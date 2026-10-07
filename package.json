@@ -1,0 +1,34 @@
+{
+  "name": "windows-dynamic-island",
+  "productName": "Island",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A fluid activity island for Windows: Claude Code, music, downloads, timers and system events in one spring-animated pill",
+  "type": "module",
+  "author": "Moss",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "vite": "vite",
+    "build:web": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "hook": "node scripts/tauri.mjs hook",
+    "tauri": "node scripts/tauri.mjs",
+    "app": "node scripts/tauri.mjs dev",
+    "release": "node scripts/tauri.mjs release",
+    "icons": "node scripts/make-icons.mjs"
+  },
+  "dependencies": {
+    "@choochmeque/tauri-plugin-biometry-api": "^0.3.0-rc.3",
+    "@tauri-apps/api": "^2.12.1",
+    "@tauri-apps/plugin-autostart": "^2.7.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.4"
+  }
+}

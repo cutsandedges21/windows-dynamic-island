@@ -1,0 +1,86 @@
+[package]
+name = "island"
+description = "Island: a fluid activity island for Windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "island_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+notify = "8"
+windows-registry = "0.5"
+png = "0.17"
+base64 = "0.22"
+# SHA-256 of Local AI downloads (src/llama.rs); already in the tree through other crates.
+sha2 = "0.10"
+# API keys live in the Windows Credential Manager (src/secrets.rs).
+keyring = { version = "3", features = ["windows-native"] }
+# Windows Hello. The 0.3 line, which adds the Windows backend, only has release
+# candidates so far. The copy in vendor/ is 0.3.0-rc.3 with one fix: Tauri 2.12 builds on
+# `windows` 0.62 and the published plugin on 0.61, so its window handle did not type-check
+# (see the note above window_hwnd in vendor/tauri-plugin-biometry/src/windows.rs).
+tauri-plugin-biometry = { path = "vendor/tauri-plugin-biometry" }
+
+[dependencies.windows]
+version = "0.61"
+features = [
+  "Foundation",
+  "ApplicationModel_Appointments",
+  "Foundation_Collections",
+  "Media_Control",
+  "Storage_Streams",
+  "UI_Shell",
+  "Win32_Foundation",
+  "Win32_Devices_FunctionDiscovery",
+  "Win32_Graphics_Gdi",
+  "Win32_Media_Audio",
+  "Win32_Media_Audio_Endpoints",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_Networking_NetworkListManager",
+  "Win32_Networking_WinSock",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_DataExchange",
+  "Win32_System_Diagnostics_Etw",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_JobObjects",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
+  "Win32_System_Performance",
+  "Win32_System_Pipes",
+  "Win32_System_Power",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
+  "Win32_System_Shutdown",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_System_Time",
+  "Win32_System_Variant",
+  "Win32_UI_Accessibility",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_PropertiesSystem",
+  "Win32_UI_WindowsAndMessaging",
+]

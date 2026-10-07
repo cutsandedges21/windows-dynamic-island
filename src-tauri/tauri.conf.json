@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Island",
+  "mainBinaryName": "island",
+  "version": "0.1.0",
+  "identifier": "com.moss.island",
+  "build": {
+    "beforeDevCommand": "npm run vite",
+    "devUrl": "http://localhost:1430",
+    "beforeBuildCommand": "",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1430 http://localhost:1430"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "resources": { "bin/island-hook.exe": "island-hook.exe" },
+    "copyright": "Copyright (c) 2026 Moss",
+    "category": "Utility",
+    "shortDescription": "A fluid activity island for Windows",
+    "longDescription": "Island is a spring-animated pill at the edge of your screen that shows what is happening right now: Claude Code sessions with inline permission answers, music, downloads, timers, screenshots, the clipboard and system events.",
+    "windows": {
+      "nsis": { "installMode": "currentUser" }
+    }
+  }
+}

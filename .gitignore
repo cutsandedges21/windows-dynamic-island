@@ -1,0 +1,8 @@
+node_modules/
+dist/
+release/
+target/
+src-tauri/bin/
+src-tauri/gen/
+*.log
+.vite/
