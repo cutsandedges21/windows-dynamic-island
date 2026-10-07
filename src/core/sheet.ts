@@ -180,7 +180,7 @@ interface BlockNode {
 export class SheetRenderer {
   readonly el: HTMLElement;
   private inner: HTMLElement;
-  private readonly springs: SpringSet<'h' | 'o' | 's' | 'b'>;
+  private readonly springs: SpringSet<'h' | 'o' | 's' | 'b' | 'w'>;
   private readonly nodes = new Map<string, BlockNode>();
   private readonly tileSigs = new WeakMap<HTMLElement, string>();
   private viewKey: string | null = null;
@@ -212,10 +212,10 @@ export class SheetRenderer {
     stage.append(this.el);
 
     this.springs = new SpringSet(
-      { h: SLIVER, o: 0, s: 0.94, b: 8 },
+      { h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width },
       (v) => this.place(v),
       springs.shell,
-      { h: 0.3, o: 0.002, s: 0.0005, b: 0.02 },
+      { h: 0.3, o: 0.002, s: 0.0005, b: 0.02, w: 0.3 },
     );
     this.ready = true;
 
@@ -290,14 +290,17 @@ export class SheetRenderer {
       return;
     }
     this.width = Math.round(geo.width);
-    this.el.style.width = `${this.width}px`;
     this.inner.style.setProperty('--cols', this.width >= 520 ? '4' : '2');
 
     const appearing = !this.shown;
     if (appearing) {
       this.el.style.display = '';
       this.shown = true;
-      this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8 }, { immediate: true });
+      this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width }, { immediate: true });
+    } else {
+      // A new width (the hover card turning into the Control Center as the pill opens)
+      // springs with the pill instead of jumping in one frame.
+      this.springs.set({ w: this.width }, { config: springs.shell, immediate: geo.immediate });
     }
     let changed = false;
     if (view.key !== this.viewKey) {
@@ -306,6 +309,7 @@ export class SheetRenderer {
       this.viewKey = view.key;
       changed = true;
     }
+    this.pinInner(this.inner, this.width);
     changed = this.patch(view.blocks) || changed;
     if (changed || appearing) this.fit(geo.immediate === true);
     if (appearing) this.springs.set({ o: 1, s: 1, b: 0 }, { config: { o: springs.fade, s: springs.bouncy, b: springs.fade }, immediate: geo.immediate });
@@ -342,10 +346,21 @@ export class SheetRenderer {
     this.springs.set({ h }, { config: springs.shell, immediate });
   }
 
+  /**
+   * Lays content out at its final width, centred: while the card's width springs, the
+   * card clips it instead of the text re-wrapping every frame. Content that is fading out
+   * keeps the width it had, so it does not re-wrap either.
+   */
+  private pinInner(inner: HTMLElement, width: number): void {
+    inner.style.width = `${width}px`;
+    inner.style.left = `calc(50% - ${width / 2}px)`;
+    inner.style.right = 'auto';
+  }
+
   private place(v = this.springs.values()): void {
     if (!this.ready) return;
     const h = Math.max(0, v.h);
-    const w = this.width;
+    const w = Math.max(0, Math.round(v.w));
     const p = this.pill;
     const { width: W, height: H } = this.area;
     const clampX = (x: number) => Math.max(EDGE, Math.min(W - w - EDGE, x));
@@ -372,6 +387,7 @@ export class SheetRenderer {
     }
     const st = this.el.style;
     st.transform = `translate3d(${x}px, ${y}px, 0) scale(${v.s})`;
+    st.width = `${w}px`;
     st.height = `${h}px`;
     st.opacity = String(clamp01(v.o));
     st.filter = v.b > 0.08 ? `blur(${v.b.toFixed(2)}px)` : '';
@@ -724,8 +740,8 @@ export class SheetRenderer {
 
     const existing = new Map<string, HTMLElement>();
     for (const el of host.querySelectorAll<HTMLElement>('.tile')) if (el.dataset.k) existing.set(el.dataset.k, el);
-    const was = new Map<HTMLElement, DOMRect>();
-    for (const el of existing.values()) was.set(el, el.getBoundingClientRect());
+    const was = new Map<HTMLElement, { rect: DOMRect; page: Element | null }>();
+    for (const el of existing.values()) was.set(el, { rect: el.getBoundingClientRect(), page: el.parentElement });
 
     const seen = new Set<string>();
     const render = (t: Tile, parent: HTMLElement, tray: boolean) => {
@@ -741,8 +757,12 @@ export class SheetRenderer {
           const next = this.tile(t, editing);
           next.dataset.k = t.key;
           this.tileSigs.set(next, sig);
-          if (el) el.replaceWith(next);
-          else springAnimate(next, [{ opacity: 0, transform: 'scale(0.92)' }, { opacity: 1, transform: 'none' }], springs.content);
+          if (el) {
+            el.replaceWith(next);
+            // A rebuilt tile slides from where the old one was, like its neighbours.
+            const before = was.get(el);
+            if (before) was.set(next, before);
+          } else springAnimate(next, [{ opacity: 0, transform: 'scale(0.92)' }, { opacity: 1, transform: 'none' }], springs.content);
           el = next;
         }
       }
@@ -764,8 +784,14 @@ export class SheetRenderer {
 
     // Anything that moved slides from where it was drawn; the dragged tile stays on the pointer.
     for (const el of host.querySelectorAll<HTMLElement>('.tile')) {
-      const a = was.get(el);
-      if (!a || el === this.drag?.el) continue;
+      const before = was.get(el);
+      if (!before || el === this.drag?.el) continue;
+      // Moving to another page would fly the tile across the card: it fades in at its new place instead.
+      if (before.page !== el.parentElement) {
+        springAnimate(el, [{ opacity: 0, transform: 'scale(0.92)' }, { opacity: 1, transform: 'none' }], springs.content);
+        continue;
+      }
+      const a = before.rect;
       const r = el.getBoundingClientRect();
       const dx = a.left - r.left;
       const dy = a.top - r.top;
