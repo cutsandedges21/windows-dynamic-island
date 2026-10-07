@@ -23,6 +23,7 @@ mod pipe;
 mod procs;
 mod secrets;
 mod shell;
+mod spectrum;
 mod store;
 mod system;
 mod updater;
@@ -72,6 +73,7 @@ pub fn run() {
             msgwin::start(handle.clone());
             media::start(handle.clone());
             audio::start(handle.clone());
+            spectrum::start(handle.clone());
             system::start(handle.clone());
             game::start();
             updater::tidy();
@@ -131,6 +133,7 @@ pub fn run() {
             audio::audio_state,
             audio::audio_set,
             audio::mic_set_mute,
+            spectrum::spectrum_watch,
             system::power_state,
             system::sys_sample,
             net::net_sample,

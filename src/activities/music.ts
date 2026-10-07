@@ -1,6 +1,7 @@
 // Music: whatever Windows' media controls (GSMTC) report — Spotify, YouTube in
 // a browser, Apple Music, local players — with play/pause and skip.
 
+import { reducedMotion } from '../core/animator';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { clock } from '../core/format';
 import { emitLocal, native, type MediaState } from '../core/native';
@@ -12,6 +13,8 @@ export class MusicActivity extends BaseActivity {
   private m: MediaState | null = null;
   private lastTrack = '';
   private pausedAt: number | null = null;
+  private tapping = false;
+  private liveUntil = 0;
 
   constructor() {
     super('music');
@@ -19,6 +22,9 @@ export class MusicActivity extends BaseActivity {
 
   protected init(): void {
     this.listen<MediaState>('media', (m) => this.apply(m));
+    this.listen<number[]>('spectrum', (v) => this.paintBars(v));
+    // No levels for a moment (capture failed, or a quiet stretch): back to the plain bounce.
+    this.every(250, () => this.liveUntil && Date.now() > this.liveUntil && this.paintBars(null));
     void native.mediaState().then((m) => m && this.apply(m, true));
     // Timelines drift between events; a slow poll keeps the bar honest.
     this.every(5000, () => void native.mediaState().then((m) => m && this.apply(m)));
@@ -29,6 +35,7 @@ export class MusicActivity extends BaseActivity {
     const prev = this.m;
     this.m = m;
     const playing = m.status === 'playing';
+    this.tap(playing);
     if (playing) this.pausedAt = null;
     else if (prev?.status === 'playing') this.pausedAt = Date.now();
     else if (this.pausedAt === null && m.available && m.title) this.pausedAt = Date.now();
@@ -41,6 +48,26 @@ export class MusicActivity extends BaseActivity {
       this.ctx.surface({ key: `state:${m.status}`, ms: 1800, bump: false });
     }
     this.ctx.update();
+  }
+
+  private tap(on: boolean): void {
+    if (on === this.tapping || native.demo) return;
+    this.tapping = on;
+    void native.spectrumWatch(on);
+  }
+
+  protected override dispose(): void {
+    this.tap(false);
+  }
+
+  /** Bass to treble onto the pill's bars; null hands them back to the CSS bounce. */
+  private paintBars(v: number[] | null): void {
+    const live = v !== null && v.some((x) => x > 0) && !reducedMotion();
+    this.liveUntil = live ? Date.now() + 600 : 0;
+    for (const e of document.querySelectorAll<HTMLElement>('.seg-bars')) {
+      e.classList.toggle('live', live);
+      if (live) v!.forEach((x, i) => e.style.setProperty(`--eq${i}`, String(x)));
+    }
   }
 
   private keepPausedMs(): number {

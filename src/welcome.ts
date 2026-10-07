@@ -5,7 +5,7 @@
 
 import { CATALOG_BY_ID } from './activities/catalog';
 import { bridge } from './core/bridge';
-import { packGrid } from './core/grid';
+import { leadFirst, packGrid } from './core/grid';
 import { icon } from './core/icons';
 import { activeValue } from './core/models';
 import { native } from './core/native';
@@ -194,7 +194,7 @@ function hello(): Node[] {
   const point = (ic: string, title: string, text: string) => h('li', {}, [h('span', { class: 'w-point-icon', html: icon(ic) }), h('div', {}, [h('b', { text: title }), h('span', { class: 'muted', text })])]);
   return [
     h('div', { class: 'w-art', 'aria-hidden': 'true' }, [
-      h('div', { class: 'w-pill' }, [h('span', { class: 'w-pill-dot' }), h('span', { class: 'w-pill-text', text: 'Island' }), h('span', { class: 'w-pill-bars' }, [h('i'), h('i'), h('i'), h('i')])]),
+      h('div', { class: 'w-pill' }, [h('span', { class: 'w-pill-dot' }), h('span', { class: 'w-pill-text', text: 'Island' }), h('span', { class: 'w-pill-bars' }, [h('i'), h('i'), h('i'), h('i'), h('i')])]),
     ]),
     h('h1', { text: 'Welcome to Island' }),
     h('p', { class: 'lead', text: 'Island sits at the top of your screen and shows what is going on: music, downloads, timers, calls and your AI. Answer two questions and it sets itself up around you. It takes about a minute.' }),
@@ -261,7 +261,7 @@ function done(host: WelcomeHost): Node[] {
 /** The grid as the island will lay it out (the island's own day tile first), first page only. */
 function preview(plan: Plan): HTMLElement {
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-  const items = [{ key: 'island/day', w: 1, h: 1 }, ...plan.picked.map((id) => ({ key: id, ...previewCells(id) }))];
+  const items = [{ key: 'island/day', w: 1, h: 1 }, ...leadFirst(plan.picked).map((id) => ({ key: id, ...previewCells(id) }))];
   const slots = packGrid(items, 4, 4);
   const first = slots.filter((s) => s.page === 0);
   const grid = h('div', { class: 'w-grid' });

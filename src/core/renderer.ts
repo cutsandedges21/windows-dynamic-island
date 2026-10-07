@@ -275,7 +275,7 @@ export class PillRenderer {
         e = el('span', 'seg seg-progress', '<i class="track"></i><i class="fill"></i><i class="pace"></i>');
         break;
       case 'bars':
-        e = el('span', 'seg seg-bars', '<i></i><i></i><i></i><i></i>');
+        e = el('span', 'seg seg-bars', '<i></i><i></i><i></i><i></i><i></i>');
         break;
       case 'button':
         e = el('button', 'seg seg-btn');
@@ -375,7 +375,8 @@ export class PillRenderer {
         break;
       }
       case 'bars':
-        e.className = `seg seg-bars tone-${tone}${seg.active ? ' active' : ''}`;
+        // 'live' belongs to the music activity, which paints the bars from the speakers.
+        e.className = `seg seg-bars tone-${tone}${seg.active ? ' active' : ''}${e.classList.contains('live') ? ' live' : ''}`;
         break;
       case 'button': {
         e.className = `seg seg-btn style-${seg.style ?? 'secondary'}${seg.label ? '' : ' icon-only'}`;

@@ -366,6 +366,8 @@ export const native = {
 
   mediaState: () => call<MediaState | null>('media_state', {}, null),
   mediaControl: (action: 'toggle' | 'play' | 'pause' | 'next' | 'prev' | 'seek', value?: number) => call<boolean>('media_control', { action, value: value ?? null }, false),
+  /** Music bars: tap the speakers for bass-to-treble levels ('spectrum' events, five 0..1 numbers). */
+  spectrumWatch: (on: boolean) => call('spectrum_watch', { on }, undefined),
   audioState: () => call<AudioState | null>('audio_state', {}, null),
   audioSet: (volume: number | null, muted: boolean | null) => call<boolean>('audio_set', { volume, muted }, false),
   micSetMute: (muted: boolean) => call<boolean>('mic_set_mute', { muted }, false),

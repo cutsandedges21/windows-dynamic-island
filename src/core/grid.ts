@@ -35,6 +35,22 @@ export function sizeOf(w: number, h: number): TileSize {
   return `${Math.min(2, Math.max(1, w))}x${Math.min(2, Math.max(1, h))}` as TileSize;
 }
 
+/**
+ * The activity whose tile opens the grid until the user arranges it themselves: right
+ * after the day tile, which on four columns puts this two-cell tile top and centre.
+ */
+export const GRID_LEAD = 'local';
+
+/** `ids` with GRID_LEAD moved to the front (when it is there at all). */
+export function leadFirst(ids: string[]): string[] {
+  return ids.includes(GRID_LEAD) ? [GRID_LEAD, ...ids.filter((id) => id !== GRID_LEAD)] : ids;
+}
+
+/** How many rows the packed tiles reach down to: the grid is no taller than that. */
+export function rowsUsed(slots: GridSlot[]): number {
+  return slots.reduce((n, s) => Math.max(n, s.row + s.h), 1);
+}
+
 type Page = boolean[][];
 
 function emptyPage(cols: number, rows: number): Page {

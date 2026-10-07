@@ -9,7 +9,7 @@ import { CATALOG_BY_ID } from '../activities/catalog';
 import type { Activity, ActivityContext, ActivityStatus, RenderEnv, SheetEnv, SurfaceOptions } from './activity';
 import { setReducedMotion } from './animator';
 import { BorderGlow, type GlowSpec } from './glow';
-import { dropBefore, hiddenTest, moveBefore, packGrid, pageCount, sizeOf, unhide, type GridSlot } from './grid';
+import { dropBefore, hiddenTest, leadFirst, moveBefore, packGrid, pageCount, rowsUsed, sizeOf, unhide, type GridSlot } from './grid';
 import { innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
 import { native, on, sendTo, type MenuItem } from './native';
 import { choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
@@ -759,7 +759,7 @@ export class Island {
         body: { k: 'dots', label: d.toLocaleDateString('en-US', { weekday: 'long' }), pct: dayPct, sub: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) },
       },
     ];
-    for (const id of this.settings.activities.order) {
+    for (const id of leadFirst(this.settings.activities.order)) {
       const act = this.running.get(id);
       if (!act?.tile) continue;
       const interactive = this.settings.activities.config[id]?.interactive ?? true;
@@ -807,9 +807,11 @@ export class Island {
     this.gridOrder = shown.map((t) => t.key);
     const items: Tile[] = shown.map((t) => ({ ...t, ...(where.get(t.key) ?? { page: 0, col: 0, row: 0 }) }));
     const tray: Tile[] = this.gridEditing ? sized.filter((t) => isHidden(t.key)).map((t) => ({ ...t, w: 1, h: 1, hidden: true })) : [];
+    // The card is only as tall as the rows the tiles reach; editing opens every row to drag into.
+    const rows = this.gridEditing ? geo.rows : rowsUsed(slots);
 
     const blocks: SheetView['blocks'] = [
-      { t: 'tiles', key: 'grid', items, tray, cols: geo.cols, rows: geo.rows, cell: geo.cell, pages: pageCount(slots), editing: this.gridEditing },
+      { t: 'tiles', key: 'grid', items, tray, cols: geo.cols, rows, cell: geo.cell, pages: pageCount(slots), editing: this.gridEditing },
     ];
     if (this.gridEditing) {
       blocks.push({

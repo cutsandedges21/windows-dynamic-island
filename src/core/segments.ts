@@ -135,7 +135,7 @@ export function naturalWidth(seg: Seg, measure: Measure, pillH: number): number 
     case 'progress':
       return seg.w;
     case 'bars':
-      return 18;
+      return 23;
     case 'button': {
       const label = seg.label ? measure(seg.label, BUTTON_FONT) : 0;
       if (!seg.label) return BUTTON_H;
@@ -293,7 +293,7 @@ export function verticalBox(seg: Seg, measure: Measure, crossMax: number): { len
     case 'progress':
       return { len: 4, cross: crossMax };
     case 'bars':
-      return { len: 14, cross: 18 };
+      return { len: 14, cross: 23 };
     case 'button':
       return seg.icon ? { len: BUTTON_H, cross: BUTTON_H } : { len: BUTTON_H, cross: Math.min(crossMax, naturalWidth(seg, measure, 0)) };
     case 'chip':

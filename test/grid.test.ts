@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { dropBefore, hiddenTest, moveBefore, packGrid, pageCount, sizeOf, unhide, type GridItem } from '../src/core/grid';
+import { dropBefore, hiddenTest, leadFirst, moveBefore, packGrid, pageCount, rowsUsed, sizeOf, unhide, type GridItem } from '../src/core/grid';
 
 const item = (key: string, w = 1, h = 1): GridItem => ({ key, w, h });
 /** "key@page:col,row" for every slot, in order. */
@@ -114,5 +114,31 @@ describe('hidden tiles', () => {
   it('putting a tile back undoes either kind of entry', () => {
     expect(unhide(['weather/weather', 'sound', 'devices'], 'sound/sound')).toEqual(['weather/weather', 'devices']);
     expect(unhide(['weather/weather'], 'weather/weather')).toEqual([]);
+  });
+});
+
+describe('the default layout', () => {
+  it('opens with Local AI right after the day tile: top and centre on four columns', () => {
+    expect(leadFirst(['claude', 'music', 'local', 'timer'])).toEqual(['local', 'claude', 'music', 'timer']);
+    const slots = packGrid([item('island/day'), item('local', 2), item('claude', 2), item('music', 2, 2)], 4, 4);
+    expect(map(slots).slice(0, 2)).toEqual(['island/day@0:0,0', 'local@0:1,0']);
+  });
+
+  it('leaves an order without Local AI as it is', () => {
+    const order = ['claude', 'music'];
+    expect(leadFirst(order)).toBe(order);
+  });
+});
+
+describe('grid height', () => {
+  it('is the rows the tiles reach down to, at least one', () => {
+    expect(rowsUsed(packGrid([item('island/day'), item('local', 2)], 4, 4))).toBe(1);
+    expect(rowsUsed(packGrid([item('island/day'), item('local', 2), item('music', 2, 2)], 4, 4))).toBe(3);
+    expect(rowsUsed([])).toBe(1);
+  });
+
+  it('never passes a full page, however many pages there are', () => {
+    const many = Array.from({ length: 20 }, (_, i) => item(`t${i}`));
+    expect(rowsUsed(packGrid(many, 4, 4))).toBe(4);
   });
 });

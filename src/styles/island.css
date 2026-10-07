@@ -183,12 +183,20 @@ html.peek #stage {
 .seg-progress.tone-default { color: var(--fg); }
 
 /* equalizer bars */
-.seg-bars { width: 18px; height: 14px; display: flex; align-items: flex-end; gap: 2px; color: var(--accent); }
+.seg-bars { width: 23px; height: 14px; display: flex; align-items: flex-end; gap: 2px; color: var(--accent); }
 .seg-bars i { position: relative; flex: 1; height: 100%; border-radius: 1.5px; background: currentColor; transform-origin: 50% 100%; transform: scaleY(0.25); }
 .seg-bars.active i { animation: eq 0.9s ease-in-out infinite alternate; }
 .seg-bars.active i:nth-child(2) { animation-duration: 0.7s; animation-delay: -0.2s; }
 .seg-bars.active i:nth-child(3) { animation-duration: 1.05s; animation-delay: -0.45s; }
 .seg-bars.active i:nth-child(4) { animation-duration: 0.8s; animation-delay: -0.1s; }
+.seg-bars.active i:nth-child(5) { animation-duration: 0.95s; animation-delay: -0.6s; }
+/* Live: bass to treble from the speakers (src-tauri/src/spectrum.rs); the bounce above is the fallback. */
+.seg-bars.active.live i { animation: none; transform: scaleY(calc(0.18 + var(--eq, 0) * 0.82)); transition: transform 70ms linear; }
+.seg-bars i:nth-child(1) { --eq: var(--eq0); }
+.seg-bars i:nth-child(2) { --eq: var(--eq1); }
+.seg-bars i:nth-child(3) { --eq: var(--eq2); }
+.seg-bars i:nth-child(4) { --eq: var(--eq3); }
+.seg-bars i:nth-child(5) { --eq: var(--eq4); }
 
 /* buttons */
 .seg-btn {
@@ -356,6 +364,7 @@ html.peek #stage {
   .anim-bob .ico,
   .seg-bars.active i,
   .seg-progress.indeterminate .fill { animation: none; }
+  .seg-bars.active.live i { transform: scaleY(0.25); }
 }
 
 /* ------------------------------------------------------------------ vertical pills
