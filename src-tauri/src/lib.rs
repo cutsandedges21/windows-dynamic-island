@@ -81,6 +81,7 @@ pub fn run() {
             monitors::monitor_at_cursor,
             overlay::island_place,
             overlay::island_set_hit,
+            overlay::island_set_peek,
             overlay::island_show,
             overlay::island_mirrors,
             overlay::mirror_hello,

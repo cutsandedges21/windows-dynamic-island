@@ -197,3 +197,9 @@ switch and glow all still untested on screen by Moss.
 
 - Moss: clicking the island made the Control Center glitch briefly. Two causes, both in `src/core/sheet.ts`. (1) With the hover card on (Moss: Claude stats), a click swaps that card for the grid, and the card's width jumped to the grid's in one frame while the pill sprang wider, so the fading hover content re-wrapped. The card width is now a spring (`w`), and each content layer is laid out at its own final width, centred (`pinInner`), so nothing re-wraps mid-fade. (2) A tile that arrives late (seen in the preview: Network, 350 ms after opening) re-packs the grid. Tiles already slid to their new spots, but one moving to another page flew across the card, and rebuilt tiles jumped. Now a tile that changes page fades in at its new place, and a rebuilt tile slides from where the old one was.
 - Checked: tsc, 301 Vitest; frame-by-frame in the browser preview. Moss confirmed it works.
+
+## 2026-10-07: Two opt-in options from Moss's partner (both off by default)
+
+- Settings › Behavior › **Peek behind** (`island.peekThrough`): with the pointer on the island, tap Ctrl. The island fades to 12% and the mouse goes through it until the pointer is 24 px away. Done in the Rust cursor poll (`overlay.rs`: `peek_enabled`, `island_set_peek`, `peek` event). A click through it closes an open island like any outside click. A tap rather than a held key, so the click behind is a plain click.
+- Activities › Claude Code › **Only pop up for other chats** (`onlyOtherChats`): a chat that finishes in the window the user is in no longer expands the island; other chats still pop up with Claude's answer. Uses the same `isLookingAt` check as the reply window.
+- Checked: tsc, 301 Vitest, cargo check. Not built as a release or tried on screen yet.

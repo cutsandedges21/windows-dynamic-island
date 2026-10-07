@@ -132,6 +132,7 @@ export class Island {
     });
     await on<{ monitor: string; fullscreen: string | null; pid: number }>('foreground', (fg) => this.onForeground(fg));
     await on('pointer-outside', () => this.dismiss());
+    await on<boolean>('peek', (on) => this.onPeek(on));
     await on('displays-changed', () => void this.place(false));
     await on('mirror-ready', () => {
       if (this.mirrorFrame) void native.broadcast('mirror-frame', { ...this.mirrorFrame, bump: false });
@@ -154,6 +155,7 @@ export class Island {
     setInterval(() => this.tick(), 1000);
     setInterval(() => this.followCursor(), 1500);
     await this.updateHotkeys();
+    void native.setPeek(this.settings.island.peekThrough);
     this.compose(true);
     await native.show(true);
     native.log(`island ready on ${this.monitorId ?? 'unknown monitor'} ${Math.round(this.area.width)}x${Math.round(this.area.height)}`);
@@ -174,6 +176,7 @@ export class Island {
     if (prev.island.display !== next.island.display || prev.island.displayId !== next.island.displayId || prev.island.displayIds.join() !== next.island.displayIds.join()) void this.place(false);
     this.syncActivities(prev);
     void this.updateHotkeys();
+    if (prev.island.peekThrough !== next.island.peekThrough) void native.setPeek(next.island.peekThrough);
     this.schedule();
   }
 
@@ -980,6 +983,19 @@ export class Island {
       },
       on ? 80 : 280,
     );
+  }
+
+  /**
+   * Peek behind: the island fades while the mouse goes through it. The webview
+   * gets no pointer-leave while ignoring the mouse, so a hover card ends here.
+   */
+  private onPeek(on: boolean): void {
+    document.documentElement.classList.toggle('peek', on);
+    if (!on) return;
+    clearTimeout(this.hoverTimer);
+    this.hover = false;
+    this.hoverKey = null;
+    this.schedule();
   }
 
   /**

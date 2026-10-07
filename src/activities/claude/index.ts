@@ -25,6 +25,8 @@ interface Options {
   showLimits: boolean;
   showDesktop: boolean;
   finishedSeconds: number;
+  /** A chat that finishes while the user is looking at it does not pop the island open. */
+  onlyOtherChats: boolean;
   replyWindowSeconds: number;
   requireHello: boolean;
   resetAlerts: boolean;
@@ -102,6 +104,7 @@ export class ClaudeActivity extends BaseActivity {
       showLimits: o.showLimits !== false,
       showDesktop: o.showDesktop !== false,
       finishedSeconds: Number(o.finishedSeconds) || 8,
+      onlyOtherChats: o.onlyOtherChats === true,
       replyWindowSeconds: Math.max(0, Math.min(240, Number(o.replyWindowSeconds ?? 45) || 0)),
       requireHello: o.requireHello === true,
       resetAlerts: o.resetAlerts !== false,
@@ -349,8 +352,8 @@ export class ClaudeActivity extends BaseActivity {
     }
     if (kind === 'stop' && sid) {
       // With a request id the hook waits on us: decide first, so a watched chat never flashes a card.
-      if (ev.request_id) void this.onStop(ev.request_id, sid, ev).finally(() => this.markFinished(sid));
-      else this.markFinished(sid);
+      if (ev.request_id) void this.onStop(ev.request_id, sid, ev).finally(() => this.markFinished(sid, ev));
+      else this.markFinished(sid, ev);
     }
     if (kind === 'prompt' && sid) {
       this.finished.delete(sid);
@@ -427,12 +430,12 @@ export class ClaudeActivity extends BaseActivity {
    * chats can share one window (editor tabs, terminal tabs): then the one the
    * user last sent a prompt to is the one they are in.
    */
-  private async isLookingAt(sid: string, ev: HookEvent): Promise<boolean> {
+  private async isLookingAt(sid: string, ev?: HookEvent): Promise<boolean> {
     const fg = await native.foregroundPid();
     if (!fg || !this.tracker) return false;
     const probe = this.tracker.probe;
     const pidOf = (id: string) => this.sessions.find((s) => s.id === id)?.pid ?? 0;
-    const pid = pidOf(sid) || Number(ev.hook_ppid) || 0;
+    const pid = pidOf(sid) || Number(ev?.hook_ppid) || 0;
     if (!pid) return false;
     if (!probe.table.has(pid)) probe.load(await native.procSnapshot());
     if (!this.chainOf(pid).includes(fg)) return false;
@@ -591,10 +594,31 @@ export class ClaudeActivity extends BaseActivity {
 
   // ---------------------------------------------------------------- moments
 
-  private markFinished(id: string): void {
+  private markFinished(id: string, ev?: HookEvent): void {
     const prev = this.finished.get(id);
     if (prev && Date.now() - prev < 5000) return;
     this.finished.set(id, Date.now());
+    if (this.opts().onlyOtherChats) void this.announceUnlessLooking(id, ev);
+    else this.announceFinished(id);
+  }
+
+  /** "Only pop up for other chats": a chat the user is looking at finishes quietly. */
+  private async announceUnlessLooking(id: string, ev?: HookEvent): Promise<void> {
+    let looking = this.looking.has(id);
+    if (!looking) {
+      try {
+        looking = await this.isLookingAt(id, ev);
+      } catch (err) {
+        this.ctx.log('finish: foreground check failed', String(err));
+      }
+    }
+    if (!looking) return this.announceFinished(id);
+    this.looking.add(id);
+    this.ctx.log('finished quietly', { session: id.slice(0, 8) });
+    this.ctx.update();
+  }
+
+  private announceFinished(id: string): void {
     this.ctx.surface({ key: `done:${id}`, ms: this.opts().finishedSeconds * 1000, level: 'expanded' });
     if (this.ctx.settings().general.sounds) chime('done');
     this.ctx.update();

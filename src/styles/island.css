@@ -44,6 +44,13 @@ body.demo {
   position: fixed;
   inset: 0;
   pointer-events: none;
+  transition: opacity 220ms ease;
+}
+
+/* Peek behind: the mouse goes through the island to what is under it. */
+html.peek #stage {
+  opacity: 0.12;
+  transition-duration: 120ms;
 }
 
 /* ------------------------------------------------------------------ pill */

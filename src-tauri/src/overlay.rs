@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use windows::Win32::Foundation::{HWND, POINT};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_LBUTTON, VK_RBUTTON};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOSIZE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
@@ -58,6 +58,8 @@ pub struct Overlay {
     pub monitor_id: Mutex<String>,
     /// Monitor of each mirror window, by its number.
     mirrors: Mutex<Vec<String>>,
+    /// Peek behind (a setting): tapping Ctrl over the pill lets clicks through it.
+    peek_enabled: AtomicBool,
 }
 
 impl Overlay {
@@ -65,6 +67,7 @@ impl Overlay {
         Self {
             rects: Mutex::new(Vec::new()),
             ignoring: AtomicBool::new(false),
+            peek_enabled: AtomicBool::new(false),
             visible: AtomicBool::new(true),
             previous_fg: AtomicIsize::new(0),
             monitor_id: Mutex::new(String::new()),
@@ -221,6 +224,8 @@ struct ForegroundInfo {
 const NEAR_PX: f64 = 180.0;
 const NEAR_POLL_MS: u64 = 16;
 const FAR_POLL_MS: u64 = 100;
+/// A peek ends once the pointer is this far from the island, in CSS px.
+const PEEK_LEAVE_PX: f64 = 24.0;
 
 /// Click-through, outside clicks, full-screen detection and the foreground
 /// window's monitor, all from one loop: 16 ms near the island, 100 ms away from it.
@@ -230,6 +235,9 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
         let mut last_info: Option<ForegroundInfo> = None;
         let mut was_left = false;
         let mut was_right = false;
+        let mut was_ctrl = false;
+        // Peek behind: the island fades and lets the mouse through until the pointer leaves it.
+        let mut peeking = false;
         // A pointer far from the island cannot reach it within a frame or two, so
         // the loop idles at 10 Hz out there and only runs hot near the island.
         let mut period = Duration::from_millis(FAR_POLL_MS);
@@ -282,16 +290,30 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
                 x >= r.x - HIT_MARGIN && x <= r.x + r.w + HIT_MARGIN && y >= r.y - HIT_MARGIN && y <= r.y + r.h + HIT_MARGIN
             });
             period = Duration::from_millis(if gap <= NEAR_PX { NEAR_POLL_MS } else { FAR_POLL_MS });
-            let accept = on_island;
+
+            // Ctrl pressed with the pointer on the island starts a peek; a tap is
+            // enough, so the click behind is a plain click, not a Ctrl+click.
+            let ctrl = unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) } as u16 & 0x8000 != 0;
+            let peek_on = state.peek_enabled.load(Ordering::Relaxed);
+            if peek_on && !peeking && on_island && ctrl && !was_ctrl {
+                peeking = true;
+                let _ = app.emit_to(LABEL, "peek", true);
+            } else if peeking && (!peek_on || gap > PEEK_LEAVE_PX) {
+                peeking = false;
+                let _ = app.emit_to(LABEL, "peek", false);
+            }
+            was_ctrl = ctrl;
+
+            let accept = on_island && !peeking;
             if state.ignoring.load(Ordering::Relaxed) == accept {
                 state.ignoring.store(!accept, Ordering::Relaxed);
                 let _ = win.set_ignore_cursor_events(!accept);
             }
 
-            // A press anywhere off the island closes an open island.
+            // A press anywhere off the island (or through it, while peeking) closes an open island.
             let (left, left_hit) = button_state(VK_LBUTTON.0);
             let (right, right_hit) = button_state(VK_RBUTTON.0);
-            if !on_island && (left_hit || right_hit || (left && !was_left) || (right && !was_right)) {
+            if !accept && (left_hit || right_hit || (left && !was_left) || (right && !was_right)) {
                 let _ = app.emit_to(LABEL, "pointer-outside", PointerOutside { button: if left { "left" } else { "right" } });
             }
             was_left = left;
@@ -350,6 +372,11 @@ pub fn mirror_hello(app: AppHandle, window: WebviewWindow) -> Option<Placement> 
 #[tauri::command]
 pub fn island_set_hit(state: tauri::State<'_, Arc<Overlay>>, rects: Vec<HitRect>) {
     *state.rects.lock().unwrap() = rects;
+}
+
+#[tauri::command]
+pub fn island_set_peek(state: tauri::State<'_, Arc<Overlay>>, enabled: bool) {
+    state.peek_enabled.store(enabled, Ordering::Relaxed);
 }
 
 #[tauri::command]

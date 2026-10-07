@@ -62,6 +62,13 @@ export const CATALOG: ActivityMeta[] = [
       { key: 'showDesktop', type: 'toggle', label: 'Claude app chats', help: 'Recent chats from the Claude desktop app, read from its local cache.', default: true },
       { key: 'finishedSeconds', type: 'number', label: 'Show "finished" for', default: 8, min: 3, max: 60, unit: 's' },
       {
+        key: 'onlyOtherChats',
+        type: 'toggle',
+        label: 'Only pop up for other chats',
+        help: "When a chat finishes in the window you're in, the island stays small. It opens with Claude's answer only for chats you're not looking at.",
+        default: false,
+      },
+      {
         key: 'replyWindowSeconds',
         type: 'number',
         label: 'Reply window',

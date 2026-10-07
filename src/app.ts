@@ -723,6 +723,7 @@ function settingsPage(): HTMLElement {
     ]),
     section('Behavior', [
       row('Expand on hover', null, toggle(i.hoverExpand, (v) => { i.hoverExpand = v; save(true); })),
+      row('Peek behind', 'With the pointer on the island, tap Ctrl: it fades and your clicks go to whatever is under it, until the pointer moves away.', toggle(i.peekThrough, (v) => { i.peekThrough = v; save(true); })),
       row('Hide in full-screen apps', 'Games, videos and presentations. Urgent things still show.', toggle(i.hideInFullscreen, (v) => { i.hideInFullscreen = v; save(true); })),
       row('Show other activities beside the main one', 'Small chips, with +N when there is no room.', toggle(i.showSecondary, (v) => { i.showSecondary = v; save(true); })),
       row('Do not disturb', 'Nothing expands on its own; urgent moments still interrupt.', toggle(g.dnd, (v) => { g.dnd = v; save(true); })),

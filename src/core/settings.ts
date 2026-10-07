@@ -50,6 +50,8 @@ export interface Settings {
     glow: 'off' | 'slow' | 'medium' | 'fast';
     /** What hovering the island shows: the card of whatever is pointed at, or always Claude's stats. */
     hoverCard: 'pointer' | 'claude';
+    /** Tapping Ctrl over the pill fades it and lets clicks through to what is behind. */
+    peekThrough: boolean;
     grid: GridLayout;
   };
   activities: {
@@ -118,6 +120,7 @@ export function defaultSettings(): Settings {
       reduceMotion: 'system',
       glow: 'medium',
       hoverCard: 'pointer',
+      peekThrough: false,
       grid: { order: [], sizes: {}, hidden: [] },
     },
     activities: { order: CATALOG.map((m) => m.id), config },
