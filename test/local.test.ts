@@ -56,7 +56,8 @@ function deferred<T>() {
 
 let reply = deferred<{ ok: boolean; text?: string; error?: string; cancelled: boolean }>();
 
-const NOT_SET_UP = { model: 'Qwen3 4B (needs 8 GB)', installed: false, download: 2_533_400_000, gpu: null, settingUp: false };
+const NOT_SET_UP = { model: 'Qwen3 4B', recommended: 'small', installed: false, ready: [] as Array<{ id: string; name: string }>, download: 2_533_400_000, gpu: null, settingUp: false };
+const SET_UP = { ...NOT_SET_UP, installed: true, ready: [{ id: 'small', name: 'Qwen3 4B' }], download: 0 };
 let bundled: Record<string, unknown> = NOT_SET_UP;
 
 function resetBridge(running = true, island: Record<string, unknown> = NOT_SET_UP) {
@@ -274,35 +275,62 @@ describe('LocalActivity', () => {
 
   it("setup shows its progress, then answers with Island's own model", async () => {
     resetBridge(false);
-    const done = deferred<{ ok: boolean; error?: string }>();
-    h.bridge.localSetup.mockImplementation(() => done.promise);
     const { act, calls } = await boot();
-    const setup = act.action('setup', undefined);
-    await tick(0);
-    emit('local-setup', { stage: 'model', done: 1_266_700_000, total: 2_533_400_000 });
+    await act.action('setup', undefined);
+    expect(h.bridge.localSetup).toHaveBeenCalledWith();
+    emit('local-setup', { stage: 'model', model: 'small', done: 1_266_700_000, total: 2_533_400_000 });
     const pill = act.render(env('expanded'));
     expect(pill.some((s) => s.t === 'progress' && Math.abs((s.value ?? 0) - 0.5) < 0.01)).toBe(true);
     expect(texts(pill).join(' ')).toContain('50%');
 
-    bundled = { ...NOT_SET_UP, installed: true, download: 0 };
-    done.resolve({ ok: true });
-    await setup;
+    bundled = SET_UP;
+    emit('local-setup-end', { model: 'small', ok: true, error: null, cancelled: false });
+    await tick(0);
     expect(calls.surface.at(-1)?.key).toMatch(/^local-ready/);
     expect(act.home().length).toBe(1);
     await ask(act);
     expect(askCall()[4]).toBe('island');
+    expect(askCall()[1]).toBe('small');
   });
 
-  it('a failed setup says why', async () => {
+  it('a setup that cannot start says why', async () => {
     resetBridge(false);
-    h.bridge.localSetup.mockImplementation(async () => ({ ok: false, error: 'The download stopped. Next time it carries on where it left off.' }));
+    h.bridge.localSetup.mockImplementation(async () => ({ ok: false, error: 'Not enough free space: Qwen3 4B needs 3.0 GB, the disk has 1.2 GB free.' }));
     const { act } = await boot();
     await act.action('setup', undefined);
+    expect(act.status().summary).toContain('Not enough free space');
+  });
+
+  it('a download that fails part-way says why', async () => {
+    resetBridge(false);
+    const { act } = await boot();
+    await act.action('setup', undefined);
+    emit('local-setup-end', { model: 'small', ok: false, error: 'The download stopped. Next time it carries on where it left off.', cancelled: false });
+    await tick(0);
     expect(act.status().summary).toContain('The download stopped');
   });
 
+  it('follows a download started in the Activities window, and leaves its errors there', async () => {
+    resetBridge(false);
+    const { act, calls } = await boot();
+    emit('local-setup', { stage: 'model', model: 'tiny', done: 1, total: 4 });
+    expect(act.status().summary).toBe('Setting up Local AI · 25%');
+    emit('local-setup-end', { model: 'tiny', ok: false, error: 'The disk is full.', cancelled: false });
+    await tick(0);
+    expect(act.status().active).toBe(false);
+    expect(calls.surface.filter((s) => /local-(error|ready)/.test(s.key ?? ''))).toHaveLength(0);
+  });
+
+  it('an Island model picked in Activities answers, even while Ollama runs', async () => {
+    resetBridge(true, SET_UP);
+    const { act } = await boot({ model: 'island:small' });
+    await ask(act);
+    expect(askCall()[4]).toBe('island');
+    expect(askCall()[1]).toBe('small');
+  });
+
   it('a PC too small for any model hides Local AI', async () => {
-    resetBridge(false, { model: null, installed: false, download: 0, gpu: null, settingUp: false });
+    resetBridge(false, { model: null, recommended: null, installed: false, ready: [], download: 0, gpu: null, settingUp: false });
     const { act } = await boot();
     expect(act.tile(sheetEnv)).toBeNull();
   });

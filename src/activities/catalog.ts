@@ -327,14 +327,15 @@ export const CATALOG: ActivityMeta[] = [
   {
     id: 'local',
     name: 'Local AI',
-    description: 'Ask a model that runs on this PC. Nothing leaves your computer, and it works offline. Needs Ollama (ollama.com) with a model pulled.',
+    description: 'Ask a model that runs on this PC. Nothing leaves your computer, and it works offline. Island recommends a model for this PC; download or switch models below, or use Ollama.',
     icon: 'spark',
     category: 'productivity',
     enabled: true,
     priority: 'medium',
     behavior: B(true, false, true, true),
     options: [
-      { key: 'model', type: 'text', label: 'Model', help: 'An Ollama model, such as llama3.2:3b. Empty uses the smallest one you have.', default: '', placeholder: 'Smallest installed' },
+      // Set by the model list (src/models-ui.ts), not typed: 'island:<id>' is one of Island's own models, anything else an Ollama model, empty lets Island choose.
+      { key: 'model', type: 'text', label: 'Model', help: 'Pick it in the model list.', default: '', placeholder: 'Let Island choose' },
     ],
   },
   {

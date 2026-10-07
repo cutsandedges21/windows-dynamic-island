@@ -196,6 +196,8 @@ export class LocalActivity extends BaseActivity {
   /** Island's own runtime, as of the last check. */
   private bundled: Bundled | null = null;
   private progress: SetupProgress | null = null;
+  /** The download under way was started from this activity's tile, so its failure is shown here. */
+  private ownSetup = false;
   private readyUntil = 0;
   /** When the question being answered was sent, and how long its answer should take. */
   private startedAt = 0;
@@ -212,8 +214,11 @@ export class LocalActivity extends BaseActivity {
     this.listen<LocalDelta>('local-delta', (p) => this.onDelta(p));
     this.listen<SetupProgress>('local-setup', (p) => {
       this.progress = p;
+      // A download started from Activities or the welcome screen shows here too, unless a question is going on.
+      if (this.phase === 'idle') this.phase = 'setup';
       this.ctx.update();
     });
+    this.listen<SetupEnd>('local-setup-end', (e) => void this.setupEnded(e));
     this.every(STATUS_EVERY, () => void this.refresh(), true);
     // The wait bar moves while a question is out.
     this.every(500, () => {
@@ -232,6 +237,9 @@ export class LocalActivity extends BaseActivity {
     const status = await bridge.localStatus();
     if (!this.alive) return null;
     this.bundled = status.bundled ?? null;
+    // A download outlives the window that started it: show one under way, drop one that ended unseen.
+    if (status.bundled?.settingUp && this.phase === 'idle') this.phase = 'setup';
+    else if (!status.bundled?.settingUp && this.phase === 'setup' && !this.ownSetup) this.phase = 'idle';
     this.setAvailable(status.running || !!status.bundled?.installed);
     return status;
   }
@@ -296,18 +304,36 @@ export class LocalActivity extends BaseActivity {
     return p && p.total > 0 ? Math.min(1, p.done / p.total) : null;
   }
 
+  /** The tile's Set up: downloads the model recommended for this PC. */
   private async setup(): Promise<void> {
     if (this.phase === 'setup') return;
     this.phase = 'setup';
     this.progress = null;
+    this.ownSetup = true;
     this.ctx.update();
-    const result = await bridge.localSetup();
-    if (!this.alive) return;
+    const started = await bridge.localSetup();
+    // Once it has begun, its progress and its end arrive as events.
+    if (!this.alive || started.ok) return;
+    this.ownSetup = false;
     this.phase = 'idle';
-    if (!result.ok) return this.fail(result.error);
+    this.fail(started.error);
+  }
+
+  /** A download ended, wherever it was started: say Local AI is ready, or why it is not. */
+  private async setupEnded(e: SetupEnd): Promise<void> {
+    const mine = this.ownSetup;
+    this.ownSetup = false;
+    this.progress = null;
+    if (this.phase === 'setup') this.phase = 'idle';
     await this.refresh();
-    this.readyUntil = Date.now() + READY_MS;
-    this.ctx.surface({ key: `local-ready-${this.turn}`, level: 'expanded', ms: READY_MS });
+    if (!this.alive) return;
+    if (e.ok && this.phase === 'idle') {
+      this.readyUntil = Date.now() + READY_MS;
+      this.ctx.surface({ key: `local-ready-${this.turn}`, level: 'expanded', ms: READY_MS });
+    } else if (!e.ok && !e.cancelled && mine) {
+      // A download started in the Activities window shows its failure there instead.
+      return this.fail(e.error || 'The download failed.');
+    }
     this.ctx.update();
   }
 
@@ -469,7 +495,8 @@ export class LocalActivity extends BaseActivity {
 
   /** A starter for the open, idle island, while a local server is running. */
   home(): Seg[] {
-    if (this.phase !== 'idle' || !this.available) return [];
+    // Another model downloading in the background does not stop the one that is ready.
+    if ((this.phase !== 'idle' && this.phase !== 'setup') || !this.available) return [];
     return [{ t: 'button', key: 'local', icon: 'spark', label: 'Local AI', action: 'ask', style: 'secondary', prio: 5, tip: 'Ask the model on this PC' }];
   }
 

@@ -5,7 +5,7 @@ A spring-animated pill at the edge of your Windows screen that shows what is hap
 ## Run it
 
 1. Double-click `release\Island.exe` (portable), or run the installer next to it.
-2. The island appears at the top centre of your main display.
+2. The island appears at the top centre of your main display. The first time, a short setup asks what you use the PC for, fills the Control Center from your answers, and offers a Local AI model picked for your PC's memory and graphics (`docs/ONBOARDING.md`). Settings › Run setup again repeats it.
 3. Right-click the island for positions, Do not disturb and Activities. The tray icon has the same, plus your Claude sessions.
 
 ## Use it
@@ -38,6 +38,8 @@ Turn on the hooks for the rest: **Activities › Claude Code › Install hooks�
 ## Activities
 
 **Activities** (tray, right-click menu, or `Alt+Shift+A`) is where you choose what the island shows. Drag cards between High, Medium, Low and Available, flip behaviours (Auto-show, Persistent, Interactive, Interrupt), and drag the three width handles to resize the island live.
+
+**Local AI › Models** lists this PC's specs and every model Island can download, with the one that suits the PC marked Recommended: download, switch, cancel or delete them there.
 
 Other programs can push their own activities: see `docs/ACTIVITY-API.md`.
 

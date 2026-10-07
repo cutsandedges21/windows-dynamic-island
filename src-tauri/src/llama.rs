@@ -604,8 +604,10 @@ async fn ensure_plan(plan: &Plan) -> Result<u16, String> {
             running.last = std::time::Instant::now();
             return Ok(running.port);
         }
-        // Another model (the user switched), or it died: start again.
+        // Another model (the user switched), or it died: start again, once the old one has
+        // let go of its memory, so two models never sit in RAM together.
         let _ = running.child.kill();
+        let _ = running.child.wait();
     }
     *slot = None;
     let port = std::net::TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()).map(|a| a.port()).map_err(|_| "No free port for the model runtime.".to_string())?;
@@ -640,8 +642,8 @@ pub async fn touch() {
 }
 
 pub async fn stop() {
-    if let Some(mut running) = server().lock().await.take() {
-        let _ = running.child.kill();
+    if let Some(running) = server().lock().await.take() {
+        end(running);
     }
 }
 
@@ -649,10 +651,17 @@ pub async fn stop() {
 async fn stop_if(id: &str) {
     let mut slot = server().lock().await;
     if slot.as_ref().is_some_and(|r| r.tier == id) {
-        if let Some(mut running) = slot.take() {
-            let _ = running.child.kill();
+        if let Some(running) = slot.take() {
+            end(running);
         }
     }
+}
+
+/// Kills the server and waits for it to be gone: until then Windows keeps its model file
+/// open, and deleting that file right after would fail.
+fn end(mut running: Running) {
+    let _ = running.child.kill();
+    let _ = running.child.wait();
 }
 
 fn start_reaper() {

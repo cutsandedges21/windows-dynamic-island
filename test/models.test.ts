@@ -69,7 +69,7 @@ const report = (over: Partial<ModelsReport> = {}): ModelsReport => ({
 describe('specs', () => {
   it('describes a PC with built-in graphics', () => {
     const s = specs(report().machine, [model({ id: 'medium', recommended: true })]);
-    expect(s).toMatchObject({ cpu: '12th Gen Intel Core i7-12650H · 16 threads', memory: '32 GB memory', graphics: 'Intel UHD Graphics (built in)', disk: '600 GB free on C:' });
+    expect(s).toMatchObject({ cpu: 'Intel Core i7-12650H', threads: '16 threads', memory: '32 GB', graphics: 'Intel UHD Graphics (built in)', disk: '600 GB free on C:' });
     expect(s.note).toMatch(/processor/);
   });
 

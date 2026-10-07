@@ -98,7 +98,10 @@ export function cleanName(name: string): string {
 }
 
 export interface Specs {
+  /** "Intel Core i7-12650H" */
   cpu: string;
+  /** "16 threads", or '' when unknown. */
+  threads: string;
   memory: string;
   graphics: string;
   disk: string;
@@ -118,8 +121,10 @@ export function specs(m: Machine, models: IslandModel[]): Specs {
   else if (cards.length) note = `Models run on the processor. ${cleanName(cards[0].name)} can take the smaller ones.`;
   else note = 'No graphics card with memory of its own, so models run on the processor.';
   return {
-    cpu: `${cleanName(m.cpu) || 'Processor'}${m.threads ? ` · ${m.threads} threads` : ''}`,
-    memory: `${memoryClass(m.ram)} memory`,
+    // "12th Gen" says little and pushes the model number out of a narrow box.
+    cpu: cleanName(m.cpu).replace(/^\d+(st|nd|rd|th) Gen\s+/i, '') || 'Unknown',
+    threads: m.threads ? `${m.threads} threads` : '',
+    memory: memoryClass(m.ram),
     graphics,
     disk: `${Math.round(m.diskFree / 1e9)} GB free${m.disk ? ` on ${m.disk}` : ''}`,
     note,

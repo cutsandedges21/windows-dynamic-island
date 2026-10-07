@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { dropBefore, moveBefore, packGrid, pageCount, sizeOf, type GridItem } from '../src/core/grid';
+import { dropBefore, hiddenTest, moveBefore, packGrid, pageCount, sizeOf, unhide, type GridItem } from '../src/core/grid';
 
 const item = (key: string, w = 1, h = 1): GridItem => ({ key, w, h });
 /** "key@page:col,row" for every slot, in order. */
@@ -99,5 +99,20 @@ describe('sizes', () => {
     // Three wide tiles no longer share a row.
     const wide = packGrid([item('a', 2), item('b', 2), item('c', 2)], 4, 4);
     expect(map(wide)).toEqual(['a@0:0,0', 'b@0:2,0', 'c@0:0,1']);
+  });
+});
+
+describe('hidden tiles', () => {
+  it('an entry hides one tile, or every tile of an activity', () => {
+    const hidden = hiddenTest(['weather/weather', 'sound']);
+    expect(hidden('weather/weather')).toBe(true);
+    expect(hidden('sound/sound')).toBe(true);
+    expect(hidden('claude/claude')).toBe(false);
+    expect(hidden('soundboard/x')).toBe(false);
+  });
+
+  it('putting a tile back undoes either kind of entry', () => {
+    expect(unhide(['weather/weather', 'sound', 'devices'], 'sound/sound')).toEqual(['weather/weather', 'devices']);
+    expect(unhide(['weather/weather'], 'weather/weather')).toEqual([]);
   });
 });

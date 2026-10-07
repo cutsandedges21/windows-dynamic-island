@@ -9,7 +9,7 @@ import { CATALOG_BY_ID } from '../activities/catalog';
 import type { Activity, ActivityContext, ActivityStatus, RenderEnv, SheetEnv, SurfaceOptions } from './activity';
 import { setReducedMotion } from './animator';
 import { BorderGlow, type GlowSpec } from './glow';
-import { dropBefore, moveBefore, packGrid, pageCount, sizeOf, type GridSlot } from './grid';
+import { dropBefore, hiddenTest, moveBefore, packGrid, pageCount, sizeOf, unhide, type GridSlot } from './grid';
 import { innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
 import { native, on, sendTo, type MenuItem } from './native';
 import { choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
@@ -157,6 +157,8 @@ export class Island {
     this.compose(true);
     await native.show(true);
     native.log(`island ready on ${this.monitorId ?? 'unknown monitor'} ${Math.round(this.area.width)}x${Math.round(this.area.height)}`);
+    // First run: the welcome screen asks two questions and sets the Control Center up.
+    if (!this.settings.general.onboarded && !native.demo) void native.openApp('welcome');
   }
 
   private applyLook(): void {
@@ -792,14 +794,14 @@ export class Island {
       .sort((a, b) => a.at - b.at)
       .map((x) => x.tile);
 
-    const hidden = new Set(layout.hidden);
-    const shown = sized.filter((t) => !hidden.has(t.key));
+    const isHidden = hiddenTest(layout.hidden);
+    const shown = sized.filter((t) => !isHidden(t.key));
     const slots = packGrid(shown.map((t) => ({ key: t.key, w: t.w, h: t.h })), geo.cols, geo.rows);
     const where = new Map(slots.map((slot) => [slot.key, slot]));
     this.gridSlots = slots;
     this.gridOrder = shown.map((t) => t.key);
     const items: Tile[] = shown.map((t) => ({ ...t, ...(where.get(t.key) ?? { page: 0, col: 0, row: 0 }) }));
-    const tray: Tile[] = this.gridEditing ? sized.filter((t) => hidden.has(t.key)).map((t) => ({ ...t, w: 1, h: 1, hidden: true })) : [];
+    const tray: Tile[] = this.gridEditing ? sized.filter((t) => isHidden(t.key)).map((t) => ({ ...t, w: 1, h: 1, hidden: true })) : [];
 
     const blocks: SheetView['blocks'] = [
       { t: 'tiles', key: 'grid', items, tray, cols: geo.cols, rows: geo.rows, cell: geo.cell, pages: pageCount(slots), editing: this.gridEditing },
@@ -842,7 +844,7 @@ export class Island {
         if (key && !grid.hidden.includes(key)) grid.hidden.push(key);
         break;
       case 'island:grid-show':
-        grid.hidden = grid.hidden.filter((k) => k !== key);
+        grid.hidden = unhide(grid.hidden, key);
         break;
       case 'island:grid-size': {
         const options = this.sizesFor(key);
@@ -1265,6 +1267,12 @@ export class Island {
         return true;
       case 'state':
         return this.snapshot(this.statuses());
+      case 'open':
+        // The welcome screen's Finish: show the new Control Center.
+        this.open = true;
+        this.view = 'main';
+        this.schedule();
+        return true;
       default:
         return null;
     }

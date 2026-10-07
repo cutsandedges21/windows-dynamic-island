@@ -13,28 +13,18 @@ import { isTauri, native, on, sendTo, type MonitorInfo } from './core/native';
 import { springAnimate } from './core/renderer';
 import { ACCENTS, cloneSettings, migrate, type ActivityConfig, type Settings } from './core/settings';
 import { springs } from './core/spring';
+import { h } from './dom';
+import { modelPicker } from './models-ui';
+import { welcomePage, type WelcomeHost } from './welcome';
 
-type Page = 'activities' | 'settings';
-type Props = Record<string, unknown> & { class?: string; text?: string; html?: string };
-
-function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = {}, kids: Array<Node | string | null | false | undefined> = []): HTMLElementTagNameMap[K] {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) {
-    if (v == null || v === false) continue;
-    if (k === 'class') el.className = String(v);
-    else if (k === 'text') el.textContent = String(v);
-    else if (k === 'html') el.innerHTML = String(v); // static icon markup only
-    else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v as EventListener);
-    else el.setAttribute(k, v === true ? '' : String(v));
-  }
-  for (const kid of kids) if (kid) el.append(kid);
-  return el;
-}
+/** 'welcome' is the first-run setup: the whole window, no sidebar. */
+type Page = 'activities' | 'settings' | 'welcome';
+const PAGES: Page[] = ['activities', 'settings', 'welcome'];
 
 let settings: Settings = migrate(null);
 // Rust passes the page to open in an init script (a # in the window URL is not reliable).
 const requested = (window as unknown as { __ISLAND_PAGE__?: string }).__ISLAND_PAGE__ || location.hash.slice(1);
-let page: Page = requested === 'settings' ? 'settings' : 'activities';
+let page: Page = PAGES.includes(requested as Page) ? (requested as Page) : 'activities';
 let dragging = false;
 const openCards = new Set<string>();
 let monitors: MonitorInfo[] = [];
@@ -93,13 +83,30 @@ function go(p: Page): void {
   if (content) springAnimate(content, [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], springs.content);
 }
 
+/** The first-run setup saves through here, and hands back to Activities with the island open on the new grid. */
+const welcomeHost: WelcomeHost = {
+  settings: () => settings,
+  save: (next) => {
+    settings = next;
+    save(true);
+  },
+  done: () => {
+    void ask('island', 'open');
+    go('activities');
+  },
+};
+
 function render(): void {
   if (dragging) return;
+  document.documentElement.style.setProperty('--accent', ACCENTS[settings.island.accent] ?? settings.island.accent);
+  if (page === 'welcome') {
+    root.replaceChildren(welcomePage(welcomeHost));
+    return;
+  }
   const scroll = root.querySelector('.content')?.scrollTop ?? 0;
   root.replaceChildren(h('div', { class: 'body' }, [nav(), h('main', { class: 'content' }, [page === 'activities' ? activitiesPage() : settingsPage()])]));
   const content = root.querySelector('.content');
   if (content) content.scrollTop = scroll;
-  document.documentElement.style.setProperty('--accent', ACCENTS[settings.island.accent] ?? settings.island.accent);
 }
 
 // ------------------------------------------------------------------ controls
@@ -226,9 +233,11 @@ function cardBody(meta: ActivityMeta): HTMLElement {
   const body = h('div', { class: 'act-body' }, [
     h('div', { class: 'body-row' }, [h('span', { class: 'label', text: 'Priority' }), segmented(c.priority, [['high', 'High'], ['medium', 'Medium'], ['low', 'Low']], (v) => { c.priority = v; c.enabled = true; save(true); flipRender(); })]),
     h('div', { class: 'body-row' }, [h('span', { class: 'label', text: 'Behavior' }), chips]),
-    ...meta.options.map((o) => optionRow(meta.id, o)),
+    // Local AI's model is picked in its panel below, not typed.
+    ...meta.options.filter((o) => !(meta.id === 'local' && o.key === 'model')).map((o) => optionRow(meta.id, o)),
   ]);
   if (meta.id === 'claude') body.append(claudePanel());
+  if (meta.id === 'local') body.append(localPanel());
   return body;
 }
 
@@ -496,6 +505,25 @@ function sizeCard(): HTMLElement {
   ]);
 }
 
+// ------------------------------------------------------------------ Local AI panel
+
+/** Local AI's models: what this PC has, which models it can run, and download, switch or delete them. */
+function localPanel(): HTMLElement {
+  const host = {
+    option: () => String(cfg('local').options.model ?? ''),
+    choose: (value: string) => {
+      const c = cfg('local');
+      c.options.model = value;
+      const wasOff = !c.enabled;
+      c.enabled = true;
+      save(true);
+      // Picking a model turns Local AI on, which moves its card out of Available.
+      if (wasOff) flipRender();
+    },
+  };
+  return h('div', { class: 'local-panel' }, [h('h3', { text: 'Models' }), modelPicker(host, 'list')]);
+}
+
 // ------------------------------------------------------------------ Claude panel (Usage Clip's screen)
 
 interface ClaudeSnapshot {
@@ -701,6 +729,7 @@ function settingsPage(): HTMLElement {
     ]),
     section('Startup', [
       row('Start with Windows', null, toggle(g.startWithWindows, (v) => { g.startWithWindows = v; save(true); void native.autostartSet(v); })),
+      row('Run setup again', 'The two questions and the Local AI model. Your Control Center is rebuilt from the answers.', h('button', { class: 'btn', text: 'Run setup', onclick: () => go('welcome') })),
     ]),
     section('Notifications', [
       row('Windows notifications', 'A toast for moments that need you (Claude sessions, timers).', toggle(g.notifications, (v) => { g.notifications = v; save(true); })),
@@ -714,7 +743,7 @@ function settingsPage(): HTMLElement {
     section('Privacy', [
       row('Show what you copied', 'Off: the Clipboard activity only says "Copied". Password managers are always skipped.', toggle(s.privacy.clipboardContent, (v) => { s.privacy.clipboardContent = v; save(true); })),
       row('Screenshot thumbnails', null, toggle(s.privacy.screenshotPreview, (v) => { s.privacy.screenshotPreview = v; save(true); })),
-      h('p', { class: 'muted', text: 'Everything stays on this PC. The only network calls are Claude plan limits (with Claude Code\'s own sign-in), and weather or calendar if you turn them on.' }),
+      h('p', { class: 'muted', text: 'Everything stays on this PC. The only network calls are Claude plan limits (with Claude Code\'s own sign-in), weather or calendar if you turn them on, and the Local AI models you choose to download. Questions to Local AI never leave this PC.' }),
     ]),
     section('About', [
       h('p', { text: 'Island 0.1.0 by Moss. Claude session logic comes from Usage Clip; the hook relay is adapted from Coucou (MIT, Louis Raillé). Icons and design are Island\'s own.' }),

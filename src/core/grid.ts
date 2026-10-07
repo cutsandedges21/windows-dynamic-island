@@ -125,3 +125,18 @@ export function moveBefore(order: string[], key: string, before: string | null):
   next.splice(at < 0 ? next.length : at, 0, key);
   return next;
 }
+
+/**
+ * Which tiles are off the grid. A `hidden` entry names one tile ('sound/sound') or every
+ * tile of an activity ('sound'): the first-run setup hides helpers that way, since it
+ * cannot know their tile keys.
+ */
+export function hiddenTest(hidden: string[]): (key: string) => boolean {
+  const set = new Set(hidden);
+  return (key) => set.has(key) || set.has(key.split('/')[0]);
+}
+
+/** `hidden` without whatever hides `key`, so "+" brings a tile back either way it was hidden. */
+export function unhide(hidden: string[], key: string): string[] {
+  return hidden.filter((k) => k !== key && k !== key.split('/')[0]);
+}
