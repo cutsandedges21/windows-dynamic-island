@@ -2,9 +2,11 @@
 
 A spring-animated pill at the edge of your Windows screen that shows what is happening right now: Claude Code sessions (with Allow/Deny and Continue Session right in the pill), music, downloads, timers, screenshots, the clipboard, your mic and camera, and system events.
 
+**[Download Island.exe](https://github.com/cutsandedges21/windows-dynamic-island/releases/latest/download/Island.exe)** (always the newest version)
+
 ## Run it
 
-1. Download `Island.exe` and double-click it. That one file is the whole app: no installer, nothing else to download.
+1. Download `Island.exe` (link above) and double-click it. That one file is the whole app: no installer, nothing else to download, and it keeps itself up to date (Settings › Startup › Update automatically). The exe is not code-signed, so the first time Windows may say it protected your PC: click **More info › Run anyway**.
 2. The island appears at the top centre of your main display. The first time, a short setup asks what you use the PC for, fills the Control Center from your answers, and offers a Local AI model picked for your PC's memory and graphics (`docs/ONBOARDING.md`). Settings › Run setup again repeats it.
 3. Right-click the island for positions, Do not disturb and Activities. The tray icon has the same, plus your Claude sessions.
 

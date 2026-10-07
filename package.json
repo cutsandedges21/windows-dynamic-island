@@ -2,7 +2,7 @@
   "name": "windows-dynamic-island",
   "productName": "Island",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A fluid activity island for Windows: Claude Code, music, downloads, timers and system events in one spring-animated pill",
   "type": "module",
   "author": "Moss",
