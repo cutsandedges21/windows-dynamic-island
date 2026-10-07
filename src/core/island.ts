@@ -156,6 +156,7 @@ export class Island {
     setInterval(() => this.followCursor(), 1500);
     await this.updateHotkeys();
     void native.setPeek(this.settings.island.peekThrough);
+    void native.setAutoUpdate(this.settings.general.autoUpdate);
     this.compose(true);
     await native.show(true);
     native.log(`island ready on ${this.monitorId ?? 'unknown monitor'} ${Math.round(this.area.width)}x${Math.round(this.area.height)}`);
@@ -177,6 +178,7 @@ export class Island {
     this.syncActivities(prev);
     void this.updateHotkeys();
     if (prev.island.peekThrough !== next.island.peekThrough) void native.setPeek(next.island.peekThrough);
+    if (prev.general.autoUpdate !== next.general.autoUpdate) void native.setAutoUpdate(next.general.autoUpdate);
     this.schedule();
   }
 

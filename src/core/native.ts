@@ -297,6 +297,8 @@ export const native = {
   show: (visible: boolean) => call('island_show', { visible }, undefined),
   /** Peek behind: tapping Ctrl over the pill lets clicks through it until the pointer leaves. */
   setPeek: (enabled: boolean) => call('island_set_peek', { enabled }, undefined),
+  /** Install newer releases from GitHub on their own (release builds only). */
+  setAutoUpdate: (enabled: boolean) => call('update_set', { enabled }, undefined),
   /** Duplicate mode: one click-through copy of the pill on each of these monitors. */
   mirrors: (monitors: string[]) => call('island_mirrors', { monitors }, undefined),
   mirrorHello: () => call<Placement | null>('mirror_hello', {}, null),

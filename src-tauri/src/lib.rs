@@ -25,6 +25,7 @@ mod secrets;
 mod shell;
 mod store;
 mod system;
+mod updater;
 
 use std::sync::Arc;
 
@@ -40,6 +41,8 @@ pub fn run() {
     if args.iter().any(|a| a == "--install-hooks" || a == "--remove-hooks") {
         std::process::exit(hooks::cli(args.iter().any(|a| a == "--install-hooks")));
     }
+    // Before the single-instance check: the exe that started this one must be gone first.
+    let updated_from = updater::after_update(&args);
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             app::open_app(app, Some("activities".into()));
@@ -57,7 +60,7 @@ pub fn run() {
         .manage(fsx::Watches::default())
         .manage(pipe::Pending::default())
         .manage(app::Hotkeys::default())
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
             log::line(format!("start v{}", app.package_info().version));
             *app.state::<store::SettingsStore>().value.lock().unwrap() = store::load(&handle);
@@ -71,6 +74,11 @@ pub fn run() {
             audio::start(handle.clone());
             system::start(handle.clone());
             game::start();
+            updater::tidy();
+            updater::start(handle.clone());
+            if let Some(from) = updated_from.clone() {
+                updater::announce(handle.clone(), from);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -144,6 +152,7 @@ pub fn run() {
             app::app_quit,
             app::autostart_get,
             app::autostart_set,
+            updater::update_set,
             secrets::secret_has,
             secrets::secret_set,
             secrets::secret_delete,

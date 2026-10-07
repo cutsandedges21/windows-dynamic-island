@@ -25,7 +25,7 @@ export interface GridLayout {
   hidden: string[];
 }
 
-export const SETTINGS_VERSION = 3;
+export const SETTINGS_VERSION = 4;
 
 export interface Settings {
   version: number;
@@ -68,6 +68,8 @@ export interface Settings {
     activitiesHotkey: string;
     /** The first-run setup (src/welcome.ts) was finished or skipped. */
     onboarded: boolean;
+    /** Install newer Island.exe releases from GitHub on their own (src-tauri/src/updater.rs). */
+    autoUpdate: boolean;
   };
   privacy: {
     clipboardContent: boolean;
@@ -120,7 +122,7 @@ export function defaultSettings(): Settings {
       reduceMotion: 'system',
       glow: 'medium',
       hoverCard: 'pointer',
-      peekThrough: false,
+      peekThrough: true,
       grid: { order: [], sizes: {}, hidden: [] },
     },
     activities: { order: CATALOG.map((m) => m.id), config },
@@ -132,6 +134,7 @@ export function defaultSettings(): Settings {
       toggleHotkey: 'Alt+Shift+Space',
       activitiesHotkey: 'Alt+Shift+A',
       onboarded: false,
+      autoUpdate: true,
     },
     privacy: { clipboardContent: true, screenshotPreview: true },
   };
@@ -201,6 +204,8 @@ export function migrate(saved: unknown): Settings {
   // Version 3 adds the first-run setup. Settings saved before it belong to someone who
   // already set Island up by hand, so they are not walked through it again.
   if (from < 3) out.general.onboarded = true;
+  // Version 4: Peek behind is on by default, also where an earlier build saved it off.
+  if (from < 4) out.island.peekThrough = true;
   out.version = SETTINGS_VERSION;
   return out;
 }

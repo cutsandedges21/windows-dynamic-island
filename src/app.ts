@@ -730,6 +730,7 @@ function settingsPage(): HTMLElement {
     ]),
     section('Startup', [
       row('Start with Windows', null, toggle(g.startWithWindows, (v) => { g.startWithWindows = v; save(true); void native.autostartSet(v); })),
+      row('Update automatically', 'When a newer Island is released, it downloads in the background and Island restarts into it.', toggle(g.autoUpdate, (v) => { g.autoUpdate = v; save(true); })),
       row('Run setup again', 'The two questions and the Local AI model. Your Control Center is rebuilt from the answers.', h('button', { class: 'btn', text: 'Run setup', onclick: () => go('welcome') })),
     ]),
     section('Notifications', [
