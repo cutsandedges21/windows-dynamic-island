@@ -216,10 +216,40 @@ pub fn write(install: bool, fp: &str) -> Result<String, String> {
     Ok(backup.to_string_lossy().to_string())
 }
 
-/// Copies island-hook.exe to %LOCALAPPDATA%\Island\bin on launch: from the app
-/// resources when installed, from src-tauri/bin in development.
+/// The hook relay built into Island.exe (see build.rs); empty in a build made without it.
+const EMBEDDED_HOOK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/island-hook.exe"));
+
+/// Writes the embedded relay to `dest` unless it is already there. False when
+/// this build carries none or the write failed.
+fn write_embedded_hook(dest: &Path) -> bool {
+    if EMBEDDED_HOOK.is_empty() {
+        return false;
+    }
+    if std::fs::read(dest).is_ok_and(|b| b == EMBEDDED_HOOK) {
+        return true;
+    }
+    if let Some(dir) = dest.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    match std::fs::write(dest, EMBEDDED_HOOK) {
+        Ok(()) => true,
+        Err(err) => {
+            // A running relay locks the file; the copy already there still works.
+            if !dest.exists() {
+                crate::log::line(format!("could not install island-hook.exe: {err}"));
+            }
+            dest.exists()
+        }
+    }
+}
+
+/// Puts island-hook.exe in %LOCALAPPDATA%\Island\bin on launch: the copy built
+/// into Island.exe, else from the app resources (installer) or src-tauri/bin.
 pub fn ensure_hook_exe(app: &AppHandle) {
     let dest = hook_exe_path();
+    if write_embedded_hook(&dest) {
+        return;
+    }
     let Some(dir) = dest.parent() else { return };
     if std::fs::create_dir_all(dir).is_err() {
         return;
@@ -314,8 +344,11 @@ fn unified_diff(before: &str, after: &str) -> String {
 /// write as the Activities button, for scripts and first-time setup.
 pub fn cli(install: bool) -> i32 {
     let hook = hook_exe_path();
+    if install {
+        write_embedded_hook(&hook);
+    }
     if install && !hook.is_file() {
-        // The app copies the relay on launch; a portable exe keeps one beside it.
+        // An older portable exe kept the relay beside it.
         let beside = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("island-hook.exe")));
         let dev = Path::new(env!("CARGO_MANIFEST_DIR")).join("bin").join("island-hook.exe");
         if let Some(src) = beside.filter(|p| p.is_file()).or_else(|| dev.is_file().then_some(dev)) {

@@ -4,7 +4,7 @@ A spring-animated pill at the edge of your Windows screen that shows what is hap
 
 ## Run it
 
-1. Double-click `release\Island.exe` (portable), or run the installer next to it.
+1. Download `Island.exe` and double-click it. That one file is the whole app: no installer, nothing else to download.
 2. The island appears at the top centre of your main display. The first time, a short setup asks what you use the PC for, fills the Control Center from your answers, and offers a Local AI model picked for your PC's memory and graphics (`docs/ONBOARDING.md`). Settings › Run setup again repeats it.
 3. Right-click the island for positions, Do not disturb and Activities. The tray icon has the same, plus your Claude sessions.
 
@@ -50,7 +50,7 @@ npm install
 npm test               # Vitest: engine + Usage Clip's own tests on the copied logic
 npm run dev            # the island in a normal browser with demo data
 npm run app            # the real app with live reload
-npm run release        # release\Island.exe and the installer
+npm run release        # release\Island.exe, the one file to hand out (the hook relay is built into it)
 ```
 
 The Rust build cache goes to `%LOCALAPPDATA%\windows-dynamic-island\target`, outside OneDrive. Logs: `%LOCALAPPDATA%\Island\island.log`.

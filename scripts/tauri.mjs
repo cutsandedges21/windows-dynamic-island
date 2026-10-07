@@ -3,12 +3,12 @@
 //
 //   node scripts/tauri.mjs dev       live app (vite + cargo debug)
 //   node scripts/tauri.mjs build     installer + exe
-//   node scripts/tauri.mjs release   build, then copy the exe to release/
+//   node scripts/tauri.mjs release   one self-contained exe in release/ (no installer)
 //   node scripts/tauri.mjs hook      only the hook relay
 //   node scripts/tauri.mjs <args>    anything else goes straight to the CLI
 
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -54,22 +54,18 @@ if (cmd === 'hook') {
   run('npm', ['run', 'build:web']);
   run(tauriCli, ['build', ...rest]);
 } else if (cmd === 'release') {
+  // One file to hand out: Island.exe carries the hook relay (build.rs), so no installer.
   buildHook();
   run('npm', ['run', 'build:web']);
-  run(tauriCli, ['build', ...rest]);
+  run(tauriCli, ['build', '--no-bundle', ...rest]);
   const out = join(root, 'release');
   mkdirSync(out, { recursive: true });
-  const exe = join(targetDir, 'release', 'island.exe');
-  copyFileSync(exe, join(out, 'Island.exe'));
-  // The portable exe installs its Claude Code relay from beside itself.
-  copyFileSync(join(root, 'src-tauri', 'bin', 'island-hook.exe'), join(out, 'island-hook.exe'));
-  const nsisDir = join(targetDir, 'release', 'bundle', 'nsis');
-  if (existsSync(nsisDir)) {
-    for (const f of (await import('node:fs')).readdirSync(nsisDir)) {
-      if (f.endsWith('-setup.exe')) copyFileSync(join(nsisDir, f), join(out, f));
-    }
+  // Older releases also shipped these; leave only the exe (and a running Island.old.exe).
+  for (const f of readdirSync(out)) {
+    if (f === 'island-hook.exe' || f.endsWith('-setup.exe')) rmSync(join(out, f), { force: true });
   }
-  console.log(`\nrelease/ now holds Island.exe and the installer. Cargo output: ${targetDir}`);
+  copyFileSync(join(targetDir, 'release', 'island.exe'), join(out, 'Island.exe'));
+  console.log(`\nrelease/Island.exe is the whole app. Cargo output: ${targetDir}`);
 } else {
   run(tauriCli, [cmd, ...rest].filter(Boolean));
 }
