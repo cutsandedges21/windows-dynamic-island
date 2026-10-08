@@ -25,9 +25,9 @@ Games (FPS/ping) stays Windows-only: it reads ETW, which has no Mac counterpart.
 
 ## Code organization
 
-- A feature file (`media.rs`, `system.rs`, …) keeps its `#[tauri::command]` functions and the types it sends to the UI, so the command list in `lib.rs` and every command's name, arguments and result shape are the same on both systems.
-- Windows-only code in that file (imports, helpers, command bodies) gets `#[cfg(windows)]`. It is not moved or rewritten.
-- The Mac side of a command lives in `src-tauri/src/mac/<feature>.rs` and is called from the command under `#[cfg(target_os = "macos")]`. In part 1 most Mac functions return the value the UI already treats as "nothing here": `None`, an empty list, `false`, or the same failure result the Windows code returns when a Windows API refuses. Commands that only make sense on Windows return an error string; `native.ts`'s `call()` already turns any error into its fallback.
+- A module that is almost all Windows API (`media.rs`, `audio.rs`, `system.rs`, `net.rs`, `monitors.rs`, `shell.rs`, …) gets a Mac twin, `src-tauri/src/mac/<name>.rs`, swapped in by `#[cfg_attr(target_os = "macos", path = "mac/<name>.rs")]` on its `mod` line in `lib.rs`. The Windows file does not change. The twin has the same command names, so the command list in `lib.rs` is the same on both systems.
+- A module that is mostly portable (`overlay.rs`, `claude.rs`, `chat.rs`, `local.rs`, `llama.rs`, …) keeps one file; its Windows-only lines get `#[cfg(windows)]` and Mac lines `#[cfg(target_os = "macos")]`.
+- In part 1 a twin's command for a later feature returns `Err("not on Mac yet")`; `native.ts`'s `call()` turns any error into its fallback (`null`, `[]`, `false`, `0`), which the UI already treats as "nothing here". No reading is invented.
 - Start-up tasks in `lib.rs` that are Windows-only (`msgwin::start`, `pipe::start`, `hooks::ensure_hook_exe`, `game::start`, the updater) do nothing on the Mac.
 - `windows`, `windows-core` and `windows-registry` move to `[target.'cfg(windows)'.dependencies]`. `keyring` uses `windows-native` on Windows and `apple-native` on macOS. New Mac-only crates, if any, go under `[target.'cfg(target_os = "macos")'.dependencies]`.
 - `hook/` (the `island-hook` relay) is not built for the Mac in part 1. `build.rs` already embeds an empty file when `bin/island-hook.exe` is missing.
@@ -49,7 +49,7 @@ Not in part 1: hiding over full-screen apps, the notch, a template (monochrome) 
 
 ## Platform-specific config
 
-`src-tauri/tauri.macos.conf.json` (merged over `tauri.conf.json` by Tauri on macOS) sets: `app.macOSPrivateApi: true`; bundle targets `app` and `dmg`; no `island-hook.exe` resource; `bundle.macOS.minimumSystemVersion: "12.0"`. `tauri.conf.json` itself does not change, so the Windows build is untouched.
+`src-tauri/tauri.macos.conf.json` (merged over `tauri.conf.json` by Tauri on macOS) sets: bundle targets `app` and `dmg`; PNG icons (Tauri makes the `.icns`); no `island-hook.exe` resource; `bundle.macOS.minimumSystemVersion: "12.0"`. `app.macOSPrivateApi: true` goes in `tauri.conf.json` itself, with the `macos-private-api` cargo feature on every platform: Tauri's CLI rewrites the cargo features to match the config, so a Mac-only setting would flip `Cargo.toml` between systems. Windows ignores both.
 
 ## What runs on a Mac in part 1
 
