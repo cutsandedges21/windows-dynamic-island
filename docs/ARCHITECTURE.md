@@ -76,6 +76,10 @@ New on top of Usage Clip:
 
 Rust is kept to native access: window styles and click-through, monitors and work areas, process table and window activation, file primitives, the hook pipe, GSMTC media, Core Audio volume and mic, power, CPU and memory, network throughput, clipboard and device messages (one message-only window), TCP listeners, HTTP GET, and settings persistence. Product logic stays in TypeScript.
 
+### macOS
+
+Windows code stays where it is. A module that is almost all Windows API has a Mac twin in `src-tauri/src/mac/<name>.rs`, swapped in by `#[cfg_attr(target_os = "macos", path = "mac/<name>.rs")]` on its `mod` line in lib.rs, with the same command names. Twins of features that come later return `Err("not on Mac yet")`; `native.ts`'s `call()` turns that into its fallback. Mostly-portable modules (overlay, claude, chat, local, llama, hooks, fsx, log, updater) use `#[cfg(windows)]` guards, `crate::nowindow::NoWindow` for helper processes, `crate::mac::sys` (sysctl, statfs) for system facts and `crate::mac::input` (CoreGraphics) for the mouse and Control key. On a Mac the island is an Accessory app (no Dock icon) over the screen's visible frame, so the top anchor sits under the menu bar. `src/core/platform.ts` decides what the UI offers: catalog field `mac: 'soon' | 'never'`; the island never starts, setup never picks, and the Activities page labels ("Coming to Mac", "Windows only") what a Mac cannot run. Mac builds: `.github/workflows/macos.yml` (compile check, universal `.dmg`, a 25 s smoke run with a screenshot), artifacts only until part 2. Spec and plan: `docs/superpowers/`.
+
 ## Build notes
 
 - The Cargo target directory lives outside OneDrive (`%LOCALAPPDATA%\windows-dynamic-island\target`, set by `scripts/tauri.mjs`), because OneDrive would otherwise sync several GB of build output.
