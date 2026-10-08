@@ -36,6 +36,9 @@ keyring = { version = "3", features = ["windows-native"] }
 # `windows` 0.62 and the published plugin on 0.61, so its window handle did not type-check
 # (see the note above window_hwnd in vendor/tauri-plugin-biometry/src/windows.rs).
 tauri-plugin-biometry = { path = "vendor/tauri-plugin-biometry" }
+# The #[interface] macro for QuietHours.dll's COM interface (src/dnd.rs) names this crate;
+# the same 0.61 copy `windows` already uses.
+windows-core = "0.61"
 
 [dependencies.windows]
 version = "0.61"

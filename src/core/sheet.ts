@@ -123,7 +123,7 @@ export type SheetAction = (action: string, arg: unknown, source: HTMLElement) =>
 /** Rewrites every action in a view (the island namespaces them per activity). */
 export function mapActions(blocks: Block[], fn: (action: string) => string): Block[] {
   const btn = (b: SheetButton): SheetButton => ({ ...b, action: fn(b.action) });
-  const row = (r: SheetRow): SheetRow => (r.action ? { ...r, action: fn(r.action) } : r);
+  const row = (r: SheetRow): SheetRow => ({ ...r, action: r.action ? fn(r.action) : undefined, button: r.button ? btn(r.button) : undefined });
   const body = (b: TileBody): TileBody => {
     if (b.k === 'media' || b.k === 'actions') return { ...b, buttons: b.buttons.map(btn) };
     if (b.k === 'list') return { ...b, rows: b.rows.map(row) };
