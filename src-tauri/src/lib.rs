@@ -1,31 +1,48 @@
 // Island: the native layer. Everything here is OS access; product logic lives in
 // TypeScript (src/). See docs/ARCHITECTURE.md.
 
+// On a Mac, a module that is almost all Windows API is swapped for its twin in
+// src/mac/ (same command names), so the Windows file never changes.
 mod app;
+#[cfg_attr(target_os = "macos", path = "mac/agenda.rs")]
 mod agenda;
+#[cfg_attr(target_os = "macos", path = "mac/audio.rs")]
 mod audio;
 mod chat;
 mod claude;
+#[cfg_attr(target_os = "macos", path = "mac/dnd.rs")]
 mod dnd;
 mod fsx;
+#[cfg_attr(target_os = "macos", path = "mac/game.rs")]
 mod game;
 mod hooks;
 mod integrations;
 mod llama;
 mod local;
 mod log;
+#[cfg(target_os = "macos")]
+mod mac;
+#[cfg_attr(target_os = "macos", path = "mac/media.rs")]
 mod media;
+#[cfg_attr(target_os = "macos", path = "mac/monitors.rs")]
 mod monitors;
+#[cfg_attr(target_os = "macos", path = "mac/msgwin.rs")]
 mod msgwin;
+#[cfg_attr(target_os = "macos", path = "mac/net.rs")]
 mod net;
 mod nowindow;
 mod overlay;
+#[cfg_attr(target_os = "macos", path = "mac/pipe.rs")]
 mod pipe;
+#[cfg_attr(target_os = "macos", path = "mac/procs.rs")]
 mod procs;
 mod secrets;
+#[cfg_attr(target_os = "macos", path = "mac/shell.rs")]
 mod shell;
+#[cfg_attr(target_os = "macos", path = "mac/spectrum.rs")]
 mod spectrum;
 mod store;
+#[cfg_attr(target_os = "macos", path = "mac/system.rs")]
 mod system;
 mod updater;
 
@@ -63,12 +80,19 @@ pub fn run() {
         .manage(pipe::Pending::default())
         .manage(app::Hotkeys::default())
         .setup(move |app| {
+            // A Mac menu bar app: no Dock icon, no app menu.
+            #[cfg(target_os = "macos")]
+            {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                monitors::init(app.handle());
+            }
             let handle = app.handle().clone();
             log::line(format!("start v{}", app.package_info().version));
             *app.state::<store::SettingsStore>().value.lock().unwrap() = store::load(&handle);
             overlay::create(&handle)?;
             overlay::spawn_poll(handle.clone(), app.state::<Arc<overlay::Overlay>>().inner().clone());
             app::create_tray(&handle)?;
+            #[cfg(windows)]
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
             msgwin::start(handle.clone());
