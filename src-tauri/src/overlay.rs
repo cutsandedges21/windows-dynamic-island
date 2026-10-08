@@ -137,8 +137,9 @@ fn build(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
         .minimizable(false)
         .closable(false)
         .visible(false)
-        .drag_and_drop(false)
         .background_color(tauri::window::Color(0, 0, 0, 0));
+    #[cfg(windows)]
+    let win = win.drag_and_drop(false);
     // On a Mac: on every desktop, and the first click on the pill counts even while another app is in front.
     #[cfg(target_os = "macos")]
     let win = win.visible_on_all_workspaces(true).accept_first_mouse(true);

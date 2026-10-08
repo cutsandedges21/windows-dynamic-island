@@ -528,7 +528,7 @@ fn missing_bytes(tier: &Tier) -> u64 {
 }
 
 /// Downloads what `tier` is missing: the runtime, then the model. `slot` is held throughout.
-#[cfg_attr(target_os = "macos", allow(unreachable_code))]
+#[cfg_attr(target_os = "macos", allow(unreachable_code, unused_variables, unused_mut))]
 pub async fn setup(tier: &'static Tier, slot: Slot, mut report: impl FnMut(Progress)) -> Result<(), String> {
     // Nothing to download on a Mac: the runtime here is the Windows build.
     #[cfg(target_os = "macos")]
@@ -627,7 +627,7 @@ pub async fn ensure(id: &str) -> Result<u16, String> {
     ensure_plan(&pick_from(id, *ram, gpus, |t| model_file(t).is_file())?).await
 }
 
-#[cfg_attr(target_os = "macos", allow(unreachable_code))]
+#[cfg_attr(target_os = "macos", allow(unreachable_code, unused_variables, unused_mut))]
 async fn ensure_plan(plan: &Plan) -> Result<u16, String> {
     #[cfg(target_os = "macos")]
     return Err(MAC_RUNTIME.to_string());
