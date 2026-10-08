@@ -252,5 +252,7 @@ switch and glow all still untested on screen by Moss.
   - holding at the right edge through every page to a new page, then a drop there (saved `· · · · · timer`);
   - corner resize 1x1, 2x1, 2x2 (the others reflow, the size is saved);
   - − to the tray and + back to the same spot, then Done.
-- Not yet tried on the real overlay with a mouse. Uncommitted; the release session owns git.
+- Moss tried it on the real overlay: works.
+- 10:57: **v0.2.3 published as the Latest release** (github.com/cutsandedges21/windows-dynamic-island/releases/tag/v0.2.3), tag on dcf6141, only asset Island.exe (8.7 MB, sha256 d75877ef…d7a2, reports 0.2.3); `releases/latest/download/Island.exe` serves the same bytes. Moss's PC runs it (`release\Island.exe`; `Island.old.exe` is the official 0.2.2). Built in the main tree (no one else's uncommitted work); the copy step hits EBUSY while Island runs, so the exe was swapped in by hand: rename the running one, copy, restart.
+- Build gotcha: the first build failed reading `C:	mp\island-release\...	auri-plugin-biometry\permissions\...`: the plugin's cached build output in the main target dir still listed files from an old clean-worktree build that used that dir. `cargo clean -p tauri-plugin-biometry --release` (with `CARGO_TARGET_DIR` set) fixed it. Clean-worktree releases should use their own target dir.
 - Preview QA: the MCP Playwright window drops to ~2 fps when other windows cover it, and springs run at a fraction of their speed. For real timing, launch headless Edge inside `browser_run_code_unsafe` with `browserType().launch({ channel: 'msedge', headless: true })` and close it in `finally`.
