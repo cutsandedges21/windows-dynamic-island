@@ -38,6 +38,17 @@ describe('planActivities', () => {
     expect(planActivities(answers({ uses: ['coding'] }), { ...desktop, claudeCode: true }).picked).toEqual(['claude', 'ask', 'servers']);
   });
 
+  it('on a Mac, plans only what a Mac can run', () => {
+    const mac: Facts = { laptop: true, claudeCode: true, platform: 'macos' };
+    const plan = planActivities(answers({ uses: ['media', 'coding'], glance: ['music', 'timer', 'calendar'] }), mac);
+    expect(plan.enabled).not.toContain('music');
+    expect(plan.enabled).not.toContain('claude');
+    expect(plan.enabled).not.toContain('battery');
+    expect(plan.picked).toContain('timer');
+    expect(plan.picked).toContain('ask');
+    expect(glanceChoices(mac).map((g) => g.id)).not.toContain('music');
+  });
+
   it('a glance tick the PC cannot have is ignored, and Battery runs on laptops only', () => {
     expect(planActivities(answers({ glance: ['battery', 'weather'] }), desktop).picked).toEqual(['weather']);
     expect(planActivities(answers({}), desktop).enabled).not.toContain('battery');

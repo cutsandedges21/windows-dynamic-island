@@ -39,6 +39,8 @@ export interface ActivityMeta {
   priority: Band;
   behavior: Behavior;
   options: OptionSpec[];
+  /** On a Mac: 'soon' = comes in a later part, 'never' = Windows only. Absent = runs on a Mac. */
+  mac?: 'soon' | 'never';
 }
 
 const B = (autoShow: boolean, persistent: boolean, interactive: boolean, interrupt: boolean): Behavior => ({ autoShow, persistent, interactive, interrupt });
@@ -46,6 +48,7 @@ const B = (autoShow: boolean, persistent: boolean, interactive: boolean, interru
 export const CATALOG: ActivityMeta[] = [
   {
     id: 'claude',
+    mac: 'soon',
     name: 'Claude Code',
     description: 'Shows up when a chat finishes or needs you: permission prompts, questions and replies right in the island, plus your plan limits. Turn on Persistent to keep it on the island all the time.',
     icon: 'claude',
@@ -83,6 +86,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'music',
+    mac: 'soon',
     name: 'Music',
     description: 'Whatever is playing through Windows media controls: Spotify, YouTube, Apple Music and more.',
     icon: 'music',
@@ -97,6 +101,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'game',
+    mac: 'never',
     name: 'Games',
     description: 'While you play (Steam or another store), the pill shows your frame rate and ping, even at its smallest. Frame rate needs a one-time Windows permission, asked the first time.',
     icon: 'gamepad',
@@ -142,6 +147,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'battery',
+    mac: 'soon',
     name: 'Battery',
     description: 'Plugging in, unplugging and low battery.',
     icon: 'battery',
@@ -156,6 +162,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'sound',
+    mac: 'soon',
     name: 'Sound',
     description: 'Volume changes and audio devices, like headphones connecting.',
     icon: 'speaker',
@@ -167,6 +174,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'screenshots',
+    mac: 'soon',
     name: 'Screenshots',
     description: 'A new screenshot, with Copy, Open and Edit.',
     icon: 'screenshot',
@@ -178,6 +186,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'calls',
+    mac: 'soon',
     name: 'Mic & Camera',
     description: 'Shows which apps use your microphone or camera, with a system-wide mute.',
     icon: 'mic',
@@ -189,6 +198,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'devices',
+    mac: 'soon',
     name: 'Devices',
     description: 'USB drives and other storage plugged in or removed.',
     icon: 'usb',
@@ -200,6 +210,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'external',
+    mac: 'soon',
     name: 'Other apps',
     description: 'Activities sent by scripts and other programs through the Island activity API.',
     icon: 'stack',
@@ -211,6 +222,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'system',
+    mac: 'soon',
     name: 'System Stats',
     description: 'CPU, memory and GPU. Quiet until something spikes, unless you keep it on.',
     icon: 'cpu',
@@ -265,6 +277,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'clipboard',
+    mac: 'soon',
     name: 'Clipboard',
     description: 'What you just copied, with Open and clipboard history. Passwords from password managers are skipped.',
     icon: 'clipboard',
@@ -276,6 +289,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'network',
+    mac: 'soon',
     name: 'Network',
     description: 'Connection drops and reconnects; optionally live download and upload speed.',
     icon: 'wifi',
@@ -287,6 +301,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'servers',
+    mac: 'soon',
     name: 'Local Servers',
     description: 'Dev servers listening on localhost (Node, Python, Bun…), with Open in browser.',
     icon: 'server',
@@ -298,6 +313,7 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'quick',
+    mac: 'soon',
     name: 'Quick Actions',
     description: 'Mute, screenshot, focus, Bluetooth, Wi-Fi and lock, when you open an idle island.',
     icon: 'grid',

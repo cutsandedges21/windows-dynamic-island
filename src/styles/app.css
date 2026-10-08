@@ -118,6 +118,8 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 .band-help { color: var(--dim); font-size: 12px; }
 .act-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; will-change: transform; position: relative; }
 .act-card.off .act-icon, .act-card.off .act-name { opacity: 0.55; }
+.act-card.unavailable .act-desc { opacity: 0.55; }
+.act-soon { font-size: 12px; opacity: 0.7; white-space: nowrap; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
 .act-card.dragging { z-index: 10; background: #2a2a31; border-color: rgba(255, 255, 255, 0.16); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5); }
 .act-head { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 6px; cursor: grab; user-select: none; touch-action: none; }
 .dragging .act-head { cursor: grabbing; }

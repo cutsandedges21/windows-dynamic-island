@@ -3,6 +3,7 @@
 // are in src/welcome.ts.
 
 import type { IconName } from './icons';
+import { availableHere, type Platform } from './platform';
 import { cloneSettings, type Settings } from './settings';
 
 export type Use = 'school' | 'work' | 'coding' | 'gaming' | 'media' | 'calls' | 'creative';
@@ -73,11 +74,13 @@ export interface Facts {
   laptop: boolean;
   /** Claude Code is on this PC. */
   claudeCode: boolean;
+  /** The system Island runs on (Windows when not given). */
+  platform?: Platform;
 }
 
 /** The glance choices that make sense on this PC. */
 export function glanceChoices(facts: Facts): Glance[] {
-  return GLANCE.filter((g) => !g.laptop || facts.laptop);
+  return GLANCE.filter((g) => (!g.laptop || facts.laptop) && availableHere(g.id, facts.platform ?? 'windows'));
 }
 
 /** The second question's ticks to start with: what the uses call for, plus Battery on a laptop. */
@@ -129,8 +132,10 @@ export function planActivities(a: Answers, facts: Facts): Plan {
   if (a.ai) wanted.add('local');
   const picked = GRID_ORDER.filter((id) => wanted.has(id));
   const helpers = HELPERS.filter((id) => id !== 'battery' || facts.laptop);
-  const enabled = [...new Set([...picked, ...helpers])];
-  return { picked, enabled, hidden: enabled.filter((id) => !picked.includes(id)) };
+  // A Mac switches on only what it can run yet.
+  const here = (id: string) => availableHere(id, facts.platform ?? 'windows');
+  const enabled = [...new Set([...picked, ...helpers])].filter(here);
+  return { picked: picked.filter(here), enabled, hidden: enabled.filter((id) => !picked.includes(id)) };
 }
 
 /**

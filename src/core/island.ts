@@ -17,6 +17,7 @@ import type { MirrorFrame } from './mirror';
 import { PillRenderer } from './renderer';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { ACCENTS, migrate, TILE_SIZES, type Settings, type TileSize } from './settings';
+import { availableHere } from './platform';
 import { mapActions, SheetRenderer, type SheetView, type Tile } from './sheet';
 import { springs } from './spring';
 import { clip, timeOfDay } from './format';
@@ -300,7 +301,7 @@ export class Island {
     for (const id of this.settings.activities.order) {
       const cfg = this.settings.activities.config[id];
       const running = this.running.get(id);
-      if (cfg?.enabled && !running) {
+      if (cfg?.enabled && !running && availableHere(id)) {
         const factory = this.factories.get(id);
         if (!factory) continue;
         const act = factory();

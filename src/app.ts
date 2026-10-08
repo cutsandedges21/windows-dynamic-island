@@ -10,6 +10,7 @@ import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtToke
 import { icon } from './core/icons';
 import { levelWidth, normalizeWidths, type Anchor, type Level } from './core/layout';
 import { isTauri, native, on, sendTo, type MonitorInfo } from './core/native';
+import { availableHere, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
 import { ACCENTS, cloneSettings, migrate, type ActivityConfig, type Settings } from './core/settings';
 import { springs } from './core/spring';
@@ -163,7 +164,7 @@ function orderedIds(): Array<{ kind: 'band'; band: Band | 'available' } | { kind
     for (const id of settings.activities.order) {
       const c = cfg(id);
       if (!c || !CATALOG_BY_ID.has(id)) continue;
-      const band = c.enabled ? c.priority : 'available';
+      const band = c.enabled && availableHere(id) ? c.priority : 'available';
       if (band === b.id) out.push({ kind: 'card', id });
     }
   }
@@ -195,16 +196,20 @@ const BEHAVIORS: Array<[keyof Pick<ActivityConfig, 'autoShow' | 'persistent' | '
 function activityCard(meta: ActivityMeta): HTMLElement {
   const c = cfg(meta.id);
   const open = openCards.has(meta.id);
-  const card = h('div', { class: `act-card${c.enabled ? '' : ' off'}${open ? ' open' : ''}`, 'data-id': meta.id });
+  // On a Mac, what it cannot run yet says so instead of offering a switch.
+  const reason = unavailableReason(meta.id);
+  const card = h('div', { class: `act-card${c.enabled && !reason ? '' : ' off'}${reason ? ' unavailable' : ''}${open ? ' open' : ''}`, 'data-id': meta.id });
   const head = h('div', { class: 'act-head' }, [
     h('span', { class: 'grip', html: icon('more'), title: 'Drag to reorder' }),
     h('span', { class: 'act-icon', html: icon(meta.icon) }),
     h('div', { class: 'act-text' }, [h('div', { class: 'act-name', text: meta.name }), h('div', { class: 'act-desc', text: meta.description })]),
-    toggle(c.enabled, (v) => {
-      c.enabled = v;
-      save(true);
-      flipRender();
-    }, `Enable ${meta.name}`),
+    reason
+      ? h('span', { class: 'act-soon', text: reason })
+      : toggle(c.enabled, (v) => {
+          c.enabled = v;
+          save(true);
+          flipRender();
+        }, `Enable ${meta.name}`),
     h('button', { class: 'chev', html: icon('chevron-down'), title: open ? 'Collapse' : 'Options', onclick: (e: Event) => { e.stopPropagation(); toggleCard(meta.id); } }),
   ]);
   head.addEventListener('pointerdown', (e) => startDrag(e as PointerEvent, card));

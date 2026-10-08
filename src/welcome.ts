@@ -10,6 +10,7 @@ import { icon } from './core/icons';
 import { activeValue } from './core/models';
 import { native } from './core/native';
 import { applyPlan, glanceChoices, planActivities, previewCells, suggestGlance, USES, type Facts, type Plan, type Use } from './core/onboarding';
+import { platform } from './core/platform';
 import { springAnimate } from './core/renderer';
 import { cloneSettings, type Settings } from './core/settings';
 import { springs } from './core/spring';
@@ -43,7 +44,7 @@ const flow = {
 
 let current: { root: HTMLElement; host: WelcomeHost } | null = null;
 
-const facts = (): Facts => flow.facts ?? { laptop: false, claudeCode: false };
+const facts = (): Facts => flow.facts ?? { laptop: false, claudeCode: false, platform };
 
 export function welcomePage(host: WelcomeHost): HTMLElement {
   const root = h('div', { class: 'welcome' });
@@ -59,7 +60,7 @@ async function loadFacts(): Promise<void> {
   const [power, env] = await Promise.all([native.powerState(), native.claudeEnv()]);
   let claudeCode = Boolean(env?.claudeExe);
   if (env && !claudeCode) claudeCode = (await native.statMany([`${env.configDir}\\projects`]))[0] != null;
-  flow.facts = { laptop: Boolean(power?.hasBattery), claudeCode };
+  flow.facts = { laptop: Boolean(power?.hasBattery), claudeCode, platform };
   if (current?.root.isConnected && STEPS[flow.step] === 'glance') paint();
 }
 
