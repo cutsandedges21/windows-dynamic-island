@@ -12,6 +12,8 @@ use std::time::Duration;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use crate::nowindow::NoWindow;
+
 /// A download that sends nothing for this long has stalled.
 const CHUNK_WAIT: Duration = Duration::from_secs(60);
 
@@ -148,6 +150,7 @@ pub fn wanted(id: &str) -> Result<&'static Tier, String> {
 }
 
 /// Total RAM and the graphics cards Windows knows.
+#[cfg(windows)]
 pub fn hardware() -> (u64, Vec<Gpu>) {
     use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
     let mut mem = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
@@ -156,6 +159,7 @@ pub fn hardware() -> (u64, Vec<Gpu>) {
 }
 
 /// Display adapters from the registry: the WMI figure stops at 4 GB, this one does not.
+#[cfg(windows)]
 fn gpus() -> Vec<Gpu> {
     const DISPLAY: &str = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
     let Ok(class) = windows_registry::LOCAL_MACHINE.open(DISPLAY) else { return Vec::new() };
@@ -178,6 +182,7 @@ fn hw() -> &'static (u64, Vec<Gpu>) {
 }
 
 /// The processor's name as Windows shows it.
+#[cfg(windows)]
 pub fn cpu_name() -> String {
     windows_registry::LOCAL_MACHINE
         .open(r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
@@ -186,7 +191,33 @@ pub fn cpu_name() -> String {
         .unwrap_or_default()
 }
 
+/// Island's own runtime is the Windows llama.cpp build; Macs use Ollama until a later part.
+#[cfg(target_os = "macos")]
+const MAC_RUNTIME: &str = "Island's own model runtime comes to the Mac later. Install Ollama from ollama.com and pick an Ollama model.";
+
+#[cfg(target_os = "macos")]
+pub fn hardware() -> (u64, Vec<Gpu>) {
+    (crate::mac::sys::total_memory(), Vec::new())
+}
+
+#[cfg(target_os = "macos")]
+pub fn cpu_name() -> String {
+    crate::mac::sys::cpu_name()
+}
+
+#[cfg(target_os = "macos")]
+fn disk_free(path: &Path) -> Option<u64> {
+    let dir = path.ancestors().find(|p| p.is_dir())?;
+    crate::mac::sys::disk_space(dir).map(|(free, _)| free)
+}
+
+#[cfg(target_os = "macos")]
+fn extract(_zip: &Path, _dir: &Path) -> Result<(), String> {
+    Err(MAC_RUNTIME.to_string())
+}
+
 /// Free bytes on the disk that holds `path` (or the nearest folder above it that exists).
+#[cfg(windows)]
 fn disk_free(path: &Path) -> Option<u64> {
     use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
@@ -260,6 +291,7 @@ async fn download(url: &str, sha256: &str, dest: &Path, mut progress: impl FnMut
 }
 
 /// Unpacks a zip into `dir` with Windows' own tar.exe (bsdtar reads zips).
+#[cfg(windows)]
 fn extract(zip: &Path, dir: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -496,7 +528,11 @@ fn missing_bytes(tier: &Tier) -> u64 {
 }
 
 /// Downloads what `tier` is missing: the runtime, then the model. `slot` is held throughout.
+#[cfg_attr(target_os = "macos", allow(unreachable_code))]
 pub async fn setup(tier: &'static Tier, slot: Slot, mut report: impl FnMut(Progress)) -> Result<(), String> {
+    // Nothing to download on a Mac: the runtime here is the Windows build.
+    #[cfg(target_os = "macos")]
+    return Err(MAC_RUNTIME.to_string());
     let need = missing_bytes(tier);
     if need > 0 {
         if let Some(free) = disk_free(&ai_dir()).filter(|free| *free < need + SPARE) {
@@ -591,9 +627,10 @@ pub async fn ensure(id: &str) -> Result<u16, String> {
     ensure_plan(&pick_from(id, *ram, gpus, |t| model_file(t).is_file())?).await
 }
 
+#[cfg_attr(target_os = "macos", allow(unreachable_code))]
 async fn ensure_plan(plan: &Plan) -> Result<u16, String> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    #[cfg(target_os = "macos")]
+    return Err(MAC_RUNTIME.to_string());
     let (exe, model) = (server_exe(), model_file(plan.tier));
     if !exe.is_file() || !model.is_file() {
         return Err(format!("{} is not downloaded yet. Get it in Activities › Local AI.", plan.tier.name));
@@ -613,7 +650,7 @@ async fn ensure_plan(plan: &Plan) -> Result<u16, String> {
     let port = std::net::TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()).map(|a| a.port()).map_err(|_| "No free port for the model runtime.".to_string())?;
     let log = File::create(ai_dir().join("server.log")).ok();
     let mut command = std::process::Command::new(&exe);
-    command.args(server_args(&model, port, plan.gpu.is_some(), plan.tier)).current_dir(runtime_dir()).stdin(std::process::Stdio::null()).creation_flags(CREATE_NO_WINDOW);
+    command.args(server_args(&model, port, plan.gpu.is_some(), plan.tier)).current_dir(runtime_dir()).stdin(std::process::Stdio::null()).no_window();
     match log.as_ref().and_then(|f| Some((f.try_clone().ok()?, f.try_clone().ok()?))) {
         Some((out, err)) => command.stdout(out).stderr(err),
         None => command.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()),
@@ -703,12 +740,31 @@ fn server_args(model: &Path, port: u16, gpu: bool, tier: &Tier) -> Vec<String> {
 }
 
 /// A Windows job that kills everything in it when Island goes, even if Island crashes.
+#[cfg(windows)]
 struct Job(windows::Win32::Foundation::HANDLE);
 
 // The handle is only passed to thread-safe Win32 calls.
+#[cfg(windows)]
 unsafe impl Send for Job {}
+#[cfg(windows)]
 unsafe impl Sync for Job {}
 
+/// No runtime starts on a Mac yet (see MAC_RUNTIME), so there is nothing to hold.
+#[cfg(target_os = "macos")]
+struct Job;
+
+#[cfg(target_os = "macos")]
+impl Job {
+    fn new() -> Result<Job, String> {
+        Ok(Job)
+    }
+
+    fn adopt(&self, _child: &std::process::Child) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
 impl Job {
     fn new() -> Result<Job, String> {
         use windows::Win32::System::JobObjects::{CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE};
@@ -731,6 +787,7 @@ impl Job {
     }
 }
 
+#[cfg(windows)]
 impl Drop for Job {
     fn drop(&mut self) {
         unsafe {

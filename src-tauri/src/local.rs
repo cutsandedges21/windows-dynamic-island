@@ -420,6 +420,7 @@ pub struct Drive {
 }
 
 /// Windows 11 still calls itself "Windows 10" in ProductName; the build number tells them apart.
+#[cfg(windows)]
 fn os_label(product: &str, display: &str, build: &str, ubr: Option<u32>) -> String {
     let eleven = build.parse::<u32>().is_ok_and(|b| b >= 22000);
     let name = if eleven { product.replacen("Windows 10", "Windows 11", 1) } else { product.to_string() };
@@ -431,6 +432,7 @@ fn os_label(product: &str, display: &str, build: &str, ubr: Option<u32>) -> Stri
     format!("{name}{version} (build {build})")
 }
 
+#[cfg(windows)]
 fn device_info() -> DeviceInfo {
     let nt = windows_registry::LOCAL_MACHINE.open(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion").ok();
     let text = |name: &str| nt.as_ref().and_then(|k| k.get_string(name).ok()).unwrap_or_default();
@@ -448,6 +450,7 @@ fn device_info() -> DeviceInfo {
 }
 
 /// Local disks only: asking a sleeping network drive for its free space can hang.
+#[cfg(windows)]
 fn fixed_drives() -> Vec<Drive> {
     use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives};
@@ -467,6 +470,20 @@ fn fixed_drives() -> Vec<Drive> {
             Some(Drive { root, free, total })
         })
         .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn device_info() -> DeviceInfo {
+    use crate::mac::sys;
+    DeviceInfo {
+        computer: sys::host_name(),
+        user: std::env::var("USER").unwrap_or_default(),
+        os: sys::os_version(),
+        cpu: crate::llama::cpu_name(),
+        threads: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0),
+        uptime_secs: sys::uptime_secs(),
+        drives: sys::disk_space(std::path::Path::new("/")).map(|(free, total)| vec![Drive { root: "/".into(), free, total }]).unwrap_or_default(),
+    }
 }
 
 fn request_body(model: &str, turns: &[Turn], context: Option<&str>) -> Value {
