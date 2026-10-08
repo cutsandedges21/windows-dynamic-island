@@ -14,8 +14,11 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, POINT};
+#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_LBUTTON, VK_RBUTTON};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOSIZE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
@@ -80,17 +83,26 @@ pub fn window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(LABEL)
 }
 
+#[cfg(windows)]
 fn hwnd_of(win: &WebviewWindow) -> Option<HWND> {
     let raw = win.hwnd().ok()?.0 as isize;
     (raw != 0).then(|| HWND(raw as *mut _))
 }
 
+#[cfg(windows)]
 pub fn hwnd_raw(app: &AppHandle) -> isize {
     window(app).and_then(|w| hwnd_of(&w)).map(|h| h.0 as isize).unwrap_or(0)
 }
 
+/// A Mac window that cannot become key never takes the keyboard from the app in front.
+#[cfg(target_os = "macos")]
+fn set_activating(win: &WebviewWindow, activating: bool) {
+    let _ = win.set_focusable(activating);
+}
+
 /// WS_EX_NOACTIVATE keeps clicks from stealing focus; WS_EX_TOOLWINDOW keeps the
 /// island out of Alt-Tab and the taskbar.
+#[cfg(windows)]
 fn set_activating(win: &WebviewWindow, activating: bool) {
     let Some(hwnd) = hwnd_of(win) else { return };
     unsafe {
@@ -126,8 +138,11 @@ fn build(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
         .closable(false)
         .visible(false)
         .drag_and_drop(false)
-        .background_color(tauri::window::Color(0, 0, 0, 0))
-        .build()?;
+        .background_color(tauri::window::Color(0, 0, 0, 0));
+    // On a Mac: on every desktop, and the first click on the pill counts even while another app is in front.
+    #[cfg(target_os = "macos")]
+    let win = win.visible_on_all_workspaces(true).accept_first_mouse(true);
+    let win = win.build()?;
     set_activating(&win, false);
     let _ = win.set_ignore_cursor_events(true);
     Ok(win)
@@ -155,6 +170,7 @@ fn cover(win: &WebviewWindow, m: MonitorInfo) -> Placement {
     // Crossing displays with different DPI rescales the window: assert again.
     let _ = win.set_position(pos);
     let _ = win.set_size(size);
+    #[cfg(windows)]
     if let Some(h) = hwnd_of(win) {
         unsafe {
             let _ = SetWindowPos(h, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -174,6 +190,7 @@ fn place_mirror(app: &AppHandle, win: &WebviewWindow) -> Option<Placement> {
     Some(cover(win, monitors::find(&id)?))
 }
 
+#[cfg(windows)]
 fn cursor() -> Option<(f64, f64)> {
     let mut p = POINT::default();
     unsafe { GetCursorPos(&mut p).ok()? };
@@ -183,14 +200,17 @@ fn cursor() -> Option<(f64, f64)> {
 /// (held now, pressed at any point since the last call). The second half is what
 /// catches a click that began and ended between two polls; Windows keeps that bit
 /// per caller, and this loop is the only one asking about the mouse buttons.
+#[cfg(windows)]
 fn button_state(vk: u16) -> (bool, bool) {
     let s = unsafe { GetAsyncKeyState(vk as i32) } as u16;
     (s & 0x8000 != 0, s & 0x0001 != 0)
 }
 
+#[cfg(windows)]
 const SHELL_CLASSES: &[&str] = &["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow"];
 
 /// The foreground window covers its whole monitor (a game, a video, F11).
+#[cfg(windows)]
 fn fullscreen_on(fg: isize, own: isize) -> Option<String> {
     if fg == 0 || fg == own {
         return None;
@@ -212,6 +232,7 @@ struct PointerOutside {
     button: &'static str,
 }
 
+#[cfg(windows)]
 #[derive(Serialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct ForegroundInfo {
@@ -231,7 +252,9 @@ const PEEK_LEAVE_PX: f64 = 24.0;
 /// window's monitor, all from one loop: 16 ms near the island, 100 ms away from it.
 pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
     std::thread::spawn(move || {
+        #[cfg(windows)]
         let mut last_fg = Instant::now() - Duration::from_secs(5);
+        #[cfg(windows)]
         let mut last_info: Option<ForegroundInfo> = None;
         let mut was_left = false;
         let mut was_right = false;
@@ -243,11 +266,15 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
         let mut period = Duration::from_millis(FAR_POLL_MS);
         let mut geom: Option<(f64, f64, f64)> = None;
         let mut last_geom = Instant::now() - Duration::from_secs(5);
+        #[cfg(target_os = "macos")]
+        let mut clicks = crate::mac::input::Clicks::new();
         loop {
             std::thread::sleep(period);
             let Some(win) = window(&app) else { continue };
+            #[cfg(windows)]
             let own = hwnd_of(&win).map(|h| h.0 as isize).unwrap_or(0);
 
+            #[cfg(windows)]
             if last_fg.elapsed() >= Duration::from_millis(400) {
                 last_fg = Instant::now();
                 let fg = crate::procs::foreground();
@@ -274,7 +301,11 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
             }
             let Some((ox, oy, scale)) = geom else { continue };
             let origin = (ox, oy);
-            let Some((cx, cy)) = cursor() else { continue };
+            #[cfg(windows)]
+            let pointer = cursor();
+            #[cfg(target_os = "macos")]
+            let pointer = win.cursor_position().ok().map(|p| (p.x, p.y));
+            let Some((cx, cy)) = pointer else { continue };
             let x = (cx - origin.0) / scale;
             let y = (cy - origin.1) / scale;
 
@@ -293,7 +324,10 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
 
             // Ctrl pressed with the pointer on the island starts a peek; a tap is
             // enough, so the click behind is a plain click, not a Ctrl+click.
+            #[cfg(windows)]
             let ctrl = unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) } as u16 & 0x8000 != 0;
+            #[cfg(target_os = "macos")]
+            let ctrl = crate::mac::input::control_down();
             let peek_on = state.peek_enabled.load(Ordering::Relaxed);
             if peek_on && !peeking && on_island && ctrl && !was_ctrl {
                 peeking = true;
@@ -311,8 +345,10 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
             }
 
             // A press anywhere off the island (or through it, while peeking) closes an open island.
-            let (left, left_hit) = button_state(VK_LBUTTON.0);
-            let (right, right_hit) = button_state(VK_RBUTTON.0);
+            #[cfg(windows)]
+            let ((left, left_hit), (right, right_hit)) = (button_state(VK_LBUTTON.0), button_state(VK_RBUTTON.0));
+            #[cfg(target_os = "macos")]
+            let ((left, left_hit), (right, right_hit)) = clicks.poll();
             if !accept && (left_hit || right_hit || (left && !was_left) || (right && !was_right)) {
                 let _ = app.emit_to(LABEL, "pointer-outside", PointerOutside { button: if left { "left" } else { "right" } });
             }
@@ -392,8 +428,22 @@ pub fn island_show(app: AppHandle, state: tauri::State<'_, Arc<Overlay>>, visibl
     }
 }
 
+/// The island takes the keyboard while an inline input is open.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn island_set_focusable(app: AppHandle, focusable: bool) -> bool {
+    let Some(win) = window(&app) else { return false };
+    set_activating(&win, focusable);
+    if focusable {
+        win.set_focus().is_ok()
+    } else {
+        true
+    }
+}
+
 /// The island takes the keyboard while an inline input is open, then hands it
 /// back to whatever had it before.
+#[cfg(windows)]
 #[tauri::command]
 pub fn island_set_focusable(app: AppHandle, state: tauri::State<'_, Arc<Overlay>>, focusable: bool) -> bool {
     let Some(win) = window(&app) else { return false };
