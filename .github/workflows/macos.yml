@@ -1,0 +1,57 @@
+name: macOS
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # generate_context! reads the frontend folder at compile time.
+      - run: mkdir -p dist && echo '<!doctype html>' > dist/index.html
+      - run: cargo check -p island --lib --locked
+
+  build:
+    needs: check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+      - run: npm run build:web
+      - run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+      - name: Smoke test
+        run: |
+          APP="target/universal-apple-darwin/release/bundle/macos/Island.app"
+          "$APP/Contents/MacOS/island" > run.log 2>&1 &
+          PID=$!
+          sleep 25
+          screencapture -x shot.png || echo "screencapture failed"
+          kill $PID || true
+          cp "$HOME/Library/Application Support/Island/island.log" island.log || true
+          cat island.log || true
+          grep -q "island ready" island.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: island-macos
+          path: |
+            target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            shot.png
+            island.log
+            run.log
