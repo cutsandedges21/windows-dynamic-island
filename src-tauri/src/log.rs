@@ -1,4 +1,4 @@
-// Append-only log at %LOCALAPPDATA%\Island\island.log, rotated past 512 KB.
+// Append-only log, island.log in data_dir(), rotated past 512 KB.
 // Hook events, permission decisions, switch attempts and native failures land here.
 
 use std::io::Write;
@@ -8,11 +8,13 @@ use std::sync::Mutex;
 static LOCK: Mutex<()> = Mutex::new(());
 const MAX_BYTES: u64 = 512 * 1024;
 
+/// %LOCALAPPDATA%\Island on Windows, ~/Library/Application Support/Island on a Mac.
 pub fn data_dir() -> PathBuf {
-    let base = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("Island")
+    #[cfg(windows)]
+    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    #[cfg(not(windows))]
+    let base = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library").join("Application Support"));
+    base.unwrap_or_else(std::env::temp_dir).join("Island")
 }
 
 pub fn path() -> PathBuf {

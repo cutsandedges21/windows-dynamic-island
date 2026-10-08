@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager};
+#[cfg(windows)]
 use windows::Win32::System::SystemInformation::GetLocalTime;
 
 use crate::claude::{config_dir, hook_exe_path};
@@ -136,9 +137,15 @@ fn pretty(v: &Value) -> String {
     serde_json::to_string_pretty(v).unwrap_or_default()
 }
 
+#[cfg(windows)]
 fn stamp() -> String {
     let t = unsafe { GetLocalTime() };
     format!("{:04}{:02}{:02}-{:02}{:02}{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
+}
+
+#[cfg(target_os = "macos")]
+fn stamp() -> String {
+    crate::mac::sys::local_stamp()
 }
 
 fn backup_path() -> PathBuf {

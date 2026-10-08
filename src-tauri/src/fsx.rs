@@ -18,7 +18,11 @@ const MAX_USER_TEXTS: usize = 24;
 
 fn roots() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for var in ["USERPROFILE", "APPDATA", "LOCALAPPDATA", "CLAUDE_CONFIG_DIR", "OneDrive"] {
+    #[cfg(windows)]
+    const VARS: &[&str] = &["USERPROFILE", "APPDATA", "LOCALAPPDATA", "CLAUDE_CONFIG_DIR", "OneDrive"];
+    #[cfg(not(windows))]
+    const VARS: &[&str] = &["HOME", "CLAUDE_CONFIG_DIR"];
+    for var in VARS {
         if let Some(v) = std::env::var_os(var) {
             out.push(PathBuf::from(v));
         }
@@ -471,7 +475,7 @@ pub fn fs_unwatch(state: tauri::State<'_, Watches>, id: String) {
 /// Home-relative well-known folders the activities watch.
 #[tauri::command]
 pub fn known_folders() -> serde_json::Value {
-    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default();
     let one = std::env::var("OneDrive").unwrap_or_default();
     let pick = |rel: &str| -> String {
         let local = Path::new(&home).join(rel);

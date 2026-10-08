@@ -124,7 +124,8 @@ fn swap_in(exe: &Path, temp: &Path, dir: &Path) -> Result<(), String> {
 
 /// The background checker. Development builds never update themselves.
 pub fn start(app: AppHandle) {
-    if cfg!(debug_assertions) {
+    // Mac updates come with part 5; the release asset is a Windows exe.
+    if cfg!(debug_assertions) || cfg!(target_os = "macos") {
         return;
     }
     tauri::async_runtime::spawn(async move {
@@ -145,14 +146,19 @@ pub fn start(app: AppHandle) {
 pub fn after_update(args: &[String]) -> Option<String> {
     let at = args.iter().position(|a| a == AFTER_UPDATE)?;
     let pid: u32 = args.get(at + 1)?.parse().ok()?;
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
-    unsafe {
-        if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
-            let _ = WaitForSingleObject(h, 15_000);
-            let _ = CloseHandle(h);
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+        unsafe {
+            if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+                let _ = WaitForSingleObject(h, 15_000);
+                let _ = CloseHandle(h);
+            }
         }
     }
+    #[cfg(not(windows))]
+    let _ = pid;
     Some(args.get(at + 2).cloned().unwrap_or_default())
 }
 
