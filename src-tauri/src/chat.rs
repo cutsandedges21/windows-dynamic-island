@@ -10,7 +10,6 @@
 // decline is retried on another model inside the same call.
 
 use std::io::Read;
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{mpsc, OnceLock};
@@ -19,9 +18,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::nowindow::NoWindow;
 use crate::secrets;
-
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const API_KEY_SECRET: &str = "ask.apikey";
 const ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
@@ -166,13 +164,21 @@ pub(crate) fn clean_turns(messages: Vec<Turn>) -> Result<Vec<Turn>, String> {
 fn find_claude_exe() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
-            let candidate = dir.join("claude.exe");
+            let candidate = dir.join(crate::claude::CLAUDE_BIN);
             if candidate.is_file() {
                 return Some(candidate);
             }
         }
     }
-    let local = crate::claude::home().join(".local").join("bin").join("claude.exe");
+    // Mac apps started from Finder get a short PATH, so look where Homebrew puts it too.
+    #[cfg(target_os = "macos")]
+    for dir in ["/opt/homebrew/bin", "/usr/local/bin"] {
+        let candidate = Path::new(dir).join(crate::claude::CLAUDE_BIN);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    let local = crate::claude::home().join(".local").join("bin").join(crate::claude::CLAUDE_BIN);
     local.is_file().then_some(local)
 }
 
@@ -305,11 +311,12 @@ fn drain(pipe: Option<impl Read + Send + 'static>) -> mpsc::Receiver<String> {
 
 /// A shell may have started helpers of its own, so the whole tree goes, not just the child.
 fn kill_tree(child: &mut Child) {
+    #[cfg(windows)]
     let _ = Command::new("taskkill")
         .args(["/PID", &child.id().to_string(), "/T", "/F"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
+        .no_window()
         .status();
     let _ = child.kill();
     let _ = child.wait();
@@ -321,7 +328,7 @@ fn run_hidden(mut command: Command, limit: Duration) -> Result<Finished, RunFail
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .creation_flags(CREATE_NO_WINDOW)
+        .no_window()
         .spawn()
         .map_err(|_| RunFailure::Start)?;
     let out = drain(child.stdout.take());

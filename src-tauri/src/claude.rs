@@ -3,29 +3,41 @@
 // typing a prompt into a live session's console, and picking a Windows
 // Terminal tab by name. Session tracking itself is TypeScript (src/activities/claude).
 
+#[cfg(windows)]
 use std::io::Write;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
+#[cfg(windows)]
 use windows::core::{PCWSTR, PWSTR};
+#[cfg(windows)]
 use windows::Win32::Foundation::CloseHandle;
+#[cfg(windows)]
 use windows::Win32::System::Threading::{
     CreateProcessW, CREATE_NEW_CONSOLE, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION, STARTF_USESHOWWINDOW, STARTUPINFOW,
 };
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{SW_SHOWMINNOACTIVE, SW_SHOWNORMAL};
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const FALLBACK_VERSION: &str = "2.1.204";
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
 const DETACHED_PROCESS: u32 = 0x0000_0008;
 
 pub fn home() -> PathBuf {
-    std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
 }
+
+/// Claude Code's program name on this system.
+pub const CLAUDE_BIN: &str = if cfg!(windows) { "claude.exe" } else { "claude" };
 
 pub fn config_dir() -> PathBuf {
     match std::env::var_os("CLAUDE_CONFIG_DIR") {
@@ -41,13 +53,13 @@ pub fn hook_exe_path() -> PathBuf {
 fn find_claude_exe() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
-            let candidate = dir.join("claude.exe");
+            let candidate = dir.join(CLAUDE_BIN);
             if candidate.is_file() {
                 return Some(candidate);
             }
         }
     }
-    let local = home().join(".local").join("bin").join("claude.exe");
+    let local = home().join(".local").join("bin").join(CLAUDE_BIN);
     local.is_file().then_some(local)
 }
 
@@ -154,11 +166,13 @@ pub fn is_uuid(s: &str) -> bool {
         })
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn cwd_ok(cwd: &str) -> bool {
     !cwd.is_empty() && !cwd.contains(['"', ';', '\r', '\n', '\0']) && Path::new(cwd).is_dir()
 }
 
 /// One argument, quoted for the MSVC / Bun command-line parser.
+#[cfg(windows)]
 fn quote_arg(arg: &str) -> String {
     if !arg.is_empty() && !arg.contains([' ', '\t', '"', '\n']) {
         return arg.to_string();
@@ -185,11 +199,13 @@ fn quote_arg(arg: &str) -> String {
     out
 }
 
+#[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// Starts `exe args…` in its own console, optionally minimized without focus.
+#[cfg(windows)]
 fn spawn_console(exe: &Path, args: &[&str], cwd: &str, minimized: bool) -> bool {
     let exe_s = exe.to_string_lossy().to_string();
     let mut line = quote_arg(&exe_s);
@@ -231,6 +247,7 @@ fn spawn_console(exe: &Path, args: &[&str], cwd: &str, minimized: bool) -> bool 
     ok
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn clean_prompt(text: &str) -> String {
     text.replace("\r\n", " ").replace(['\n', '\r', '\t'], " ").chars().filter(|c| !c.is_control()).collect::<String>().trim().to_string()
 }
@@ -239,6 +256,7 @@ fn clean_prompt(text: &str) -> String {
 /// claude runs in its own minimized console, so the user stays where they are
 /// and the session shows up live in the island again. Without, it opens in
 /// Windows Terminal like Usage Clip does.
+#[cfg(windows)]
 #[tauri::command]
 pub fn claude_resume(session_id: String, cwd: String, prompt: Option<String>, minimized: bool) -> bool {
     if !is_uuid(&session_id) || !cwd_ok(&cwd) {
@@ -279,6 +297,7 @@ pub struct InjectResult {
     error: Option<String>,
 }
 
+#[cfg(windows)]
 fn hook_exe() -> Option<PathBuf> {
     let installed = hook_exe_path();
     if installed.is_file() {
@@ -289,6 +308,7 @@ fn hook_exe() -> Option<PathBuf> {
 }
 
 /// Types `text` + Enter into the console of a live CLI session (island-hook inject).
+#[cfg(windows)]
 #[tauri::command]
 pub async fn claude_inject(pid: u32, text: String) -> InjectResult {
     let text = clean_prompt(&text);
@@ -333,6 +353,7 @@ pub async fn claude_inject(pid: u32, text: String) -> InjectResult {
 // Select a Windows Terminal tab by name through UI Automation (ported from Usage
 // Clip). The title travels in an environment variable, never spliced into the
 // script. Prints the hosting window handle on success.
+#[cfg(windows)]
 const WT_TAB_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
@@ -353,6 +374,7 @@ foreach ($w in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $w
 exit 1
 "#;
 
+#[cfg(windows)]
 #[tauri::command]
 pub async fn claude_select_wt_tab(title: String) -> Option<isize> {
     let needle = title.trim().to_string();
@@ -381,6 +403,26 @@ pub async fn claude_select_wt_tab(title: String) -> Option<isize> {
     .await
     .ok()
     .flatten()
+}
+
+// Resuming, typing into a session and picking a terminal tab come to the Mac in part 2.
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn claude_resume() -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub async fn claude_inject() -> InjectResult {
+    InjectResult { ok: false, error: Some(crate::mac::NOT_YET.into()) }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub async fn claude_select_wt_tab() -> Option<isize> {
+    None
 }
 
 #[cfg(test)]

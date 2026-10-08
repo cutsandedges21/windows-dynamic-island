@@ -18,6 +18,7 @@ mod media;
 mod monitors;
 mod msgwin;
 mod net;
+mod nowindow;
 mod overlay;
 mod pipe;
 mod procs;
