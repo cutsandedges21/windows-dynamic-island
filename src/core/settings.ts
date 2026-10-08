@@ -18,11 +18,16 @@ export const TILE_SIZES: TileSize[] = ['1x1', '2x1', '1x2', '2x2'];
 
 /** How the user arranged the open island's grid (long-press a tile to edit). */
 export interface GridLayout {
-  /** Tile keys in the user's order; tiles not listed follow in activity order. */
+  /** Older builds' tile order, used as the starting layout while `pages` is empty. */
   order: string[];
   sizes: Record<string, TileSize>;
   /** Tiles taken off the grid. */
   hidden: string[];
+  /**
+   * Each page's tiles in reading order (src/core/grid.ts); null is an empty cell the
+   * user left. Empty until the user first moves or resizes a tile.
+   */
+  pages: Array<Array<string | null>>;
 }
 
 export const SETTINGS_VERSION = 4;
@@ -123,7 +128,7 @@ export function defaultSettings(): Settings {
       glow: 'medium',
       hoverCard: 'pointer',
       peekThrough: true,
-      grid: { order: [], sizes: {}, hidden: [] },
+      grid: { order: [], sizes: {}, hidden: [], pages: [] },
     },
     activities: { order: CATALOG.map((m) => m.id), config },
     general: {
@@ -190,7 +195,22 @@ export function migrate(saved: unknown): Settings {
   const strings = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length < 120))] : []);
   const sizes: Record<string, TileSize> = {};
   if (isObj(savedGrid.sizes)) for (const [k, v] of Object.entries(savedGrid.sizes)) if (TILE_SIZES.includes(v as TileSize)) sizes[k] = v as TileSize;
-  out.island.grid = { order: strings(savedGrid.order), sizes, hidden: strings(savedGrid.hidden) };
+  // Pages: tile keys (each on one page at most) and nulls for the empty cells the user left.
+  const seen = new Set<string>();
+  const pages: Array<Array<string | null>> = [];
+  for (const p of Array.isArray(savedGrid.pages) ? savedGrid.pages.slice(0, 24) : []) {
+    if (!Array.isArray(p)) continue;
+    const list: Array<string | null> = [];
+    for (const e of p.slice(0, 96)) {
+      if (e === null) list.push(null);
+      else if (typeof e === 'string' && e.length > 0 && e.length < 120 && !seen.has(e)) {
+        seen.add(e);
+        list.push(e);
+      }
+    }
+    pages.push(list);
+  }
+  out.island.grid = { order: strings(savedGrid.order), sizes, hidden: strings(savedGrid.hidden), pages };
   out.island.displayIds = strings(isObj(saved.island) ? saved.island.displayIds : null);
   if (!['primary', 'cursor', 'active', 'specific', 'duplicate'].includes(out.island.display)) out.island.display = 'primary';
 

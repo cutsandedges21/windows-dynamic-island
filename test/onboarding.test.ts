@@ -53,7 +53,7 @@ describe('applyPlan', () => {
   const base = () => {
     const s = defaultSettings();
     s.activities.config.github.enabled = true; // set up by hand earlier, with a token
-    s.island.grid = { order: ['music/music'], sizes: { 'music/music': '2x2' }, hidden: ['timer/timer'] };
+    s.island.grid = { order: ['music/music'], sizes: { 'music/music': '2x2' }, hidden: ['timer/timer'], pages: [['music/music']] };
     return s;
   };
 
@@ -71,7 +71,7 @@ describe('applyPlan', () => {
     const s = applyPlan(base(), plan, '');
     expect(s.activities.order.slice(0, 2)).toEqual(['music', 'timer']);
     expect(new Set(s.activities.order).size).toBe(s.activities.order.length);
-    expect(s.island.grid).toEqual({ order: [], sizes: {}, hidden: plan.hidden });
+    expect(s.island.grid).toEqual({ order: [], sizes: {}, hidden: plan.hidden, pages: [] });
     expect(s.general.onboarded).toBe(true);
     expect(s.activities.config.weather.options.city).toBe('');
   });

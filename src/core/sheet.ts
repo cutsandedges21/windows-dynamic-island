@@ -93,8 +93,8 @@ export interface Tile {
   tip?: string;
   /** Taken off the grid by the user: only shown while editing, to be put back. */
   hidden?: boolean;
-  /** Size label for the resize button while editing ("2×1"). */
-  sizeLabel?: string;
+  /** Sizes (columns, rows) its corner can be dragged to while editing. */
+  sizes?: Array<[number, number]>;
   body: TileBody;
 }
 
@@ -153,6 +153,16 @@ const GAP = 8;
 /** The card grows out of a sliver about the size of a resting pill. */
 const SLIVER = 26;
 const EDGE = 8;
+/** Holding a tile this long starts arranging the grid. */
+const LONG_PRESS_MS = 450;
+/** A tile carried this close to the card's side (or past it)... */
+const EDGE_ZONE = 30;
+/** ...and held there this long turns the page; past the last page it makes a new one. */
+const EDGE_HOLD_MS = 2000;
+/** How far past the card a carried tile keeps the mouse (beyond, clicks reach the desktop). */
+const DRAG_REACH = 160;
+/** How long a carried tile rests over a spot before the grid makes room for it there. */
+const REFLOW_DWELL_MS = 150;
 
 const args = new WeakMap<HTMLElement, unknown>();
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -187,8 +197,16 @@ export class SheetRenderer {
   /** A long-press just opened edit mode: the click that ends it must not run the tile's action. */
   private swallowClick = false;
   private swallowTimer: ReturnType<typeof setTimeout> | undefined;
-  /** The tile being dragged right now, if any. */
-  private drag: { key: string; el: HTMLElement; host: HTMLElement; pointer: number } | null = null;
+  /** The tile being carried or resized right now: `abort` ends it unsaved, `rescan` re-aims it after a page turn. */
+  private drag: { key: string; mode: 'move' | 'resize'; host: HTMLElement; abort: () => void; rescan: () => void } | null = null;
+  /** Pages the grid keeps while a tile is carried (a page made at the edge stays until the drop). */
+  private dragPages = 0;
+  /** A dropped tile whose floating copy is still flying home: its spot stays empty until it lands. */
+  private landing: string | null = null;
+  /** The page a turn is sliding to: the scroll position lags behind a smooth scroll. */
+  private readonly aim = new WeakMap<HTMLElement, number>();
+  /** The tiles last drawn, for the empty cells shown while editing. */
+  private grid: { items: Tile[]; cols: number; rows: number } | null = null;
   private shown = false;
   private anchor: Anchor = 'top';
   private area: Area = { width: 1280, height: 720 };
@@ -200,7 +218,7 @@ export class SheetRenderer {
   private ready = false;
 
   constructor(
-    stage: HTMLElement,
+    private readonly stage: HTMLElement,
     private readonly onAction: SheetAction,
     private readonly onMove: () => void,
   ) {
@@ -253,6 +271,8 @@ export class SheetRenderer {
   hitRect(): Rect | null {
     const d = this.drawn;
     if (!d || this.springs.get('o') < 0.05) return null;
+    // A carried tile can go past the card (to its side, to turn the page): keep the mouse that far.
+    if (this.drag) return { x: d.x - DRAG_REACH, y: d.y - DRAG_REACH, w: d.w + DRAG_REACH * 2, h: d.h + DRAG_REACH * 2 };
     switch (this.anchor) {
       case 'top':
         return { x: d.x, y: d.y - GAP, w: d.w, h: d.h + GAP };
@@ -319,6 +339,7 @@ export class SheetRenderer {
 
   private hide(immediate: boolean): void {
     if (!this.shown) return;
+    this.drag?.abort();
     this.shown = false;
     this.viewKey = null;
     this.engagedInput = null;
@@ -398,6 +419,7 @@ export class SheetRenderer {
   // ---------------------------------------------------------------- content
 
   private clear(): void {
+    this.drag?.abort();
     this.nodes.clear();
     this.inner.replaceChildren();
     this.engagedInput = null;
@@ -405,6 +427,7 @@ export class SheetRenderer {
 
   /** The old content blurs out in place while the new content builds up. */
   private crossFade(): void {
+    this.drag?.abort();
     const old = this.inner;
     old.classList.add('leaving');
     old.style.pointerEvents = 'none';
@@ -610,7 +633,12 @@ export class SheetRenderer {
       }
       case 'tiles': {
         const e = make('div', 'sb sb-tiles');
-        e.append(make('div', 'pages'), make('div', 'dots'), make('div', 'tray'));
+        const bar = (side: string) => {
+          const b = make('div', `edge-hold ${side}`);
+          b.append(make('i', ''));
+          return b;
+        };
+        e.append(make('div', 'pages'), make('div', 'dots'), make('div', 'tray'), bar('left'), bar('right'));
         this.wireGrid(e);
         this.patchTiles(e, b);
         return e;
@@ -700,7 +728,15 @@ export class SheetRenderer {
   }
 
   private placeTile(el: HTMLElement, t: Tile): void {
-    el.style.gridArea = `${(t.row ?? 0) + 1} / ${(t.col ?? 0) + 1} / span ${t.h ?? 1} / span ${t.w ?? 1}`;
+    const w = t.w ?? 1;
+    const h = t.h ?? 1;
+    el.style.gridArea = `${(t.row ?? 0) + 1} / ${(t.col ?? 0) + 1} / span ${h} / span ${w}`;
+    // Size classes follow the cells it has now: a tile being resized is not rebuilt.
+    for (const c of Array.from(el.classList)) if (/^(span|rows)-\d+$/.test(c)) el.classList.remove(c);
+    el.classList.add(`span-${w}`, `rows-${h}`);
+    // Where it sits, for a drag to start from.
+    const data: Record<string, string> = { page: String(t.page ?? 0), col: String(t.col ?? 0), row: String(t.row ?? 0), w: String(w), h: String(h), sizes: (t.sizes ?? []).map(([a, b]) => `${a}x${b}`).join(' ') };
+    for (const [k, v] of Object.entries(data)) if (el.dataset[k] !== v) el.dataset[k] = v;
   }
 
   /**
@@ -716,27 +752,13 @@ export class SheetRenderer {
     host.style.setProperty('--cell', `${b.cell}px`);
     const pagesEl = host.querySelector<HTMLElement>('.pages')!;
     const trayEl = host.querySelector<HTMLElement>('.tray')!;
-    const dotsEl = host.querySelector<HTMLElement>('.dots')!;
+    this.grid = { items: b.items, cols: b.cols, rows: b.rows };
 
-    const pages = Math.max(1, b.pages);
+    // A page made at the card's edge mid-drag stays until the drop, even while empty.
+    const pages = Math.max(1, b.pages, this.drag?.host === host ? this.dragPages : 0);
     while (pagesEl.children.length < pages) pagesEl.append(make('div', 'page'));
     while (pagesEl.children.length > pages) pagesEl.lastElementChild!.remove();
-    if (dotsEl.children.length !== pages || pages < 2) {
-      dotsEl.replaceChildren();
-      if (pages > 1) {
-        for (let i = 0; i < pages; i++) {
-          const dot = make('button', 'dot');
-          dot.type = 'button';
-          dot.title = `Page ${i + 1}`;
-          dot.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.goToPage(host, i);
-          });
-          dotsEl.append(dot);
-        }
-      }
-      this.markPage(host);
-    }
+    this.syncDots(host, pages);
 
     const existing = new Map<string, HTMLElement>();
     for (const el of host.querySelectorAll<HTMLElement>('.tile')) if (el.dataset.k) existing.set(el.dataset.k, el);
@@ -748,7 +770,7 @@ export class SheetRenderer {
       seen.add(t.key);
       const sig = this.tileSig(t, editing) + (tray ? '|tray' : '');
       let el = existing.get(t.key);
-      if (!el || (this.tileSigs.get(el) !== sig && !(this.drag && this.drag.key === t.key))) {
+      if (!el || (this.tileSigs.get(el) !== sig && this.drag?.key !== t.key)) {
         if (el && this.tileSigs.get(el) === sig) {
           /* unchanged */
         } else if (el && this.patchTile(el, t)) {
@@ -768,11 +790,14 @@ export class SheetRenderer {
       }
       if (!tray) this.placeTile(el, t);
       else el.style.gridArea = '';
+      // The carried tile's own spot shows where it will land; its copy is on the pointer.
+      el.classList.toggle('drag-slot', !tray && ((this.drag?.mode === 'move' && this.drag.key === t.key) || this.landing === t.key));
+      el.classList.toggle('resizing', !tray && this.drag?.mode === 'resize' && this.drag.key === t.key);
       if (el.parentElement !== parent) parent.append(el);
       existing.set(t.key, el);
     };
 
-    for (const t of b.items) render(t, (pagesEl.children[t.page ?? 0] as HTMLElement) ?? pagesEl.firstElementChild as HTMLElement, false);
+    for (const t of b.items) render(t, (pagesEl.children[t.page ?? 0] as HTMLElement) ?? (pagesEl.firstElementChild as HTMLElement), false);
     trayEl.style.display = editing && b.tray?.length ? '' : 'none';
     for (const t of b.tray ?? []) if (editing) render(t, trayEl, true);
 
@@ -781,11 +806,12 @@ export class SheetRenderer {
       el.remove();
       this.tileSigs.delete(el);
     }
+    this.syncGhosts(pagesEl, editing);
 
-    // Anything that moved slides from where it was drawn; the dragged tile stays on the pointer.
+    // Anything that moved slides from where it was drawn.
     for (const el of host.querySelectorAll<HTMLElement>('.tile')) {
       const before = was.get(el);
-      if (!before || el === this.drag?.el) continue;
+      if (!before) continue;
       // Moving to another page would fly the tile across the card: it fades in at its new place instead.
       if (before.page !== el.parentElement) {
         springAnimate(el, [{ opacity: 0, transform: 'scale(0.92)' }, { opacity: 1, transform: 'none' }], springs.content);
@@ -795,11 +821,42 @@ export class SheetRenderer {
       const r = el.getBoundingClientRect();
       const dx = a.left - r.left;
       const dy = a.top - r.top;
-      if (Math.abs(dx) + Math.abs(dy) > 0.5) springAnimate(el, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], springs.content);
+      if (el.classList.contains('resizing') && (Math.abs(a.width - r.width) > 0.5 || Math.abs(a.height - r.height) > 0.5)) {
+        // The tile being resized grows out of its old box rather than jumping.
+        springAnimate(el, [{ width: `${a.width}px`, height: `${a.height}px`, transform: `translate(${dx}px, ${dy}px)` }, { width: `${r.width}px`, height: `${r.height}px`, transform: 'none' }], springs.snappy);
+      } else if (Math.abs(dx) + Math.abs(dy) > 0.5) springAnimate(el, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], springs.content);
     }
   }
 
-  /** Remove (or put back) and resize, laid over a tile in edit mode. */
+  /** While editing, the empty cells of every page show faintly: the grid the tiles snap to. */
+  private syncGhosts(pagesEl: HTMLElement, editing: boolean): void {
+    const g = this.grid;
+    Array.from(pagesEl.children).forEach((child, i) => {
+      const page = child as HTMLElement;
+      const empty: Array<[number, number]> = [];
+      if (editing && g) {
+        const taken = new Set<string>();
+        for (const t of g.items) {
+          if ((t.page ?? 0) !== i) continue;
+          const c0 = t.col ?? 0;
+          const r0 = t.row ?? 0;
+          for (let r = r0; r < r0 + (t.h ?? 1); r++) for (let c = c0; c < c0 + (t.w ?? 1); c++) taken.add(`${c},${r}`);
+        }
+        for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) if (!taken.has(`${c},${r}`)) empty.push([c, r]);
+      }
+      const sig = empty.map(([c, r]) => `${c},${r}`).join(' ');
+      if (page.dataset.ghosts === sig) return;
+      page.dataset.ghosts = sig;
+      for (const old of page.querySelectorAll('.cell-ghost')) old.remove();
+      for (const [c, r] of empty) {
+        const ghost = make('i', 'cell-ghost');
+        ghost.style.gridArea = `${r + 1} / ${c + 1}`;
+        page.prepend(ghost);
+      }
+    });
+  }
+
+  /** Remove (or put back) and the resize corner, laid over a tile in edit mode. */
   private editControls(e: HTMLElement, t: Tile): void {
     const key = t.key;
     if (t.hidden) {
@@ -816,11 +873,13 @@ export class SheetRenderer {
     x.innerHTML = icon('minus');
     x.title = 'Take off the grid';
     this.bind(x, 'island:grid-hide', key);
-    const size = make('button', 'tile-size', t.sizeLabel ?? '');
-    size.type = 'button';
-    size.title = 'Change size';
-    this.bind(size, 'island:grid-size', key);
-    e.append(x, size);
+    e.append(x);
+    // Drag the corner to resize, as on a phone (startDrag, mode 'resize').
+    if ((t.sizes?.length ?? 0) > 1) {
+      const grip = iconEl('corner', 'tile-resize');
+      grip.title = 'Drag to resize';
+      e.append(grip);
+    }
   }
 
   // ---------------------------------------------------------------- pages
@@ -829,25 +888,106 @@ export class SheetRenderer {
     return host.querySelector<HTMLElement>('.pages')?.clientWidth || 1;
   }
 
+  /** The page in view (pages scroll sideways, one at a time). */
+  private visiblePage(host: HTMLElement): number {
+    const pages = host.querySelector<HTMLElement>('.pages');
+    if (!pages) return 0;
+    return Math.max(0, Math.min(pages.children.length - 1, Math.round(pages.scrollLeft / this.pageWidth(host))));
+  }
+
+  /** The page in view, or the one it is sliding to (unless that page has gone meanwhile). */
+  private currentPage(host: HTMLElement): number {
+    const aim = this.aim.get(host);
+    const pages = host.querySelector<HTMLElement>('.pages')?.children.length ?? 1;
+    if (aim !== undefined && aim < pages) return aim;
+    this.aim.delete(host);
+    return this.visiblePage(host);
+  }
+
   private goToPage(host: HTMLElement, i: number): void {
     const pages = host.querySelector<HTMLElement>('.pages');
     if (!pages) return;
+    this.aim.set(host, i);
     pages.scrollTo({ left: i * this.pageWidth(host), behavior: reducedMotion() ? 'auto' : 'smooth' });
   }
 
   private markPage(host: HTMLElement): void {
-    const pages = host.querySelector<HTMLElement>('.pages');
     const dots = host.querySelectorAll<HTMLElement>('.dot');
-    if (!pages || !dots.length) return;
-    const at = Math.round(pages.scrollLeft / this.pageWidth(host));
+    if (!dots.length) return;
+    const at = this.visiblePage(host);
     dots.forEach((d, i) => d.classList.toggle('on', i === at));
+  }
+
+  /** One dot per page, when there is more than one. */
+  private syncDots(host: HTMLElement, pages: number): void {
+    const dotsEl = host.querySelector<HTMLElement>('.dots')!;
+    const want = pages > 1 ? pages : 0;
+    if (dotsEl.children.length !== want) {
+      dotsEl.replaceChildren();
+      for (let i = 0; i < want; i++) {
+        const dot = make('button', 'dot');
+        dot.type = 'button';
+        dot.title = `Page ${i + 1}`;
+        dot.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.goToPage(host, i);
+        });
+        dotsEl.append(dot);
+      }
+    }
+    this.markPage(host);
+  }
+
+  /** A held tile may turn to the page before, the page after, or a new page after one that keeps tiles of its own. */
+  private canTurn(host: HTMLElement, dir: 1 | -1, key: string): boolean {
+    const pages = host.querySelector<HTMLElement>('.pages');
+    if (!pages) return false;
+    const at = this.currentPage(host);
+    if (dir < 0) return at > 0;
+    if (at < pages.children.length - 1) return true;
+    // Never two empty pages in a row: the last page must hold a tile besides the one carried.
+    const last = pages.children[pages.children.length - 1];
+    return Array.from(last.querySelectorAll<HTMLElement>('.tile')).some((t) => t.dataset.k !== key);
+  }
+
+  private turnPage(host: HTMLElement, dir: 1 | -1): void {
+    const pages = host.querySelector<HTMLElement>('.pages');
+    if (!pages) return;
+    const next = this.currentPage(host) + dir;
+    if (next < 0) return;
+    if (next >= pages.children.length) {
+      // Past the last page: a new, empty one, kept until the tile is let go.
+      this.dragPages = next + 1;
+      pages.append(make('div', 'page'));
+      this.syncDots(host, pages.children.length);
+      this.syncGhosts(pages, true);
+    }
+    this.goToPage(host, next);
+  }
+
+  /** The bar along the card's side that fills while a held tile waits there to turn the page. */
+  private showHold(host: HTMLElement, dir: -1 | 0 | 1): void {
+    const pages = host.querySelector<HTMLElement>('.pages');
+    for (const side of [-1, 1] as const) {
+      const bar = host.querySelector<HTMLElement>(side < 0 ? '.edge-hold.left' : '.edge-hold.right');
+      const fill = bar?.firstElementChild as HTMLElement | null;
+      if (!bar || !fill) continue;
+      const on = side === dir;
+      bar.classList.toggle('on', on);
+      for (const a of fill.getAnimations?.() ?? []) a.cancel();
+      if (!on) continue;
+      bar.style.height = `${pages?.offsetHeight ?? 0}px`;
+      // A timer, not decoration: it runs at full length even with reduced motion.
+      fill.animate?.([{ transform: 'scaleY(0)' }, { transform: 'scaleY(1)' }], { duration: EDGE_HOLD_MS, easing: 'linear', fill: 'forwards' });
+    }
   }
 
   // ---------------------------------------------------------------- long press and drag
 
   /**
-   * Long-press a tile to edit the grid. While editing, dragging a tile pushes the
-   * others out of its way; holding it at an edge turns the page.
+   * Long-press a tile (or an empty spot) to arrange the grid; still holding, the
+   * same press carries the tile. While editing, a tile is dragged straight away
+   * and its corner resizes it.
    */
   private wireGrid(host: HTMLElement): void {
     let press: { timer: ReturnType<typeof setTimeout>; x: number; y: number } | null = null;
@@ -856,12 +996,16 @@ export class SheetRenderer {
       press = null;
     };
     host.addEventListener('pointerdown', (e) => {
-      const tile = (e.target as HTMLElement).closest<HTMLElement>('.tile');
-      if (!tile || e.button !== 0 || (e.target as HTMLElement).closest('.tile-x, .tile-size, .tile-add')) return;
+      if (e.button !== 0 || this.drag) return;
+      const target = e.target as HTMLElement;
+      if (target.closest('.tile-x, .tile-add')) return;
+      const tile = target.closest<HTMLElement>('.tile');
+      const key = tile?.dataset.k ?? null;
       if (host.classList.contains('editing')) {
-        if (!tile.classList.contains('hidden-tile')) this.dragTile(host, tile, e);
+        if (tile && key && !tile.classList.contains('hidden-tile')) this.startDrag(host, key, e, target.closest('.tile-resize') ? 'resize' : 'move');
         return;
       }
+      if (!tile && !target.closest('.page')) return;
       cancel();
       press = {
         x: e.clientX,
@@ -872,114 +1016,269 @@ export class SheetRenderer {
           clearTimeout(this.swallowTimer);
           // If no click follows (the pointer was lifted elsewhere), stop swallowing.
           this.swallowTimer = setTimeout(() => (this.swallowClick = false), 700);
-          this.onAction('island:grid-edit', tile.dataset.k ?? null, tile);
-        }, 450),
+          this.onAction('island:grid-edit', key, tile ?? host);
+          if (key) this.startDrag(host, key, e, 'move');
+        }, LONG_PRESS_MS),
       };
     });
     host.addEventListener('pointermove', (e) => {
       if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 6) cancel();
     });
     for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) host.addEventListener(ev, cancel);
-    host.querySelector('.pages')?.addEventListener('scroll', () => this.markPage(host), { passive: true });
+    host.querySelector('.pages')?.addEventListener(
+      'scroll',
+      () => {
+        this.markPage(host);
+        // Arrived: the scroll position speaks for itself again.
+        const aim = this.aim.get(host);
+        const pages = host.querySelector<HTMLElement>('.pages');
+        if (aim !== undefined && pages && Math.abs(pages.scrollLeft - aim * this.pageWidth(host)) < 2) this.aim.delete(host);
+        // The page under a carried tile changed: where it would land did too.
+        if (this.drag?.host === host) this.drag.rescan();
+      },
+      { passive: true },
+    );
     host.addEventListener(
       'wheel',
       (e) => {
         const pages = host.querySelector<HTMLElement>('.pages');
         if (!pages || pages.scrollWidth <= pages.clientWidth + 2) return;
         e.preventDefault();
-        const at = Math.round(pages.scrollLeft / this.pageWidth(host));
+        const at = this.currentPage(host);
         this.goToPage(host, Math.max(0, Math.min(pages.children.length - 1, at + Math.sign(e.deltaY || e.deltaX))));
       },
       { passive: false },
     );
   }
 
-  /** The cell under the pointer, in the page it is over. */
-  private cellAt(host: HTMLElement, x: number, y: number): { page: number; col: number; row: number } | null {
-    const pagesEl = host.querySelector<HTMLElement>('.pages');
-    if (!pagesEl) return null;
+  /** Cell geometry of the page in view, in screen px. */
+  private gridMetrics(host: HTMLElement): { left: number; top: number; cols: number; rows: number; gap: number; pitchX: number; pitchY: number } {
+    const pages = host.querySelector<HTMLElement>('.pages')!;
+    const r = pages.getBoundingClientRect();
     const cols = Number(host.style.getPropertyValue('--cols')) || 4;
     const rows = Number(host.style.getPropertyValue('--rows')) || 4;
-    for (let i = 0; i < pagesEl.children.length; i++) {
-      const page = pagesEl.children[i] as HTMLElement;
-      const r = page.getBoundingClientRect();
-      if (x < r.left - 4 || x > r.right + 4 || y < r.top - 4 || y > r.bottom + 4) continue;
-      const col = Math.max(0, Math.min(cols - 1, Math.floor(((x - r.left) / r.width) * cols)));
-      const row = Math.max(0, Math.min(rows - 1, Math.floor(((y - r.top) / r.height) * rows)));
-      return { page: i, col, row };
-    }
-    return null;
+    const cell = parseFloat(host.style.getPropertyValue('--cell')) || 92;
+    const first = pages.firstElementChild as HTMLElement | null;
+    const gap = (first && parseFloat(getComputedStyle(first).columnGap)) || 8;
+    return { left: r.left, top: r.top, cols, rows, gap, pitchX: (r.width + gap) / cols, pitchY: cell + gap };
   }
 
-  private dragTile(host: HTMLElement, tile: HTMLElement, down: PointerEvent): void {
-    const key = tile.dataset.k;
-    if (!key) return;
-    const startX = down.clientX;
-    const startY = down.clientY;
-    let moving = false;
-    let edgeTimer: ReturnType<typeof setTimeout> | undefined;
-    let lastCell = '';
+  /** The cell a w x h tile snaps to with its top-left corner at (left, top), on the page in view. */
+  private cellUnder(host: HTMLElement, left: number, top: number, size: { w: number; h: number }): { page: number; col: number; row: number } {
+    const g = this.gridMetrics(host);
+    const col = Math.max(0, Math.min(g.cols - size.w, Math.round((left - g.left) / g.pitchX)));
+    const row = Math.max(0, Math.min(g.rows - size.h, Math.round((top - g.top) / g.pitchY)));
+    return { page: this.currentPage(host), col, row };
+  }
 
-    const follow = (ev: PointerEvent) => {
-      // Measured with the transform cleared, so the tile stays under the pointer
-      // even after the grid has re-packed around it.
-      tile.style.transform = '';
+  /** Of the sizes a tile may take, the one whose corner is nearest the pointer (a cell counts once the pointer is past its middle). */
+  private sizeAt(host: HTMLElement, anchor: { col: number; row: number }, p: { x: number; y: number }, sizes: Array<[number, number]>): [number, number] | null {
+    if (!sizes.length) return null;
+    const g = this.gridMetrics(host);
+    const across = (p.x - (g.left + anchor.col * g.pitchX) + g.gap / 2) / g.pitchX;
+    const down = (p.y - (g.top + anchor.row * g.pitchY) + g.gap / 2) / g.pitchY;
+    let best = sizes[0];
+    let bestD = Infinity;
+    for (const s of sizes) {
+      const d = (s[0] - across) ** 2 + (s[1] - down) ** 2;
+      if (d < bestD) {
+        best = s;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  /** A copy of the tile that follows the pointer above everything: the card clips its own content. */
+  private floatCopy(tile: HTMLElement, r: DOMRect): HTMLElement {
+    const f = tile.cloneNode(true) as HTMLElement;
+    for (const x of f.querySelectorAll('.tile-x, .tile-resize, .tile-add')) x.remove();
+    delete f.dataset.k;
+    f.classList.remove('drag-slot', 'resizing', 'act');
+    f.classList.add('tile-float');
+    f.style.gridArea = '';
+    f.style.width = `${r.width}px`;
+    f.style.height = `${r.height}px`;
+    f.style.transform = `translate3d(${r.left}px, ${r.top}px, 0)`;
+    this.stage.append(f);
+    requestAnimationFrame(() => f.classList.add('up'));
+    return f;
+  }
+
+  /** After a drop, the floating copy flies into the tile's spot and the tile shows again. */
+  private land(host: HTMLElement, key: string, float: HTMLElement): void {
+    this.landing = key;
+    const find = () => (host.isConnected ? host.querySelector<HTMLElement>(`.tile[data-k="${CSS.escape(key)}"]`) : null);
+    const done = () => {
+      clearTimeout(fallback);
+      float.remove();
+      if (this.landing !== key) return;
+      this.landing = null;
+      // Picked up again while it flew home: it is still being carried.
+      if (this.drag?.key !== key) find()?.classList.remove('drag-slot');
+    };
+    // Whatever happens to the animation (a hidden window pauses it), the tile shows again.
+    const fallback = setTimeout(done, 1200);
+    // The island redraws on the next frame; aim for where the tile is then.
+    requestAnimationFrame(() => {
+      const slot = find();
+      if (!slot) return done();
+      const to = slot.getBoundingClientRect();
+      float.classList.remove('up');
+      const anim = springAnimate(float, [{ transform: float.style.transform }, { transform: `translate3d(${to.left}px, ${to.top}px, 0)` }], springs.content, { fill: 'forwards' });
+      if (anim) anim.finished.then(done, done);
+      else done();
+    });
+  }
+
+  /**
+   * Carries a tile, or resizes it by its corner, until the pointer lets go.
+   * Moving: a copy floats under the pointer while the tile's own spot shows where
+   * it will land, and the grid re-packs live around it; held at the card's side
+   * for EDGE_HOLD_MS the next page slides in, a new one past the last. Resizing:
+   * the tile takes the size nearest the pointer and the others make room. The
+   * island saves the layout on the drop.
+   */
+  private startDrag(host: HTMLElement, key: string, down: PointerEvent, mode: 'move' | 'resize'): void {
+    const pointerId = down.pointerId;
+    const start = { x: down.clientX, y: down.clientY };
+    let last = start;
+    let live = false;
+    let grab = { x: 0, y: 0 };
+    let size = { w: 1, h: 1 };
+    let anchor = { page: 0, col: 0, row: 0 };
+    let sizes: Array<[number, number]> = [];
+    let float: HTMLElement | null = null;
+    let sent = '';
+    let pending: Record<string, number> | null = null;
+    let dwell: ReturnType<typeof setTimeout> | undefined;
+    let edge: { dir: 1 | -1; timer: ReturnType<typeof setTimeout> } | null = null;
+    const find = () => host.querySelector<HTMLElement>(`.tile[data-k="${CSS.escape(key)}"]`);
+    const num = (v: string | undefined, d: number) => (v ? Number(v) || 0 : d);
+
+    const flush = () => {
+      clearTimeout(dwell);
+      if (!pending) return;
+      const arg = pending;
+      pending = null;
+      sent = JSON.stringify(arg);
+      this.onAction('island:grid-move', { key, ...arg }, host);
+    };
+    // The grid re-packs once a carried tile rests over a spot (REFLOW_DWELL_MS), not on
+    // every cell it crosses; a size change or a drop applies at once.
+    const send = (arg: Record<string, number>, now: boolean) => {
+      clearTimeout(dwell);
+      pending = JSON.stringify(arg) === sent ? null : arg;
+      if (!pending) return;
+      if (now) flush();
+      else dwell = setTimeout(flush, REFLOW_DWELL_MS);
+    };
+
+    const stopEdge = () => {
+      if (!edge) return;
+      clearTimeout(edge.timer);
+      edge = null;
+      this.showHold(host, 0);
+    };
+    const holdEdge = () => {
+      const card = this.el.getBoundingClientRect();
+      const dir = last.x >= card.right - EDGE_ZONE ? 1 : last.x <= card.left + EDGE_ZONE ? -1 : 0;
+      if (edge && edge.dir === dir) return;
+      stopEdge();
+      if (!dir || !this.canTurn(host, dir, key)) return;
+      edge = {
+        dir,
+        timer: setTimeout(() => {
+          stopEdge();
+          // Asked again now: the grid may have changed under the held tile meanwhile.
+          if (this.canTurn(host, dir, key)) this.turnPage(host, dir);
+        }, EDGE_HOLD_MS),
+      };
+      this.showHold(host, dir);
+    };
+
+    const update = () => {
+      if (mode === 'resize') {
+        const s = this.sizeAt(host, anchor, last, sizes);
+        if (s) send({ ...anchor, w: s[0], h: s[1] }, true);
+        return;
+      }
+      if (float) float.style.transform = `translate3d(${last.x - grab.x}px, ${last.y - grab.y}px, 0)`;
+      send(this.cellUnder(host, last.x - grab.x, last.y - grab.y, size), false);
+      holdEdge();
+    };
+
+    const lift = (): boolean => {
+      const tile = find();
+      if (!tile) return false;
       const r = tile.getBoundingClientRect();
-      tile.style.transform = `translate(${ev.clientX - (r.left + r.width / 2)}px, ${ev.clientY - (r.top + r.height / 2)}px) scale(1.05)`;
+      grab = { x: start.x - r.left, y: start.y - r.top };
+      size = { w: num(tile.dataset.w, 1), h: num(tile.dataset.h, 1) };
+      anchor = { page: num(tile.dataset.page, 0), col: num(tile.dataset.col, 0), row: num(tile.dataset.row, 0) };
+      sizes = (tile.dataset.sizes ?? '')
+        .split(' ')
+        .filter(Boolean)
+        .map((s) => s.split('x').map(Number) as [number, number]);
+      live = true;
+      this.drag = { key, mode, host, abort: () => end(true), rescan: () => live && update() };
+      try {
+        host.setPointerCapture(pointerId);
+      } catch {
+        /* the pointer is already gone; pointerup ends the drag */
+      }
+      if (mode === 'move') {
+        float = this.floatCopy(tile, r);
+        tile.classList.add('drag-slot');
+      } else tile.classList.add('resizing');
+      host.classList.add(mode === 'move' ? 'carrying' : 'sizing');
+      this.onAction('island:grid-lift', key, tile);
+      return true;
     };
 
     const move = (ev: PointerEvent) => {
-      if (!moving) {
-        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return;
-        moving = true;
-        this.drag = { key, el: tile, host, pointer: ev.pointerId };
-        host.setPointerCapture(ev.pointerId);
-        tile.classList.add('dragging');
+      if (ev.pointerId !== pointerId) return;
+      // Let go somewhere the island could not see: the first move after that ends it.
+      if (live && ev.buttons === 0) return end(false);
+      last = { x: ev.clientX, y: ev.clientY };
+      if (!live) {
+        if (Math.hypot(last.x - start.x, last.y - start.y) < 5) return;
+        if (!lift()) return end(false);
       }
-      follow(ev);
-      const cell = this.cellAt(host, ev.clientX, ev.clientY);
-      if (cell) {
-        const id = `${cell.page}:${cell.col}:${cell.row}`;
-        if (id !== lastCell) {
-          lastCell = id;
-          this.onAction('island:grid-move', { key, ...cell }, tile);
-        }
-      }
-      // Held near an edge: turn the page.
-      const r = host.getBoundingClientRect();
-      const near = ev.clientX < r.left + 36 ? -1 : ev.clientX > r.right - 36 ? 1 : 0;
-      if (!near) {
-        clearTimeout(edgeTimer);
-        edgeTimer = undefined;
-      } else if (!edgeTimer) {
-        edgeTimer = setTimeout(() => {
-          edgeTimer = undefined;
-          const pagesEl = host.querySelector<HTMLElement>('.pages');
-          if (!pagesEl) return;
-          const at = Math.round(pagesEl.scrollLeft / this.pageWidth(host));
-          this.goToPage(host, Math.max(0, Math.min(pagesEl.children.length - 1, at + near)));
-        }, 450);
-      }
+      update();
+    };
+    const up = (ev: PointerEvent) => {
+      if (ev.pointerId === pointerId) end(false);
     };
 
-    const end = () => {
-      clearTimeout(edgeTimer);
+    const end = (aborted: boolean) => {
+      stopEdge();
+      // Dropped before the grid caught up: it lands where it was let go.
+      if (aborted) clearTimeout(dwell);
+      else if (live) flush();
       host.removeEventListener('pointermove', move);
-      host.removeEventListener('pointerup', end);
-      host.removeEventListener('pointercancel', end);
-      if (!moving) return;
-      const from = tile.getBoundingClientRect();
+      host.removeEventListener('pointerup', up);
+      host.removeEventListener('pointercancel', up);
+      if (!live) return;
+      live = false;
       this.drag = null;
-      tile.classList.remove('dragging');
-      tile.style.transform = '';
-      const to = tile.getBoundingClientRect();
-      springAnimate(tile, [{ transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(1.05)` }, { transform: 'none' }], springs.content);
-      this.onAction('island:grid-drop', key, tile);
+      this.dragPages = 0;
+      host.classList.remove('carrying', 'sizing');
+      find()?.classList.remove('resizing');
+      try {
+        host.releasePointerCapture(pointerId);
+      } catch {
+        /* already released */
+      }
+      this.onAction(aborted ? 'island:grid-cancel' : 'island:grid-drop', key, host);
+      if (float) {
+        if (aborted) float.remove();
+        else this.land(host, key, float);
+      }
     };
 
     host.addEventListener('pointermove', move);
-    host.addEventListener('pointerup', end);
-    host.addEventListener('pointercancel', end);
+    host.addEventListener('pointerup', up);
+    host.addEventListener('pointercancel', up);
   }
 
   /**

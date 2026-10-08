@@ -222,3 +222,35 @@ switch and glow all still untested on screen by Moss.
 - Checked: ignored probe `dnd::tests::flips_this_pcs_do_not_disturb` (flip and straight back, then read where Windows settled) passed 4 of 4, each confirmed by an independent PowerShell read of the profile and of WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED (`C:\tmp\qh-probe.ps1`); 95 cargo lib tests; the 26 Claude island tests. Moss's DND was on before testing and is on again. Not built as a release or tried from the pill yet.
 - The tree also holds another session's uncommitted tile-move work (`src/core/grid.ts`, `test/grid.test.ts`): tsc fails on `dropBefore`/`moveBefore` and one grid test fails. Not touched.
 - 10:25: **v0.2.2 published as the Latest release** (github.com/cutsandedges21/windows-dynamic-island/releases/tag/v0.2.2), only asset Island.exe (8.7 MB, sha256 15ae23fa…91d3, reports 0.2.2), tag on 6fe7b48. Built in a clean worktree (`C:\tmp\island-release`, now removed) with its own Cargo cache `C:\tmp\island-release-target`, kept for faster next releases, because the main tree held the other session's uncommitted grid/sheet/onboarding work, which stays uncommitted. Clean tree: tsc, 305 Vitest. `releases/latest/download/Island.exe` serves the same bytes. Not yet seen: Moss's 0.2.1 updating itself to 0.2.2, and DND from the pill.
+
+## 2026-10-08, 11:00: Control Center arranged like iOS: exact cells, pages, drag to resize
+
+- Moss asked for an invisible grid, 4 across and 3 or 4 down. It was 4, so it stays 4: a page holds 16 1x1 or eight 2x1. Tiles must drag anywhere. Holding a tile at the right edge for 2 s makes a new page. Resizing is by dragging, not the size button. Reference: iOS 18 Control Center edit mode.
+- Found: dragging never reordered anything. The sheet sent `island:grid-move`/`island:grid-drop`, but `handleAction` never routed them. A narrow card (Small size) also fell back to 3 columns.
+- **Layout model** (`src/core/grid.ts`, rewritten): pages of tile keys in reading order, plus `null` for empty cells the user left.
+  - Each page packs first-fit; what doesn't fit goes to the front of the next page.
+  - `settle` drops empty cells after a page's last tile and pages with no tile. Absent tiles (music not playing) keep their place in the list and take no cells.
+  - `moveTile` lifts the tile (its hole closes, as on a phone) and puts it back on the exact cell: after empty cells when dropped past the others, in front of what it was dropped onto otherwise. Empty cells under it are its own. One page past the last is a new page. Dropping it back where it was changes nothing.
+  - Resize is `moveTile` on the same cell with the new size.
+  - `withNew` puts never-placed tiles after their activities-order neighbour, taking empty cells right behind it.
+  - Saved as `island.grid.pages` (checked in `migrate`); `grid.order` only seeds the first layout. 43 grid tests.
+- **Island** (`island.ts`):
+  - Always 4x4 cells (`GRID_COLS`/`GRID_ROWS`), with a minimum width so cells stay at least 90 px.
+  - `grid-lift` snapshots pages and sizes. `grid-move` previews from that snapshot, so dragging back over a spot gives the same layout. `grid-drop` saves the pages, plus the size if it changed. `grid-cancel` throws the preview away.
+  - The size button and `island:grid-size` are gone.
+- **Sheet** (`sheet.ts`):
+  - Long-press (450 ms) a tile or an empty spot to arrange; still holding, the same press carries the tile.
+  - A copy floats above the card under the pointer (the card clips its own content). The tile's spot shows where it lands. The grid re-packs once the tile rests 150 ms over a spot, and at once on the drop.
+  - Pages: holding within 30 px of the card's side (or past it) for 2 s turns the page; a bar along that side fills meanwhile. Past the last page it makes one new page, never two empty pages in a row. Empty pages go on the drop.
+  - The corner arc (`icons.ts` `corner`) resizes to the allowed size nearest the pointer: 1x1, 2x1, 1x2, 2x2; lists, cards and players stay 2 wide.
+  - Empty cells show as faint squares only while arranging.
+  - While a tile is held, the card's hit area reaches 160 px past the card so the overlay keeps the mouse. Escape, or the card closing, mid-drag cancels.
+- Checked: tsc, 328 Vitest, and in headless Edge on the preview (`/?fill`):
+  - long-press then carry, dropping onto a tile, dropping a tile on itself (no change);
+  - a quick sweep with an immediate release (lands where let go);
+  - Escape mid-drag (nothing saved);
+  - holding at the right edge through every page to a new page, then a drop there (saved `· · · · · timer`);
+  - corner resize 1x1, 2x1, 2x2 (the others reflow, the size is saved);
+  - − to the tray and + back to the same spot, then Done.
+- Not yet tried on the real overlay with a mouse. Uncommitted; the release session owns git.
+- Preview QA: the MCP Playwright window drops to ~2 fps when other windows cover it, and springs run at a fraction of their speed. For real timing, launch headless Edge inside `browser_run_code_unsafe` with `browserType().launch({ channel: 'msedge', headless: true })` and close it in `finally`.

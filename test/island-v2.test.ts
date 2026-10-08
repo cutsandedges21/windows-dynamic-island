@@ -31,9 +31,20 @@ describe('settings v2', () => {
 
   it('keeps a well-formed grid layout and drops the rest', () => {
     const raw = defaultSettings() as unknown as Record<string, any>;
-    raw.island.grid = { order: ['claude/claude', 7, 'island/day', 'claude/claude'], sizes: { 'music/music': '2x2', bad: '9x9' }, hidden: ['weather/weather', null] };
+    raw.island.grid = {
+      order: ['claude/claude', 7, 'island/day', 'claude/claude'],
+      sizes: { 'music/music': '2x2', bad: '9x9' },
+      hidden: ['weather/weather', null],
+      pages: [['island/day', null, 'claude/claude', 5], 'junk', [null, 'claude/claude', 'music/music', '']],
+    };
     const s = migrate(raw);
-    expect(s.island.grid).toEqual({ order: ['claude/claude', 'island/day'], sizes: { 'music/music': '2x2' }, hidden: ['weather/weather'] });
+    expect(s.island.grid).toEqual({
+      order: ['claude/claude', 'island/day'],
+      sizes: { 'music/music': '2x2' },
+      hidden: ['weather/weather'],
+      // Empty cells stay; a key already on an earlier page, numbers and blanks go.
+      pages: [['island/day', null, 'claude/claude'], [null, 'music/music']],
+    });
   });
 });
 

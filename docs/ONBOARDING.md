@@ -22,7 +22,7 @@ The same model list, as rows with Use / Download / Resume / Cancel / Delete, sit
 | A glance tick | that activity's tile |
 | A model picked on screen 4 | Local AI |
 
-Helpers stay switched on but off the grid unless picked: Sound, Downloads, Screenshots, Devices, Other apps, and Battery on a laptop. They still pop up for their events (the volume, a finished download, a USB drive). `grid.hidden` takes an activity id for this (`hiddenTest` in `src/core/grid.ts`), and "+" in grid edit mode brings such a tile back. Integrations with keys (GitHub, Vercel…) and Quick Actions keep whatever state they had. The grid order follows the answers; sizes reset.
+Helpers stay switched on but off the grid unless picked: Sound, Downloads, Screenshots, Devices, Other apps, and Battery on a laptop. They still pop up for their events (the volume, a finished download, a USB drive). `grid.hidden` takes an activity id for this (`hiddenTest` in `src/core/grid.ts`), and "+" in grid edit mode brings such a tile back. Integrations with keys (GitHub, Vercel…) and Quick Actions keep whatever state they had. The grid order follows the answers; sizes and any arranged pages reset.
 
 ## First run
 

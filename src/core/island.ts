@@ -9,7 +9,7 @@ import { CATALOG_BY_ID } from '../activities/catalog';
 import type { Activity, ActivityContext, ActivityStatus, RenderEnv, SheetEnv, SurfaceOptions } from './activity';
 import { setReducedMotion } from './animator';
 import { BorderGlow, type GlowSpec } from './glow';
-import { dropBefore, hiddenTest, leadFirst, moveBefore, packGrid, pageCount, rowsUsed, sizeOf, unhide, type GridSlot } from './grid';
+import { CELLS, hiddenTest, leadFirst, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
 import { innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
 import { native, on, sendTo, type MenuItem } from './native';
 import { choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
@@ -26,13 +26,18 @@ type View = 'main' | 'overflow' | 'menu';
 const levelIdx = (l: Level) => LEVELS.indexOf(l);
 /** Tile kinds that read well in a single column. */
 const NARROW_OK = new Set(['stat', 'actions', 'dots']);
-/** Cell size in px for each island size, so a small island gets a small grid. */
+/** The sizes a list, card or player can take: two columns at least. */
+const WIDE_SIZES: TileSize[] = ['2x1', '2x2'];
 /** Row height per island size (the width comes from the pill). */
 const CELL_PX = { small: 80, medium: 92, large: 106 } as const;
 const SIZE_SCALE = { small: 0.88, medium: 1, large: 1.14 } as const;
 const GRID_GAP = 8;
 const GRID_PAD = 14;
-const ROWS_PER_PAGE = 4;
+/** Every page of the grid is this many cells: always four across. */
+const GRID_COLS = 4;
+const GRID_ROWS = 4;
+/** Narrowest grid that still gives each of the four columns 90 px. */
+const GRID_MIN_W = GRID_COLS * 90 + GRID_GAP * (GRID_COLS - 1) + GRID_PAD * 2;
 const atLeast = (a: Level, b: Level): Level => (levelIdx(a) >= levelIdx(b) ? a : b);
 
 export class Island {
@@ -77,11 +82,15 @@ export class Island {
   private sheetEngaged = false;
   /** The grid is in edit mode (a tile was long-pressed). */
   private gridEditing = false;
-  /** The packing of the last grid drawn, and the order it came from (for drops). */
+  /** The layout of the last grid drawn: its pages and where every tile landed. */
+  private gridPages: GridPages = [];
   private gridSlots: GridSlot[] = [];
-  private gridOrder: string[] = [];
-  /** A drag changed the order; saved when the tile is dropped. */
-  private gridDirty = false;
+  /**
+   * A tile being dragged or resized: the layout and sizes when it was picked up,
+   * its size now, and the layout it would get if dropped this moment (drawn
+   * instead of the saved one until the drop).
+   */
+  private gridDrag: { key: string; snap: GridPages; dims: Map<string, { w: number; h: number }>; size: { w: number; h: number }; preview: GridPages | null } | null = null;
   /** Segment key under the pointer: tells whose card a hover asks for. */
   private hoverKey: string | null = null;
   /** Light on the pill's edge and on an urgent card's, in the tone of whatever is happening. */
@@ -732,16 +741,14 @@ export class Island {
 
   /**
    * The grid is as wide as the open island, so it looks like it belongs to it,
-   * and everything in it scales with the island's size setting.
+   * and everything in it scales with the island's size setting. It is always
+   * four cells across and four down per page.
    */
   private gridGeometry(pillW: number): { cols: number; rows: number; cell: number; width: number } {
     const scale = SIZE_SCALE[this.settings.island.size] ?? 1;
-    const width = Math.round(Math.min(this.area.width - 32, Math.max(460, Math.min(pillW, 760)) * scale));
-    // Four columns unless that would squeeze the cells too narrow to read.
-    let cols = 4;
-    const cellW = (c: number) => (width - GRID_PAD * 2 - GRID_GAP * (c - 1)) / c;
-    while (cols > 2 && cellW(cols) < 104) cols--;
-    return { cols, rows: ROWS_PER_PAGE, cell: Math.round(CELL_PX[this.settings.island.size] ?? CELL_PX.medium), width };
+    const want = Math.max(460, Math.min(pillW, 760)) * scale;
+    const width = Math.round(Math.min(this.area.width - 32, Math.max(GRID_MIN_W, want)));
+    return { cols: GRID_COLS, rows: GRID_ROWS, cell: Math.round(CELL_PX[this.settings.island.size] ?? CELL_PX.medium), width };
   }
 
   /** Control Center: one tile per switched-on activity, in the user's order. */
@@ -780,33 +787,39 @@ export class Island {
   }
 
   /**
-   * The user's grid: their order and their sizes, packed into pages. Tiles they
-   * took off the grid wait in the tray while editing. Nothing stores positions:
-   * the packing is recomputed, so moving one tile shuffles the rest for free.
+   * The user's grid: their pages and their sizes (src/core/grid.ts). Tiles they took
+   * off the grid wait in the tray while editing. While a tile is dragged or resized,
+   * the grid shows the layout it would get if let go now.
    */
   private arrange(natural: Tile[], geo: { cols: number; rows: number; cell: number }): SheetView['blocks'] {
     const layout = this.settings.island.grid;
-    const rank = new Map(layout.order.map((k, i) => [k, i]));
-    const sized = natural
-      .map((t, i) => {
-        const saved = layout.sizes[t.key];
-        const [sw, sh] = saved ? (saved.split('x').map(Number) as [number, number]) : [t.span ?? 1, t.rows ?? 1];
-        // Lists, cards and players need two columns whatever was asked for.
-        const w = Math.min(geo.cols, NARROW_OK.has(t.body.k) ? sw : Math.max(2, sw));
-        const h = Math.max(1, Math.min(geo.rows, sh));
-        return { tile: { ...t, w, h, sizeLabel: `${w}×${h}` }, at: rank.get(t.key) ?? 10_000 + i };
-      })
-      .sort((a, b) => a.at - b.at)
-      .map((x) => x.tile);
+    const drag = this.gridDrag;
+    const sized = natural.map((t) => {
+      const narrow = NARROW_OK.has(t.body.k);
+      const saved = layout.sizes[t.key];
+      const [sw, sh] = saved ? (saved.split('x').map(Number) as [number, number]) : [t.span ?? 1, t.rows ?? 1];
+      // Lists, cards and players need two columns whatever was asked for.
+      let w = Math.min(geo.cols, narrow ? sw : Math.max(2, sw));
+      let h = Math.max(1, Math.min(geo.rows, sh));
+      if (drag?.key === t.key) ({ w, h } = drag.size);
+      const sizes = (narrow ? TILE_SIZES : WIDE_SIZES).map((x): [number, number] => [CELLS[x].w, CELLS[x].h]);
+      return { ...t, w, h, sizes };
+    });
 
     const isHidden = hiddenTest(layout.hidden);
     const shown = sized.filter((t) => !isHidden(t.key));
-    const slots = packGrid(shown.map((t) => ({ key: t.key, w: t.w, h: t.h })), geo.cols, geo.rows);
-    const where = new Map(slots.map((slot) => [slot.key, slot]));
+    const dims = new Map(shown.map((t) => [t.key, { w: t.w, h: t.h }]));
+    const dimsOf: GridDims = (k) => dims.get(k) ?? null;
+    const saved = drag?.preview ?? (layout.pages.length ? layout.pages : layout.order.length ? [layout.order] : []);
+    const { pages, slots } = settle(withNew(saved, shown.map((t) => t.key), dimsOf), dimsOf, geo.cols, geo.rows);
+    this.gridPages = pages;
     this.gridSlots = slots;
-    this.gridOrder = shown.map((t) => t.key);
-    const items: Tile[] = shown.map((t) => ({ ...t, ...(where.get(t.key) ?? { page: 0, col: 0, row: 0 }) }));
-    const tray: Tile[] = this.gridEditing ? sized.filter((t) => isHidden(t.key)).map((t) => ({ ...t, w: 1, h: 1, hidden: true })) : [];
+    const where = new Map(slots.map((slot) => [slot.key, slot]));
+    const items: Tile[] = shown.flatMap((t) => {
+      const slot = where.get(t.key);
+      return slot ? [{ ...t, page: slot.page, col: slot.col, row: slot.row, w: slot.w, h: slot.h }] : [];
+    });
+    const tray: Tile[] = this.gridEditing ? sized.filter((t) => isHidden(t.key)).map((t) => ({ ...t, w: 1, h: 1, hidden: true, sizes: undefined })) : [];
     // The card is only as tall as the rows the tiles reach; editing opens every row to drag into.
     const rows = this.gridEditing ? geo.rows : rowsUsed(slots);
 
@@ -828,10 +841,16 @@ export class Island {
 
   /** Sizes a tile may take: lists, cards and players need the width of two cells. */
   private sizesFor(key: string): TileSize[] {
-    return NARROW_OK.has(this.lastTiles.get(key) ?? '') ? TILE_SIZES : ['2x1', '2x2'];
+    return NARROW_OK.has(this.lastTiles.get(key) ?? '') ? TILE_SIZES : WIDE_SIZES;
   }
 
   private lastTiles = new Map<string, string>();
+
+  /** Tile keys worth keeping in the saved layout: on the grid now, or from an activity that still exists. */
+  private keepKey(key: string, present: Map<string, unknown>): boolean {
+    const id = key.split('/')[0];
+    return present.has(key) || id === 'island' || CATALOG_BY_ID.has(id) || this.running.has(id);
+  }
 
   private gridAction(action: string, arg: unknown): void {
     const grid = this.settings.island.grid;
@@ -843,9 +862,10 @@ export class Island {
         return;
       case 'island:grid-done':
         this.gridEditing = false;
+        this.gridDrag = null;
         return;
       case 'island:grid-reset':
-        this.settings.island.grid = { order: [], sizes: {}, hidden: [] };
+        this.settings.island.grid = { order: [], sizes: {}, hidden: [], pages: [] };
         break;
       case 'island:grid-hide':
         if (key && !grid.hidden.includes(key)) grid.hidden.push(key);
@@ -853,31 +873,48 @@ export class Island {
       case 'island:grid-show':
         grid.hidden = unhide(grid.hidden, key);
         break;
-      case 'island:grid-size': {
-        const options = this.sizesFor(key);
+      case 'island:grid-lift': {
+        // A drag or resize begins. Every preview is worked out from the grid as it is
+        // now, so dragging back over a spot always gives the same layout.
         const slot = this.gridSlots.find((x) => x.key === key);
-        const now = grid.sizes[key] ?? (slot ? sizeOf(slot.w, slot.h) : undefined);
-        const i = now ? options.indexOf(now) : -1;
-        grid.sizes[key] = options[(i + 1) % options.length];
-        break;
-      }
-      case 'island:grid-move': {
-        // Live reflow: the order changes as the tile is dragged over the others.
-        const a = (arg ?? {}) as { key?: unknown; page?: unknown; col?: unknown; row?: unknown };
-        if (typeof a.key !== 'string' || typeof a.page !== 'number' || typeof a.col !== 'number' || typeof a.row !== 'number') return;
-        const before = dropBefore(this.gridSlots, this.gridOrder, a.key, a.page, a.col, a.row);
-        const next = moveBefore(this.gridOrder, a.key, before);
-        if (next.join('\u0000') === this.gridOrder.join('\u0000')) return;
-        this.gridOrder = next;
-        grid.order = [...next, ...grid.order.filter((k) => !next.includes(k))];
-        this.gridDirty = true;
-        this.schedule();
+        if (!slot) return;
+        this.gridDrag = {
+          key,
+          snap: this.gridPages.map((p) => [...p]),
+          dims: new Map(this.gridSlots.map((x) => [x.key, { w: x.w, h: x.h }])),
+          size: { w: slot.w, h: slot.h },
+          preview: null,
+        };
+        // The card's hit area reaches past its edges while a tile is held.
+        this.publishHit(this.renderer.rect, true);
         return;
       }
-      case 'island:grid-drop':
-        if (!this.gridDirty) return;
-        this.gridDirty = false;
+      case 'island:grid-move': {
+        // Live: the grid shows where everything goes if the tile is let go here.
+        const drag = this.gridDrag;
+        const a = (arg ?? {}) as { key?: unknown; page?: unknown; col?: unknown; row?: unknown; w?: unknown; h?: unknown };
+        if (!drag || a.key !== drag.key || typeof a.page !== 'number' || typeof a.col !== 'number' || typeof a.row !== 'number') return;
+        if (typeof a.w === 'number' && typeof a.h === 'number' && a.w <= 2 && a.h <= 2 && this.sizesFor(drag.key).includes(sizeOf(a.w, a.h))) {
+          drag.size = { w: a.w, h: a.h };
+        }
+        const at = { page: a.page, col: a.col, row: a.row };
+        drag.preview = moveTile(drag.snap, drag.key, at, drag.size, (k) => drag.dims.get(k) ?? null, GRID_COLS, GRID_ROWS).pages;
+        return;
+      }
+      case 'island:grid-drop': {
+        const drag = this.gridDrag;
+        this.gridDrag = null;
+        this.publishHit(this.renderer.rect, true);
+        if (!drag?.preview || drag.key !== key) return;
+        grid.pages = drag.preview.map((p) => p.filter((e) => e === null || this.keepKey(e, drag.dims))).filter((p) => p.length > 0);
+        const was = drag.dims.get(drag.key);
+        if (was && (was.w !== drag.size.w || was.h !== drag.size.h)) grid.sizes[drag.key] = sizeOf(drag.size.w, drag.size.h);
         break;
+      }
+      case 'island:grid-cancel':
+        this.gridDrag = null;
+        this.publishHit(this.renderer.rect, true);
+        return;
     }
     this.saveSettings();
   }
@@ -1017,6 +1054,7 @@ export class Island {
     this.hoverKey = null;
     this.sheetEngaged = false;
     this.gridEditing = false;
+    this.gridDrag = null;
     this.open = false;
     this.view = 'main';
     this.selected = null;
@@ -1091,8 +1129,10 @@ export class Island {
       case 'island:grid-reset':
       case 'island:grid-hide':
       case 'island:grid-show':
-      case 'island:grid-size':
-      case 'island:grid-order':
+      case 'island:grid-lift':
+      case 'island:grid-move':
+      case 'island:grid-drop':
+      case 'island:grid-cancel':
         this.gridAction(action, arg);
         break;
       case 'island:wheel':

@@ -61,6 +61,8 @@ const P: Record<string, string> = {
   server: '<rect x="3.5" y="4" width="17" height="7" rx="1.8"/><rect x="3.5" y="13" width="17" height="7" rx="1.8"/><path d="M7 7.5h.01M7 16.5h.01"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   minus: '<path d="M5 12h14"/>',
+  /** The resize handle hugging a tile's bottom-right corner. */
+  corner: '<path d="M20 7.5a12.5 12.5 0 0 1-12.5 12.5"/>',
   refresh: '<path d="M20 11.5A8 8 0 006 6.3L4 8.5M4 4v4.5h4.5M4 12.5a8 8 0 0014 5.2l2-2.2M20 20v-4.5h-4.5"/>',
   terminal: '<rect x="2.5" y="4" width="19" height="16" rx="2.4"/><path d="M6.5 9l3 3-3 3M12 15.5h5"/>',
   external: '<path d="M14 4.5h5.5V10M19.5 4.5L11 13M17.5 14v4.5a2 2 0 01-2 2h-10a2 2 0 01-2-2v-10a2 2 0 012-2H10"/>',

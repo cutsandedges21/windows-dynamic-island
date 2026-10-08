@@ -141,7 +141,7 @@ export function applyPlan(s: Settings, plan: Plan, city: string): Settings {
   const out = cloneSettings(s);
   for (const [id, cfg] of Object.entries(out.activities.config)) if (MANAGED.has(id)) cfg.enabled = plan.enabled.includes(id);
   out.activities.order = [...plan.picked, ...out.activities.order.filter((id) => !plan.picked.includes(id))];
-  out.island.grid = { order: [], sizes: {}, hidden: [...plan.hidden] };
+  out.island.grid = { order: [], sizes: {}, hidden: [...plan.hidden], pages: [] };
   const place = city.trim();
   if (place && out.activities.config.weather) out.activities.config.weather.options.city = place;
   out.general.onboarded = true;
