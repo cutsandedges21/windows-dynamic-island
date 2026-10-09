@@ -16,7 +16,7 @@ import { choosePrimary, type Candidate, type Choice as Picked, type Surface } fr
 import type { MirrorFrame } from './mirror';
 import { PillRenderer } from './renderer';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
-import { ACCENTS, migrate, TILE_SIZES, type Settings, type TileSize } from './settings';
+import { accentColor, migrate, TILE_SIZES, type Settings, type TileSize } from './settings';
 import { availableHere } from './platform';
 import { mapActions, SheetRenderer, type SheetView, type Tile } from './sheet';
 import { springs } from './spring';
@@ -177,7 +177,8 @@ export class Island {
   private applyLook(): void {
     const s = this.settings.island;
     setReducedMotion(s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches));
-    document.documentElement.style.setProperty('--accent', ACCENTS[s.accent] ?? s.accent ?? ACCENTS.ember);
+    document.documentElement.style.setProperty('--accent', accentColor(s));
+    document.documentElement.dataset.pill = s.color;
   }
 
   private applySettings(next: Settings): void {
@@ -244,7 +245,7 @@ export class Island {
 
   private sendMirror(frame: MirrorFrame): void {
     if (!this.mirrorCount) return;
-    const key = `${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.reduce}`;
+    const key = `${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.reduce}`;
     if (key === this.mirrorKey && !frame.bump) return;
     this.mirrorKey = key;
     this.mirrorFrame = frame;
@@ -545,7 +546,7 @@ export class Island {
       sig, swap, bump: bump && !hiddenEverywhere, placed, w, h, orient, anchor, edge: s.edge,
       hidden: hiddenEverywhere, fsHide, fullscreen: this.fullscreenAny,
       glow: beamSpec(beam), speed: s.glow,
-      accent: ACCENTS[s.accent] ?? s.accent ?? ACCENTS.ember, reduce: s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches),
+      accent: accentColor(s), color: s.color, reduce: s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches),
     });
     this.pillInput = placed.some((p) => p.seg.t === 'input');
     this.syncInput();

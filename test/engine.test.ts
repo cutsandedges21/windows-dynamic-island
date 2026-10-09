@@ -6,7 +6,7 @@ import { contentOrigin, expansionVector, levelWidth, normalizeWidths, orientatio
 import { choosePrimary, rankOf, type Candidate } from '../src/core/priority';
 import { timeLike } from '../src/core/renderer';
 import { fitSegments, fitVertical, type Seg } from '../src/core/segments';
-import { defaultActivityConfig, migrate } from '../src/core/settings';
+import { accentColor, defaultActivityConfig, migrate } from '../src/core/settings';
 import { solve, Spring, springEasing, springs } from '../src/core/spring';
 
 describe('springs', () => {
@@ -186,6 +186,20 @@ describe('settings migration', () => {
     expect(s.activities.config.music.enabled).toBe(false);
     expect(s.activities.config.music.options.pausedMinutes).toBe(9);
     expect(s.activities.config.music.options.showArt).toBe(true);
+  });
+
+  it('pill colour: black by default, any of the five kept, anything else back to black', () => {
+    expect(migrate({}).island.color).toBe('black');
+    for (const c of ['white', 'silver', 'blur', 'glass']) expect(migrate({ island: { color: c } }).island.color).toBe(c);
+    expect(migrate({ island: { color: 'pink' } }).island.color).toBe('black');
+  });
+
+  it('a white accent turns dark on a white or silver pill only', () => {
+    const island = (color: string) => ({ ...migrate({ island: { color, accent: 'white' } }).island });
+    expect(accentColor(island('black'))).toBe('#ffffff');
+    expect(accentColor(island('glass'))).toBe('#ffffff');
+    expect(accentColor(island('white'))).toBe('#1c1c1e');
+    expect(accentColor(island('silver'))).toBe('#1c1c1e');
   });
 });
 

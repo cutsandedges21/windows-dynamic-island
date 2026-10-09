@@ -714,6 +714,7 @@ function settingsPage(): HTMLElement {
   return h('div', { class: 'page' }, [
     h('div', { class: 'page-head' }, [h('h1', { text: 'Settings' }), h('p', { text: 'How Island looks and behaves everywhere.' })]),
     section('Appearance', [
+      row('Pill colour', 'The whole island, card included.', segmented(i.color, [['black', 'Black'], ['white', 'White'], ['silver', 'Silver'], ['blur', 'Blur'], ['glass', 'Glass']], (v) => { i.color = v; save(true); render(); })),
       row('Accent', null, accents),
       row('Size', 'Pill height and text size.', segmented(i.size, [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], (v) => { i.size = v; save(true); render(); })),
       row('Distance from the edge', 'Gap between the island and its screen edge.', edge),

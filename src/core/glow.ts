@@ -48,6 +48,7 @@ export class BorderGlow {
   private readonly core: HTMLElement;
   private readonly halo: HTMLElement;
   private spec: GlowSpec | null = null;
+  /** The size last written to the ring. */
   private rect: Rect = { x: 0, y: 0, w: 0, h: 0 };
   private hideTimer: ReturnType<typeof setTimeout> | undefined;
   private pace = GLOW_PACE.medium;
@@ -94,10 +95,12 @@ export class BorderGlow {
    * so it writes one transform and touches the rest only when the size changes.
    */
   place(rect: Rect): void {
-    const sameSize = Math.abs(rect.w - this.rect.w) < 0.25 && Math.abs(rect.h - this.rect.h) < 0.25;
-    this.rect = rect;
     this.el.style.transform = `translate3d(${rect.x}px, ${rect.y}px, 0)`;
-    if (sameSize) return;
+    // Measured against the size last written, not the last frame: a spring's tail moves
+    // a fraction of a pixel per frame, and comparing frame to frame froze the ring short
+    // of the pill on the side it grows toward.
+    if (Math.abs(rect.w - this.rect.w) < 0.1 && Math.abs(rect.h - this.rect.h) < 0.1) return;
+    this.rect = rect;
     const { w, h } = rect;
     this.el.style.width = `${w}px`;
     this.el.style.height = `${h}px`;

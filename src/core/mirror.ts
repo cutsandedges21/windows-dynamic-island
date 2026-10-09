@@ -8,6 +8,7 @@ import { pillRect, tuckedRect, type Anchor, type Area, type Orientation } from '
 import { native, on, type Placement } from './native';
 import { PillRenderer } from './renderer';
 import type { Placed } from './segments';
+import type { PillColor } from './settings';
 import { springs } from './spring';
 
 export interface MirrorFrame {
@@ -29,6 +30,7 @@ export interface MirrorFrame {
   glow: GlowSpec | null;
   speed: GlowSpeed;
   accent: string;
+  color: PillColor;
   reduce: boolean;
 }
 
@@ -46,6 +48,7 @@ export async function runMirror(stage: HTMLElement): Promise<void> {
     const f = frame;
     if (!f) return;
     document.documentElement.style.setProperty('--accent', f.accent);
+    document.documentElement.dataset.pill = f.color;
     setReducedMotion(f.reduce);
     const hidden = f.hidden || (f.fsHide && f.fullscreen === monitor);
     renderer.setOrientation(f.orient);

@@ -30,6 +30,8 @@ export interface GridLayout {
   pages: Array<Array<string | null>>;
 }
 
+export type PillColor = 'black' | 'white' | 'silver' | 'blur' | 'glass';
+
 export const SETTINGS_VERSION = 4;
 
 export interface Settings {
@@ -50,6 +52,8 @@ export interface Settings {
     hideInFullscreen: boolean;
     showSecondary: boolean;
     accent: string;
+    /** The pill's own colour, and the card's under it. */
+    color: PillColor;
     reduceMotion: 'system' | 'on' | 'off';
     /** How fast the border glow moves, or off. */
     glow: 'off' | 'slow' | 'medium' | 'fast';
@@ -93,6 +97,12 @@ export const ACCENTS: Record<string, string> = {
   rose: '#ea7aa1',
 };
 
+/** The accent as the pill draws it: white turns dark on a white or silver pill, where it would vanish. */
+export function accentColor(island: Settings['island']): string {
+  const c = ACCENTS[island.accent] ?? island.accent ?? ACCENTS.ember;
+  return (island.color === 'white' || island.color === 'silver') && c.toLowerCase() === '#ffffff' ? '#1c1c1e' : c;
+}
+
 export function defaultActivityConfig(id: string): ActivityConfig {
   const meta = CATALOG.find((m) => m.id === id);
   const options: Record<string, unknown> = {};
@@ -124,6 +134,7 @@ export function defaultSettings(): Settings {
       hideInFullscreen: true,
       showSecondary: true,
       accent: 'sky',
+      color: 'black',
       reduceMotion: 'system',
       glow: 'medium',
       hoverCard: 'pointer',
@@ -170,6 +181,7 @@ export function migrate(saved: unknown): Settings {
   if (!['top', 'bottom', 'left', 'right'].includes(out.island.anchor)) out.island.anchor = 'top';
   if (!['off', 'slow', 'medium', 'fast'].includes(out.island.glow)) out.island.glow = 'medium';
   if (!['pointer', 'claude'].includes(out.island.hoverCard)) out.island.hoverCard = 'pointer';
+  if (!['black', 'white', 'silver', 'blur', 'glass'].includes(out.island.color)) out.island.color = 'black';
 
   // Activity configs: merge each known one; options keep any extra saved keys.
   const savedActs = isObj(saved.activities) ? saved.activities : {};
