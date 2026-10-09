@@ -104,6 +104,7 @@ export class ScreenshotsActivity extends BaseActivity {
     this.shot = { path, name: baseName(path), src, at: Date.now() };
     this.flash = null;
     this.ctx.surface({ key: 'shot', ms: SHOT_MS, level: 'expanded' });
+    this.saw('screenshot', `screenshots:${path}`);
     this.ctx.update();
   }
 

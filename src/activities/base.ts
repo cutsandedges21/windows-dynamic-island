@@ -3,6 +3,7 @@
 
 import type { Activity, ActivityContext, ActivityStatus, RenderEnv } from '../core/activity';
 import { on } from '../core/native';
+import type { MomentId, PetMoment, PetSignal } from '../core/pet';
 import type { Seg } from '../core/segments';
 import { CATALOG_BY_ID, type ActivityMeta } from './catalog';
 
@@ -72,6 +73,25 @@ export abstract class BaseActivity implements Activity {
 
   protected get alive(): boolean {
     return !this.stopped;
+  }
+
+  // ---------------------------------------------------------------- the bot
+
+  /** The latest moment this activity saw, for the bot (src/core/pet.ts). */
+  protected petMoment: PetMoment | null = null;
+
+  /**
+   * Tells the bot something just happened here. Moments with the same `key` merge (holding a
+   * volume key is one moment); `strength` 0..1 says how big.
+   */
+  protected saw(id: MomentId, key: string = `${this.meta.id}:${id}`, strength?: number): void {
+    this.petMoment = { id, key, at: Date.now(), strength };
+    this.ctx?.update();
+  }
+
+  /** What the bot hears from here: by default only moments; an activity with a mood overrides this. */
+  pet(_now: number): PetSignal | null {
+    return this.petMoment ? { moment: this.petMoment } : null;
   }
 }
 

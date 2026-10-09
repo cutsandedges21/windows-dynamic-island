@@ -35,8 +35,16 @@ export class SoundActivity extends BaseActivity {
     const prev = this.a;
     this.a = a;
     if (!prev) return;
-    if (a.deviceId && a.deviceId !== prev.deviceId) this.show('device', DEVICE_MS);
-    else if (a.muted !== prev.muted || Math.abs(a.volume - prev.volume) >= 0.005) this.show('volume', VOLUME_MS);
+    if (a.deviceId && a.deviceId !== prev.deviceId) {
+      this.show('device', DEVICE_MS);
+      this.saw('audio-device', 'sound:device');
+    } else if (a.muted !== prev.muted || Math.abs(a.volume - prev.volume) >= 0.005) {
+      this.show('volume', VOLUME_MS);
+      // One key for all of it, so holding a volume key is one long reaction; a bigger step bounces higher.
+      const step = a.volume - prev.volume;
+      if (a.muted && !prev.muted) this.saw('muted', 'sound:volume');
+      else this.saw(step > 0 || (prev.muted && !a.muted) ? 'volume-up' : 'volume-down', 'sound:volume', Math.min(1, 0.2 + Math.abs(step) * 8));
+    }
   }
 
   private show(kind: View['kind'], ms: number): void {

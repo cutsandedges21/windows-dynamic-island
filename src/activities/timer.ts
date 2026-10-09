@@ -1,5 +1,6 @@
 // Timer, stopwatch and focus sessions, entirely in the island.
 
+import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { clock } from '../core/format';
 import type { Seg } from '../core/segments';
@@ -57,6 +58,7 @@ export class TimerActivity extends BaseActivity {
   startTimer(ms: number, label = 'Timer'): void {
     this.t = { mode: 'timer', label, endsAt: Date.now() + ms, totalMs: ms, remainingMs: ms, startedAt: null, bankedMs: 0, running: true, phase: 'focus', round: 1, doneAt: null };
     this.ctx.surface({ key: 'start', ms: 2500 });
+    this.saw('timer-start', 'timer:start');
     this.ctx.update();
   }
 
@@ -83,7 +85,15 @@ export class TimerActivity extends BaseActivity {
       doneAt: null,
     };
     this.ctx.surface({ key: `focus-${round}-${phase}`, ms: 2500 });
+    this.saw(phase === 'focus' ? 'focus-start' : 'break-start', 'timer:start');
     this.ctx.update();
+  }
+
+  /** A focus round running: the bot concentrates; a finished timer needs you. */
+  override pet(): PetSignal {
+    const t = this.t;
+    const mood = t?.doneAt ? 'needs-you' : t?.running && t.mode === 'focus' && t.phase === 'focus' ? 'focused' : null;
+    return { mood, moment: this.petMoment };
   }
 
   private check(): void {
@@ -101,6 +111,7 @@ export class TimerActivity extends BaseActivity {
       t.endsAt = null;
       t.doneAt = now;
       this.ctx.alert('shake');
+      this.saw('timer-done', 'timer:done');
       this.ctx.alert('glow', t.mode === 'focus' ? 'bad' : 'warn');
       if (this.ctx.settings().general.sounds) chime('done');
       this.ctx.notify(t.mode === 'focus' ? (t.phase === 'focus' ? 'Focus session done' : 'Break over') : 'Timer done', t.label);

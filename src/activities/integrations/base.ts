@@ -169,6 +169,9 @@ export abstract class IntegrationActivity<S extends object> extends BaseActivity
     this.ctx.surface({ key: change.key, ms, level: change.level ?? (loud ? 'expanded' : 'compact') });
     if (change.tone === 'bad') this.ctx.alert('shake');
     if (loud) this.ctx.alert('glow', change.tone);
+    // The bot reacts by how it went; a payment coming in gets its own coin.
+    const reaction = change.key.startsWith('stripe:') && change.key.endsWith(':paid') ? 'payment' : change.tone === 'good' ? 'good-news' : change.tone === 'bad' ? 'bad-news' : change.tone === 'warn' ? 'warning' : 'info';
+    this.saw(reaction, `${this.meta.id}:${change.key}`);
     this.ctx.update();
   }
 

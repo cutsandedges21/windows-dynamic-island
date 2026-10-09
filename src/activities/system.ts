@@ -1,6 +1,7 @@
 // System stats: CPU, memory and GPU. Quiet until something spikes, unless
 // "Always show" is on.
 
+import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv } from '../core/activity';
 import { bytes } from '../core/format';
 import { native, type SysSample } from '../core/native';
@@ -70,6 +71,12 @@ export class SystemActivity extends BaseActivity {
   private announce(kind: 'cpu' | 'mem'): void {
     this.event = { kind, at: Date.now() };
     this.ctx.surface({ key: kind, ms: SPIKE_MS, level: 'expanded' });
+    this.saw(kind === 'cpu' ? 'cpu-spike' : 'ram-spike', `system:${kind}`);
+  }
+
+  /** The CPU running hot: the bot overheats (memory can stay high for hours, so it does not count). */
+  override pet(): PetSignal {
+    return { mood: this.spiking ? 'overheated' : null, moment: this.petMoment };
   }
 
   private spike(now: number): 'cpu' | 'mem' | null {

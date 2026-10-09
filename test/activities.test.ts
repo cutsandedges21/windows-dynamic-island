@@ -910,3 +910,60 @@ describe('quick', () => {
     expect(act.home!(env('maximum'))[0]).toMatchObject({ icon: 'speaker-mute', tip: 'Unmute sound' });
   });
 });
+
+describe('what the bot hears', () => {
+  const audio = (over: Record<string, unknown> = {}) => ({ volume: 0.5, muted: false, device: 'Speakers', deviceId: 'a', micMuted: false, micDevice: 'Mic', ...over });
+  const power = (over: Record<string, unknown> = {}) => ({ hasBattery: true, percent: 50, ac: false, charging: false, saver: false, secondsLeft: 7200, ...over });
+  const heard = (act: Activity) => act.pet!(Date.now());
+
+  it('volume: up and down on one key, a bigger step stronger; muted, unmuted, a new device', async () => {
+    h.native.audioState = vi.fn(async () => audio());
+    const { act } = await boot(new SoundActivity());
+    emit('audio', audio());
+    emit('audio', audio({ volume: 0.52 }));
+    const up = heard(act)!.moment!;
+    expect(up).toMatchObject({ id: 'volume-up', key: 'sound:volume' });
+    emit('audio', audio({ volume: 0.3 }));
+    const down = heard(act)!.moment!;
+    expect(down).toMatchObject({ id: 'volume-down', key: 'sound:volume' });
+    expect(down.strength!).toBeGreaterThan(up.strength!);
+    emit('audio', audio({ volume: 0.3, muted: true }));
+    expect(heard(act)!.moment!.id).toBe('muted');
+    emit('audio', audio({ volume: 0.3, muted: false }));
+    expect(heard(act)!.moment!.id).toBe('volume-up');
+    emit('audio', audio({ volume: 0.3, deviceId: 'b', device: 'AirPods' }));
+    expect(heard(act)!.moment!.id).toBe('audio-device');
+  });
+
+  it('battery: charging, tired when low, drained when nearly empty; full, unplugged and the warnings', async () => {
+    h.native.powerState = vi.fn(async () => power({ percent: 98, ac: true, charging: true }));
+    const { act } = await boot(new BatteryActivity(), { lowAt: 20, showCharging: false });
+    expect(heard(act)!.mood).toBe('charging');
+    emit('power', power({ percent: 100, ac: true, charging: false }));
+    expect(heard(act)!.moment!.id).toBe('full');
+    emit('power', power({ percent: 100 }));
+    expect(heard(act)).toMatchObject({ mood: null, moment: { id: 'unplugged' } });
+    emit('power', power({ percent: 19 }));
+    expect(heard(act)).toMatchObject({ mood: 'tired', moment: { id: 'battery-low' } });
+    emit('power', power({ percent: 9 }));
+    expect(heard(act)).toMatchObject({ mood: 'drained', moment: { id: 'battery-critical' } });
+  });
+
+  it('USB drives coming and going', async () => {
+    const { act } = await boot(new DevicesActivity());
+    emit('device', { kind: 'volume', action: 'arrived', drive: 'E:', label: 'SANDISK', removable: true });
+    expect(heard(act)!.moment).toMatchObject({ id: 'usb-in', key: 'devices:E:' });
+    emit('device', { kind: 'volume', action: 'removed', drive: 'E:', label: '', removable: false });
+    expect(heard(act)!.moment).toMatchObject({ id: 'usb-out', key: 'devices:E:' });
+  });
+
+  it('outside news by its tone, and Island’s own update notice', async () => {
+    const { act } = await boot(new ExternalActivity());
+    emit('external-activity', { island: 'activity', id: 'deploy', title: 'Deployed', tone: 'good' });
+    expect(heard(act)!.moment!.id).toBe('good-news');
+    emit('external-activity', { island: 'activity', id: 'tests', title: 'Tests failed', tone: 'bad' });
+    expect(heard(act)!.moment!.id).toBe('bad-news');
+    emit('external-activity', { island: 'activity', id: 'island-update', title: 'Island updated', text: 'Now on 0.2.6', tone: 'good' });
+    expect(heard(act)!.moment!.id).toBe('updated');
+  });
+});

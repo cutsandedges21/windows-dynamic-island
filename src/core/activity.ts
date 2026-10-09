@@ -4,6 +4,7 @@
 
 import type { ActivityMeta } from '../activities/catalog';
 import type { ChatView } from './chat';
+import type { PetSignal } from './pet';
 import type { IconName } from './icons';
 import type { Level } from './layout';
 import type { MenuItem } from './native';
@@ -117,6 +118,8 @@ export interface Activity {
   tile?(env: SheetEnv): Tile | null;
   /** The bot's chat, shown in the bar under the bot (Local AI is the only one). */
   chat?(): ChatView | null;
+  /** What this activity tells the bot (src/core/pet.ts): its mood while something is true, and its latest moment. */
+  pet?(now: number): PetSignal | null;
   /** A segment with `action` was clicked (or an input submitted). */
   action?(name: string, arg: unknown): void | Promise<void>;
   /** Options changed in the Activities page. */

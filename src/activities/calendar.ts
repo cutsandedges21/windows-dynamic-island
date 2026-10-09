@@ -1,6 +1,7 @@
 // Calendar: your next event from an iCal (ICS) link, with a Join button for
 // Teams, Meet and Zoom links. Secret feed URLs are never logged.
 
+import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { clip, timeOfDay, until } from '../core/format';
 import { native } from '../core/native';
@@ -202,6 +203,12 @@ export class CalendarActivity extends BaseActivity {
   }
 
   /** Nods when an event comes into range and again at its start, even if nothing else triggers a redraw. */
+  /** A meeting starting now needs you. */
+  override pet(now: number): PetSignal {
+    const o = this.next(now);
+    return { mood: o && now >= o.start && now - o.start < URGENT_MS ? 'needs-you' : null, moment: this.petMoment };
+  }
+
   private check(): void {
     const now = Date.now();
     const o = this.next(now);
@@ -214,6 +221,7 @@ export class CalendarActivity extends BaseActivity {
       this.ctx.alert('glow', 'accent');
     } else if (o && now < o.start) {
       this.ctx.surface({ key: `soon-${o.uid}${o.start}`, ms: 5000, level: 'expanded' });
+      this.saw('meeting-soon', `calendar:${o.uid}${o.start}`);
     }
     this.ctx.update();
   }

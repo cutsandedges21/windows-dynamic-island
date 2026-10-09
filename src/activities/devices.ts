@@ -35,6 +35,7 @@ export class DevicesActivity extends BaseActivity {
     const ms = ev.action === 'arrived' ? ARRIVED_MS : REMOVED_MS;
     this.m = { ev, at: Date.now(), ms };
     this.ctx.surface({ key: `${ev.action}:${ev.drive}`, ms, level: 'expanded' });
+    if (ev.action === 'removed' || ev.removable) this.saw(ev.action === 'arrived' ? 'usb-in' : 'usb-out', `devices:${letter}`);
     this.ctx.update();
   }
 

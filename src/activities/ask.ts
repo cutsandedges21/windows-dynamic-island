@@ -4,6 +4,7 @@
 // Messages API (a key in the Credential Manager), chosen in the options. src-tauri/src/chat.rs
 // does the asking, so a key never reaches the webview and the question travels only to Claude.
 
+import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { bridge, type AskBackend, type AskBackends, type AskReply, type ChatTurn } from '../core/bridge';
 import { clip, plainText } from '../core/format';
@@ -107,6 +108,11 @@ export class AskActivity extends BaseActivity {
   }
 
   // ---------------------------------------------------------------- asking
+
+  /** Ask Claude answering: the bot thinks along. */
+  override pet(): PetSignal {
+    return { mood: this.phase === 'thinking' ? 'thinking' : null, moment: this.petMoment };
+  }
 
   private async send(text: string): Promise<void> {
     const question = text.trim();

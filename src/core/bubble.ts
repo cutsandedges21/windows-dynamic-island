@@ -5,9 +5,11 @@
 // pulls them a little (src/core/gaze.ts), and now and then it glances to one side.
 
 import { BotAvatar, botColors, type BotState } from '../fx';
+import { COSTUMES } from '../fx/bot/costumes';
 import { SpringSet } from './animator';
 import { gazeToward, REST_GAZE } from './gaze';
 import type { Rect } from './layout';
+import type { Motion, PetLook } from './looks';
 import { springs } from './spring';
 
 /** Between two idle glances, and how long one lasts. */
@@ -36,6 +38,11 @@ export class BubbleView {
   private pointerNear = false;
   private gaze: { yaw: number; pitch: number } | null = null;
   private state: BotState = 'idle';
+  private readonly costumeSvg: SVGSVGElement;
+  private costumeKey = '';
+  private motion: Motion = 'breathe';
+  /** The brain's play count shown last: a new one restarts the moment's animations. */
+  private play = -1;
   private glanceTimer: ReturnType<typeof setTimeout> | undefined;
   private destroyed = false;
 
@@ -45,11 +52,15 @@ export class BubbleView {
     const bg = document.createElement('div');
     bg.className = 'bubble-bg';
     this.life = document.createElement('div');
-    this.life.className = 'bubble-life';
+    this.life.className = 'bubble-life motion-breathe';
     const bot = document.createElement('div');
     bot.className = 'bubble-bot';
     this.costume = document.createElement('div');
     this.costume.className = 'bubble-costume';
+    this.costumeSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    this.costumeSvg.setAttribute('viewBox', '0 0 32 32');
+    this.costumeSvg.setAttribute('aria-hidden', 'true');
+    this.costume.append(this.costumeSvg);
     this.life.append(bot, this.costume);
     this.el.append(bg, this.life);
     if (!opts.interactive) this.el.classList.add('passive');
@@ -110,6 +121,33 @@ export class BubbleView {
     this.accent = accent;
     const { body, eye } = botColors(accent);
     this.avatar.setSkin({ color: body, eye });
+    this.el.style.setProperty('--bot-eye', eye);
+  }
+
+  /**
+   * A look from src/core/looks.ts: pose, face, costume and motion. A new `play` (a new moment)
+   * restarts the costume's and the motion's animations; the same look again changes nothing.
+   */
+  show(look: PetLook, play: number, strength = 0.5): void {
+    if (this.destroyed) return;
+    this.setState(look.state);
+    this.avatar.setExpression(look.face);
+    const restart = play !== this.play;
+    this.play = play;
+    const key = look.costume.join(' ');
+    if (key !== this.costumeKey || restart) {
+      this.costumeKey = key;
+      // Static markup from costumes.ts only.
+      this.costumeSvg.innerHTML = look.costume.map((c) => COSTUMES[c] ?? '').join('');
+    }
+    if (look.motion !== this.motion || restart) {
+      this.life.classList.remove(`motion-${this.motion}`);
+      // Reading layout between the two class changes restarts a one-shot motion.
+      if (restart) void this.life.offsetWidth;
+      this.motion = look.motion;
+      this.life.classList.add(`motion-${look.motion}`);
+    }
+    this.life.style.setProperty('--k', String(Math.max(0, Math.min(1, strength))));
   }
 
   setState(state: BotState): void {

@@ -2,6 +2,7 @@
 // (.crdownload, .part…) show their speed while they grow; when one turns into
 // the finished file the island offers Open and Show.
 
+import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { agoText, baseName, bytes, clip, rate } from '../core/format';
 import { native } from '../core/native';
@@ -175,6 +176,7 @@ export class DownloadsActivity extends BaseActivity {
       this.done = { name: file.name, path: file.path, at: now };
       this.recent = [this.done, ...this.recent.filter((r) => r.path.toLowerCase() !== file.path.toLowerCase())].slice(0, RECENT_MAX);
       this.ctx.surface({ key: `done:${file.name}`, ms: DONE_MS, level: 'expanded' });
+      this.saw('download-done', `downloads:${file.path}`);
     }
   }
 
@@ -247,6 +249,11 @@ export class DownloadsActivity extends BaseActivity {
     if (!files.length) return null;
     const rows = files.map((f) => ({ key: f.path, title: clip(f.name, 30), detail: agoText(env.now - f.at), action: env.interactive ? 'open' : undefined, arg: f.path, tip: env.interactive ? 'Open' : undefined }));
     return { key: 'downloads', rows: rows.length > 1 ? 2 : 1, body: { k: 'list', icon: 'download', label: 'Downloads', rows } };
+  }
+
+  /** Something downloading: an arrow bobs over the bot. */
+  override pet(): PetSignal {
+    return { mood: this.lead() ? 'downloading' : null, moment: this.petMoment };
   }
 
   status(): ActivityStatus {

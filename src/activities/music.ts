@@ -2,6 +2,7 @@
 // a browser, Apple Music, local players — with play/pause and skip.
 
 import { reducedMotion } from '../core/animator';
+import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { clock } from '../core/format';
 import { emitLocal, native, type MediaState } from '../core/native';
@@ -43,11 +44,21 @@ export class MusicActivity extends BaseActivity {
     const track = m.available && m.title ? `${m.title}\u0000${m.artist}` : '';
     if (track && track !== this.lastTrack) {
       this.lastTrack = track;
-      if (!first && playing) this.ctx.surface({ key: `track:${track}`, ms: 3200 });
+      if (!first && playing) {
+        this.ctx.surface({ key: `track:${track}`, ms: 3200 });
+        this.saw('track', 'music:track');
+      }
     } else if (!first && prev && prev.status !== m.status && track) {
       this.ctx.surface({ key: `state:${m.status}`, ms: 1800, bump: false });
+      if (m.status === 'playing') this.saw('played', 'music:state');
+      else if (prev.status === 'playing') this.saw('paused', 'music:state');
     }
     this.ctx.update();
+  }
+
+  /** Music playing: the bot vibes along. */
+  override pet(): PetSignal {
+    return { mood: this.m?.status === 'playing' ? 'vibing' : null, moment: this.petMoment };
   }
 
   private tap(on: boolean): void {

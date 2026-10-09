@@ -4,6 +4,7 @@
 // rate needs a one-time Windows permission (Performance Log Users), asked from
 // here; RivaTuner's numbers are used without it when RivaTuner runs.
 
+import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { native, type GameState } from '../core/native';
 import type { Seg, Tone } from '../core/segments';
@@ -54,7 +55,10 @@ export class GameActivity extends BaseActivity {
     const was = this.state?.game?.name ?? null;
     this.state = next;
     const now = next?.game?.name ?? null;
-    if (now && now !== was) this.ctx.surface({ key: `game:${now}`, ms: 4000, level: 'expanded' });
+    if (now && now !== was) {
+      this.ctx.surface({ key: `game:${now}`, ms: 4000, level: 'expanded' });
+      this.saw('game-start', `game:${now}`);
+    }
     if (now || was) this.ctx.update();
   }
 
@@ -74,6 +78,11 @@ export class GameActivity extends BaseActivity {
     const s = this.state;
     if (!s?.ping) return "No answer from the game's server";
     return s.pingKind === 'server' ? `Round trip to the game's server (${s.pingTarget})` : "Internet latency (1.1.1.1): the game's server does not answer pings";
+  }
+
+  /** A game running: the bot plays along. */
+  override pet(): PetSignal {
+    return { mood: this.state?.game ? 'gaming' : null, moment: this.petMoment };
   }
 
   status(): ActivityStatus {

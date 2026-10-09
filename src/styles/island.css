@@ -217,6 +217,115 @@ html.peek #stage {
   0%, 100% { transform: scale(1, 1); }
   50% { transform: translateY(1.5%) scale(1.035, 0.965); }
 }
+/* the bot's motions (src/core/looks.ts): loops for moods, one-shots for moments; --k is a moment's strength */
+.bubble-life.motion-breathe { animation: bot-breathe 3.4s ease-in-out infinite; }
+.bubble-life.motion-snooze { animation: bot-breathe 5.2s ease-in-out infinite; }
+.bubble-life.motion-sway { animation: bot-sway 0.9s ease-in-out infinite alternate; }
+.bubble-life.motion-talk { animation: bot-talk 0.34s ease-in-out infinite alternate; }
+.bubble-life.motion-bounce { animation: bot-bounce 0.62s cubic-bezier(0.3, 0.6, 0.4, 1) infinite; }
+.bubble-life.motion-droop { animation: bot-droop 2.8s ease-in-out infinite; }
+.bubble-life.motion-shiver { animation: bot-shiver 0.12s linear infinite; }
+.bubble-life.motion-still { animation: none; }
+.bubble-life.motion-tilt { animation: bot-tilt 2.4s ease-in-out infinite alternate; }
+.bubble-life.motion-hop { animation: bot-hop 0.62s cubic-bezier(0.3, 0.6, 0.4, 1) 2; }
+.bubble-life.motion-jolt { animation: bot-jolt 0.45s ease-out 1; }
+.bubble-life.motion-shake { animation: bot-shake 0.5s ease-in-out 3; }
+.bubble-life.motion-shrink { animation: bot-shrink 0.35s ease-out 1 forwards; }
+.bubble-life.motion-stretch { animation: bot-stretch 1.4s ease-in-out 1; }
+@keyframes bot-sway { from { transform: rotate(-7deg); } to { transform: translateY(-3%) rotate(7deg); } }
+@keyframes bot-talk { from { transform: scale(1, 1); } to { transform: translateY(-3%) scale(1.02, 0.97); } }
+@keyframes bot-bounce {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  30% { transform: translateY(calc(-6% - 10% * var(--k, 0.5))) scale(0.97, 1.04); }
+  60% { transform: translateY(0) scale(1.05, 0.94); }
+}
+@keyframes bot-droop { 0%, 100% { transform: translateY(6%) scale(1.04, 0.9); } 50% { transform: translateY(8%) scale(1.06, 0.87); } }
+@keyframes bot-shiver { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3%); } 75% { transform: translateX(3%); } }
+@keyframes bot-tilt { from { transform: rotate(-9deg); } to { transform: rotate(6deg); } }
+@keyframes bot-hop {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  15% { transform: translateY(3%) scale(1.06, 0.92); }
+  45% { transform: translateY(-16%) scale(0.96, 1.05); }
+  75% { transform: translateY(2%) scale(1.04, 0.95); }
+}
+@keyframes bot-jolt { 25% { transform: translateY(-12%) scale(0.96, 1.06); } 60% { transform: translateY(2%) scale(1.05, 0.95); } 100% { transform: none; } }
+@keyframes bot-shake {
+  0%, 100% { transform: translateX(0) rotate(0); }
+  20% { transform: translateX(-7%) rotate(-6deg); }
+  40% { transform: translateX(6%) rotate(5deg); }
+  60% { transform: translateX(-4%) rotate(-3deg); }
+  80% { transform: translateX(3%) rotate(2deg); }
+}
+@keyframes bot-shrink { to { transform: translateY(5%) scale(0.86); } }
+@keyframes bot-stretch { 0%, 100% { transform: scale(1, 1); } 40%, 60% { transform: translateY(-6%) scale(0.92, 1.12); } }
+
+/* costume pieces (src/fx/bot/costumes.ts); delayed loops fill backwards so they wait unseen */
+.bubble-costume svg { color: var(--fg); }
+.bubble-costume svg * { transform-box: fill-box; transform-origin: center; }
+.c-float { animation: c-float 1.8s ease-out infinite backwards; }
+.c-n2 { animation-delay: 0.9s; }
+@keyframes c-float { 0% { opacity: 0; transform: translate(0, 2px) scale(0.8); } 20% { opacity: 1; } 100% { opacity: 0; transform: translate(3px, -7px) scale(1.05); } }
+.c-burst { animation: c-burst 1.1s ease-out 1 both; }
+.c-b1 { --bx: 6px; --by: -9px; }
+.c-b2 { --bx: -6px; --by: -9px; animation-delay: 80ms; }
+.c-b3 { --bx: 1px; --by: -12px; animation-delay: 160ms; }
+@keyframes c-burst { 0% { opacity: 0; transform: translate(0, 4px) scale(0.4); } 25% { opacity: 1; } 100% { opacity: 0; transform: translate(var(--bx), var(--by)) scale(1.1); } }
+.c-z { animation: c-z 2.6s ease-out infinite backwards; }
+.c-z2 { animation-delay: 0.85s; }
+.c-z3 { animation-delay: 1.7s; }
+@keyframes c-z { 0% { opacity: 0; transform: translate(-1px, 2px) scale(0.7); } 25% { opacity: 1; } 100% { opacity: 0; transform: translate(2px, -4px) scale(1.1); } }
+.c-pop { animation: c-pop 0.45s cubic-bezier(0.3, 1.6, 0.5, 1) 1 both; }
+@keyframes c-pop { from { opacity: 0; transform: scale(0.3); } to { opacity: 1; transform: scale(1); } }
+.c-wave { animation: c-wave 0.8s ease-out infinite backwards; }
+.c-w2 { animation-delay: 0.2s; }
+@keyframes c-wave { 0% { opacity: 0; transform: translateX(-2px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateX(2px); } }
+.c-glow { animation: c-glow 1.6s ease-in-out infinite; }
+@keyframes c-glow { 0%, 100% { opacity: 0.7; transform: scale(0.95); } 50% { opacity: 1; transform: scale(1.08); } }
+.c-zap { animation: c-zap 0.7s ease-in 1 both; }
+@keyframes c-zap { 0% { opacity: 0; transform: translateY(-8px) scale(0.6); } 40% { opacity: 1; transform: translateY(2px) scale(1.1); } 100% { opacity: 0; transform: translateY(8px) scale(0.6); } }
+.c-blink { animation: c-blink 0.9s steps(2) infinite; }
+@keyframes c-blink { 50% { opacity: 0.25; } }
+.c-twinkle { animation: c-twinkle 1.2s ease-in-out infinite backwards; }
+.c-t2 { animation-delay: 0.3s; }
+.c-t3 { animation-delay: 0.6s; }
+@keyframes c-twinkle { 0%, 100% { opacity: 0; transform: scale(0.3) rotate(0deg); } 50% { opacity: 1; transform: scale(1) rotate(45deg); } }
+.c-sweat { animation: c-sweat 1.6s ease-in infinite; }
+@keyframes c-sweat { 0% { opacity: 0; transform: translateY(-2px); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateY(7px); } }
+.c-steam { animation: c-steam 1.4s ease-out infinite backwards; }
+.c-s2 { animation-delay: 0.45s; }
+.c-s3 { animation-delay: 0.9s; }
+@keyframes c-steam { 0% { opacity: 0; transform: translateY(2px); } 40% { opacity: 0.9; } 100% { opacity: 0; transform: translateY(-4px); } }
+.c-drift { animation: c-drift 2.4s ease-in-out infinite alternate; }
+@keyframes c-drift { from { transform: translateX(-1.5px); } to { transform: translateX(1.5px); } }
+.c-drop-in { animation: c-drop-in 0.5s cubic-bezier(0.3, 1.4, 0.5, 1) 1 both; }
+@keyframes c-drop-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.c-spin { animation: c-spin 1s linear infinite; }
+@keyframes c-spin { to { transform: rotate(360deg); } }
+.c-rec { animation: c-rec 1.4s ease-in-out infinite; }
+@keyframes c-rec { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+.c-flash { opacity: 0; animation: c-flash 0.6s ease-out 1 both; }
+@keyframes c-flash { 0% { opacity: 0.95; } 100% { opacity: 0; } }
+.c-catch { animation: c-catch 0.55s cubic-bezier(0.3, 1.5, 0.5, 1) 1 both; }
+@keyframes c-catch { from { opacity: 0; transform: translate(-4px, -6px) rotate(-30deg); } to { opacity: 1; transform: none; } }
+.c-fall { animation: c-fall 0.9s cubic-bezier(0.5, 0, 0.7, 1) 1 both; }
+@keyframes c-fall { 0% { opacity: 0; transform: translateY(-6px); } 20% { opacity: 1; } 70% { opacity: 1; transform: translateY(12px); } 100% { opacity: 0; transform: translateY(14px) scale(0.6); } }
+.c-bob { animation: c-bob 1s ease-in-out infinite; }
+@keyframes c-bob { 0%, 100% { transform: translateY(-1.5px); } 50% { transform: translateY(1.5px); } }
+.c-ring { animation: c-ring 0.16s linear infinite; }
+@keyframes c-ring { 0%, 100% { transform: rotate(-10deg); } 50% { transform: rotate(10deg); } }
+.c-rain { animation: c-rain 0.8s linear infinite backwards; }
+.c-r2 { animation-delay: 0.27s; }
+.c-r3 { animation-delay: 0.53s; }
+@keyframes c-rain { 0% { opacity: 0; transform: translateY(-3px); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateY(5px); } }
+.c-confetti { animation: c-confetti 1.1s cubic-bezier(0.2, 0.8, 0.4, 1) 1 both; }
+@keyframes c-confetti { 0% { opacity: 1; transform: translate(0, 0) rotate(0); } 100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--r)); } }
+.c-coin { animation: c-coin 0.9s cubic-bezier(0.3, 1.4, 0.5, 1) 1 both; }
+@keyframes c-coin { 0% { opacity: 0; transform: translateY(-8px) scaleX(0.2); } 50% { opacity: 1; transform: translateY(1px) scaleX(1); } 100% { transform: none; } }
+.c-yawn { animation: c-yawn 2.2s ease-in-out 1 both; }
+@keyframes c-yawn { 0%, 100% { opacity: 0; transform: scale(0.3, 0.1); } 15% { opacity: 1; } 45%, 65% { transform: scale(1, 1); } }
+.c-slide-down { animation: c-slide-down 0.6s ease-out 1 both; }
+@keyframes c-slide-down { from { transform: translateY(-14px); } to { transform: none; } }
+
 html.reduce .bubble-life,
 html.reduce .bubble-costume * { animation: none !important; }
 @media (prefers-reduced-motion: reduce) {

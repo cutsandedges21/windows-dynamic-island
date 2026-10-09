@@ -179,6 +179,7 @@ export class WeatherActivity extends BaseActivity {
     if (this.wx.rain >= RAIN_AT && !wet(this.wx.code) && Date.now() - this.rainAt >= RAIN_EVERY_MS) {
       this.rainAt = Date.now();
       this.ctx.surface({ key: 'rain', ms: RAIN_SHOW_MS, level: 'expanded' });
+      this.saw('rain', 'weather:rain');
     }
     return true;
   }

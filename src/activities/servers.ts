@@ -40,7 +40,10 @@ export class ServersActivity extends BaseActivity {
     const fresh = [...next.values()].filter((s) => !this.servers.has(s.port));
     this.servers = next;
     // The first scan only learns what is already running.
-    if (this.scanned && fresh.length) this.ctx.surface({ key: `port-${fresh[fresh.length - 1].port}`, ms: NEW_MS, level: 'expanded' });
+    if (this.scanned && fresh.length) {
+      this.ctx.surface({ key: `port-${fresh[fresh.length - 1].port}`, ms: NEW_MS, level: 'expanded' });
+      this.saw('new-server', `servers:${fresh[fresh.length - 1].port}`);
+    }
     this.scanned = true;
     this.ctx.update();
   }

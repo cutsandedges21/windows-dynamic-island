@@ -45,6 +45,7 @@ export class ClipboardActivity extends BaseActivity {
     }
     this.c = { kind: e.kind, preview, url, count: Array.isArray(e.files) ? e.files.length : 0, at: Date.now() };
     this.ctx.surface({ key: 'copy', ms: SHOW_MS, level: 'expanded' });
+    this.saw('copy', `clipboard:${e.seq}`);
     this.ctx.update();
   }
 

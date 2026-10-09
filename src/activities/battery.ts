@@ -1,5 +1,6 @@
 // Battery: plugging in, unplugging and low charge. Quiet the rest of the time.
 
+import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv } from '../core/activity';
 import { duration } from '../core/format';
 import { native, type PowerState } from '../core/native';
@@ -89,7 +90,10 @@ export class BatteryActivity extends BaseActivity {
     if (prev.hasBattery && prev.ac !== p.ac) {
       this.event = { kind: p.ac ? 'plug' : 'unplug', at: Date.now() };
       this.ctx.surface({ key: this.event.kind, ms: EVENT_MS, level: 'expanded' });
+      this.saw(p.ac ? 'plugged' : 'unplugged', 'battery:power');
     }
+    // Charged to the top while plugged in: the bot is proud of it.
+    if (p.hasBattery && p.percent !== null && prev.percent !== null && p.percent >= 100 && prev.percent < 100 && (p.ac || p.charging)) this.saw('full', 'battery:full');
 
     if (!this.onBattery(p)) this.warned.clear();
     else if (p.percent !== null) {
@@ -107,6 +111,17 @@ export class BatteryActivity extends BaseActivity {
     this.ctx.surface({ key, ms: WARN_MS, level: 'expanded' });
     this.ctx.alert('glow', 'bad');
     if (threshold <= CRITICAL) this.ctx.alert('shake');
+    this.saw(threshold <= CRITICAL ? 'battery-critical' : 'battery-low', 'battery:low');
+  }
+
+  /** Charging, tired when low, drained when nearly empty. */
+  override pet(): PetSignal {
+    const p = this.p;
+    let mood: PetSignal['mood'] = null;
+    if (p?.hasBattery && p.charging) mood = 'charging';
+    else if (p && this.onBattery(p) && p.percent !== null && p.percent <= CRITICAL) mood = 'drained';
+    else if (p && this.isLow(p)) mood = 'tired';
+    return { mood, moment: this.petMoment };
   }
 
   dismiss(key: string): void {

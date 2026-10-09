@@ -13,6 +13,7 @@ import { platform, thisComputer } from '../core/platform';
 import type { Seg } from '../core/segments';
 import type { SheetButton, SheetView, Tile } from '../core/sheet';
 import type { ChatView } from '../core/chat';
+import type { PetSignal } from '../core/pet';
 import { NO_BACKEND, pickBackend, trimHistory } from './ask';
 import { BaseActivity } from './base';
 
@@ -211,6 +212,8 @@ export class LocalActivity extends BaseActivity {
   private brain: 'local' | 'claude' = 'local';
   /** Ask Claude has a backend, as of the last check. */
   private canClaude = false;
+  /** When the last answer arrived (the bot winks). */
+  private answeredAt = 0;
 
   constructor() {
     super('local');
@@ -465,6 +468,13 @@ export class LocalActivity extends BaseActivity {
     this.history = trimHistory([...this.history, { role: 'assistant', content: answer }]);
     this.answer = answer;
     this.phase = 'answer';
+    this.answeredAt = Date.now();
+  }
+
+  /** The bot ponders while the model thinks, talks while it writes, and winks at the answer. */
+  override pet(): PetSignal {
+    const mood = this.phase === 'thinking' ? 'pondering' : this.phase === 'streaming' ? 'talking' : null;
+    return { mood, moment: this.answeredAt ? { id: 'answered', key: 'local-answer', at: this.answeredAt } : null };
   }
 
   private fail(why: string): void {

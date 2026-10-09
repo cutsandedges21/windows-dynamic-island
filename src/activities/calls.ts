@@ -1,6 +1,7 @@
 // Mic & Camera: which apps are using the microphone or camera right now, with
 // a system-wide microphone mute.
 
+import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { clip } from '../core/format';
 import { native, type AudioState, type PrivacyState } from '../core/native';
@@ -25,8 +26,14 @@ export class CallsActivity extends BaseActivity {
 
   private setMuted(muted: boolean | null): void {
     if (muted === this.muted) return;
+    if (muted === true && this.muted === false && this.mic.length) this.saw('mic-muted', 'calls:mute');
     this.muted = muted;
     this.ctx.update();
+  }
+
+  /** The mic or camera in use: the bot is on air. */
+  override pet(): PetSignal {
+    return { mood: this.mic.length || this.cam.length ? 'on-air' : null, moment: this.petMoment };
   }
 
   private apply(p: PrivacyState): void {
@@ -34,7 +41,10 @@ export class CallsActivity extends BaseActivity {
     this.mic = Array.isArray(p.mic) ? p.mic : [];
     this.cam = Array.isArray(p.cam) ? p.cam : [];
     // A new app starting to listen or watch is the moment worth a nod.
-    if ([...this.mic, ...this.cam].some((n) => !before.has(n))) this.ctx.surface({ key: 'start', ms: 3000, level: 'expanded' });
+    if ([...this.mic, ...this.cam].some((n) => !before.has(n))) {
+      this.ctx.surface({ key: 'start', ms: 3000, level: 'expanded' });
+      this.saw('call-start', 'calls:start');
+    }
     this.ctx.update();
   }
 

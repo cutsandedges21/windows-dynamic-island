@@ -45,6 +45,8 @@ export class BotAvatar {
   private state: BotState;
   private reduceMotion: boolean;
   private destroyed = false;
+  /** The resting face, one of bloub's expression ids. */
+  private expression = DEFAULT_EXPRESSION;
 
   /** Pending animation frame, 0 when the loop is asleep. */
   private frameRequest = 0;
@@ -110,6 +112,20 @@ export class BotAvatar {
     }
     // A still picture (or a sleeping loop) must show the new look right away.
     if (shapeChanged || colorsChanged) this.refresh();
+  }
+
+  /** The resting face: one of bloub's expressions by id (src/fx/bot/expressions.ts). It eases there. */
+  setExpression(id: string): void {
+    if (this.destroyed || id === this.expression || !EXPRESSION_BY_ID.has(id)) return;
+    this.expression = id;
+    if (this.reduceMotion) {
+      this.drawStill();
+      return;
+    }
+    const now = this.now();
+    this.engine.setExpression(EXPRESSION_BY_ID.get(id)!, now);
+    this.extraMotionUntil = Math.max(this.extraMotionUntil, now + BotEngine.SHAPE_MORPH);
+    this.wake();
   }
 
   /**
@@ -191,7 +207,7 @@ export class BotAvatar {
       RAYON,
       this.state,
       SHAPE_BY_ID.get(this.skin.shape)!.radii,
-      EXPRESSION_BY_ID.get(DEFAULT_EXPRESSION) ?? null,
+      EXPRESSION_BY_ID.get(this.expression) ?? null,
     );
     // No drifting gaze or scheduled blinks: the face is still until blink() so the loop can sleep.
     engine.ambient = false;

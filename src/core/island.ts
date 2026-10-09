@@ -10,6 +10,8 @@ import type { Activity, ActivityContext, ActivityStatus, RenderEnv, SheetEnv, Su
 import { setReducedMotion } from './animator';
 import { BubbleView } from './bubble';
 import { ChatBar, type ChatAction, type ChatView } from './chat';
+import { lookFor } from './looks';
+import { PetBrain, type PetSignal } from './pet';
 import { BorderGlow, type GlowSpec } from './glow';
 import { CELLS, hiddenTest, leadFirst, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
 import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
@@ -104,6 +106,8 @@ export class Island {
   private readonly chat: ChatBar;
   /** The bar is open (a click on the bot opens it; a tap away or Escape closes it, the chat kept). */
   private chatOpen = false;
+  /** What the bot shows, from what every activity reports (src/core/pet.ts). */
+  private readonly brain = new PetBrain();
   private readonly cardGlow: BorderGlow;
   /** Duplicate mode: how many copies of the pill run on other screens, and the last frame sent to them. */
   private mirrorCount = 0;
@@ -552,7 +556,7 @@ export class Island {
     if (!chatView) this.chatOpen = false;
     this.chat.place(anchor, this.chatOpen ? chatBarRect(anchor, botRect, restPill) : null, { immediate });
     if (chatView && this.chatOpen) this.chat.render(chatView);
-    this.bubble.setState(this.chatMood(chatView));
+    this.syncPet(now, chatView);
 
     const swap = primary !== this.lastPrimary || viewKey !== this.lastViewKey || reshaped;
     const sig = `${orient}|${viewKey}|${w}|${h}|${signature(placed)}`;
@@ -1229,14 +1233,22 @@ export class Island {
     this.schedule();
   }
 
-  /** Until the mood brain lands: the bot listens while you type, thinks, and winks at an answer. */
-  private chatMood(view: ChatView | null): 'idle' | 'wide' | 'thinking' | 'wink' | 'alert' {
-    if (!view) return 'idle';
-    if (view.phase === 'thinking' || view.phase === 'streaming') return 'thinking';
-    if (!this.chatOpen) return 'idle';
-    if (view.phase === 'answer') return 'wink';
-    if (view.phase === 'error') return 'alert';
-    return 'wide';
+  /** The bot shows what everything reports: asked on every compose and once a second. */
+  private syncPet(now: number, chatView: ChatView | null): void {
+    if (!this.settings.island.bot) return;
+    const signals: PetSignal[] = [];
+    for (const [id, act] of this.running) {
+      try {
+        const s = act.pet?.(now);
+        if (s) signals.push(s);
+      } catch (err) {
+        console.error(`pet ${id}`, err);
+      }
+    }
+    // With the bar open and nothing on its way, it listens to you.
+    if (this.chatOpen && chatView && chatView.phase !== 'thinking' && chatView.phase !== 'streaming') signals.push({ mood: 'listening' });
+    const frame = this.brain.update({ signals, dnd: this.settings.general.dnd, now, hour: new Date(now).getHours() });
+    this.bubble.show(lookFor(frame), frame.play, frame.moment?.strength ?? 0.5);
   }
 
   /** Quiet: the island stays small and holds its notifications, and Windows' Do Not Disturb follows. */
@@ -1268,6 +1280,8 @@ export class Island {
     if (!this.settings) return;
     // Clocks, elapsed times and countdowns: recompose once a second while anything shows.
     if (this.primaryId || this.open || this.surfaces.length) this.compose(false);
+    // The bot's moments end, and late at night it yawns, without anything else changing.
+    else if (this.settings.island.bot) this.syncPet(Date.now(), this.chatOpen ? (this.running.get('local')?.chat?.() ?? null) : null);
   }
 
   // ---------------------------------------------------------------- hotkeys + tray

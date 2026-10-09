@@ -8,6 +8,7 @@ import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../../core/a
 import { agoText, baseName, clip, elapsed, pace, plainText, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from '../../core/format';
 import { requireHello } from '../../core/hello';
 import { native, type ClaudeEnv, type MenuItem } from '../../core/native';
+import type { PetSignal } from '../../core/pet';
 import type { Seg, Tone } from '../../core/segments';
 import type { Block, SheetButton, SheetRow, SheetView, Tile } from '../../core/sheet';
 import { BaseActivity, chime } from '../base';
@@ -313,6 +314,7 @@ export class ClaudeActivity extends BaseActivity {
       const was = Math.round(w.pct);
       this.ctx.log('limit reset', { window: key, was });
       this.flash(`${label} reset. Back to 0%`, 'good', 'refresh', 8000);
+      this.saw('limits-reset', `claude:reset:${key}`);
       this.ctx.notify(`${label} reset`, was ? `It was at ${was}%. A fresh window starts with your next message.` : 'A fresh window starts with your next message.');
     }
     if (!changed) return;
@@ -347,6 +349,7 @@ export class ClaudeActivity extends BaseActivity {
       if (canShow) {
         void native.hookReply(ev.request_id, 'ack');
         this.ctx.alert('glow', 'claude');
+        this.saw('claude-asks', `claude:ask:${ev.request_id}`);
         if (this.ctx.settings().general.sounds) chime('attention');
       } else {
         // Nobody will see the card: let the terminal ask right away.
@@ -370,6 +373,7 @@ export class ClaudeActivity extends BaseActivity {
       } else {
         this.ctx.surface({ key: `note:${sid}`, ms: 15000, level: 'expanded' });
         this.ctx.alert('glow', 'claude');
+        this.saw('claude-asks', `claude:note:${sid}`);
       }
     }
     this.pollSoon(150);
@@ -624,6 +628,8 @@ export class ClaudeActivity extends BaseActivity {
 
   private announceFinished(id: string): void {
     this.ctx.surface({ key: `done:${id}`, ms: this.opts().finishedSeconds * 1000, level: 'expanded' });
+    const s = this.sessions.find((x) => x.id === id);
+    this.saw(s?.status === 'errored' ? 'claude-error' : 'claude-done', `claude:done:${id}`);
     if (this.ctx.settings().general.sounds) chime('done');
     this.ctx.update();
   }
@@ -631,6 +637,7 @@ export class ClaudeActivity extends BaseActivity {
   private announceNeedsYou(session: SessionView): void {
     this.ctx.surface({ key: `needs:${session.id}`, ms: 7000, level: 'expanded' });
     this.ctx.alert('shake');
+    this.saw('claude-asks', `claude:needs:${session.id}`);
     this.ctx.alert('glow', 'claude');
     if (this.opts().notifications) this.ctx.notify(session.displayTitle, `Needs you in ${session.project}. Alt+Shift+0 to switch.`);
   }
@@ -808,6 +815,13 @@ export class ClaudeActivity extends BaseActivity {
           ? `Claude · ${this.sessions[0].label}`
           : 'Claude';
     return { active: true, weight, urgent, summary, beam };
+  }
+
+  /** Claude working: the bot thinks along; a chat waiting on the user needs you. */
+  override pet(): PetSignal {
+    const needs = this.hooks.cards.length > 0 || this.waitingNote() !== null || this.sessions.some((s) => s.needsYou);
+    const working = this.sessions.some((s) => s.status === 'working');
+    return { mood: needs ? 'needs-you' : working ? 'thinking' : null, moment: this.petMoment };
   }
 
   chip(): ChipView | null {

@@ -91,6 +91,9 @@ export class ExternalActivity extends BaseActivity {
 
     if (changed) {
       this.ctx.surface({ key: `ext:${id}`, ms: 3500, level: 'expanded' });
+      // Island's own update notice is news for the bot; anything else reacts by its tone.
+      const tone = item.tone ?? 'info';
+      this.saw(id === 'island-update' ? 'updated' : tone === 'good' ? 'good-news' : tone === 'bad' ? 'bad-news' : tone === 'warn' ? 'warning' : 'info', `external:${id}`);
       if (item.urgent) {
         this.ctx.alert('shake');
         this.ctx.alert('glow', item.tone ?? 'warn');

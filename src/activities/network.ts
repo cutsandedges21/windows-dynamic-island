@@ -1,5 +1,6 @@
 // Network: drops and reconnects, VPN on and off, and (optionally) live speed.
 
+import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv } from '../core/activity';
 import { bytes, clip, duration, rate } from '../core/format';
 import { native, type NetSample } from '../core/native';
@@ -58,14 +59,17 @@ export class NetworkActivity extends BaseActivity {
       this.online = false;
       this.offlineAt = now;
       this.ctx.surface({ key: 'offline', ms: OFFLINE_MS, level: 'expanded' });
+      this.saw('offline', 'network:link');
     } else if (!this.online && online) {
       this.online = true;
       this.offlineAt = 0;
       this.show('online', ONLINE_MS);
+      this.saw('online', 'network:link');
     }
     if (s.vpn !== this.vpn) {
       this.vpn = s.vpn;
       this.show(s.vpn ? 'vpn-on' : 'vpn-off', VPN_MS);
+      this.saw(s.vpn ? 'vpn-on' : 'vpn-off', 'network:vpn');
     }
     this.ctx.update();
   }
@@ -73,6 +77,11 @@ export class NetworkActivity extends BaseActivity {
   private show(kind: Moment['kind'], ms: number): void {
     this.moment = { kind, at: Date.now(), ms };
     this.ctx.surface({ key: kind, ms, level: 'expanded' });
+  }
+
+  /** Offline: the bot is lost. */
+  override pet(): PetSignal {
+    return { mood: this.known && !this.online ? 'offline' : null, moment: this.petMoment };
   }
 
   private recent(now: number): Moment | null {
