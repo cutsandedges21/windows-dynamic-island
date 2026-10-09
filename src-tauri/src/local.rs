@@ -28,11 +28,11 @@ const MAX_STREAM_BYTES: usize = 4 * 1024 * 1024;
 /// The webview hears about the answer at most this often while it is written.
 const EMIT_EVERY: Duration = Duration::from_millis(40);
 
-const SYSTEM_PROMPT: &str = "You are Local AI, a small assistant inside Island, answering from a panel at the edge of the user's screen. \
-You run on the user's own Windows PC. Lead with the answer and keep it short unless the question needs more. \
-Use plain text with line breaks: no markdown, no headings, no bullet dashes.";
-const FACTS_INTRO: &str = "Here is what Island can see on the user's PC right now. Use it to answer questions about the time, \
-the date, this PC, its battery, disks, network, sound, music, calendar and apps. If a question needs something \
+const SYSTEM_PROMPT: &str = "You are the little bot that lives in Island, beside the island at the edge of the user's screen, \
+answering from a small panel there. You run on the user's own computer. Be friendly. Lead with the answer and keep it short \
+unless the question needs more. Use plain text with line breaks: no markdown, no headings, no bullet dashes.";
+const FACTS_INTRO: &str = "Here is what Island can see on the user's computer right now. Use it to answer questions about the time, \
+the date, this computer, its battery, disks, network, sound, music, calendar and apps. If a question needs something \
 that is not listed, say you cannot see that from here.";
 /// How long Ollama keeps the model in memory after the last use (its default is 5 minutes,
 /// after which the next question waits seconds for the model to load again).
