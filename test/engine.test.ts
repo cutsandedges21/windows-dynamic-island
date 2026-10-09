@@ -190,16 +190,19 @@ describe('settings migration', () => {
 
   it('pill colour: black by default, any of the five kept, anything else back to black', () => {
     expect(migrate({}).island.color).toBe('black');
-    for (const c of ['white', 'silver', 'blur', 'glass']) expect(migrate({ island: { color: c } }).island.color).toBe(c);
+    for (const c of ['white', 'matte-white', 'matte-black', 'glass']) expect(migrate({ island: { color: c } }).island.color).toBe(c);
+    // 0.2.4's names carry over.
+    expect(migrate({ island: { color: 'silver' } }).island.color).toBe('matte-white');
+    expect(migrate({ island: { color: 'blur' } }).island.color).toBe('matte-black');
     expect(migrate({ island: { color: 'pink' } }).island.color).toBe('black');
   });
 
-  it('a white accent turns dark on a white or silver pill only', () => {
+  it('a white accent turns dark on a white or matte white pill only', () => {
     const island = (color: string) => ({ ...migrate({ island: { color, accent: 'white' } }).island });
     expect(accentColor(island('black'))).toBe('#ffffff');
     expect(accentColor(island('glass'))).toBe('#ffffff');
     expect(accentColor(island('white'))).toBe('#1c1c1e');
-    expect(accentColor(island('silver'))).toBe('#1c1c1e');
+    expect(accentColor(island('matte-white'))).toBe('#1c1c1e');
   });
 });
 

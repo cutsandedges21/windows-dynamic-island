@@ -1,8 +1,9 @@
 // Self-update from the GitHub releases. A release is one Island.exe, so updating
 // is: download the newer exe beside the running one, rename the running exe to
-// Island.old.exe (Windows allows that), move the new one into its place, start
-// it and quit. The new process waits for the old one to be gone before the
-// single-instance check, or that check would send it straight back.
+// Island.old.exe (Windows allows that, not overwriting it), move the new one into
+// its place, start it and quit. The new process waits for the old one to be gone
+// before the single-instance check, or that check would send it straight back,
+// then deletes Island.old.exe: one exe is left, under its own name.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,6 +15,8 @@ use tauri::{AppHandle, Emitter};
 
 const REPO: &str = "cutsandedges21/windows-dynamic-island";
 const ASSET: &str = "Island.exe";
+/// Where the running exe goes while its replacement moves in.
+const OLD: &str = "Island.old.exe";
 /// After start, so the check never competes with the island coming up.
 const FIRST_CHECK: Duration = Duration::from_secs(90);
 const EVERY: Duration = Duration::from_secs(6 * 3600);
@@ -106,9 +109,10 @@ async fn check(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Running exe → Island.old.exe, the download → the running exe's own name.
+/// Running exe → Island.old.exe (the new process deletes it, see tidy), the
+/// download → the running exe's own name.
 fn swap_in(exe: &Path, temp: &Path, dir: &Path) -> Result<(), String> {
-    let old = dir.join("Island.old.exe");
+    let old = dir.join(OLD);
     let _ = std::fs::remove_file(&old);
     std::fs::rename(exe, &old).map_err(|e| {
         let _ = std::fs::remove_file(temp);
@@ -176,11 +180,35 @@ pub fn announce(app: AppHandle, from: String) {
     });
 }
 
-/// A download a crash left behind goes. Island.old.exe stays: it is the way back.
+/// What an update leaves goes: a download a crash cut short, and the exe it
+/// replaced (Moss wants one exe). Right after an update the old process may still
+/// be letting go of its file, so the delete keeps trying for 20 s; a copy that is
+/// still running is never touched (Windows refuses), and the next start tries again.
 pub fn tidy() {
-    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from)) {
-        let _ = std::fs::remove_file(dir.join("Island.update.tmp"));
+    let Ok(exe) = std::env::current_exe() else { return };
+    let Some(dir) = exe.parent().map(PathBuf::from) else { return };
+    let _ = std::fs::remove_file(dir.join("Island.update.tmp"));
+    let name = exe.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+    if !dir.join(OLD).exists() || name.eq_ignore_ascii_case(OLD) {
+        return;
     }
+    std::thread::spawn(move || {
+        for _ in 0..40 {
+            if remove_old(&dir, &name) {
+                crate::log::line(format!("update: removed {OLD}"));
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    });
+}
+
+/// Deletes `dir`'s Island.old.exe unless that is the running exe (`exe_name`). True once it is gone.
+fn remove_old(dir: &Path, exe_name: &str) -> bool {
+    if exe_name.eq_ignore_ascii_case(OLD) {
+        return false;
+    }
+    std::fs::remove_file(dir.join(OLD)).is_ok()
 }
 
 #[tauri::command]
@@ -210,5 +238,18 @@ mod tests {
         let list = vec![rel("v0.1.0", false, true), rel("v0.4.0", true, true), rel("v0.3.0", false, false), rel("v0.2.0", false, true)];
         assert_eq!(newest(&list, (0, 1, 0)).map(|(r, _)| r.tag_name.as_str()), Some("v0.2.0"));
         assert!(newest(&list, (0, 2, 0)).is_none());
+    }
+
+    #[test]
+    fn the_replaced_exe_goes_but_never_the_running_one() {
+        let dir = std::env::temp_dir().join(format!("island-tidy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(OLD), b"MZ").unwrap();
+        assert!(!remove_old(&dir, "island.old.exe"), "the running exe is never deleted");
+        assert!(dir.join(OLD).exists());
+        assert!(remove_old(&dir, "Island.exe"));
+        assert!(!dir.join(OLD).exists());
+        assert!(!remove_old(&dir, "Island.exe"), "nothing left to delete");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
