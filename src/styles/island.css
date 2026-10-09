@@ -54,7 +54,7 @@ html[data-pill='matte-white'] {
   --violet: #5d3fb8;
 }
 /* a darker rim, and the top edge catching the light */
-html[data-pill='matte-white'] :is(.pill-bg, .sheet-bg) {
+html[data-pill='matte-white'] :is(.pill-bg, .sheet-bg, .bubble-bg) {
   box-shadow:
     inset 0 0 0 1px rgba(0, 0, 0, 0.16),
     inset 0 2px 0 rgba(255, 255, 255, 0.8),
@@ -66,7 +66,7 @@ html[data-pill='matte-black'] {
     linear-gradient(160deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 40%, rgba(255, 255, 255, 0.02) 70%, rgba(255, 255, 255, 0.07) 100%),
     #050608;
 }
-html[data-pill='matte-black'] :is(.pill-bg, .sheet-bg) {
+html[data-pill='matte-black'] :is(.pill-bg, .sheet-bg, .bubble-bg) {
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.2),
     inset 0 1px 0 rgba(255, 255, 255, 0.32);
@@ -81,13 +81,13 @@ html[data-pill='glass'] {
 }
 html[data-pill='glass'] .pill { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.14); }
 html[data-pill='glass'] .sheet { box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.14); }
-html[data-pill='glass'] :is(.pill-bg, .sheet-bg) {
+html[data-pill='glass'] :is(.pill-bg, .sheet-bg, .bubble-bg) {
   box-shadow:
     inset 0 0 14px rgba(255, 255, 255, 0.1),
     inset 0 -10px 16px -12px rgba(255, 255, 255, 0.35);
 }
 /* the rim: a thin frame cut to the shape, bright at two opposite corners */
-html[data-pill='glass'] :is(.pill-bg, .sheet-bg)::after {
+html[data-pill='glass'] :is(.pill-bg, .sheet-bg, .bubble-bg)::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -167,6 +167,61 @@ html.peek #stage {
     inset 0 0 0 1px rgba(var(--ink), 0.075),
     inset 0 1px 0 rgba(var(--ink), 0.07);
   z-index: -1;
+}
+
+/* ------------------------------------------------------------------ the bot's bubble */
+
+.bubble {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: auto;
+  transform-origin: 50% 50%;
+  will-change: transform, opacity;
+}
+.bubble.passive { pointer-events: none; }
+/* the drop shadow sits on its own layer, so the pill colours can restyle the background freely */
+.bubble::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow:
+    0 14px 34px -10px rgba(0, 0, 0, 0.62),
+    0 3px 10px rgba(0, 0, 0, 0.32);
+}
+.bubble-bg {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--pill);
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--ink), 0.075),
+    inset 0 1px 0 rgba(var(--ink), 0.07);
+}
+.bubble-life {
+  position: absolute;
+  inset: 11%;
+  animation: bot-breathe 3.4s ease-in-out infinite;
+  transform-origin: 50% 85%;
+}
+.bubble-bot,
+.bubble-costume {
+  position: absolute;
+  inset: 0;
+}
+.bubble-bot svg { width: 100%; height: 100%; }
+.bubble-costume { pointer-events: none; }
+.bubble-costume svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+@keyframes bot-breathe {
+  0%, 100% { transform: scale(1, 1); }
+  50% { transform: translateY(1.5%) scale(1.035, 0.965); }
+}
+html.reduce .bubble-life,
+html.reduce .bubble-costume * { animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .bubble-life,
+  .bubble-costume * { animation: none !important; }
 }
 
 .pill-glow {

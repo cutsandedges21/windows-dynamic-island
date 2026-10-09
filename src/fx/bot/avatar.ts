@@ -112,6 +112,18 @@ export class BotAvatar {
     if (shapeChanged || colorsChanged) this.refresh();
   }
 
+  /**
+   * Turns the eyes toward a direction (degrees: yaw > 0 looks right, pitch > 0 looks up), or
+   * back to the pose's own gaze with null. The eyes ease there, so it is fine to call often.
+   */
+  look(gaze: { yaw: number; pitch: number } | null): void {
+    if (this.destroyed || this.reduceMotion) return;
+    const now = this.now();
+    this.engine.setLook(gaze ? { yaw: gaze.yaw, pitch: gaze.pitch, mix: 1, spin: 0, wander: 0 } : null, now);
+    this.extraMotionUntil = Math.max(this.extraMotionUntil, now + BotEngine.LOOK_MORPH);
+    this.wake();
+  }
+
   /** Stops everything and removes the svg. Safe to call twice; later calls do nothing. */
   destroy(): void {
     if (this.destroyed) return;

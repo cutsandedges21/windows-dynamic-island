@@ -8,6 +8,7 @@ export {
   BOT_SHAPES,
   BOT_STATES,
   ISLAND_SKIN,
+  botColors,
   botStateFor,
   type BotColor,
   type BotMood,

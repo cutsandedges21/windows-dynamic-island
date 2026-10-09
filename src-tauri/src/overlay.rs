@@ -248,6 +248,14 @@ const NEAR_POLL_MS: u64 = 16;
 const FAR_POLL_MS: u64 = 100;
 /// A peek ends once the pointer is this far from the island, in CSS px.
 const PEEK_LEAVE_PX: f64 = 24.0;
+/// Within NEAR_PX the bot's eyes follow the pointer: its position goes to the island at most this often.
+const POINTER_EVERY: Duration = Duration::from_millis(50);
+
+#[derive(Serialize, Clone)]
+struct PointerAt {
+    x: f64,
+    y: f64,
+}
 
 /// Click-through, outside clicks, full-screen detection and the foreground
 /// window's monitor, all from one loop: 16 ms near the island, 100 ms away from it.
@@ -267,6 +275,9 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
         let mut period = Duration::from_millis(FAR_POLL_MS);
         let mut geom: Option<(f64, f64, f64)> = None;
         let mut last_geom = Instant::now() - Duration::from_secs(5);
+        // The last pointer position sent for the bot's eyes, and when.
+        let mut last_pointer: Option<(f64, f64)> = None;
+        let mut last_pointer_at = Instant::now() - Duration::from_secs(5);
         #[cfg(target_os = "macos")]
         let mut clicks = crate::mac::input::Clicks::new();
         loop {
@@ -322,6 +333,18 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
                 x >= r.x - HIT_MARGIN && x <= r.x + r.w + HIT_MARGIN && y >= r.y - HIT_MARGIN && y <= r.y + r.h + HIT_MARGIN
             });
             period = Duration::from_millis(if gap <= NEAR_PX { NEAR_POLL_MS } else { FAR_POLL_MS });
+
+            // Near the island the bot watches the pointer; once it leaves, one null says so.
+            if gap <= NEAR_PX {
+                let moved = last_pointer.is_none_or(|(px, py)| (px - x).abs() >= 1.0 || (py - y).abs() >= 1.0);
+                if moved && last_pointer_at.elapsed() >= POINTER_EVERY {
+                    last_pointer = Some((x, y));
+                    last_pointer_at = Instant::now();
+                    let _ = app.emit_to(LABEL, "pointer", Some(PointerAt { x, y }));
+                }
+            } else if last_pointer.take().is_some() {
+                let _ = app.emit_to(LABEL, "pointer", None::<PointerAt>);
+            }
 
             // Ctrl pressed with the pointer on the island starts a peek; a tap is
             // enough, so the click behind is a plain click, not a Ctrl+click.

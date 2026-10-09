@@ -4,7 +4,8 @@
 
 import { setReducedMotion } from './animator';
 import { BorderGlow, type GlowSpec, type GlowSpeed } from './glow';
-import { pillRect, tuckedRect, type Anchor, type Area, type Orientation } from './layout';
+import { BubbleView } from './bubble';
+import { bubbleRect, pillRect, tuckedRect, type Anchor, type Area, type Orientation } from './layout';
 import { native, on, type Placement } from './native';
 import { PillRenderer } from './renderer';
 import type { Placed } from './segments';
@@ -32,11 +33,14 @@ export interface MirrorFrame {
   accent: string;
   color: PillColor;
   reduce: boolean;
+  /** The bot's bubble beside the pill (its diameter), or null when it is off or the island is moving. */
+  bot: { d: number } | null;
 }
 
 export async function runMirror(stage: HTMLElement): Promise<void> {
   const renderer = new PillRenderer(stage, () => {});
   const glow = new BorderGlow(stage);
+  const bubble = new BubbleView(stage, { interactive: false });
   renderer.onFrame((r) => glow.place(r));
   let area: Area = { width: 1280, height: 720 };
   let monitor = '';
@@ -50,12 +54,16 @@ export async function runMirror(stage: HTMLElement): Promise<void> {
     document.documentElement.style.setProperty('--accent', f.accent);
     document.documentElement.dataset.pill = f.color;
     setReducedMotion(f.reduce);
+    document.documentElement.classList.toggle('reduce', f.reduce);
+    bubble.colour(f.accent);
     const hidden = f.hidden || (f.fsHide && f.fullscreen === monitor);
     renderer.setOrientation(f.orient);
     renderer.setAnchor(f.anchor);
     const target = hidden ? tuckedRect(area, f.anchor, f.w, f.h) : pillRect(area, f.anchor, f.w, f.h, f.edge);
     renderer.setShell(target, { config: lastAnchor && lastAnchor !== f.anchor ? springs.travel : springs.shell, immediate });
     lastAnchor = f.anchor;
+    const fsHere = f.fsHide && f.fullscreen === monitor;
+    bubble.place(f.bot && !fsHere ? bubbleRect(pillRect(area, f.anchor, f.w, f.h, f.edge), f.anchor, f.bot.d) : null, { immediate });
     if (f.sig !== lastSig) {
       renderer.render(f.placed, f.w, f.h, { swap: f.swap && lastSig !== '', immediate });
       lastSig = f.sig;

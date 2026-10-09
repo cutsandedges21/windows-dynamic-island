@@ -8,9 +8,10 @@
 import { CATALOG_BY_ID } from '../activities/catalog';
 import type { Activity, ActivityContext, ActivityStatus, RenderEnv, SheetEnv, SurfaceOptions } from './activity';
 import { setReducedMotion } from './animator';
+import { BubbleView } from './bubble';
 import { BorderGlow, type GlowSpec } from './glow';
 import { CELLS, hiddenTest, leadFirst, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
-import { innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
+import { bubbleRect, bubbleSize, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
 import { native, on, sendTo, type MenuItem } from './native';
 import { choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
 import type { MirrorFrame } from './mirror';
@@ -96,6 +97,8 @@ export class Island {
   private hoverKey: string | null = null;
   /** Light on the pill's edge and on an urgent card's, in the tone of whatever is happening. */
   private readonly pillGlow: BorderGlow;
+  /** The bot in its bubble beside the pill. */
+  private readonly bubble: BubbleView;
   private readonly cardGlow: BorderGlow;
   /** Duplicate mode: how many copies of the pill run on other screens, and the last frame sent to them. */
   private mirrorCount = 0;
@@ -120,6 +123,7 @@ export class Island {
     );
     // The light is drawn above the pill and the card, not inside them, so it can spill over their edges.
     this.pillGlow = new BorderGlow(stage);
+    this.bubble = new BubbleView(stage, { interactive: true, onClick: () => this.handleAction('island:bot', null, this.bubble.el) });
     this.cardGlow = new BorderGlow(stage, 24);
     this.renderer.onFrame((r) => {
       this.sheet.follow(r);
@@ -143,6 +147,9 @@ export class Island {
     await on<{ monitor: string; fullscreen: string | null; pid: number }>('foreground', (fg) => this.onForeground(fg));
     await on('pointer-outside', () => this.dismiss());
     await on<boolean>('peek', (on) => this.onPeek(on));
+    // The bot's eyes follow the pointer while Rust sees it near the island (the preview has no Rust).
+    await on<{ x: number; y: number } | null>('pointer', (p) => this.bubble.lookAt(p));
+    if (native.demo) window.addEventListener('pointermove', (e) => this.bubble.lookAt({ x: e.clientX, y: e.clientY }));
     await on('displays-changed', () => void this.place(false));
     await on('mirror-ready', () => {
       if (this.mirrorFrame) void native.broadcast('mirror-frame', { ...this.mirrorFrame, bump: false });
@@ -156,7 +163,7 @@ export class Island {
     // Rust reports presses outside the window's hit area; this catches the rest
     // (the thin margin around the pill, and everything in the browser preview).
     document.addEventListener('pointerdown', (e) => {
-      if (!(e.target as Element | null)?.closest?.('.pill, .sheet')) this.dismiss();
+      if (!(e.target as Element | null)?.closest?.('.pill, .sheet, .bubble')) this.dismiss();
     });
     window.addEventListener('resize', () => {
       if (native.demo) void this.place(false);
@@ -176,8 +183,11 @@ export class Island {
 
   private applyLook(): void {
     const s = this.settings.island;
-    setReducedMotion(s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches));
+    const reduce = s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    setReducedMotion(reduce);
+    document.documentElement.classList.toggle('reduce', reduce);
     document.documentElement.style.setProperty('--accent', accentColor(s));
+    this.bubble.colour(accentColor(s));
     document.documentElement.dataset.pill = s.color;
   }
 
@@ -245,7 +255,7 @@ export class Island {
 
   private sendMirror(frame: MirrorFrame): void {
     if (!this.mirrorCount) return;
-    const key = `${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.reduce}`;
+    const key = `${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.reduce}|${frame.bot?.d ?? 0}`;
     if (key === this.mirrorKey && !frame.bump) return;
     this.mirrorKey = key;
     this.mirrorFrame = frame;
@@ -524,6 +534,11 @@ export class Island {
     this.renderer.setShell(target, { config: travelling ? springs.travel : springs.shell, immediate });
     this.lastAnchor = anchor;
     this.lastOrientation = orient;
+    // The bot stays beside where the pill rests, even while the idle pill is tucked away; it goes
+    // only while the island moves screens or hides behind a full-screen app.
+    const botShown = s.bot && !this.moving && !(fsHide && this.fullscreenOn !== null);
+    const botD = bubbleSize(s.size);
+    this.bubble.place(botShown ? bubbleRect(pillRect(this.area, anchor, w, h, s.edge), anchor, botD) : null, { immediate });
 
     const swap = primary !== this.lastPrimary || viewKey !== this.lastViewKey || reshaped;
     const sig = `${orient}|${viewKey}|${w}|${h}|${signature(placed)}`;
@@ -546,6 +561,7 @@ export class Island {
       sig, swap, bump: bump && !hiddenEverywhere, placed, w, h, orient, anchor, edge: s.edge,
       hidden: hiddenEverywhere, fsHide, fullscreen: this.fullscreenAny,
       glow: beamSpec(beam), speed: s.glow,
+      bot: botShown ? { d: botD } : null,
       accent: accentColor(s), color: s.color, reduce: s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches),
     });
     this.pillInput = placed.some((p) => p.seg.t === 'input');
@@ -1010,8 +1026,10 @@ export class Island {
     const card = this.sheet?.hitRect();
     if (card) rects.push(card);
     if (strip) rects.push(strip);
+    const bot = this.bubble?.hitRect;
+    if (bot) rects.push(bot);
     const hiddenNow = this.renderer.targetRect.y < 0 || this.renderer.targetRect.x < 0 || this.renderer.targetRect.y > this.area.height || this.renderer.targetRect.x > this.area.width;
-    void native.setHit(hiddenNow && strip ? [strip] : rects);
+    void native.setHit(hiddenNow && strip ? [strip, ...(bot ? [bot] : [])] : rects);
   }
 
   // ---------------------------------------------------------------- interaction
@@ -1164,6 +1182,13 @@ export class Island {
         this.open = false;
         this.view = 'main';
         break;
+      case 'island:bot': {
+        // Talking to the bot is Local AI's chat (src/activities/local.ts).
+        const local = this.running.get('local');
+        if (local?.action) Promise.resolve(local.action('ask', null)).catch((err) => native.log(`bot chat failed: ${String(err)}`));
+        else void native.openApp('activities');
+        break;
+      }
       case 'island:cancel-input':
         this.open = false;
         break;
