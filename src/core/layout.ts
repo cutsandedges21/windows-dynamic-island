@@ -106,6 +106,33 @@ export function tuckedRect(area: Area, anchor: Anchor, w: number, h: number): Re
   }
 }
 
+// ------------------------------------------------------------------ the bot's bubble
+
+/** Space between the bubble and the pill, CSS px. */
+export const BUBBLE_GAP = 6;
+
+/** The bubble is as tall as the compact pill, whatever the pill is doing. */
+export function bubbleSize(size: IslandSize): number {
+  return heightFor('compact', size);
+}
+
+/**
+ * The bubble beside the pill: to its left on the top and bottom edges, above it on the
+ * sides, lined up with the screen edge the pill is pinned to.
+ */
+export function bubbleRect(pill: Rect, anchor: Anchor, d: number): Rect {
+  switch (anchor) {
+    case 'top':
+      return { x: pill.x - BUBBLE_GAP - d, y: pill.y, w: d, h: d };
+    case 'bottom':
+      return { x: pill.x - BUBBLE_GAP - d, y: pill.y + pill.h - d, w: d, h: d };
+    case 'left':
+      return { x: pill.x, y: pill.y - BUBBLE_GAP - d, w: d, h: d };
+    case 'right':
+      return { x: pill.x + pill.w - d, y: pill.y - BUBBLE_GAP - d, w: d, h: d };
+  }
+}
+
 /**
  * The point that stays fixed while the pill changes size, in pill-local
  * coordinates: the centre for top and bottom, the pinned edge for the sides.

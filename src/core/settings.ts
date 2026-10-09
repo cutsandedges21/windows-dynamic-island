@@ -61,6 +61,8 @@ export interface Settings {
     hoverCard: 'pointer' | 'claude';
     /** Tapping Ctrl over the pill fades it and lets clicks through to what is behind. */
     peekThrough: boolean;
+    /** The bot in its bubble beside the pill (src/core/bubble.ts). */
+    bot: boolean;
     grid: GridLayout;
   };
   activities: {
@@ -139,6 +141,7 @@ export function defaultSettings(): Settings {
       glow: 'medium',
       hoverCard: 'pointer',
       peekThrough: true,
+      bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
     },
     activities: { order: CATALOG.map((m) => m.id), config },

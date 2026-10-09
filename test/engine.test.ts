@@ -197,6 +197,12 @@ describe('settings migration', () => {
     expect(migrate({ island: { color: 'pink' } }).island.color).toBe('black');
   });
 
+  it('the bot is on unless it was turned off', () => {
+    expect(migrate({}).island.bot).toBe(true);
+    expect(migrate({ island: { bot: false } }).island.bot).toBe(false);
+    expect(migrate({ island: { bot: 'yes' } }).island.bot).toBe(true);
+  });
+
   it('a white accent turns dark on a white or matte white pill only', () => {
     const island = (color: string) => ({ ...migrate({ island: { color, accent: 'white' } }).island });
     expect(accentColor(island('black'))).toBe('#ffffff');

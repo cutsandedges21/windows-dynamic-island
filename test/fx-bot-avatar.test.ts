@@ -3,7 +3,7 @@
 // island uses checked to look different from the resting bot.
 
 import { describe, expect, it } from 'vitest';
-import { BOT_STATES, ISLAND_SKIN, botStateFor, motionSeconds, nextBlinkDelayMs, resolveSkin, type BotMood, type BotState } from '../src/fx/bot/catalog';
+import { BOT_STATES, ISLAND_SKIN, botColors, botStateFor, motionSeconds, nextBlinkDelayMs, resolveSkin, type BotMood, type BotState } from '../src/fx/bot/catalog';
 import { BotEngine } from '../src/fx/bot/engine';
 import { DEFAULT_EXPRESSION, EXPRESSION_BY_ID } from '../src/fx/bot/expressions';
 import { RAYON } from '../src/fx/bot/repere';
@@ -95,5 +95,21 @@ describe('skins and blinks', () => {
   it('blinks every 3 to 6 seconds', () => {
     expect(nextBlinkDelayMs(() => 0)).toBe(3000);
     expect(nextBlinkDelayMs(() => 0.999)).toBeLessThan(6000);
+  });
+});
+
+describe('the bot in an accent colour', () => {
+  it('wears the accent and keeps its eyes readable on it', () => {
+    for (const accent of ['#6aa6e8', '#e8845f', '#62c99a', '#a58cf0', '#e3b34f', '#ea7aa1', '#ffffff']) {
+      expect(botColors(accent)).toEqual({ body: accent, eye: '#17120e' });
+    }
+    // A white accent on a white pill turns dark, and so do custom dark colours: light eyes there.
+    expect(botColors('#1c1c1e').eye).toBe('#fbf3e6');
+    expect(botColors('#203040').eye).toBe('#fbf3e6');
+  });
+
+  it('takes #rgb, named palette colours, and falls back to the island skin for junk', () => {
+    expect(botColors('#fff')).toEqual({ body: '#ffffff', eye: '#17120e' });
+    expect(botColors('nope').body).toBe(ISLAND_SKIN.color);
   });
 });
