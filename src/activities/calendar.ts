@@ -4,6 +4,7 @@
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { clip, timeOfDay, until } from '../core/format';
 import { native } from '../core/native';
+import { platform } from '../core/platform';
 import type { Seg } from '../core/segments';
 import type { Tile } from '../core/sheet';
 import { BaseActivity } from './base';
@@ -73,8 +74,9 @@ export class CalendarActivity extends BaseActivity {
     void this.refresh();
   }
 
-  /** Windows accounts by default; a link only when the user picks one. */
+  /** Windows accounts by default; a link only when the user picks one. A Mac has only the link so far. */
   private source(): 'windows' | 'ics' {
+    if (platform === 'macos') return 'ics';
     return this.ctx.options<Partial<Options>>().source === 'ics' ? 'ics' : 'windows';
   }
 

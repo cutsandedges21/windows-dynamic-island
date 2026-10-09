@@ -77,6 +77,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "writes to this PC's real Credential Manager; run with --ignored"]
     fn a_secret_round_trips_through_the_credential_manager() {
         let name = format!("test.island-{}", std::process::id());
         assert!(!secret_has(name.clone()));

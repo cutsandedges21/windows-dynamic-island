@@ -10,7 +10,7 @@ import { icon } from './core/icons';
 import { activeValue } from './core/models';
 import { native } from './core/native';
 import { applyPlan, glanceChoices, planActivities, previewCells, suggestGlance, USES, type Facts, type Plan, type Use } from './core/onboarding';
-import { platform } from './core/platform';
+import { platform, thisComputer } from './core/platform';
 import { springAnimate } from './core/renderer';
 import { cloneSettings, type Settings } from './core/settings';
 import { springs } from './core/spring';
@@ -161,7 +161,7 @@ function content(step: Step, host: WelcomeHost): Node[] {
       return hello();
     case 'uses':
       return [
-        h('h1', { text: 'What do you use this PC for?' }),
+        h('h1', { text: `What do you use ${thisComputer()} for?` }),
         h('p', { class: 'lead', text: 'Pick all that fit. Island fills your Control Center from this, the panel that opens when you click it.' }),
         h('div', { class: 'w-options' }, USES.map((u) => option(u.icon, u.label, u.sub, flow.uses.has(u.id), (on) => (on ? flow.uses.add(u.id) : flow.uses.delete(u.id))))),
       ];
@@ -182,8 +182,8 @@ function content(step: Step, host: WelcomeHost): Node[] {
     }
     case 'ai':
       return [
-        h('h1', { text: 'Your own AI, on this PC' }),
-        h('p', { class: 'lead', text: 'Local AI answers questions without the internet, and nothing you ask leaves this computer. Island checked this PC and marked the model that suits it. Click a model to download it and use it. You can switch any time in Activities › Local AI.' }),
+        h('h1', { text: `Your own AI, on ${thisComputer()}` }),
+        h('p', { class: 'lead', text: `Local AI answers questions without the internet, and nothing you ask leaves this computer. Island checked ${thisComputer()} and marked the model that suits it. Click a model to download it and use it. You can switch any time in Activities › Local AI.` }),
         modelPicker(pickerHost(host), 'cards'),
       ];
     case 'done':
@@ -201,7 +201,7 @@ function hello(): Node[] {
     h('p', { class: 'lead', text: 'Island sits at the top of your screen and shows what is going on: music, downloads, timers, calls and your AI. Answer two questions and it sets itself up around you. It takes about a minute.' }),
     h('ul', { class: 'w-points' }, [
       point('grid', 'A Control Center made for you', 'Click the island for a panel of tiles, picked from your answers.'),
-      point('spark', 'An AI that runs on this PC', 'Island checks your memory and graphics and recommends the model that suits them.'),
+      point('spark', `An AI that runs on ${thisComputer()}`, 'Island checks your memory and graphics and recommends the model that suits them.'),
       point('settings', 'Nothing is final', 'Change any of it later in Activities and Settings.'),
     ]),
   ];

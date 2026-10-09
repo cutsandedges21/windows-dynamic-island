@@ -6,6 +6,7 @@
 // of shoving it. Per frame only transform, opacity, filter and the shell's size
 // are written; nothing is read back from layout.
 
+import { BotAvatar, ISLAND_SKIN, botStateFor, type BotSkin } from '../fx';
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
 import { contentOrigin, fixedPointX, innerPadding, type Anchor, type Orientation, type Rect } from './layout';
@@ -13,6 +14,14 @@ import { springEasing, springs, type SpringConfig } from './spring';
 import type { Placed, Seg } from './segments';
 
 export type ActionHandler = (action: string, arg: unknown, source: HTMLElement) => void;
+
+/** The bot's colours for the pill's: the cream bot on the dark pills, an ink one on the light ones. */
+const LIGHT_PILL_SKIN: BotSkin = { color: '#24201c', eye: '#f6e1bd' };
+
+function botSkin(): BotSkin {
+  const pill = document.documentElement.dataset.pill;
+  return pill === 'white' || pill === 'matte-white' ? LIGHT_PILL_SKIN : ISLAND_SKIN;
+}
 
 type NodeKeys = 'x' | 'w' | 'o' | 's' | 'b';
 
@@ -49,6 +58,8 @@ export class PillRenderer {
   private readonly content: HTMLElement;
   private readonly shell: SpringSet<'x' | 'y' | 'w' | 'h' | 's' | 'dx' | 'dy'>;
   private readonly nodes = new Map<string, SegNode>();
+  /** The live bot avatars, by their segment element. */
+  private readonly bots = new Map<HTMLElement, BotAvatar>();
   private anchor: Anchor = 'top';
   private orientation: Orientation = 'horizontal';
   private onShellFrame: ((r: Rect) => void) | null = null;
@@ -98,6 +109,12 @@ export class PillRenderer {
     const release = () => this.shell.set({ s: 1 }, { config: springs.bouncy });
     this.pill.addEventListener('pointerup', release);
     this.pill.addEventListener('pointercancel', release);
+
+    // A new pill colour (Settings, or the frame a Duplicate mirror receives) recolours the bots.
+    new MutationObserver(() => {
+      const skin = botSkin();
+      for (const bot of this.bots.values()) bot.setSkin(skin);
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-pill'] });
   }
 
   /** Called on every shell frame with the drawn rect (for hit testing). */
@@ -251,11 +268,18 @@ export class PillRenderer {
     if (node.el.querySelector('input') === this.focusInput) this.focusInput = null;
     if (!animate) {
       node.set.stop();
-      node.el.remove();
+      this.discard(node.el);
       return;
     }
     node.set.set({ o: 0, s: 0.86, b: 6 }, { config: { o: springs.fade, s: springs.snappy, b: springs.fade } });
-    node.set.onRest(() => node.el.remove());
+    node.set.onRest(() => this.discard(node.el));
+  }
+
+  /** Takes a segment's element out for good, stopping a bot that lives in it. */
+  private discard(e: HTMLElement): void {
+    e.remove();
+    this.bots.get(e)?.destroy();
+    this.bots.delete(e);
   }
 
   private build(seg: Seg): HTMLElement {
@@ -315,6 +339,9 @@ export class PillRenderer {
       }
       case 'art':
         e = el('span', 'seg seg-art');
+        break;
+      case 'bot':
+        e = el('span', 'seg seg-bot');
         break;
       case 'sep':
         e = el('span', 'seg seg-sep');
@@ -425,6 +452,14 @@ export class PillRenderer {
           }
           if (prev && e.firstElementChild) springAnimate(e.firstElementChild, [{ opacity: 0, transform: 'scale(0.86)' }, { opacity: 1, transform: 'none' }], springs.content);
         }
+        break;
+      }
+      case 'bot': {
+        // One avatar for the element's whole life: a new mood morphs it instead of swapping it.
+        const state = botStateFor(seg.mood);
+        const bot = this.bots.get(e);
+        if (bot) bot.setState(state);
+        else this.bots.set(e, new BotAvatar(e, { size: 24, state, ...botSkin() }));
         break;
       }
       case 'meter': {

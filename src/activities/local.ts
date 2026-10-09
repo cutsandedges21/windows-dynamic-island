@@ -9,6 +9,7 @@ import { bridge, type Bundled, type ChatTurn, type DeviceInfo, type LocalDelta, 
 import { bytes, clip, plainText, rate } from '../core/format';
 import { chooseBackend } from '../core/models';
 import { native, type Agenda, type AudioState, type MediaState, type NetSample, type PowerState, type SysSample } from '../core/native';
+import { platform, thisComputer } from '../core/platform';
 import type { Seg } from '../core/segments';
 import type { SheetButton, SheetView, Tile } from '../core/sheet';
 import { trimHistory } from './ask';
@@ -95,7 +96,7 @@ export function deviceFacts(s: DeviceSnapshot, now: Date): string {
 
   const i = s.info;
   if (i) {
-    add('This PC', [i.computer, i.os, i.user && `signed in as ${i.user}`, i.uptimeSecs > 0 && `up ${hours(i.uptimeSecs)}`].filter(Boolean).join(', '));
+    add(platform === 'macos' ? 'This Mac' : 'This PC', [i.computer, i.os, i.user && `signed in as ${i.user}`, i.uptimeSecs > 0 && `up ${hours(i.uptimeSecs)}`].filter(Boolean).join(', '));
     add('Processor', i.cpu && `${i.cpu}${i.threads ? `, ${i.threads} threads` : ''}`);
     add('Disks', i.drives.map((d) => `${d.root.replace(/\\$/, '')} ${gb(d.free)} free of ${gb(d.total)}`).join('; '));
   }
@@ -497,7 +498,7 @@ export class LocalActivity extends BaseActivity {
   home(): Seg[] {
     // Another model downloading in the background does not stop the one that is ready.
     if ((this.phase !== 'idle' && this.phase !== 'setup') || !this.available) return [];
-    return [{ t: 'button', key: 'local', icon: 'spark', label: 'Local AI', action: 'ask', style: 'secondary', prio: 5, tip: 'Ask the model on this PC' }];
+    return [{ t: 'button', key: 'local', icon: 'spark', label: 'Local AI', action: 'ask', style: 'secondary', prio: 5, tip: `Ask the model on ${thisComputer()}` }];
   }
 
   render(env: RenderEnv): Seg[] {
@@ -614,7 +615,7 @@ export class LocalActivity extends BaseActivity {
     const chatting = this.history.length > 0;
     const buttons: SheetButton[] = [{ key: 'ask', icon: 'spark', label: chatting ? 'Follow up' : 'Ask', action: 'ask', style: 'primary' }];
     if (chatting) buttons.push({ key: 'new', icon: 'plus', label: 'New chat', action: 'new', style: 'ghost' });
-    const sub = this.phase === 'thinking' ? 'Thinking…' : this.phase === 'streaming' ? 'Writing…' : this.answer && chatting ? clip(oneLine(this.answer), 48) : 'Runs on this PC';
+    const sub = this.phase === 'thinking' ? 'Thinking…' : this.phase === 'streaming' ? 'Writing…' : this.answer && chatting ? clip(oneLine(this.answer), 48) : `Runs on ${thisComputer()}`;
     return { key: 'local', span: 2, tone: 'violet', body: { k: 'actions', icon: 'spark', label: 'Local AI', sub, buttons } };
   }
 }

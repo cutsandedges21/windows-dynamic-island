@@ -339,10 +339,10 @@ export const native = {
   watch: (id: string, path: string, recursive = false) => call<boolean>('fs_watch', { id, path, recursive }, false),
   unwatch: (id: string) => call('fs_unwatch', { id }, undefined),
   knownFolders: () =>
-    call<{ home: string; downloads: string; desktop: string; pictures: string; screenshots: string[]; appData: string; localAppData: string }>(
+    call<{ home: string; downloads: string; desktop: string; pictures: string; screenshots: string[]; appData: string; localAppData: string; islandData: string }>(
       'known_folders',
       {},
-      { home: '', downloads: '', desktop: '', pictures: '', screenshots: [], appData: '', localAppData: '' },
+      { home: '', downloads: '', desktop: '', pictures: '', screenshots: [], appData: '', localAppData: '', islandData: '' },
     ),
 
   claudeEnv: () =>

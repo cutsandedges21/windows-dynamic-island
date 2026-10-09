@@ -9,6 +9,7 @@ import { agoText, baseName, clip, elapsed, pace, plainText, resetsIn, resetsOn, 
 import { requireHello } from '../../core/hello';
 import { native, type ClaudeEnv, type MenuItem } from '../../core/native';
 import type { Seg, Tone } from '../../core/segments';
+import type { BotMood } from '../../fx';
 import type { Block, SheetButton, SheetRow, SheetView, Tile } from '../../core/sheet';
 import { BaseActivity, chime } from '../base';
 import { chatUrl, DesktopChats, type DesktopChat } from './desktop';
@@ -27,6 +28,8 @@ interface Options {
   finishedSeconds: number;
   /** A chat that finishes while the user is looking at it does not pop the island open. */
   onlyOtherChats: boolean;
+  /** The bot at the front of the pill instead of the status dot and Claude mark. */
+  avatar: boolean;
   replyWindowSeconds: number;
   requireHello: boolean;
   resetAlerts: boolean;
@@ -49,6 +52,23 @@ const HOLD_MS = 240_000;
 const HOLD_CEILING_MS = 270_000;
 
 const TONE: Record<string, Tone> = { needs: 'claude', working: 'good', turn: 'info', error: 'bad', muted: 'muted' };
+
+/** The Claude mark that leads the pill when the avatar is off. */
+const MARK: Seg = { t: 'icon', key: 'mark', icon: 'claude', tone: 'claude', prio: 0 };
+
+/** What the avatar shows for a chat: it waits on you, it is busy, it hit an error, or it rests. */
+export function moodOf(s: Pick<SessionView, 'status' | 'needsYou'>): BotMood {
+  if (s.needsYou) return 'needs-you';
+  if (s.status === 'working') return 'thinking';
+  if (s.status === 'errored') return 'error';
+  return 'idle';
+}
+
+/** One avatar for several chats shows the most pressing of their moods. */
+export function moodOfAll(sessions: Array<Pick<SessionView, 'status' | 'needsYou'>>): BotMood {
+  const moods = new Set(sessions.map(moodOf));
+  return (['needs-you', 'error', 'thinking'] as const).find((m) => moods.has(m)) ?? 'idle';
+}
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** "a:b:c" → ["a", "b:c"]: action names carry their target after the first colon. */
@@ -105,6 +125,7 @@ export class ClaudeActivity extends BaseActivity {
       showDesktop: o.showDesktop !== false,
       finishedSeconds: Number(o.finishedSeconds) || 8,
       onlyOtherChats: o.onlyOtherChats === true,
+      avatar: o.avatar !== false,
       replyWindowSeconds: Math.max(0, Math.min(240, Number(o.replyWindowSeconds ?? 45) || 0)),
       requireHello: o.requireHello === true,
       resetAlerts: o.resetAlerts !== false,
@@ -843,12 +864,20 @@ export class ClaudeActivity extends BaseActivity {
     if (note && (env.level === 'maximum' || env.level === 'expanded')) return this.noteView(note.sessionId, env);
     if (this.sessions.length > 1 && !this.selected) return this.multiView(env);
     const s = this.featured();
-    if (!s) return [{ t: 'icon', key: 'mark', icon: 'claude', tone: 'claude', prio: 0 }, { t: 'text', key: 'none', text: 'Claude', weight: 'semibold', prio: 0 }];
+    if (!s) return [this.face('idle', MARK), { t: 'text', key: 'none', text: 'Claude', weight: 'semibold', prio: 0 }];
     return this.sessionView(s, env);
   }
 
   private dot(s: SessionView): Seg {
     return { t: 'dot', key: `dot`, tone: TONE[s.tone] ?? 'muted', pulse: s.needsYou, prio: 0 };
+  }
+
+  /**
+   * What leads the pill: the avatar in `mood`, or `plain` (a status dot or icon) with the avatar off.
+   * Every view gives the avatar the same key, so moving between views morphs the one bot.
+   */
+  private face(mood: BotMood, plain: Seg): Seg {
+    return this.opts().avatar ? { t: 'bot', key: 'face', mood, prio: 0 } : plain;
   }
 
   private timing(s: SessionView, now: number): string {
@@ -893,13 +922,15 @@ export class ClaudeActivity extends BaseActivity {
   private sessionView(s: SessionView, env: RenderEnv): Seg[] {
     const now = env.now;
     const dot = this.dot(s);
+    const lead = this.face(moodOf(s), dot);
     const label: Seg = { t: 'text', key: 'label', text: s.status === 'working' ? 'Working…' : s.label, tone: s.needsYou ? 'claude' : 'muted', prio: 1 };
     if (env.level === 'compact' || env.level === 'idle') {
-      if (env.vertical) return [{ t: 'icon', key: 'mark', icon: 'claude', tone: 'claude', prio: 0 }, dot];
-      return [dot, { t: 'text', key: 'name', text: 'Claude', weight: 'semibold', prio: 0 }, { ...label, side: 'end' }];
+      // Down a side the bot alone says both who and how; without it, the mark and the dot do.
+      if (env.vertical) return lead === dot ? [MARK, dot] : [lead];
+      return [lead, { t: 'text', key: 'name', text: 'Claude', weight: 'semibold', prio: 0 }, { ...label, side: 'end' }];
     }
     const segs: Seg[] = [
-      dot,
+      lead,
       { t: 'text', key: 'title', text: s.displayTitle, weight: 'semibold', prio: 3, max: env.level === 'expanded' ? 170 : 240 },
       { t: 'sep', key: 'sep1', prio: 6 },
       label,
@@ -923,15 +954,18 @@ export class ClaudeActivity extends BaseActivity {
     const needs = this.sessions.filter((s) => s.needsYou).length;
     const working = this.sessions.filter((s) => s.status === 'working').length;
     const tone: Tone = needs ? 'claude' : working ? 'good' : 'info';
+    const mood = moodOfAll(this.sessions);
     if (env.level === 'compact' || env.level === 'idle') {
-      if (env.vertical) return [{ t: 'icon', key: 'mark', icon: 'claude', tone: 'claude', prio: 0 }, { t: 'text', key: 'count', text: `×${n}`, weight: 'semibold', prio: 0 }];
+      if (env.vertical) return [this.face(mood, MARK), { t: 'text', key: 'count', text: `×${n}`, weight: 'semibold', prio: 0 }];
+      const lead = this.face(mood, { t: 'dot', key: 'dot', tone, pulse: needs > 0, prio: 0 });
       return [
-        { t: 'dot', key: 'dot', tone, pulse: needs > 0, prio: 0 },
-        { t: 'text', key: 'name', text: `Claude ×${n}`, weight: 'semibold', prio: 0 },
+        lead,
+        // Beside Claude's face the count says it all, which leaves a small pill room for the status.
+        { t: 'text', key: 'name', text: lead.t === 'bot' ? `×${n}` : `Claude ×${n}`, weight: 'semibold', prio: 0 },
         { t: 'text', key: 'label', text: needs ? `${needs} need${needs > 1 ? '' : 's'} you` : working ? `${working} working` : 'Your turn', tone: needs ? 'claude' : 'muted', side: 'end', prio: 3 },
       ];
     }
-    const segs: Seg[] = [{ t: 'icon', key: 'mark', icon: 'claude', tone: 'claude', prio: 0 }];
+    const segs: Seg[] = [this.face(mood, MARK)];
     this.sessions.forEach((s, i) => {
       segs.push({
         t: 'chip',
@@ -968,7 +1002,7 @@ export class ClaudeActivity extends BaseActivity {
     const s = this.sessions.find((x) => x.id === card.sessionId);
     const more = this.hooks.cards.length - 1;
     const segs: Seg[] = [
-      { t: 'icon', key: 'perm-icon', icon: card.tool === 'AskUserQuestion' ? 'chat' : 'claude', tone: 'claude', anim: 'pulse', prio: 0 },
+      this.face('needs-you', { t: 'icon', key: 'perm-icon', icon: card.tool === 'AskUserQuestion' ? 'chat' : 'claude', tone: 'claude', anim: 'pulse', prio: 0 }),
       { t: 'text', key: 'perm-ask', text: this.askOf(card), weight: 'semibold', prio: 0 },
       { t: 'text', key: 'perm-title', text: s?.displayTitle || baseName(card.cwd) || 'Claude Code', tone: 'muted', prio: 4, max: env.vertical ? 60 : 200 },
     ];
@@ -979,7 +1013,7 @@ export class ClaudeActivity extends BaseActivity {
   private replyView(h: ReplyHold, env: RenderEnv): Seg[] {
     const s = this.sessions.find((x) => x.id === h.sessionId);
     return [
-      { t: 'icon', key: 'reply-icon', icon: 'check', tone: 'good', prio: 0 },
+      this.face('done', { t: 'icon', key: 'reply-icon', icon: 'check', tone: 'good', prio: 0 }),
       { t: 'text', key: 'reply-done', text: 'Claude finished', weight: 'semibold', prio: 0 },
       { t: 'text', key: 'reply-title', text: s?.displayTitle ?? 'your chat', tone: 'muted', prio: 4, max: env.vertical ? 60 : 220 },
     ];
@@ -987,7 +1021,7 @@ export class ClaudeActivity extends BaseActivity {
 
   private finishedView(s: SessionView, env: RenderEnv): Seg[] {
     const segs: Seg[] = [
-      { t: 'icon', key: 'done-icon', icon: 'check', tone: 'good', prio: 0 },
+      this.face('done', { t: 'icon', key: 'done-icon', icon: 'check', tone: 'good', prio: 0 }),
       { t: 'text', key: 'done', text: 'Claude finished', weight: 'semibold', prio: 0 },
       { t: 'text', key: 'done-title', text: s.displayTitle, tone: 'muted', prio: 4, max: 200 },
     ];
@@ -1006,7 +1040,7 @@ export class ClaudeActivity extends BaseActivity {
     const s = this.tracker?.get(id) ?? this.tracker?.getClosed(id) ?? this.sessions.find((x) => x.id === id) ?? null;
     void env;
     return [
-      { t: 'icon', key: 'in-icon', icon: 'claude', tone: 'claude', prio: 0 },
+      this.face('listening', { t: 'icon', key: 'in-icon', icon: 'claude', tone: 'claude', prio: 0 }),
       { t: 'input', key: 'prompt', placeholder: `Continue ${clip(s?.displayTitle ?? 'this session', 40)}…`, action: 'send', cancel: 'cancel-input', prio: 0, min: 220 },
       { t: 'button', key: 'in-cancel', icon: 'x', action: 'cancel-input', style: 'ghost', side: 'end', prio: 1, tip: 'Cancel (Esc)' },
     ];
@@ -1016,7 +1050,7 @@ export class ClaudeActivity extends BaseActivity {
     const s = this.sessions.find((x) => x.id === sid);
     const ask = this.hooks.asks.get(sid);
     return [
-      { t: 'icon', key: 'note-icon', icon: ask ? 'chat' : 'bell', tone: 'claude', anim: 'pulse', prio: 0 },
+      this.face('needs-you', { t: 'icon', key: 'note-icon', icon: ask ? 'chat' : 'bell', tone: 'claude', anim: 'pulse', prio: 0 }),
       { t: 'text', key: 'note-what', text: ask ? 'Claude is asking' : 'Claude needs you', weight: 'semibold', prio: 0 },
       { t: 'text', key: 'note-title', text: s?.displayTitle ?? 'a chat', tone: 'muted', prio: 4, max: env.vertical ? 60 : 220 },
     ];

@@ -3,6 +3,7 @@
 // no DOM layout) and fits them into the space budget: shrink text first, then
 // drop the least important segments, never grow the pill.
 
+import type { BotMood } from '../fx/bot/catalog';
 import type { IconName } from './icons';
 
 export type Tone = 'default' | 'muted' | 'dim' | 'accent' | 'claude' | 'good' | 'warn' | 'bad' | 'info' | 'violet';
@@ -56,6 +57,8 @@ export type Seg =
     })
   | (Base & { t: 'input'; placeholder: string; action: string; cancel?: string; value?: string; min?: number })
   | (Base & { t: 'art'; src: string | null; icon?: IconName; round?: boolean })
+  /** The bot avatar. Its mood can change in place: the renderer keeps one avatar per key and morphs it. */
+  | (Base & { t: 'bot'; mood: BotMood })
   | (Base & { t: 'sep' })
   | (Base & { t: 'meter'; label: string; value: number; pace: number | null; text: string; tone?: Tone; w?: number })
   | (Base & { t: 'gap'; w: number });
@@ -122,6 +125,11 @@ const ICON_SIZE = { sm: 15, md: 18, lg: 22 } as const;
 export const CHIP_H = 24;
 export const BUTTON_H = 26;
 
+/** The bot grows with the pill like album art (22 px compact, 28 expanded), but stays an icon, never a picture. */
+export function botSize(pillH: number): number {
+  return Math.max(18, Math.min(30, pillH - 14));
+}
+
 export function naturalWidth(seg: Seg, measure: Measure, pillH: number): number {
   switch (seg.t) {
     case 'icon':
@@ -153,6 +161,8 @@ export function naturalWidth(seg: Seg, measure: Measure, pillH: number): number 
       return seg.min ?? 180;
     case 'art':
       return Math.max(20, pillH - 14);
+    case 'bot':
+      return botSize(pillH);
     case 'sep':
       return 1;
     case 'meter':
@@ -302,6 +312,10 @@ export function verticalBox(seg: Seg, measure: Measure, crossMax: number): { len
       return { len: 30, cross: crossMax };
     case 'art': {
       const s = Math.max(20, Math.min(crossMax, 40));
+      return { len: s, cross: s };
+    }
+    case 'bot': {
+      const s = Math.max(18, Math.min(crossMax, 26));
       return { len: s, cross: s };
     }
     case 'sep':

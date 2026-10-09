@@ -502,6 +502,8 @@ pub fn known_folders() -> serde_json::Value {
         "screenshots": screenshots,
         "appData": std::env::var("APPDATA").unwrap_or_default(),
         "localAppData": std::env::var("LOCALAPPDATA").unwrap_or_default(),
+        // Island's own folder (log, relay, models) on either system.
+        "islandData": crate::log::data_dir().to_string_lossy(),
     })
 }
 

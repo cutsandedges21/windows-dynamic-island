@@ -22,6 +22,11 @@ pub fn path() -> PathBuf {
 }
 
 pub fn line(text: impl AsRef<str>) {
+    // Unit tests run code that logs; their lines must not land in the user's real log.
+    if cfg!(test) {
+        eprintln!("[island test] {}", text.as_ref());
+        return;
+    }
     let _guard = LOCK.lock();
     let file = path();
     if let Some(dir) = file.parent() {

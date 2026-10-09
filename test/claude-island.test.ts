@@ -17,11 +17,11 @@ vi.mock('../src/core/native', () => ({
   emitLocal: () => {},
 }));
 
-import type { ActivityContext, SheetEnv } from '../src/core/activity';
+import type { ActivityContext, RenderEnv, SheetEnv } from '../src/core/activity';
 import { plainText } from '../src/core/format';
 import { mapActions, type Block, type SheetView } from '../src/core/sheet';
 import { defaultSettings } from '../src/core/settings';
-import { ClaudeActivity } from '../src/activities/claude';
+import { ClaudeActivity, moodOf, moodOfAll } from '../src/activities/claude';
 import { HookState, questionsOf } from '../src/activities/claude/hooks';
 import type { SessionView } from '../src/activities/claude/tracker';
 
@@ -507,5 +507,55 @@ describe('helpers', () => {
     for (const a of ['open', 'go', 'send', 'hold', 'pick', 'hide', 'choose', 'tap', 'start', 'row', 'play']) expect(out).toContain(`"act:x:${a}"`);
     expect(out).toContain('"island:app"');
     expect(out).not.toMatch(/"action":"(?!act:|island:)/);
+  });
+});
+
+// ---------------------------------------------------------------- the avatar
+
+describe('the avatar in the pill', () => {
+  const renv = (level: RenderEnv['level'], over: Partial<RenderEnv> = {}): RenderEnv => ({
+    level, width: 420, height: 36, now: Date.now(), open: false, hover: false, surfaced: null, interactive: true, vertical: false, ...over,
+  });
+
+  it('leads every view with the same bot, whose mood follows the chat', async () => {
+    const { act } = await boot();
+    stubTracker(act, [session({ status: 'working', label: 'Working', tone: 'working' })], { 100: [50] });
+    expect(act.render(renv('compact'))[0]).toEqual({ t: 'bot', key: 'face', mood: 'thinking', prio: 0 });
+    expect(act.render(renv('compact', { vertical: true }))).toEqual([{ t: 'bot', key: 'face', mood: 'thinking', prio: 0 }]);
+    emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'p1', tool_name: 'Edit', tool_input: { file_path: 'C:\code\app\a.ts' } });
+    expect(act.render(renv('expanded'))[0]).toEqual({ t: 'bot', key: 'face', mood: 'needs-you', prio: 0 });
+  });
+
+  it('several chats: the bot with their count, or the dot with "Claude ×n"', async () => {
+    const two = [session({ status: 'working', label: 'Working', tone: 'working' }), session({ id: 'S2', sessionId: 'S2', pid: 200, slot: 2 })];
+    const on = await boot();
+    stubTracker(on.act, two, { 100: [50], 200: [60] });
+    expect(on.act.render(renv('compact')).slice(0, 2)).toEqual([{ t: 'bot', key: 'face', mood: 'thinking', prio: 0 }, { t: 'text', key: 'name', text: '×2', weight: 'semibold', prio: 0 }]);
+    const off = await boot({ avatar: false });
+    stubTracker(off.act, two, { 100: [50], 200: [60] });
+    expect(off.act.render(renv('compact')).map((s) => (s.t === 'text' ? s.text : s.t))).toEqual(['dot', 'Claude ×2', '1 working']);
+  });
+
+  it('with the avatar off, the status dot and the Claude mark lead again', async () => {
+    const { act } = await boot({ avatar: false });
+    stubTracker(act, [session({})], { 100: [50] });
+    expect(act.render(renv('compact'))[0]).toMatchObject({ t: 'dot', key: 'dot', tone: 'info' });
+    expect(act.render(renv('compact', { vertical: true })).map((s) => s.key)).toEqual(['mark', 'dot']);
+    expect(act.render(renv('compact')).some((s) => s.t === 'bot')).toBe(false);
+  });
+
+  it('moods: waiting on you beats an error, an error beats busy, busy beats resting', () => {
+    expect(moodOf({ status: 'awaiting_permission', needsYou: true })).toBe('needs-you');
+    expect(moodOf({ status: 'working', needsYou: false })).toBe('thinking');
+    expect(moodOf({ status: 'errored', needsYou: false })).toBe('error');
+    expect(moodOf({ status: 'awaiting_input', needsYou: false })).toBe('idle');
+    expect(moodOf({ status: 'interrupted', needsYou: false })).toBe('idle');
+    const working = { status: 'working', needsYou: false } as const;
+    const errored = { status: 'errored', needsYou: false } as const;
+    const waiting = { status: 'awaiting_permission', needsYou: true } as const;
+    expect(moodOfAll([working, errored, waiting])).toBe('needs-you');
+    expect(moodOfAll([working, errored])).toBe('error');
+    expect(moodOfAll([{ status: 'awaiting_input', needsYou: false }, working])).toBe('thinking');
+    expect(moodOfAll([])).toBe('idle');
   });
 });

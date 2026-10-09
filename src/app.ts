@@ -10,7 +10,7 @@ import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtToke
 import { icon } from './core/icons';
 import { levelWidth, normalizeWidths, type Anchor, type Level } from './core/layout';
 import { isTauri, native, on, sendTo, type MonitorInfo } from './core/native';
-import { availableHere, unavailableReason } from './core/platform';
+import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
 import { ACCENTS, cloneSettings, migrate, type ActivityConfig, type Settings } from './core/settings';
 import { springs } from './core/spring';
@@ -239,7 +239,7 @@ function cardBody(meta: ActivityMeta): HTMLElement {
     h('div', { class: 'body-row' }, [h('span', { class: 'label', text: 'Priority' }), segmented(c.priority, [['high', 'High'], ['medium', 'Medium'], ['low', 'Low']], (v) => { c.priority = v; c.enabled = true; save(true); flipRender(); })]),
     h('div', { class: 'body-row' }, [h('span', { class: 'label', text: 'Behavior' }), chips]),
     // Local AI's model is picked in its panel below, not typed.
-    ...meta.options.filter((o) => !(meta.id === 'local' && o.key === 'model')).map((o) => optionRow(meta.id, o)),
+    ...meta.options.filter((o) => optionHere(o) && !(meta.id === 'local' && o.key === 'model')).map((o) => optionRow(meta.id, o)),
   ]);
   if (meta.id === 'claude') body.append(claudePanel());
   if (meta.id === 'local') body.append(localPanel());
@@ -667,10 +667,28 @@ async function hookFlow(box: HTMLElement, install: boolean): Promise<void> {
 
 // ------------------------------------------------------------------ settings page
 
+/** Everything that makes Island go online, for the Privacy section. Keep it in step with the Rust HTTP calls. */
+function privacyNote(mac: boolean): string {
+  const online = [
+    // Claude Code and Games are not on a Mac yet.
+    ...(mac ? [] : ["Claude plan limits (with Claude Code's own sign-in)"]),
+    "Ask (Anthropic's API, with your key)",
+    'weather (Open-Meteo)',
+    'a calendar link',
+    'the integrations you connect',
+    ...(mac ? [] : ["the Games ping (the game's server, or 1.1.1.1)"]),
+    'the Local AI models you choose to download',
+  ];
+  const list = `${online.slice(0, -1).join(', ')} and ${online[online.length - 1]}`;
+  const update = mac ? '' : ' With Update automatically on, it also asks GitHub for a newer Island every 6 hours.';
+  return `Island only goes online for what you turn on: ${list}.${update} Questions to Local AI never leave ${thisComputer()}.`;
+}
+
 function settingsPage(): HTMLElement {
   const s = settings;
   const i = s.island;
   const g = s.general;
+  const mac = platform === 'macos';
   const accents = h('div', { class: 'swatches' }, Object.entries(ACCENTS).map(([name, color]) =>
     h('button', { class: `swatch${i.accent === name ? ' on' : ''}`, title: name, style: `--c:${color}`, onclick: () => { i.accent = name; save(true); render(); } }),
   ));
@@ -729,48 +747,51 @@ function settingsPage(): HTMLElement {
     ]),
     section('Behavior', [
       row('Expand on hover', null, toggle(i.hoverExpand, (v) => { i.hoverExpand = v; save(true); })),
-      row('Peek behind', 'With the pointer on the island, tap Ctrl: it fades and your clicks go to whatever is under it, until the pointer moves away.', toggle(i.peekThrough, (v) => { i.peekThrough = v; save(true); })),
+      row('Peek behind', `With the pointer on the island, tap ${ctrlKey()}: it fades and your clicks go to whatever is under it, until the pointer moves away.`, toggle(i.peekThrough, (v) => { i.peekThrough = v; save(true); })),
       row('Hide in full-screen apps', 'Games, videos and presentations. Urgent things still show.', toggle(i.hideInFullscreen, (v) => { i.hideInFullscreen = v; save(true); })),
       row('Show other activities beside the main one', 'Small chips, with +N when there is no room.', toggle(i.showSecondary, (v) => { i.showSecondary = v; save(true); })),
       row('Do not disturb', 'Nothing expands on its own; urgent moments still interrupt.', toggle(g.dnd, (v) => { g.dnd = v; save(true); })),
     ]),
     section('Startup', [
-      row('Start with Windows', null, toggle(g.startWithWindows, (v) => { g.startWithWindows = v; save(true); void native.autostartSet(v); })),
-      row('Update automatically', 'When a newer Island is released, it downloads in the background and Island restarts into it.', toggle(g.autoUpdate, (v) => { g.autoUpdate = v; save(true); })),
+      row(mac ? 'Open at login' : 'Start with Windows', null, toggle(g.startWithWindows, (v) => { g.startWithWindows = v; save(true); void native.autostartSet(v); })),
+      // A Mac build cannot update itself yet (updater.rs), so it offers no switch that does nothing.
+      ...(mac ? [] : [row('Update automatically', 'When a newer Island is released, it downloads in the background and Island restarts into it.', toggle(g.autoUpdate, (v) => { g.autoUpdate = v; save(true); }))]),
       row('Run setup again', 'The two questions and the Local AI model. Your Control Center is rebuilt from the answers.', h('button', { class: 'btn', text: 'Run setup', onclick: () => go('welcome') })),
     ]),
     section('Notifications', [
-      row('Windows notifications', 'A toast for moments that need you (Claude sessions, timers).', toggle(g.notifications, (v) => { g.notifications = v; save(true); })),
+      row(mac ? 'Mac notifications' : 'Windows notifications', 'A notification for moments that need you (Claude sessions, timers).', toggle(g.notifications, (v) => { g.notifications = v; save(true); })),
       row('Sounds', 'A soft chime when something finishes or needs you.', toggle(g.sounds, (v) => { g.sounds = v; save(true); })),
     ]),
     section('Keyboard shortcuts', [
       row('Open or close the island', null, hotkey('toggleHotkey', 'island.toggle')),
       row('Open Activities', null, hotkey('activitiesHotkey', 'island.activities')),
-      h('p', { class: 'muted', text: 'Claude Code sessions: Alt+Shift+1–9 switches, Alt+Shift+0 jumps to the one that needs you (Activities › Claude Code).' }),
+      // Claude Code comes to the Mac in part 2, its session keys with it.
+      ...(mac ? [] : [h('p', { class: 'muted', text: 'Claude Code sessions: Alt+Shift+1–9 switches, Alt+Shift+0 jumps to the one that needs you (Activities › Claude Code).' })]),
     ]),
     section('Privacy', [
       row('Show what you copied', 'Off: the Clipboard activity only says "Copied". Password managers are always skipped.', toggle(s.privacy.clipboardContent, (v) => { s.privacy.clipboardContent = v; save(true); })),
       row('Screenshot thumbnails', null, toggle(s.privacy.screenshotPreview, (v) => { s.privacy.screenshotPreview = v; save(true); })),
-      h('p', { class: 'muted', text: 'Everything stays on this PC. The only network calls are Claude plan limits (with Claude Code\'s own sign-in), weather or calendar if you turn them on, and the Local AI models you choose to download. Questions to Local AI never leave this PC.' }),
+      h('p', { class: 'muted', text: privacyNote(mac) }),
     ]),
     section('About', [
-      h('p', { text: 'Island 0.1.0 by Moss. Claude session logic comes from Usage Clip; the hook relay is adapted from Coucou (MIT, Louis Raillé). Icons and design are Island\'s own.' }),
+      h('p', { text: `Island ${__APP_VERSION__} by Moss. Claude session logic comes from Usage Clip; the hook relay is adapted from Coucou (MIT, Louis Raillé) and the avatar from bloub (MIT, Jérémy Perret). Icons and the rest of the design are Island's own.` }),
       h('div', { class: 'hook-actions' }, [
-        h('button', { class: 'btn ghost', text: 'Open log folder', onclick: () => void native.open(`${localAppData}\\Island`) }),
+        h('button', { class: 'btn ghost', text: 'Open log folder', onclick: () => void (islandData && native.open(islandData)) }),
         h('button', { class: 'btn danger', text: 'Quit Island', onclick: () => void native.quit() }),
       ]),
     ]),
   ]);
 }
 
-let localAppData = '';
+/** Island's data folder (log, relay, models), as Rust reports it on this system. */
+let islandData = '';
 
 // ------------------------------------------------------------------ boot
 
 async function boot(): Promise<void> {
   settings = migrate(await native.settingsGet());
   monitors = await native.monitors();
-  localAppData = (await native.knownFolders()).localAppData;
+  islandData = (await native.knownFolders()).islandData;
   await on<{ value: unknown; origin: string }>('settings', ({ value, origin }) => {
     if (origin === 'app') return;
     settings = migrate(value);

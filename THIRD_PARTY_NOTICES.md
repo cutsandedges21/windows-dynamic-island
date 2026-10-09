@@ -1,6 +1,6 @@
 # Third-party notices
 
-Island carries over logic from Usage Clip (claude-session-monitor, by Moss), which ports logic and patterns from the first three MIT-licensed projects below. The Claude Code hook relay and installer are adapted from Coucou. Their copyright notices are kept here as the MIT License requires.
+Island carries over logic from Usage Clip (claude-session-monitor, by Moss), which ports logic and patterns from the first three MIT-licensed projects below. The Claude Code hook relay and installer are adapted from Coucou, the bot avatar comes from bloub, and the other visual effects in src/fx from thinking-orbs and Libraries.dev. Their copyright notices are kept here as the MIT License requires.
 
 ## agent-monitor-for-claude
 
@@ -134,6 +134,96 @@ Used for: the island-hook relay (hook/), the named-pipe protocol (src-tauri/src/
 MIT License
 
 Copyright (c) 2026 Louis Raillé
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## bloub
+
+https://github.com/jeremy-prt/bloub
+
+Used for: the bot avatar in the pill (src/fx/bot: engine, states, shapes, eyes and decor, ported from its src/bot with upstream's comments kept so fixes can be diffed). Island draws it in its own colours and its own rounded-square body.
+
+```
+MIT License
+
+Copyright (c) 2026 Jérémy Perret
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## thinking-orbs
+
+https://github.com/Jakubantalik/thinking-orbs
+
+Used for: the dotted thinking orbs (src/fx/orbs), ported to framework-free TypeScript.
+
+```
+MIT License
+
+Copyright (c) 2026 Jakub Antalik
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Libraries.dev
+
+https://github.com/Jakubantalik/Libraries.dev
+
+Used for: the technique behind the border beam (src/fx/beam.ts) and the liquid goo filter (src/fx/gooey.ts).
+
+```
+MIT License
+
+Copyright (c) 2026 Jakub Antalik
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

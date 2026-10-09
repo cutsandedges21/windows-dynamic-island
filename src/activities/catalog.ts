@@ -17,7 +17,7 @@ export interface Behavior {
   interrupt: boolean;
 }
 
-export type OptionSpec =
+export type OptionSpec = (
   | { key: string; type: 'toggle'; label: string; help?: string; default: boolean }
   | { key: string; type: 'number'; label: string; help?: string; default: number; min: number; max: number; step?: number; unit?: string }
   | { key: string; type: 'text'; label: string; help?: string; default: string; placeholder?: string; secret?: boolean }
@@ -27,7 +27,11 @@ export type OptionSpec =
    * 'github.token'), never in settings: the Activities page saves it through secretSet, and
    * `default` is always empty.
    */
-  | { key: string; type: 'secret'; label: string; help?: string; placeholder?: string; secret: string; default: '' };
+  | { key: string; type: 'secret'; label: string; help?: string; placeholder?: string; secret: string; default: '' }
+) & {
+  /** 'never': Windows only, not offered on a Mac (its default must then make sense there too). */
+  mac?: 'never';
+};
 
 export interface ActivityMeta {
   id: string;
@@ -61,6 +65,7 @@ export const CATALOG: ActivityMeta[] = [
       { key: 'resetAlerts', type: 'toggle', label: 'Limit reset alerts', help: 'Tell me when the session or weekly limit resets.', default: true },
       { key: 'sessionHotkeys', type: 'toggle', label: 'Session hotkeys', help: 'Alt+Shift+1–9 switch to a session, Alt+Shift+0 jumps to the one that needs you.', default: true },
       { key: 'notifications', type: 'toggle', label: 'Windows notification', help: 'Also show a toast when a session needs you.', default: true },
+      { key: 'avatar', type: 'toggle', label: 'Avatar', help: 'A small bot leads the island and shows how Claude is doing: thinking, waiting for you, finished or stuck. Off: a status dot.', default: true },
       { key: 'showLimits', type: 'toggle', label: 'Limits in the island', help: 'Session and weekly limit bars in the expanded island.', default: true },
       { key: 'showDesktop', type: 'toggle', label: 'Claude app chats', help: 'Recent chats from the Claude desktop app, read from its local cache.', default: true },
       { key: 'finishedSeconds', type: 'number', label: 'Show "finished" for', default: 8, min: 3, max: 60, unit: 's' },
@@ -253,7 +258,7 @@ export const CATALOG: ActivityMeta[] = [
   {
     id: 'calendar',
     name: 'Calendar',
-    description: 'Your next event, with a Join button for meeting links. Reads every calendar in your Windows accounts, or an iCal (ICS) link.',
+    description: 'Your next event, with a Join button for meeting links. Reads an iCal (ICS) link, or on Windows every calendar in your Windows accounts.',
     icon: 'calendar',
     category: 'productivity',
     enabled: false,
@@ -264,6 +269,8 @@ export const CATALOG: ActivityMeta[] = [
         key: 'source',
         type: 'choice',
         label: 'Where events come from',
+        // A Mac reads the link only (calendar.ts), so there is nothing to choose.
+        mac: 'never',
         default: 'windows',
         choices: [
           { value: 'windows', label: 'My Windows accounts' },
@@ -271,7 +278,7 @@ export const CATALOG: ActivityMeta[] = [
         ],
         help: 'Windows accounts: every calendar you added in Windows Settings › Accounts (Outlook, Microsoft 365, Google, iCloud). Windows asks for calendar access the first time.',
       },
-      { key: 'ics', type: 'text', label: 'Calendar link (ICS)', default: '', placeholder: 'https://calendar.google.com/…/basic.ics', secret: true, help: 'Only used with "A calendar link". Google Calendar: Settings › your calendar › Secret address in iCal format. Outlook: Publish calendar › ICS.' },
+      { key: 'ics', type: 'text', label: 'Calendar link (ICS)', default: '', placeholder: 'https://calendar.google.com/…/basic.ics', secret: true, help: 'Used with "A calendar link" (always on a Mac). Google Calendar: Settings › your calendar › Secret address in iCal format. Outlook: Publish calendar › ICS.' },
       { key: 'leadMinutes', type: 'number', label: 'Show events this early', default: 15, min: 1, max: 120, unit: 'min' },
     ],
   },
@@ -350,7 +357,7 @@ export const CATALOG: ActivityMeta[] = [
   {
     id: 'local',
     name: 'Local AI',
-    description: 'Ask a model that runs on this PC. Nothing leaves your computer, and it works offline. Island recommends a model for this PC; download or switch models below, or use Ollama.',
+    description: 'Ask a model that runs on your computer. Nothing leaves it, and it works offline. Island recommends a model that suits your computer; download or switch models below, or use Ollama.',
     icon: 'spark',
     category: 'productivity',
     enabled: true,

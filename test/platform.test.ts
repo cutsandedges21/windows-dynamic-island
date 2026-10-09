@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { availableHere, detectPlatform, unavailableReason } from '../src/core/platform';
+import { CATALOG_BY_ID } from '../src/activities/catalog';
+import { availableHere, ctrlKey, detectPlatform, optionHere, thisComputer, unavailableReason } from '../src/core/platform';
 
 describe('platform', () => {
   it('reads the system from the user agent', () => {
@@ -16,5 +17,27 @@ describe('platform', () => {
     expect(unavailableReason('music', 'macos')).toBe('Coming to Mac');
     expect(unavailableReason('claude', 'macos')).toBe('Coming to Mac');
     expect(unavailableReason('game', 'macos')).toBe('Windows only');
+  });
+
+  it('names the computer and its keys the way each system does', () => {
+    expect(thisComputer('windows')).toBe('this PC');
+    expect(thisComputer('macos')).toBe('this Mac');
+    expect(ctrlKey('windows')).toBe('Ctrl');
+    expect(ctrlKey('macos')).toBe('Control');
+  });
+
+  it('a Mac is not offered the Windows-only options, like Calendar reading Windows accounts', () => {
+    const source = CATALOG_BY_ID.get('calendar')!.options.find((o) => o.key === 'source')!;
+    expect(optionHere(source, 'windows')).toBe(true);
+    expect(optionHere(source, 'macos')).toBe(false);
+    const link = CATALOG_BY_ID.get('calendar')!.options.find((o) => o.key === 'ics')!;
+    expect(optionHere(link, 'macos')).toBe(true);
+  });
+
+  it('activities a Mac can run never say "this PC" in their description', () => {
+    for (const [id, meta] of CATALOG_BY_ID) {
+      if (!availableHere(id, 'macos')) continue;
+      expect(meta.description, id).not.toMatch(/this PC/);
+    }
   });
 });

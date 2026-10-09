@@ -7,6 +7,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { emitLocal } from './native';
+import { thisComputer } from './platform';
 
 export const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -198,7 +199,7 @@ function demoBundled(): Bundled {
 /** A pretend download, so the welcome flow and the model list can be tried in a browser. */
 function demoSetup(id: string): SecretResult {
   const m = demoModels.models.find((x) => x.id === (id || demoBundled().recommended));
-  if (!m?.fits) return { ok: false, error: 'This model is too big for this PC.' };
+  if (!m?.fits) return { ok: false, error: `This model is too big for ${thisComputer()}.` };
   if (demoModels.downloading === m.id) return { ok: true };
   const run = ++demoRun;
   demoModels.downloading = m.id;

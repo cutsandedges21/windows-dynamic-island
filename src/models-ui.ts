@@ -8,6 +8,7 @@ import { bridge, type IslandModel, type LocalModel, type LocalStatus, type Model
 import { icon } from './core/icons';
 import { activeValue, ISLAND, isEmbedding, modelView, sizeText, specs, type ModelView } from './core/models';
 import { on } from './core/native';
+import { thisComputer } from './core/platform';
 import { h } from './dom';
 
 export interface PickerHost {
@@ -114,12 +115,12 @@ function paintProgress(): void {
 
 function paint(entry: Mounted): void {
   if (!loaded) {
-    entry.el.replaceChildren(h('div', { class: 'muted models-wait', text: 'Looking at this PC…' }));
+    entry.el.replaceChildren(h('div', { class: 'muted models-wait', text: `Looking at ${thisComputer()}…` }));
     return;
   }
   const r = report;
   if (!r) {
-    entry.el.replaceChildren(h('div', { class: 'warn', text: 'Island could not read this PC.' }));
+    entry.el.replaceChildren(h('div', { class: 'warn', text: `Island could not read ${thisComputer()}.` }));
     return;
   }
   const option = entry.host.option();
@@ -148,7 +149,7 @@ function specsBlock(r: ModelsReport): HTMLElement {
 const LABEL: Partial<Record<ModelView['status'], string>> = {
   ready: 'Downloaded',
   paused: 'Paused',
-  'too-big': 'Too big for this PC',
+  'too-big': `Too big for ${thisComputer()}`,
   'no-room': 'Not enough space',
 };
 
@@ -229,7 +230,7 @@ function row(entry: Mounted, r: ModelsReport, m: IslandModel, active: string): H
 
 function ollamaBlock(entry: Mounted, models: LocalModel[], active: string): HTMLElement {
   return h('div', { class: 'ollama-block' }, [
-    h('div', { class: 'models-sub', text: 'Already on this PC, from Ollama' }),
+    h('div', { class: 'models-sub', text: `Already on ${thisComputer()}, from Ollama` }),
     ...models.map((m) =>
       h('div', { class: 'model-row compact' }, [
         h('div', { class: 'model-text' }, [h('div', { class: 'model-top' }, [h('span', { class: 'model-name', text: m.name }), active === m.name ? statusTag({ status: 'in-use', detail: '', progress: null }) : null]), h('div', { class: 'model-detail', text: [sizeText(m.size), m.params].filter(Boolean).join(' · ') })]),

@@ -17,7 +17,7 @@ import type { MirrorFrame } from './mirror';
 import { PillRenderer } from './renderer';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { accentColor, migrate, TILE_SIZES, type Settings, type TileSize } from './settings';
-import { availableHere } from './platform';
+import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type SheetView, type Tile } from './sheet';
 import { springs } from './spring';
 import { clip, timeOfDay } from './format';
@@ -655,7 +655,7 @@ export class Island {
         label: this.settings.general.dnd ? 'Quiet on' : 'Quiet',
         style: this.settings.general.dnd ? 'primary' : 'ghost',
         action: 'island:dnd',
-        tip: 'Do not disturb, for Windows and the island: notifications wait and the island stays small',
+        tip: platform === 'macos' ? 'Quiet: the island stays small and its notifications wait' : 'Do not disturb, for Windows and the island: notifications wait and the island stays small',
         prio: 2,
       },
       { t: 'button', key: 'menu/activities', icon: 'grid', label: 'Activities', action: 'island:app', arg: 'activities', side: 'end', style: 'secondary', prio: 1 },
