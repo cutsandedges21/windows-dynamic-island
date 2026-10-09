@@ -6,3 +6,4 @@ src-tauri/bin/
 src-tauri/gen/
 *.log
 .vite/
+.superpowers/
