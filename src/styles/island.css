@@ -232,6 +232,10 @@ html.peek #stage {
 .bubble-life.motion-shake { animation: bot-shake 0.5s ease-in-out 3; }
 .bubble-life.motion-shrink { animation: bot-shrink 0.35s ease-out 1 forwards; }
 .bubble-life.motion-stretch { animation: bot-stretch 1.4s ease-in-out 1; }
+/* typing: the bot bobs over its keys while the laptop in front stays put */
+.bubble-life.motion-type { animation: none; }
+.bubble-life.motion-type .bubble-bot { animation: bot-type 0.36s ease-in-out infinite; }
+@keyframes bot-type { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(2.5%) rotate(-1.5deg); } }
 @keyframes bot-sway { from { transform: rotate(-7deg); } to { transform: translateY(-3%) rotate(7deg); } }
 @keyframes bot-talk { from { transform: scale(1, 1); } to { transform: translateY(-3%) scale(1.02, 0.97); } }
 @keyframes bot-bounce {
@@ -325,6 +329,12 @@ html.peek #stage {
 @keyframes c-yawn { 0%, 100% { opacity: 0; transform: scale(0.3, 0.1); } 15% { opacity: 1; } 45%, 65% { transform: scale(1, 1); } }
 .c-slide-down { animation: c-slide-down 0.6s ease-out 1 both; }
 @keyframes c-slide-down { from { transform: translateY(-14px); } to { transform: none; } }
+.c-screen { animation: c-screen 2.2s ease-in-out infinite; opacity: 0.22; }
+@keyframes c-screen { 0%, 100% { opacity: 0.16; } 50% { opacity: 0.3; } }
+.c-bit { animation: c-bit 1.5s ease-out infinite backwards; }
+.c-bt2 { animation-delay: 0.5s; }
+.c-bt3 { animation-delay: 1s; }
+@keyframes c-bit { 0% { opacity: 0; transform: translateY(1px); } 25% { opacity: 1; } 100% { opacity: 0; transform: translateY(-9px); } }
 
 html.reduce .bubble-life,
 html.reduce .bubble-costume * { animation: none !important; }

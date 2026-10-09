@@ -14,20 +14,28 @@ export type Face =
 /** Loops for moods, one-shots for moments (keyframes in island.css, `.motion-<name>`). */
 export type Motion =
   | 'breathe' | 'snooze' | 'sway' | 'talk' | 'bounce' | 'droop' | 'shiver' | 'still' | 'tilt'
-  | 'hop' | 'jolt' | 'shake' | 'shrink' | 'stretch';
+  | 'hop' | 'jolt' | 'shake' | 'shrink' | 'stretch' | 'type';
 
 export interface PetLook {
   state: BotState;
   face: Face;
   costume: CostumeId[];
   motion: Motion;
+  /** Where its eyes rest instead of on you (degrees, yaw right, pitch up); a pointer nearby still pulls them. */
+  gaze?: { yaw: number; pitch: number };
 }
 
 const look = (state: BotState, face: Face, costume: CostumeId[], motion: Motion): PetLook => ({ state, face, costume, motion });
 
+/**
+ * Claude working, or its own chat thinking: the bot codes at a little laptop, eyes on the screen,
+ * typing (Moss: the actual avatar, not three dots).
+ */
+const CODING: PetLook = { ...look('idle', 'attentif', ['laptop'], 'type'), gaze: { yaw: 0, pitch: -5 } };
+
 export const MOOD_LOOKS: Record<MoodId, PetLook> = {
   listening: look('idle', 'attentif', [], 'still'),
-  pondering: look('thinking', 'neutre', [], 'breathe'),
+  pondering: CODING,
   talking: look('idle', 'excite', [], 'talk'),
   asleep: look('idle', 'blase', ['zzz'], 'snooze'),
   'needs-you': look('notify', 'neutre', [], 'bounce'),
@@ -36,7 +44,7 @@ export const MOOD_LOOKS: Record<MoodId, PetLook> = {
   'on-air': look('idle', 'attentif', ['rec'], 'still'),
   vibing: look('idle', 'hilare', ['headphones', 'notes'], 'sway'),
   gaming: look('idle', 'excite', ['controller'], 'still'),
-  thinking: look('thinking', 'neutre', [], 'breathe'),
+  thinking: CODING,
   overheated: look('idle', 'effraye', ['sweat', 'heat'], 'shiver'),
   downloading: look('idle', 'curieux', ['arrow-down'], 'breathe'),
   focused: look('idle', 'mefiant', ['tomato'], 'still'),

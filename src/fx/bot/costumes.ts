@@ -9,7 +9,7 @@ export type CostumeId =
   | 'speaker' | 'speaker-off' | 'bolt' | 'zap' | 'battery-low' | 'battery-empty' | 'battery-full'
   | 'sparkle' | 'sweat' | 'heat' | 'cloud-off' | 'wifi' | 'sunglasses' | 'plug' | 'bye' | 'swirl'
   | 'rec' | 'mic-off' | 'flash' | 'clipboard' | 'box' | 'arrow-down' | 'clock' | 'tomato' | 'alarm'
-  | 'umbrella' | 'controller' | 'code' | 'confetti' | 'coin' | 'new' | 'yawn';
+  | 'umbrella' | 'controller' | 'code' | 'confetti' | 'coin' | 'new' | 'yawn' | 'laptop';
 
 const FONT = 'Segoe UI, system-ui, sans-serif';
 
@@ -102,6 +102,10 @@ const RAW: Record<CostumeId, string> = {
   coin: `<g class="c-coin" transform="translate(26 -2)"><circle r="4" fill="#ffd34d" stroke="#b8860b" stroke-width="0.7"/><text y="1.9" text-anchor="middle" font-size="5.4" font-weight="800" font-family="${FONT}" fill="#8a5a00">$</text></g>`,
   new: word('new!', '#ff7aa2', '#fff', 12.5),
   yawn: '<ellipse class="c-yawn" cx="16" cy="21.5" rx="2.4" ry="3" fill="var(--bot-eye, #17120e)"/>',
+  // Coding: the screen's glow on its face, the lid toward us with a </> on it, the keyboard deck in
+  // front, and bits of code floating up from the screen.
+  laptop:
+    `<ellipse class="c-screen" cx="16" cy="21.5" rx="9" ry="3.2" fill="#cfe8ff"/><g fill="#7ee0a1"><rect class="c-bit c-bt1" x="9.5" y="19.5" width="1.3" height="1.3" rx="0.3"/><rect class="c-bit c-bt2" x="21" y="19" width="1.3" height="1.3" rx="0.3"/><rect class="c-bit c-bt3" x="15.4" y="20" width="1.1" height="1.1" rx="0.3"/></g><rect x="7.5" y="21.8" width="17" height="7.6" rx="1.6" fill="#d6dae3" stroke="#8b93a3" stroke-width="0.6"/><text x="16" y="27.1" text-anchor="middle" font-size="4" font-weight="700" font-family="Consolas, monospace" fill="#7d8698">&lt;/&gt;</text><path d="M3.6 29.3h24.8l-1.5 1.8h-21.8z" fill="#b8bec9" stroke="#8b93a3" stroke-width="0.4" stroke-linejoin="round"/>`,
 };
 
 /**

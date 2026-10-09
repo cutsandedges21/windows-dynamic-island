@@ -38,6 +38,8 @@ export class BubbleView {
   private pointerNear = false;
   private gaze: { yaw: number; pitch: number } | null = null;
   private state: BotState = 'idle';
+  /** Where the current look rests its eyes, if not on you. */
+  private lookGaze: { yaw: number; pitch: number } | null = null;
   private readonly costumeSvg: SVGSVGElement;
   private costumeKey = '';
   private motion: Motion = 'breathe';
@@ -130,7 +132,11 @@ export class BubbleView {
    */
   show(look: PetLook, play: number, strength = 0.5): void {
     if (this.destroyed) return;
+    const gaze = look.gaze ?? null;
+    const gazeChanged = (gaze?.yaw ?? NaN) !== (this.lookGaze?.yaw ?? NaN) || (gaze?.pitch ?? NaN) !== (this.lookGaze?.pitch ?? NaN);
+    this.lookGaze = gaze;
     this.setState(look.state);
+    if (gazeChanged && !this.pointerNear) this.rest();
     this.avatar.setExpression(look.face);
     const restart = play !== this.play;
     this.play = play;
@@ -189,7 +195,7 @@ export class BubbleView {
 
   /** Where the eyes go with no pointer near: at you when idle, the pose's own gaze otherwise. */
   private rest(): void {
-    this.avatar.look(this.state === 'idle' ? REST_GAZE : null);
+    this.avatar.look(this.lookGaze ?? (this.state === 'idle' ? REST_GAZE : null));
   }
 
   /** With no pointer near, a look to one side now and then, and back. */
