@@ -197,6 +197,12 @@ describe('settings migration', () => {
     expect(migrate({ island: { color: 'pink' } }).island.color).toBe('black');
   });
 
+  it('shows over full-screen apps: off by default, and turned off once for older settings', () => {
+    expect(migrate({}).island.hideInFullscreen).toBe(false);
+    expect(migrate({ version: 4, island: { hideInFullscreen: true } }).island.hideInFullscreen).toBe(false);
+    expect(migrate({ version: 5, island: { hideInFullscreen: true } }).island.hideInFullscreen).toBe(true);
+  });
+
   it('the bot is on unless it was turned off', () => {
     expect(migrate({}).island.bot).toBe(true);
     expect(migrate({ island: { bot: false } }).island.bot).toBe(false);

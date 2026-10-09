@@ -22,7 +22,7 @@ A small, cute character that is always on screen, lives on the island, reacts to
 - **Left of the pill**, a small gap between them. With the island on the left or right screen edge, it sits **above** the pill.
 - Always there, whatever the pill does: compact, expanded, or open on Control Center. When nothing is happening it sits next to today's small idle pill: tap the pill for Control Center, tap the bot to talk.
 - The bubble wears the pill colour (Black, White, Matte black, Matte white, Glass). The bot's body is the accent (sky, ember, rose, mint, violet, gold, white or a custom colour); its eyes are dark on light bodies and light on dark ones. A white accent on a white pill turns dark, as `accentColor()` already does.
-- Everyday life: breathes, blinks every 3 to 6 s, glances around now and then; when the mouse comes near, its eyes follow the pointer.
+- Everyday life: breathes, blinks every 3 to 6 s, glances a little to the side now and then. Its eyes rest in the middle, looking at you; only a pointer within about 110 px of the bot pulls them, and only a little (Moss, while building: "it should be in the middle mostly").
 - Hides with the island in full-screen apps (until the follow-up below changes that). Duplicate copies on other screens show the bubble too.
 - Settings › Appearance › **Bot** (on by default). Off: no bubble, and the Local AI tile comes back to Control Center.
 
@@ -93,10 +93,11 @@ Two layers: a **mood** that lasts while something is true, and **moments**, 2 to
 
 ## 3. Talking to it
 
-- Click the bot: it looks up with wide eyes and the pill becomes a text box ("Ask me anything…"). Esc or a click elsewhere cancels.
-- It thinks (three pulsing dots), bobs while it writes, and the answer appears in the card under the pill as Local AI does today: Copy, New chat, a follow-up box. It winks when done.
-- The card shows the little bot in the accent colour, titled **Bot**, the model name underneath.
-- A **Local | Claude** switch in the text box. Local (Ollama, or Island's own model) is the default. Claude uses Ask Claude's backend choice (Claude Code login or API key), nothing new to set up. The card says which one answered. Follow-ups keep the same brain; a new chat starts on Local.
+Changed while building (Moss: the island must not open, nor Control Center): talking happens in a **thin bar** of its own, option A of two mocked (B, the bot stretching into the bar, may come later; the bar's place is one function, `chatBarRect`).
+
+- Click the bot: a thin bar appears under the bot and the pill, from the bot's left edge to the pill's right edge (on a side edge it reaches inward from beside the bot). The island itself does not change. Esc or a click elsewhere closes the bar and keeps the chat.
+- The bot listens while you type, ponders (three pulsing dots) while the model thinks, bobs while it writes, and winks at the answer. The answer appears in a card past the bar, the bar's width: Copy, New chat, the model's name; the bar takes the follow-up.
+- A **Local | Claude** switch in the bar. Local (Ollama, or Island's own model) is the default. Claude uses Ask Claude's backend choice (Claude Code login or API key), nothing new to set up. The card says which one answered. Follow-ups keep the same brain; a new chat starts on Local.
 - No local model yet: clicking the bot shows "I need a brain first" with the recommended model, its download size and Set up, plus "Ask Claude instead" when Ask Claude can answer. While it downloads, the bot shows its downloading mood.
 - It already gets what Island sees (time, music, battery, the window in front) in its system prompt; the prompt also tells it that it is the little bot on the user's island and to keep answers short and friendly.
 - Control Center drops the Local AI tile while the bot is on. Ask Claude keeps its tile; the model picker stays in Activities › Local AI. The Claude Code pill goes back to its status dot and mark (the in-pill avatar and its Avatar option go away).
@@ -124,10 +125,10 @@ Two layers: a **mood** that lasts while something is true, and **moments**, 2 to
 
 ## Build order
 
-1. The bubble with a living bot (accent colour, idle life, eyes following the mouse, clicks, the Bot setting, Claude's pill back to its dot).
-2. Moods.
-3. Every moment.
-4. The chat (Local AI moved into the bot, the Local | Claude switch, the setup card, the Control Center tile hidden).
+1. The bubble with a living bot (accent colour, idle life, calm eyes, clicks, the Bot setting, Claude's pill back to its dot).
+2. The chat (moved up while building: Moss was trying the click): the bar, Local AI moved into the bot, the Local | Claude switch, the setup card, the Control Center tile hidden.
+3. Moods.
+4. Every moment.
 5. Follow-up (Moss, same day): the island always on top and always showing, full-screen apps and videos included. Exclusive full-screen games draw over every window, so nothing can show there; videos and borderless full-screen are fine.
 
 ## Later, not in this build

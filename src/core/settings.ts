@@ -32,7 +32,7 @@ export interface GridLayout {
 
 export type PillColor = 'black' | 'white' | 'matte-white' | 'matte-black' | 'glass';
 
-export const SETTINGS_VERSION = 4;
+export const SETTINGS_VERSION = 5;
 
 export interface Settings {
   version: number;
@@ -133,7 +133,8 @@ export function defaultSettings(): Settings {
       size: 'medium',
       idle: 'pill',
       hoverExpand: true,
-      hideInFullscreen: true,
+      // Moss: the island stays on screen over full-screen apps and videos too.
+      hideInFullscreen: false,
       showSecondary: true,
       accent: 'sky',
       color: 'black',
@@ -244,6 +245,8 @@ export function migrate(saved: unknown): Settings {
   if (from < 3) out.general.onboarded = true;
   // Version 4: Peek behind is on by default, also where an earlier build saved it off.
   if (from < 4) out.island.peekThrough = true;
+  // 0.2.6: the island no longer hides behind full-screen apps (Moss); the switch stays for anyone who wants it back.
+  if (from < 5) out.island.hideInFullscreen = false;
   out.version = SETTINGS_VERSION;
   return out;
 }

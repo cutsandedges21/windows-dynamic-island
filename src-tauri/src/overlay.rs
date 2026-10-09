@@ -21,7 +21,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, 
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    SWP_ASYNCWINDOWPOS, SWP_NOMOVE, SWP_NOSIZE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 use crate::monitors::{self, MonitorInfo};
@@ -296,6 +296,13 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
                     if last_info.as_ref() != Some(&info) {
                         let _ = app.emit_to(LABEL, "foreground", info.clone());
                         last_info = Some(info);
+                        // A new window in front, full screen ones included, may have put itself on top:
+                        // the island stays above everything (Moss). Asynchronous, so this loop never waits.
+                        if own != 0 {
+                            unsafe {
+                                let _ = SetWindowPos(HWND(own as *mut _), Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+                            }
+                        }
                     }
                 }
             }
