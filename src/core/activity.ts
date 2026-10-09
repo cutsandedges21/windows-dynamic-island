@@ -3,6 +3,7 @@
 // know what an activity represents.
 
 import type { ActivityMeta } from '../activities/catalog';
+import type { ChatView } from './chat';
 import type { IconName } from './icons';
 import type { Level } from './layout';
 import type { MenuItem } from './native';
@@ -114,6 +115,8 @@ export interface Activity {
   sheet?(env: SheetEnv): SheetView | null;
   /** This activity's cell in the open island's grid. Null hides it. */
   tile?(env: SheetEnv): Tile | null;
+  /** The bot's chat, shown in the bar under the bot (Local AI is the only one). */
+  chat?(): ChatView | null;
   /** A segment with `action` was clicked (or an input submitted). */
   action?(name: string, arg: unknown): void | Promise<void>;
   /** Options changed in the Activities page. */

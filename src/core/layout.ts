@@ -133,6 +133,37 @@ export function bubbleRect(pill: Rect, anchor: Anchor, d: number): Rect {
   }
 }
 
+// ------------------------------------------------------------------ the bot's chat bar
+
+/** Height of the thin bar you type to the bot in, CSS px. */
+export const CHAT_BAR_H = 28;
+/** On a side edge the bar reaches this far inward from beside the bot. */
+const CHAT_SIDE_W = 300;
+
+/**
+ * The chat bar (Moss's option A): on the top and bottom edges it runs from the bot's left
+ * edge to the pill's right edge, just past both; on the sides it reaches inward from beside
+ * the bot. The island itself never opens for it.
+ */
+export function chatBarRect(anchor: Anchor, bot: Rect, pill: Rect): Rect {
+  const h = CHAT_BAR_H;
+  switch (anchor) {
+    case 'top':
+      return { x: bot.x, y: Math.max(bot.y + bot.h, pill.y + pill.h) + BUBBLE_GAP, w: pill.x + pill.w - bot.x, h };
+    case 'bottom':
+      return { x: bot.x, y: Math.min(bot.y, pill.y) - BUBBLE_GAP - h, w: pill.x + pill.w - bot.x, h };
+    case 'left':
+      return { x: bot.x + bot.w + BUBBLE_GAP, y: bot.y + (bot.h - h) / 2, w: CHAT_SIDE_W, h };
+    case 'right':
+      return { x: bot.x - BUBBLE_GAP - CHAT_SIDE_W, y: bot.y + (bot.h - h) / 2, w: CHAT_SIDE_W, h };
+  }
+}
+
+/** The card with the bot's answer: the bar's width, past the bar (above it on the bottom edge). */
+export function chatCardRect(anchor: Anchor, bar: Rect, h: number): Rect {
+  return anchor === 'bottom' ? { x: bar.x, y: bar.y - BUBBLE_GAP - h, w: bar.w, h } : { x: bar.x, y: bar.y + bar.h + BUBBLE_GAP, w: bar.w, h };
+}
+
 /**
  * The point that stays fixed while the pill changes size, in pill-local
  * coordinates: the centre for top and bottom, the pinned edge for the sides.

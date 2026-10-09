@@ -9,9 +9,10 @@ import { CATALOG_BY_ID } from '../activities/catalog';
 import type { Activity, ActivityContext, ActivityStatus, RenderEnv, SheetEnv, SurfaceOptions } from './activity';
 import { setReducedMotion } from './animator';
 import { BubbleView } from './bubble';
+import { ChatBar, type ChatAction, type ChatView } from './chat';
 import { BorderGlow, type GlowSpec } from './glow';
 import { CELLS, hiddenTest, leadFirst, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
-import { bubbleRect, bubbleSize, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
+import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
 import { native, on, sendTo, type MenuItem } from './native';
 import { choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
 import type { MirrorFrame } from './mirror';
@@ -99,6 +100,10 @@ export class Island {
   private readonly pillGlow: BorderGlow;
   /** The bot in its bubble beside the pill. */
   private readonly bubble: BubbleView;
+  /** The bar under the bot you type to it in, and the card with its answer. */
+  private readonly chat: ChatBar;
+  /** The bar is open (a click on the bot opens it; a tap away or Escape closes it, the chat kept). */
+  private chatOpen = false;
   private readonly cardGlow: BorderGlow;
   /** Duplicate mode: how many copies of the pill run on other screens, and the last frame sent to them. */
   private mirrorCount = 0;
@@ -124,6 +129,7 @@ export class Island {
     // The light is drawn above the pill and the card, not inside them, so it can spill over their edges.
     this.pillGlow = new BorderGlow(stage);
     this.bubble = new BubbleView(stage, { interactive: true, onClick: () => this.handleAction('island:bot', null, this.bubble.el) });
+    this.chat = new ChatBar(stage, (action, arg) => this.chatAction(action, arg), () => this.publishHit(this.renderer.rect, true));
     this.cardGlow = new BorderGlow(stage, 24);
     this.renderer.onFrame((r) => {
       this.sheet.follow(r);
@@ -163,7 +169,7 @@ export class Island {
     // Rust reports presses outside the window's hit area; this catches the rest
     // (the thin margin around the pill, and everything in the browser preview).
     document.addEventListener('pointerdown', (e) => {
-      if (!(e.target as Element | null)?.closest?.('.pill, .sheet, .bubble')) this.dismiss();
+      if (!(e.target as Element | null)?.closest?.('.pill, .sheet, .bubble, .chat')) this.dismiss();
     });
     window.addEventListener('resize', () => {
       if (native.demo) void this.place(false);
@@ -538,7 +544,15 @@ export class Island {
     // only while the island moves screens or hides behind a full-screen app.
     const botShown = s.bot && !this.moving && !(fsHide && this.fullscreenOn !== null);
     const botD = bubbleSize(s.size);
-    this.bubble.place(botShown ? bubbleRect(pillRect(this.area, anchor, w, h, s.edge), anchor, botD) : null, { immediate });
+    const restPill = pillRect(this.area, anchor, w, h, s.edge);
+    const botRect = bubbleRect(restPill, anchor, botD);
+    this.bubble.place(botShown ? botRect : null, { immediate });
+    // The bot's chat: Local AI answers, in the bar under the bot; the island itself stays as it is.
+    const chatView = botShown ? (this.running.get('local')?.chat?.() ?? null) : null;
+    if (!chatView) this.chatOpen = false;
+    this.chat.place(anchor, this.chatOpen ? chatBarRect(anchor, botRect, restPill) : null, { immediate });
+    if (chatView && this.chatOpen) this.chat.render(chatView);
+    this.bubble.setState(this.chatMood(chatView));
 
     const swap = primary !== this.lastPrimary || viewKey !== this.lastViewKey || reshaped;
     const sig = `${orient}|${viewKey}|${w}|${h}|${signature(placed)}`;
@@ -994,8 +1008,8 @@ export class Island {
 
   /** The island takes the keyboard while the pill shows an input or the user is typing on the card. */
   private syncInput(): void {
-    const has = this.pillInput || this.sheetEngaged;
-    const target = () => (this.pillInput ? this.renderer.focusedInput() : this.sheet.focusedInput());
+    const has = this.pillInput || this.sheetEngaged || this.chatOpen;
+    const target = () => (this.chatOpen ? this.chat.input : this.pillInput ? this.renderer.focusedInput() : this.sheet.focusedInput());
     if (has === this.inputActive) {
       if (has) requestAnimationFrame(() => target()?.focus({ preventScroll: true }));
       return;
@@ -1028,6 +1042,7 @@ export class Island {
     if (strip) rects.push(strip);
     const bot = this.bubble?.hitRect;
     if (bot) rects.push(bot);
+    if (this.chat) rects.push(...this.chat.hitRects());
     const hiddenNow = this.renderer.targetRect.y < 0 || this.renderer.targetRect.x < 0 || this.renderer.targetRect.y > this.area.height || this.renderer.targetRect.x > this.area.width;
     void native.setHit(hiddenNow && strip ? [strip, ...(bot ? [bot] : [])] : rects);
   }
@@ -1079,6 +1094,7 @@ export class Island {
     this.view = 'main';
     this.selected = null;
     this.surfaces = [];
+    this.chatOpen = false;
     for (const [id, st] of this.statuses()) {
       if (!st.urgent) continue;
       this.dismissedUrgent.add(`${id}:${st.urgent.key}`);
@@ -1183,10 +1199,14 @@ export class Island {
         this.view = 'main';
         break;
       case 'island:bot': {
-        // Talking to the bot is Local AI's chat (src/activities/local.ts).
+        // Talking to the bot is Local AI's chat, in the bar under the bot (Moss: the island does not open).
         const local = this.running.get('local');
-        if (local?.action) Promise.resolve(local.action('ask', null)).catch((err) => native.log(`bot chat failed: ${String(err)}`));
-        else void native.openApp('activities');
+        if (!local?.chat) {
+          void native.openApp('activities');
+          break;
+        }
+        this.chatOpen = !this.chatOpen;
+        if (this.chatOpen) Promise.resolve(local.action?.('ask', null)).catch((err) => native.log(`bot chat failed: ${String(err)}`));
         break;
       }
       case 'island:cancel-input':
@@ -1196,6 +1216,27 @@ export class Island {
         break;
     }
     this.schedule();
+  }
+
+  /** Something in the bot's bar or card: close it, or hand it to Local AI. */
+  private chatAction(action: ChatAction, arg: unknown): void {
+    if (action === 'close') {
+      this.chatOpen = false;
+    } else {
+      const local = this.running.get('local');
+      Promise.resolve(local?.action?.(action, arg)).catch((err) => native.log(`bot chat ${action} failed: ${String(err)}`));
+    }
+    this.schedule();
+  }
+
+  /** Until the mood brain lands: the bot listens while you type, thinks, and winks at an answer. */
+  private chatMood(view: ChatView | null): 'idle' | 'wide' | 'thinking' | 'wink' | 'alert' {
+    if (!view) return 'idle';
+    if (view.phase === 'thinking' || view.phase === 'streaming') return 'thinking';
+    if (!this.chatOpen) return 'idle';
+    if (view.phase === 'answer') return 'wink';
+    if (view.phase === 'error') return 'alert';
+    return 'wide';
   }
 
   /** Quiet: the island stays small and holds its notifications, and Windows' Do Not Disturb follows. */

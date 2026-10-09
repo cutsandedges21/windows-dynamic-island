@@ -2,7 +2,7 @@
 // always a gap away, lined up with the screen edge the pill is pinned to.
 
 import { describe, expect, it } from 'vitest';
-import { BUBBLE_GAP, bubbleRect, bubbleSize, heightFor, orientationFor, pillRect, pillSize, normalizeWidths, type Anchor, type Level, type Rect } from '../src/core/layout';
+import { BUBBLE_GAP, CHAT_BAR_H, bubbleRect, bubbleSize, chatBarRect, chatCardRect, heightFor, orientationFor, pillRect, pillSize, normalizeWidths, type Anchor, type Level, type Rect } from '../src/core/layout';
 
 const area = { width: 1536, height: 816 };
 const widths = normalizeWidths(null);
@@ -46,5 +46,36 @@ describe('the bubble', () => {
         }
       });
     }
+  }
+});
+
+describe('the chat bar', () => {
+  for (const anchor of ['top', 'bottom', 'left', 'right'] as const) {
+    it(`${anchor}: clear of the bot and the pill, a gap away`, () => {
+      const pill = pillAt(anchor, 'compact');
+      const bot = bubbleRect(pill, anchor, bubbleSize('medium'));
+      const bar = chatBarRect(anchor, bot, pill);
+      expect(bar.h).toBe(CHAT_BAR_H);
+      expect(overlaps(bar, pill)).toBe(false);
+      expect(overlaps(bar, bot)).toBe(false);
+      if (anchor === 'top' || anchor === 'bottom') {
+        // From the bot's left edge to the pill's right edge (Moss's option A).
+        expect(bar.x).toBe(bot.x);
+        expect(bar.x + bar.w).toBe(pill.x + pill.w);
+        if (anchor === 'top') expect(bar.y).toBe(Math.max(bot.y + bot.h, pill.y + pill.h) + BUBBLE_GAP);
+        else expect(bar.y + bar.h).toBe(Math.min(bot.y, pill.y) - BUBBLE_GAP);
+      } else {
+        // On a side the bar reaches inward from beside the bot, centred on it.
+        expect(bar.y + bar.h / 2).toBe(bot.y + bot.h / 2);
+        if (anchor === 'left') expect(bar.x).toBe(bot.x + bot.w + BUBBLE_GAP);
+        else expect(bar.x + bar.w).toBe(bot.x - BUBBLE_GAP);
+      }
+      const card = chatCardRect(anchor, bar, 120);
+      expect(card.x).toBe(bar.x);
+      expect(card.w).toBe(bar.w);
+      expect(overlaps(card, bar)).toBe(false);
+      if (anchor === 'bottom') expect(card.y + card.h).toBe(bar.y - BUBBLE_GAP);
+      else expect(card.y).toBe(bar.y + bar.h + BUBBLE_GAP);
+    });
   }
 });

@@ -74,6 +74,8 @@ function resetBridge(running = true, island: Record<string, unknown> = NOT_SET_U
     localCancel: vi.fn(async () => {}),
     localDeviceInfo: vi.fn(async () => SNAPSHOT.info),
     localWarm: vi.fn(async () => true),
+    askBackends: vi.fn(async () => ({ claudeCode: false, api: false })),
+    askClaude: vi.fn(async () => ({ ok: true, text: '**Ottawa.**' })),
   });
   Object.assign(h.native, {
     clipboardSetText: vi.fn(async () => true),
@@ -94,10 +96,12 @@ const emit = (event: string, payload: unknown) => {
 };
 const tick = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
 
-async function boot(options: Record<string, unknown> = {}) {
+/** `bot`: the island's bot is on, so Local AI is the bot's chat (the bar), not a pill, card and tile. */
+async function boot(options: Record<string, unknown> = {}, bot = false) {
   const act = new LocalActivity();
   const settings = defaultSettings();
-  const calls = { surface: [] as Array<{ key?: string }>, close: 0 };
+  settings.island.bot = bot;
+  const calls = { surface: [] as Array<{ key?: string }>, close: 0, open: 0 };
   const ctx: ActivityContext = {
     id: 'local',
     config: () => settings.activities.config.local,
@@ -106,7 +110,7 @@ async function boot(options: Record<string, unknown> = {}) {
     update: () => {},
     surface: (o) => void calls.surface.push(o ?? {}),
     alert: () => {},
-    open: () => {},
+    open: () => void calls.open++,
     close: () => void calls.close++,
     isOpen: () => false,
     isPrimary: () => true,
@@ -499,5 +503,58 @@ describe('LocalActivity', () => {
     reply.resolve({ ok: false, error: 'Lost the connection to the model.', cancelled: false });
     await failed;
     smoke(act, 'error');
+  });
+});
+
+describe('the bot\'s chat', () => {
+  it('stays out of the pill, its card, Control Center and the open island', async () => {
+    const { act, calls } = await boot({}, true);
+    const { sent } = await ask(act);
+    expect(act.status().active).toBe(false);
+    expect(act.tile(sheetEnv)).toBeNull();
+    expect(act.sheet(sheetEnv)).toBeNull();
+    expect(act.home()).toEqual([]);
+    expect(act.chip()).toBeNull();
+    reply.resolve({ ok: true, text: 'Ottawa.', cancelled: false });
+    await sent;
+    expect(act.status().active).toBe(false);
+    expect(calls.open).toBe(0);
+    expect(calls.surface).toEqual([]);
+  });
+
+  it('the bar shows it thinking, writing, then the answer, and keeps the chat for a follow-up', async () => {
+    resetBridge(true, SET_UP);
+    const { act } = await boot({}, true);
+    const { sent } = await ask(act);
+    expect(act.chat().phase).toBe('thinking');
+    expect(act.chat().question).toBe('Capital of Canada?');
+    emit('local-delta', { id: askCall()[0], text: 'Otta' });
+    expect(act.chat()).toMatchObject({ phase: 'streaming', answer: 'Otta' });
+    reply.resolve({ ok: true, text: 'Ottawa.', cancelled: false });
+    await sent;
+    expect(act.chat()).toMatchObject({ phase: 'answer', answer: 'Ottawa.', turns: 2, brain: 'local' });
+  });
+
+  it('the Claude switch asks through Ask Claude, and a new chat goes back to the local model', async () => {
+    resetBridge(true, SET_UP);
+    h.bridge.askBackends = vi.fn(async () => ({ claudeCode: true, api: false }));
+    const { act } = await boot({}, true);
+    await tick(0);
+    expect(act.chat().canClaude).toBe(true);
+    await act.action('brain', 'claude');
+    await act.action('send', 'Capital of Canada?');
+    expect(h.bridge.localAsk).not.toHaveBeenCalled();
+    expect(h.bridge.askClaude).toHaveBeenCalledWith('claude-code', [{ role: 'user', content: 'Capital of Canada?' }]);
+    expect(act.chat()).toMatchObject({ phase: 'answer', answer: 'Ottawa.', model: 'Claude', brain: 'claude' });
+    await act.action('new', undefined);
+    expect(act.chat()).toMatchObject({ phase: 'idle', brain: 'local', turns: 0 });
+  });
+
+  it('with no model yet it asks for a brain: what to download and how big, and Claude if it can answer', async () => {
+    resetBridge(false, NOT_SET_UP);
+    const { act } = await boot({}, true);
+    await tick(0);
+    expect(act.chat().needsModel).toEqual({ model: 'Qwen3 4B', download: expect.stringMatching(/GB/) });
+    expect(act.chat().canClaude).toBe(false);
   });
 });
