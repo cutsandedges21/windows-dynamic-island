@@ -1998,7 +1998,7 @@ checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 
 [[package]]
 name = "island"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "base64 0.22.1",
  "keyring",
@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "island-hook"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "serde_json",
  "windows 0.61.3",
