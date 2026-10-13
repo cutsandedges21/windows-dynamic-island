@@ -15,18 +15,18 @@ import { PetBrain, type PetSignal } from './pet';
 import { BorderGlow, type GlowSpec } from './glow';
 import { CELLS, hiddenTest, leadFirst, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
 import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
-import { native, on, sendTo, type MenuItem } from './native';
+import { native, on, onFileDrop, sendTo, type FileDrop, type MenuItem } from './native';
 import { choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
 import type { MirrorFrame } from './mirror';
 import { PillRenderer } from './renderer';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
-import { accentColor, migrate, TILE_SIZES, type Settings, type TileSize } from './settings';
+import { accentColor, backAt, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type SheetView, type Tile } from './sheet';
 import { springs } from './spring';
 import { clip, timeOfDay } from './format';
 
-type View = 'main' | 'overflow' | 'menu';
+type View = 'main' | 'overflow' | 'menu' | 'hide';
 
 const levelIdx = (l: Level) => LEVELS.indexOf(l);
 /** Tile kinds that read well in a single column. */
@@ -115,6 +115,12 @@ export class Island {
   private mirrorFrame: MirrorFrame | null = null;
   /** Monitor with a full-screen app in front (any monitor, for the copies). */
   private fullscreenAny: string | null = null;
+  /** The activity whose own card the open island shows instead of Control Center (Land after a drop). */
+  private cardFor: string | null = null;
+  /** Files are being dragged over the island: who would take them, and what the pill says meanwhile. */
+  private fileDrag: { owner: string; hint: string } | null = null;
+  /** The window is hidden because the user hid the island for a while (`island.hiddenUntil`). */
+  private windowHidden = false;
 
   constructor(
     stage: HTMLElement,
@@ -161,6 +167,7 @@ export class Island {
     await on<{ x: number; y: number } | null>('pointer', (p) => this.bubble.lookAt(p));
     if (native.demo) window.addEventListener('pointermove', (e) => this.bubble.lookAt({ x: e.clientX, y: e.clientY }));
     await on('displays-changed', () => void this.place(false));
+    await onFileDrop((e) => this.onFileDrop(e));
     await on('mirror-ready', () => {
       if (this.mirrorFrame) void native.broadcast('mirror-frame', { ...this.mirrorFrame, bump: false });
     });
@@ -185,8 +192,14 @@ export class Island {
     void native.setPeek(this.settings.island.peekThrough);
     void native.setAutoUpdate(this.settings.general.autoUpdate);
     this.compose(true);
-    await native.show(true);
-    native.log(`island ready on ${this.monitorId ?? 'unknown monitor'} ${Math.round(this.area.width)}x${Math.round(this.area.height)}`);
+    // Hidden for a while before Island last quit: it stays hidden, and says so once.
+    this.windowHidden = hiddenNow(this.settings.island, Date.now());
+    await native.show(!this.windowHidden);
+    if (this.windowHidden && this.settings.general.notifications && !native.demo) {
+      const at = backAt(this.settings.island.hiddenUntil, Date.now());
+      void native.notify('Island is hidden', `${at ? `It comes back ${at}.` : 'It stays hidden until you bring it back.'} ${this.showHint()}`);
+    }
+    native.log(`island ready on ${this.monitorId ?? 'unknown monitor'} ${Math.round(this.area.width)}x${Math.round(this.area.height)}${this.windowHidden ? ' (hidden)' : ''}`);
     // First run: the welcome screen asks two questions and sets the Control Center up.
     if (!this.settings.general.onboarded && !native.demo) void native.openApp('welcome');
   }
@@ -210,7 +223,49 @@ export class Island {
     void this.updateHotkeys();
     if (prev.island.peekThrough !== next.island.peekThrough) void native.setPeek(next.island.peekThrough);
     if (prev.general.autoUpdate !== next.general.autoUpdate) void native.setAutoUpdate(next.general.autoUpdate);
+    // Hidden or shown from the Settings page.
+    this.syncHidden();
     this.schedule();
+  }
+
+  // ---------------------------------------------------------------- hiding for a while
+
+  /** Hides the island (the pill, the bot and every copy) until the chosen time. */
+  private hide(choice: HideChoice): void {
+    this.dismiss();
+    this.settings.island.hiddenUntil = hideUntil(choice, Date.now());
+    this.saveSettings();
+    native.log(`hidden ${choice}`);
+    this.syncHidden();
+  }
+
+  private unhide(): void {
+    if (!this.settings.island.hiddenUntil) return;
+    this.settings.island.hiddenUntil = 0;
+    this.saveSettings();
+    this.syncHidden();
+  }
+
+  /** Shows or hides the window to match `hiddenUntil`; once the time has passed, it clears it. */
+  private syncHidden(): void {
+    const hide = hiddenNow(this.settings.island, Date.now());
+    if (!hide && this.settings.island.hiddenUntil) {
+      this.settings.island.hiddenUntil = 0;
+      this.saveSettings();
+    }
+    if (hide === this.windowHidden) return;
+    this.windowHidden = hide;
+    if (native.demo) document.body.style.visibility = hide ? 'hidden' : '';
+    void native.show(!hide);
+    if (!hide) this.pendingBump = true;
+    this.schedule();
+  }
+
+  /** How to bring a hidden island back. */
+  private showHint(): string {
+    const where = platform === 'macos' ? 'the menu bar icon' : 'the tray icon';
+    const key = this.settings.general.toggleHotkey;
+    return key ? `Bring it back from ${where} or with ${key}.` : `Bring it back from ${where}.`;
   }
 
   /** Writes settings changed from the island itself (anchor, do not disturb). */
@@ -373,6 +428,17 @@ export class Island {
       },
       isOpen: () => this.open,
       isPrimary: () => this.primaryId === id,
+      openCard: () => {
+        this.open = true;
+        this.view = 'main';
+        this.cardFor = id;
+        this.schedule();
+      },
+      closeCard: () => {
+        if (this.cardFor === id) this.cardFor = null;
+        this.schedule();
+      },
+      cardOpen: () => this.open && this.cardFor === id,
       notify: (title, body) => {
         if (this.settings.general.notifications && !this.settings.general.dnd) void native.notify(title, body);
       },
@@ -454,6 +520,10 @@ export class Island {
     if (surf) level = atLeast(level, surf.level);
     if (this.hover && s.hoverExpand && primary && !this.open) level = atLeast(level, 'expanded');
     if (this.open || this.view !== 'main') level = 'maximum';
+    // An activity's own card belongs to the open island; closing the island goes back to Control Center.
+    if (!this.open) this.cardFor = null;
+    // Files dragged over the island: the pill grows to say who takes them, a bigger target to drop on.
+    if (this.fileDrag) level = atLeast(level, 'expanded');
     // Urgency raises the pill until a tap outside dismisses it; a new urgent key raises it again.
     const urgentKeys = new Set<string>();
     for (const [id, st] of statuses) if (st.urgent) urgentKeys.add(`${id}:${st.urgent.key}`);
@@ -467,7 +537,7 @@ export class Island {
     const fsHide = !urgentNow && s.hideInFullscreen && !pStatus?.overFullscreen;
     const hiddenEverywhere =
       this.moving ||
-      (!primary && s.idle === 'hidden' && !this.open && !this.hover && this.view === 'main' && !this.previewLevel);
+      (!primary && s.idle === 'hidden' && !this.open && !this.hover && this.view === 'main' && !this.previewLevel && !this.fileDrag);
     const hidden = hiddenEverywhere || (fsHide && this.fullscreenOn !== null);
 
     const anchor = s.anchor;
@@ -480,7 +550,13 @@ export class Island {
       const vertical = orient === 'vertical';
       let segs: Seg[];
       let viewKey: string;
-      if (this.view === 'menu') {
+      if (this.fileDrag) {
+        segs = this.dropSegments(this.fileDrag.hint, vertical);
+        viewKey = 'drop';
+      } else if (this.view === 'hide') {
+        segs = this.hideSegments(vertical);
+        viewKey = 'hide';
+      } else if (this.view === 'menu') {
         segs = this.menuSegments();
         viewKey = 'menu';
       } else if (this.view === 'overflow') {
@@ -573,7 +649,7 @@ export class Island {
       this.renderer.bump();
     }
     this.composeSheet(hidden ? null : choice, statuses, now, orient, w, immediate);
-    const beam = pStatus?.beam ?? this.busyElsewhere(choice.visible, statuses);
+    const beam: ActivityStatus['beam'] = this.fileDrag ? { tone: 'accent', motion: 'pulse' } : (pStatus?.beam ?? this.busyElsewhere(choice.visible, statuses));
     this.syncGlow(hidden ? null : beam, !hidden && choice.urgent && this.sheet.visible);
     this.sendMirror({
       sig, swap, bump: bump && !hiddenEverywhere, placed, w, h, orient, anchor, edge: s.edge,
@@ -663,6 +739,41 @@ export class Island {
     return segs;
   }
 
+  /** The pill while choosing how long to hide: back to the menu, and what the card below is for. */
+  private hideSegments(vertical: boolean): Seg[] {
+    const segs: Seg[] = [
+      { t: 'button', key: 'hide/back', icon: 'chevron-left', action: 'island:menu', style: 'ghost', prio: 0, tip: 'Back' },
+      { t: 'icon', key: 'hide/icon', icon: 'eye-off', tone: 'muted', prio: 1 },
+    ];
+    if (!vertical) segs.push({ t: 'text', key: 'hide/text', text: 'Hide the island', weight: 'semibold', prio: 2 });
+    return segs;
+  }
+
+  /** How long to hide for, each choice with the time the island comes back. */
+  private hideSheet(now: number): { owner: string; view: SheetView } {
+    const items = HIDE_CHOICES.map((c) => {
+      const at = backAt(hideUntil(c.id, now), now);
+      return { key: c.id, label: c.label, detail: at ? `Back ${at}` : this.showHint(), action: 'island:hide', arg: c.id };
+    });
+    return {
+      owner: 'island',
+      view: {
+        key: 'island/hide',
+        blocks: [
+          { t: 'head', key: 'head', icon: 'eye-off', title: 'Hide the island', sub: 'The pill and the bot leave the screen. Nothing is lost while they are away.' },
+          { t: 'choices', key: 'for', items },
+        ],
+      },
+    };
+  }
+
+  /** What the pill says while files are dragged over it. */
+  private dropSegments(hint: string, vertical: boolean): Seg[] {
+    const segs: Seg[] = [{ t: 'icon', key: 'drop/icon', icon: 'land', tone: 'accent', anim: 'bob', prio: 0 }];
+    if (!vertical) segs.push({ t: 'text', key: 'drop/text', text: hint, weight: 'semibold', prio: 1 });
+    return segs;
+  }
+
   private menuSegments(): Seg[] {
     const a = this.settings.island.anchor;
     const pos = (anchor: Anchor, iconName: string, tip: string): Seg => ({
@@ -692,6 +803,7 @@ export class Island {
         tip: platform === 'macos' ? 'Quiet: the island stays small and its notifications wait' : 'Do not disturb, for Windows and the island: notifications wait and the island stays small',
         prio: 2,
       },
+      { t: 'button', key: 'menu/hide', icon: 'eye-off', label: 'Hide', action: 'island:hide-menu', style: 'ghost', tip: 'Hide the island for a while', prio: 2 },
       { t: 'button', key: 'menu/activities', icon: 'grid', label: 'Activities', action: 'island:app', arg: 'activities', side: 'end', style: 'secondary', prio: 1 },
       { t: 'button', key: 'menu/settings', icon: 'settings', action: 'island:app', arg: 'settings', side: 'end', style: 'ghost', tip: 'Settings', prio: 1 },
     ];
@@ -737,6 +849,7 @@ export class Island {
   }
 
   private pickSheet(choice: Picked, statuses: Map<string, ActivityStatus>, now: number, orient: Orientation, pillW: number): { owner: string; view: SheetView } | null {
+    if (this.view === 'hide' && !this.previewLevel) return this.hideSheet(now);
     if (this.view !== 'main' || this.previewLevel) return null;
     const vertical = orient === 'vertical';
     const ask = (id: string, reason: SheetEnv['reason']): { owner: string; view: SheetView } | null => {
@@ -761,7 +874,12 @@ export class Island {
       const card = ask(primary, 'urgent');
       if (card) return card;
     }
-    if (this.open) return this.gridSheet(now, orient, pillW);
+    if (this.open) {
+      // An activity asked for its own card (Land after a drop); its card, or the grid when it has none.
+      const own = this.cardFor && this.running.has(this.cardFor) ? ask(this.cardFor, 'open') : null;
+      if (own) return own;
+      return this.gridSheet(now, orient, pillW);
+    }
     if (primary && choice.surfaced) {
       const card = ask(primary, 'surfaced');
       if (card) return card;
@@ -1095,6 +1213,8 @@ export class Island {
     this.gridEditing = false;
     this.gridDrag = null;
     this.open = false;
+    this.cardFor = null;
+    this.fileDrag = null;
     this.view = 'main';
     this.selected = null;
     this.surfaces = [];
@@ -1143,6 +1263,13 @@ export class Island {
         if (this.view !== 'main') this.view = 'main';
         else if (!this.inputActive) this.open = !this.open;
         break;
+      case 'island:hide-menu':
+        this.view = 'hide';
+        this.open = false;
+        break;
+      case 'island:hide':
+        if (HIDE_CHOICES.some((c) => c.id === arg)) this.hide(arg as HideChoice);
+        return;
       case 'island:menu':
         this.view = this.view === 'menu' ? 'main' : 'menu';
         break;
@@ -1216,10 +1343,60 @@ export class Island {
       case 'island:cancel-input':
         this.open = false;
         break;
+      case 'island:card-close':
+        this.cardFor = null;
+        break;
       default:
         break;
     }
     this.schedule();
+  }
+
+  // ---------------------------------------------------------------- files dropped on the island
+
+  /**
+   * Files dragged onto the island. While they hover, the pill says which activity takes them
+   * (Land); a drop hands them over and opens the island on that activity's card. Nothing
+   * happens when no running activity takes files.
+   */
+  private onFileDrop(e: FileDrop): void {
+    if (e.type === 'over') return;
+    if (e.type === 'enter') {
+      this.fileDrag = e.paths.length ? this.dropOwner() : null;
+    } else if (e.type === 'leave') {
+      this.fileDrag = null;
+    } else {
+      const owner = this.fileDrag?.owner ?? this.dropOwner()?.owner ?? null;
+      this.fileDrag = null;
+      const act = owner ? this.running.get(owner) : undefined;
+      let took = false;
+      try {
+        took = e.paths.length > 0 && (act?.drop?.(e.paths) ?? false);
+      } catch (err) {
+        console.error(`drop ${owner}`, err);
+      }
+      if (took && owner) {
+        this.open = true;
+        this.view = 'main';
+        this.cardFor = owner;
+        this.chatOpen = false;
+        this.pendingBump = true;
+      }
+    }
+    this.schedule();
+  }
+
+  /** The first running activity that would take dropped files, and what it says about it. */
+  private dropOwner(): { owner: string; hint: string } | null {
+    for (const [id, act] of this.running) {
+      try {
+        const hint = act.accepts?.() ?? null;
+        if (hint) return { owner: id, hint };
+      } catch (err) {
+        console.error(`accepts ${id}`, err);
+      }
+    }
+    return null;
   }
 
   /** Something in the bot's bar or card: close it, or hand it to Local AI. */
@@ -1278,6 +1455,8 @@ export class Island {
 
   private tick(): void {
     if (!this.settings) return;
+    // A hide that has run its time ends here.
+    if (this.windowHidden) this.syncHidden();
     // Clocks, elapsed times and countdowns: recompose once a second while anything shows.
     if (this.primaryId || this.open || this.surfaces.length) this.compose(false);
     // The bot's moments end, and late at night it yawns, without anything else changing.
@@ -1306,6 +1485,10 @@ export class Island {
   private hotkeySig = '';
 
   private onHotkey(id: string): void {
+    if (id === 'island.toggle' && this.windowHidden) {
+      this.unhide();
+      return;
+    }
     if (id === 'island.toggle') {
       this.open = !this.open;
       this.view = 'main';
@@ -1340,8 +1523,14 @@ export class Island {
     const active = [...statuses.values()].filter((s) => s.active && s.summary).length;
     if (tooltip.length === 1 && active) tooltip.push(`${active} active`);
     const a = this.settings.island.anchor;
+    // Hidden: one item brings it back (and says until when); shown: how long to hide it for.
+    const until = this.windowHidden ? backAt(this.settings.island.hiddenUntil, Date.now()) : null;
+    const hideItem: MenuItem = this.windowHidden
+      ? { id: 'island:unhide', label: until ? `Show island (back ${until})` : 'Show island' }
+      : { label: 'Hide island', items: HIDE_CHOICES.map((c) => ({ id: `island:hide:${c.id}`, label: c.label })) };
     menu.push(
-      { id: 'island:toggle', label: this.open ? 'Close island' : 'Open island' },
+      ...(this.windowHidden ? [] : [{ id: 'island:toggle', label: this.open ? 'Close island' : 'Open island' }]),
+      hideItem,
       {
         label: 'Position',
         items: (['top', 'right', 'bottom', 'left'] as Anchor[]).map((x) => ({ id: `island:anchor:${x}`, label: x[0].toUpperCase() + x.slice(1), checked: a === x })),
@@ -1367,7 +1556,11 @@ export class Island {
       return;
     }
     if (id === 'island:toggle') this.open = !this.open;
-    else if (id.startsWith('island:anchor:')) {
+    else if (id === 'island:unhide') this.unhide();
+    else if (id.startsWith('island:hide:')) {
+      const choice = id.slice('island:hide:'.length);
+      if (HIDE_CHOICES.some((c) => c.id === choice)) this.hide(choice as HideChoice);
+    } else if (id.startsWith('island:anchor:')) {
       this.settings.island.anchor = id.slice('island:anchor:'.length) as Anchor;
       this.saveSettings();
     } else if (id === 'island:dnd') {

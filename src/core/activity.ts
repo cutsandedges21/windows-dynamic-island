@@ -100,6 +100,12 @@ export interface ActivityContext {
   log(...parts: unknown[]): void;
   /** Saves option values the activity keeps for itself (hidden chats, a cleared list). */
   setOptions?(patch: Record<string, unknown>): void;
+  /** Opens the island on this activity's card in place of Control Center (its sheet() is asked with reason 'open'). */
+  openCard?(): void;
+  /** Back to Control Center. */
+  closeCard?(): void;
+  /** This activity's card is the one the open island shows. */
+  cardOpen?(): boolean;
 }
 
 export interface Activity {
@@ -134,6 +140,10 @@ export interface Activity {
   command?(cmd: string, arg: unknown): unknown | Promise<unknown>;
   /** Hotkeys this activity wants registered right now. */
   hotkeys?(): Array<{ id: string; accel: string }>;
+  /** Files were dropped on the island. True takes them; the island then opens this activity's card. */
+  drop?(paths: string[]): boolean;
+  /** Says whether a drop would be taken, while files are dragged over the island (the pill shows the hint). */
+  accepts?(): string | null;
 }
 
 export type ActivityFactory = () => Activity;

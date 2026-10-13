@@ -9,7 +9,8 @@ export type CostumeId =
   | 'speaker' | 'speaker-off' | 'bolt' | 'zap' | 'battery-low' | 'battery-empty' | 'battery-full'
   | 'sparkle' | 'sweat' | 'heat' | 'cloud-off' | 'wifi' | 'sunglasses' | 'plug' | 'bye' | 'swirl'
   | 'rec' | 'mic-off' | 'flash' | 'clipboard' | 'box' | 'arrow-down' | 'clock' | 'tomato' | 'alarm'
-  | 'umbrella' | 'controller' | 'code' | 'confetti' | 'coin' | 'new' | 'yawn' | 'laptop';
+  | 'umbrella' | 'controller' | 'code' | 'confetti' | 'coin' | 'new' | 'yawn' | 'laptop'
+  | 'arrow-up' | 'paper-plane';
 
 const FONT = 'Segoe UI, system-ui, sans-serif';
 
@@ -87,6 +88,11 @@ const RAW: Record<CostumeId, string> = {
   box: '<g class="c-fall" transform="translate(12 -6)"><path d="M0 2.4l4-2.4 4 2.4v5l-4 2.4-4-2.4z" fill="#d9a066"/><path d="M0 2.4l4 2.4 4-2.4M4 4.8v5" fill="none" stroke="#8a5a2b" stroke-width="0.7"/></g>',
   'arrow-down':
     '<g class="c-bob" transform="translate(16 -2)"><path d="M0-4v6.5M-3 0l3 3.2 3-3.2" fill="none" stroke="#6cb0f2" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></g>',
+  'arrow-up':
+    '<g class="c-bob" transform="translate(16 -2)"><path d="M0 3.5v-6.5M-3 -0.2l3-3.2 3 3.2" fill="none" stroke="#6cb0f2" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></g>',
+  // Land: a paper plane taking off past its shoulder.
+  'paper-plane':
+    '<g class="c-fly" transform="translate(21 -1)"><path d="M0 4.6l10-4.6-3.3 10-1.9-3.9z" fill="#fff" stroke="#8b93a3" stroke-width="0.5" stroke-linejoin="round"/><path d="M4.8 6.1L10 0" stroke="#8b93a3" stroke-width="0.5"/></g>',
   clock:
     '<g class="c-pop" transform="translate(27 0)"><circle r="4.2" fill="#f4efe6" stroke="currentColor" stroke-width="0.8"/><path d="M0-2.5v2.6l1.8 1.2" fill="none" stroke="#1a1a1f" stroke-width="0.9" stroke-linecap="round"/></g>',
   tomato:

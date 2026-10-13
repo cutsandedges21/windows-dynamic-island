@@ -21,13 +21,18 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt", "macros"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt", "macros", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots"] }
 notify = "8"
 png = "0.17"
 base64 = "0.22"
 # SHA-256 of Local AI downloads (src/llama.rs); already in the tree through other crates.
 sha2 = "0.10"
+# Land (src/land.rs): Noise for the encrypted transfers, socket options and the network
+# interfaces for finding nearby devices.
+snow = "0.10"
+socket2 = { version = "0.6", features = ["all"] }
+if-addrs = "0.15"
 # Windows Hello. The 0.3 line, which adds the Windows backend, only has release
 # candidates so far. The copy in vendor/ is 0.3.0-rc.3 with one fix: Tauri 2.12 builds on
 # `windows` 0.62 and the published plugin on 0.61, so its window handle did not type-check

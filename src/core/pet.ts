@@ -5,13 +5,13 @@
 export type MoodId =
   | 'listening' | 'pondering' | 'talking' // the bot's own chat: above everything, you woke it up
   | 'asleep' | 'needs-you' | 'drained' | 'offline' | 'on-air' | 'vibing' | 'gaming'
-  | 'thinking' | 'overheated' | 'downloading' | 'focused' | 'charging' | 'tired' | 'idle';
+  | 'thinking' | 'overheated' | 'downloading' | 'uploading' | 'focused' | 'charging' | 'tired' | 'idle';
 
 /** Highest first: the first of these that anything reports is the mood. */
 export const MOOD_ORDER: readonly MoodId[] = [
   'listening', 'pondering', 'talking',
   'asleep', 'needs-you', 'drained', 'offline', 'on-air', 'vibing', 'gaming',
-  'thinking', 'overheated', 'downloading', 'focused', 'charging', 'tired', 'idle',
+  'thinking', 'overheated', 'downloading', 'uploading', 'focused', 'charging', 'tired', 'idle',
 ];
 
 export type MomentId =
@@ -20,7 +20,7 @@ export type MomentId =
   | 'plugged' | 'unplugged' | 'full' | 'battery-low' | 'battery-critical'
   | 'offline' | 'online' | 'vpn-on' | 'vpn-off' | 'usb-in' | 'usb-out'
   | 'cpu-spike' | 'ram-spike' | 'call-start' | 'mic-muted'
-  | 'screenshot' | 'copy' | 'download-done'
+  | 'screenshot' | 'copy' | 'download-done' | 'land-sent' | 'land-received'
   | 'timer-start' | 'focus-start' | 'break-start' | 'timer-done'
   | 'meeting-soon' | 'rain' | 'game-start' | 'new-server'
   | 'good-news' | 'bad-news' | 'warning' | 'info' | 'payment'
@@ -67,7 +67,7 @@ export const MOMENT_MS: Record<MomentId, number> = {
   plugged: 2400, unplugged: 2000, full: 3200, 'battery-low': 3000, 'battery-critical': 4000,
   offline: 2800, online: 2600, 'vpn-on': 2600, 'vpn-off': 2200, 'usb-in': 2600, 'usb-out': 2200,
   'cpu-spike': 3000, 'ram-spike': 3000, 'call-start': 2400, 'mic-muted': 2200,
-  screenshot: 1600, copy: 1500, 'download-done': 2800,
+  screenshot: 1600, copy: 1500, 'download-done': 2800, 'land-sent': 2800, 'land-received': 3000,
   'timer-start': 2000, 'focus-start': 2200, 'break-start': 2600, 'timer-done': 4000,
   'meeting-soon': 3000, rain: 3200, 'game-start': 2600, 'new-server': 2600,
   'good-news': 3000, 'bad-news': 3200, warning: 3000, info: 2800, payment: 3000,

@@ -27,6 +27,28 @@ export interface SheetButton {
   arg?: unknown;
   style?: ButtonStyle;
   tip?: string;
+  /** Shown but not pressable (Send with nothing to send). */
+  disabled?: boolean;
+}
+
+/** Someone to pick, as a round avatar with a name under it (Land's nearby devices). */
+export interface Person {
+  key: string;
+  name: string;
+  /** Under the name: what it is, or how a transfer to it is going. */
+  sub?: string;
+  initials: string;
+  /** Avatar colour, a hue 0..360. */
+  hue: number;
+  selected?: boolean;
+  /** A ring around the avatar filling 0..1; null circles (waiting). Absent: no ring. */
+  progress?: number | null;
+  /** An icon in a small disc at the avatar's corner (sent, declined). */
+  badge?: string;
+  tone?: Tone;
+  action?: string;
+  arg?: unknown;
+  tip?: string;
 }
 
 export interface SheetRow {
@@ -68,6 +90,8 @@ export type Block =
   | { t: 'stats'; key: string; items: Array<{ key: string; label: string; value: string; tone?: Tone; tip?: string }> }
   /** A thin bar draining until `until` (epoch ms) out of `total` ms. */
   | { t: 'countdown'; key: string; until: number; total: number; tone?: Tone }
+  /** A row of avatars to pick from; `empty` (with a searching pulse) when there are none. */
+  | { t: 'people'; key: string; items: Person[]; empty?: string }
   /**
    * The Control Center grid. `items` already know where they sit (the island
    * packed them); `tray` holds the ones taken off the grid, shown while editing.
@@ -120,6 +144,18 @@ export interface SheetView {
 
 export type SheetAction = (action: string, arg: unknown, source: HTMLElement) => void;
 
+/**
+ * The island's own elements, side by side with the card on one stage: a card block that took
+ * one of their class names would take their styles too (the bot's `.bubble` is
+ * `position: absolute`, which once laid a chat's last message over the card's header).
+ */
+export const ISLAND_CLASSES: readonly string[] = ['pill', 'sheet', 'bubble', 'chat', 'glow'];
+
+/** A text block's classes; a boxed one (a chat's message, an answer) scrolls after `lines`. */
+export function textClass(b: Extract<Block, { t: 'text' }>): string {
+  return `sb sb-text sz-${b.size ?? 'md'} tone-${b.tone ?? 'default'}${b.bubble ? ' boxed' : ''}`;
+}
+
 /** Rewrites every action in a view (the island namespaces them per activity). */
 export function mapActions(blocks: Block[], fn: (action: string) => string): Block[] {
   const btn = (b: SheetButton): SheetButton => ({ ...b, action: fn(b.action) });
@@ -141,6 +177,8 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
         return { ...b, items: b.items.map(row) };
       case 'choices':
         return { ...b, items: b.items.map((c) => ({ ...c, action: fn(c.action) })) };
+      case 'people':
+        return { ...b, items: b.items.map((p) => ({ ...p, action: p.action ? fn(p.action) : undefined })) };
       case 'tiles':
         return { ...b, items: b.items.map((t) => ({ ...t, action: t.action ? fn(t.action) : undefined, body: body(t.body) })) };
       default:
@@ -507,6 +545,8 @@ export class SheetRenderer {
         this.patchTiles(e, b);
         return true;
       }
+      case 'people':
+        return this.fillPeople(e, b);
       default:
         return false;
     }
@@ -524,7 +564,8 @@ export class SheetRenderer {
     if (b.icon) e.append(iconEl(b.icon, 'bi'));
     if (b.label) e.append(make('span', 'bl', b.label));
     if (b.tip) e.title = b.tip;
-    this.bind(e, b.action, b.arg);
+    if (b.disabled) e.disabled = true;
+    else this.bind(e, b.action, b.arg);
     return e;
   }
 
@@ -569,7 +610,7 @@ export class SheetRenderer {
         return e;
       }
       case 'text': {
-        const e = make('div', `sb sb-text sz-${b.size ?? 'md'} tone-${b.tone ?? 'default'}${b.bubble ? ' bubble' : ''}`);
+        const e = make('div', textClass(b));
         const tx = make('div', 'tx', b.text);
         tx.style.setProperty('--lines', String(b.lines ?? 8));
         e.append(tx);
@@ -629,6 +670,11 @@ export class SheetRenderer {
         const fill = make('i', 'cf');
         e.append(fill);
         this.runCountdown(fill, b);
+        return e;
+      }
+      case 'people': {
+        const e = make('div', 'sb sb-people');
+        this.fillPeople(e, b);
         return e;
       }
       case 'tiles': {
@@ -694,6 +740,73 @@ export class SheetRenderer {
       submit();
     });
     return e;
+  }
+
+  /**
+   * Avatars, kept by key so a ring filling or a name changing never rebuilds the row (a
+   * rebuilt avatar would restart its animations). False when the row must be rebuilt.
+   */
+  private fillPeople(e: HTMLElement, b: Extract<Block, { t: 'people' }>): boolean {
+    if (!b.items.length) {
+      if (!e.querySelector('.pe-empty')) {
+        e.replaceChildren();
+        const empty = make('div', 'pe-empty');
+        const scan = make('span', 'pe-scan');
+        scan.append(make('i', ''), make('i', ''), iconEl('land', 'pe-dot'));
+        empty.append(scan, make('span', 'pe-text', b.empty ?? ''));
+        e.append(empty);
+      } else e.querySelector('.pe-text')!.textContent = b.empty ?? '';
+      return true;
+    }
+    const keyed = new Map<string, HTMLElement>();
+    for (const c of Array.from(e.querySelectorAll<HTMLElement>(':scope > .person'))) keyed.set(c.dataset.p ?? '', c);
+    const els = b.items.map((p) => {
+      let el = keyed.get(p.key);
+      if (!el) {
+        el = make('button', 'person');
+        (el as HTMLButtonElement).type = 'button';
+        el.dataset.p = p.key;
+        const av = make('span', 'av');
+        av.append(make('span', 'ini'));
+        el.append(av, make('span', 'pn'), make('span', 'ps'));
+      }
+      keyed.delete(p.key);
+      el.className = `person tone-${p.tone ?? 'default'}${p.selected ? ' selected' : ''}${p.progress !== undefined ? ' ringed' : ''}${p.action ? ' act' : ''}`;
+      const av = el.querySelector<HTMLElement>('.av')!;
+      av.style.setProperty('--hue', String(Math.round(p.hue)));
+      av.querySelector('.ini')!.textContent = p.initials;
+      let ring = av.querySelector<HTMLElement>('.pring');
+      if (p.progress === undefined) ring?.remove();
+      else {
+        if (!ring) av.append((ring = make('span', 'pring')));
+        ring.classList.toggle('spin', p.progress === null);
+        ring.style.setProperty('--p', String(p.progress === null ? 0.28 : clamp01(p.progress)));
+      }
+      const badge = av.querySelector<HTMLElement>('.pbadge');
+      if (badge?.dataset.icon !== p.badge) {
+        badge?.remove();
+        if (p.badge) {
+          const b2 = iconEl(p.badge, 'pbadge');
+          b2.dataset.icon = p.badge;
+          av.append(b2);
+        }
+      }
+      el.querySelector('.pn')!.textContent = p.name;
+      const sub = el.querySelector<HTMLElement>('.ps')!;
+      sub.textContent = p.sub ?? '';
+      sub.style.display = p.sub ? '' : 'none';
+      if (p.tip) el.title = p.tip;
+      else el.removeAttribute('title');
+      if (p.action) this.bind(el, p.action, p.arg);
+      else delete el.dataset.action;
+      return el;
+    });
+    e.querySelector('.pe-empty')?.remove();
+    for (const gone of keyed.values()) gone.remove();
+    els.forEach((el, i) => {
+      if (e.children[i] !== el) e.insertBefore(el, e.children[i] ?? null);
+    });
+    return true;
   }
 
   private fillMeter(e: HTMLElement, b: Extract<Block, { t: 'meter' }>): void {

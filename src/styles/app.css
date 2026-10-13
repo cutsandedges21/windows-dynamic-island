@@ -92,6 +92,7 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 .btn.ghost { background: transparent; }
 .btn.danger { color: #ff9b91; }
 .hook-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.hide-choices { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* ------------------------------------------------------------------ island size + position */
 

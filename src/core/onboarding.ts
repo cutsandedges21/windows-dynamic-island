@@ -52,6 +52,7 @@ export const GLANCE: Glance[] = [
   { id: 'system', label: 'CPU and memory', icon: 'cpu' },
   { id: 'network', label: 'Internet speed', icon: 'wifi' },
   { id: 'downloads', label: 'Downloads', icon: 'download' },
+  { id: 'land', label: 'Sending files nearby', icon: 'land' },
   { id: 'screenshots', label: 'Screenshots', icon: 'screenshot' },
   { id: 'clipboard', label: 'Clipboard', icon: 'clipboard' },
   { id: 'sound', label: 'Volume', icon: 'speaker' },
@@ -103,12 +104,13 @@ export interface Answers {
 
 /**
  * On whatever the answers: they pop up for system events (the volume, a USB drive, a
- * finished download, low battery) but only get a tile when picked.
+ * finished download, low battery, files sent from a computer nearby) but only get a tile
+ * when picked.
  */
-export const HELPERS = ['sound', 'downloads', 'screenshots', 'devices', 'external', 'battery'];
+export const HELPERS = ['sound', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land'];
 
 /** Grid order: what you act on first, then what you glance at, then occasional helpers. */
-const GRID_ORDER = ['claude', 'local', 'ask', 'music', 'calendar', 'weather', 'timer', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'sound', 'downloads', 'screenshots', 'clipboard'];
+const GRID_ORDER = ['claude', 'local', 'ask', 'music', 'calendar', 'weather', 'timer', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'sound', 'downloads', 'land', 'screenshots', 'clipboard'];
 
 /** Activities the setup switches on or off. The rest (integrations with keys, Quick Actions) keep their state. */
 const MANAGED = new Set([...GRID_ORDER, ...HELPERS]);

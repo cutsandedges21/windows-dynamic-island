@@ -8,6 +8,7 @@ mod app;
 mod agenda;
 #[cfg_attr(target_os = "macos", path = "mac/audio.rs")]
 mod audio;
+mod land;
 mod chat;
 mod claude;
 #[cfg_attr(target_os = "macos", path = "mac/dnd.rs")]
@@ -79,6 +80,7 @@ pub fn run() {
         .manage(fsx::Watches::default())
         .manage(pipe::Pending::default())
         .manage(app::Hotkeys::default())
+        .manage(land::LandState::default())
         .setup(move |app| {
             // A Mac menu bar app: no Dock icon, no app menu.
             #[cfg(target_os = "macos")]
@@ -196,6 +198,13 @@ pub fn run() {
             local::local_setup_cancel,
             local::local_remove,
             local::local_models,
+            land::land_start,
+            land::land_stop,
+            land::land_scan,
+            land::land_send,
+            land::land_answer,
+            land::land_cancel,
+            land::land_stage,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Island");

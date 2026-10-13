@@ -12,7 +12,7 @@ import { levelWidth, normalizeWidths, type Anchor, type Level } from './core/lay
 import { isTauri, native, on, sendTo, type MonitorInfo } from './core/native';
 import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
-import { ACCENTS, cloneSettings, migrate, type ActivityConfig, type Settings } from './core/settings';
+import { ACCENTS, backAt, cloneSettings, HIDE_CHOICES, hideUntil, migrate, type ActivityConfig, type Settings } from './core/settings';
 import { springs } from './core/spring';
 import { h } from './dom';
 import { modelPicker } from './models-ui';
@@ -186,11 +186,15 @@ function activitiesPage(): HTMLElement {
   ]);
 }
 
+/** What Priority means, under its switch on every activity. */
+const PRIORITY_HELP = 'When several things happen at once, the highest one gets the pill and the others wait beside it as small icons. A tie goes to the one higher on this page.';
+
+/** Each behavior switch, with what it does in plain words (shown under it, not hidden in a tooltip). */
 const BEHAVIORS: Array<[keyof Pick<ActivityConfig, 'autoShow' | 'persistent' | 'interactive' | 'interrupt'>, string, string]> = [
-  ['autoShow', 'Auto-show', 'Expand on its own when something happens'],
-  ['persistent', 'Persistent', 'Stay on the island while it is active'],
-  ['interactive', 'Interactive', 'Buttons work right in the pill'],
-  ['interrupt', 'Interrupt', 'May take over for urgent moments'],
+  ['autoShow', 'Auto-show', 'Pops the island open for a few seconds when something happens here, like a download finishing. Off: it changes quietly, and you see it when you look.'],
+  ['persistent', 'Persistent', "Keeps it on the pill for as long as it's going, like music while it plays. Off: it takes the pill only for its moments, then waits beside it as a small icon."],
+  ['interactive', 'Interactive', 'Its buttons work right on the island: pause, Accept, Open. Off: the island only shows it.'],
+  ['interrupt', 'Interrupt', 'Lets it take over the island for urgent moments, like a permission request or a timer going off, even over something with a higher priority. Off: those moments wait their turn.'],
 ];
 
 function activityCard(meta: ActivityMeta): HTMLElement {
@@ -220,24 +224,10 @@ function activityCard(meta: ActivityMeta): HTMLElement {
 
 function cardBody(meta: ActivityMeta): HTMLElement {
   const c = cfg(meta.id);
-  const chips = h('div', { class: 'behaviors' });
-  for (const [key, label, help] of BEHAVIORS) {
-    chips.append(
-      h('button', {
-        class: `chip${c[key] ? ' on' : ''}`,
-        title: help,
-        text: label,
-        onclick: (e: Event) => {
-          c[key] = !c[key];
-          (e.currentTarget as HTMLElement).classList.toggle('on', c[key]);
-          save(true);
-        },
-      }),
-    );
-  }
+  const behaviors = BEHAVIORS.map(([key, label, help]) => row(label, help, toggle(c[key], (v) => { c[key] = v; save(true); }, label)));
   const body = h('div', { class: 'act-body' }, [
-    h('div', { class: 'body-row' }, [h('span', { class: 'label', text: 'Priority' }), segmented(c.priority, [['high', 'High'], ['medium', 'Medium'], ['low', 'Low']], (v) => { c.priority = v; c.enabled = true; save(true); flipRender(); })]),
-    h('div', { class: 'body-row' }, [h('span', { class: 'label', text: 'Behavior' }), chips]),
+    row('Priority', PRIORITY_HELP, segmented(c.priority, [['high', 'High'], ['medium', 'Medium'], ['low', 'Low']], (v) => { c.priority = v; c.enabled = true; save(true); flipRender(); })),
+    ...behaviors,
     // Local AI's model is picked in its panel below, not typed.
     ...meta.options.filter((o) => optionHere(o) && !(meta.id === 'local' && o.key === 'model')).map((o) => optionRow(meta.id, o)),
   ]);
@@ -504,7 +494,10 @@ function sizeCard(): HTMLElement {
     });
   return h('section', { class: 'card size-card' }, [
     h('div', { class: 'size-head' }, [h('h2', { text: 'Island' }), h('div', { class: 'positions' }, [pos('top', 'Top'), pos('right', 'Right'), pos('bottom', 'Bottom'), pos('left', 'Left')])]),
-    h('p', { class: 'muted', text: vertical ? 'Width levels, as a share of the display. On the left or right the island stands vertical, so they set its height.' : 'Width levels, as a share of the display. Drag a handle and watch the island.' }),
+    h('p', {
+      class: 'muted',
+      text: `Compact is the pill at rest, Expanded is when something happens or you point at it, Maximum is when you open it. Each is a share of the display${vertical ? '; on the left or right the island stands vertical, so they set its height' : ''}. Drag a handle and watch the island.`,
+    }),
     track,
     readout,
   ]);
@@ -752,6 +745,7 @@ function settingsPage(): HTMLElement {
       row('Hide in full-screen apps', 'Games, videos and presentations. Urgent things still show.', toggle(i.hideInFullscreen, (v) => { i.hideInFullscreen = v; save(true); })),
       row('Show other activities beside the main one', 'Small chips, with +N when there is no room.', toggle(i.showSecondary, (v) => { i.showSecondary = v; save(true); })),
       row('Do not disturb', 'Nothing expands on its own; urgent moments still interrupt.', toggle(g.dnd, (v) => { g.dnd = v; save(true); })),
+      hideRow(i, mac),
     ]),
     section('Startup', [
       row(mac ? 'Open at login' : 'Start with Windows', null, toggle(g.startWithWindows, (v) => { g.startWithWindows = v; save(true); void native.autostartSet(v); })),
@@ -782,6 +776,21 @@ function settingsPage(): HTMLElement {
       ]),
     ]),
   ]);
+}
+
+/** Hide the island for a while, or, while it is hidden, say until when and bring it back. */
+function hideRow(i: Settings['island'], mac: boolean): HTMLElement {
+  const now = Date.now();
+  if (i.hiddenUntil > now) {
+    const at = backAt(i.hiddenUntil, now);
+    const show = h('button', { class: 'btn', text: 'Show it now', onclick: () => { i.hiddenUntil = 0; save(true); render(); } });
+    return row('The island is hidden', at ? `It comes back ${at}.` : 'It stays hidden until you bring it back.', show);
+  }
+  const where = mac ? 'the menu bar icon' : 'the tray icon';
+  const choices = h('div', { class: 'hide-choices' }, HIDE_CHOICES.map((c) =>
+    h('button', { class: 'btn ghost', text: c.label, onclick: () => { i.hiddenUntil = hideUntil(c.id, Date.now()); save(true); render(); } }),
+  ));
+  return stacked(row('Hide the island', `The pill and the bot leave the screen for a while; Claude's prompts go back to the terminal meanwhile. Also in the island's right-click menu and ${where}.`, choices));
 }
 
 /** Island's data folder (log, relay, models), as Rust reports it on this system. */

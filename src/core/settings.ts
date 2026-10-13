@@ -64,6 +64,8 @@ export interface Settings {
     /** The bot in its bubble beside the pill (src/core/bubble.ts). */
     bot: boolean;
     grid: GridLayout;
+    /** The island is off the screen until this time (epoch ms); 0: shown. HIDE_UNTIL_SHOWN: until the user brings it back. */
+    hiddenUntil: number;
   };
   activities: {
     order: string[];
@@ -144,6 +146,7 @@ export function defaultSettings(): Settings {
       peekThrough: true,
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
+      hiddenUntil: 0,
     },
     activities: { order: CATALOG.map((m) => m.id), config },
     general: {
@@ -231,6 +234,8 @@ export function migrate(saved: unknown): Settings {
   }
   out.island.grid = { order: strings(savedGrid.order), sizes, hidden: strings(savedGrid.hidden), pages };
   out.island.displayIds = strings(isObj(saved.island) ? saved.island.displayIds : null);
+  if (!Number.isFinite(out.island.hiddenUntil) || out.island.hiddenUntil < 0) out.island.hiddenUntil = 0;
+  out.island.hiddenUntil = Math.min(out.island.hiddenUntil, HIDE_UNTIL_SHOWN);
   if (!['primary', 'cursor', 'active', 'specific', 'duplicate'].includes(out.island.display)) out.island.display = 'primary';
 
   // Version 2: orange is Claude's alone (the old default accent goes), and Claude no
@@ -249,6 +254,65 @@ export function migrate(saved: unknown): Settings {
   if (from < 5) out.island.hideInFullscreen = false;
   out.version = SETTINGS_VERSION;
   return out;
+}
+
+// ------------------------------------------------------------------ hiding the island
+
+/** "Until I show it": the latest time a Date can hold. */
+export const HIDE_UNTIL_SHOWN = 8_640_000_000_000_000;
+
+export type HideChoice = '30m' | '1h' | '3h' | 'morning' | 'shown';
+
+/** How long the island can be hidden for, in the order offered. */
+export const HIDE_CHOICES: Array<{ id: HideChoice; label: string }> = [
+  { id: '30m', label: 'For 30 minutes' },
+  { id: '1h', label: 'For 1 hour' },
+  { id: '3h', label: 'For 3 hours' },
+  { id: 'morning', label: 'Until tomorrow morning' },
+  { id: 'shown', label: 'Until I show it again' },
+];
+
+/** The island comes back at the next 6 AM that is at least an hour away. */
+const MORNING_HOUR = 6;
+
+/** When the island comes back for a choice made at `now` (local time for the morning). */
+export function hideUntil(choice: HideChoice, now: number): number {
+  const MIN = 60_000;
+  switch (choice) {
+    case '30m':
+      return now + 30 * MIN;
+    case '1h':
+      return now + 60 * MIN;
+    case '3h':
+      return now + 180 * MIN;
+    case 'morning': {
+      const d = new Date(now);
+      d.setHours(MORNING_HOUR, 0, 0, 0);
+      while (d.getTime() < now + 60 * MIN) d.setDate(d.getDate() + 1);
+      return d.getTime();
+    }
+    case 'shown':
+      return HIDE_UNTIL_SHOWN;
+  }
+}
+
+export function hiddenNow(island: Pick<Settings['island'], 'hiddenUntil'>, now: number): boolean {
+  return island.hiddenUntil > now;
+}
+
+/** When it comes back, to follow "back" or "comes back": "at 4:12 PM", "tomorrow at 6:00 AM", "Thursday at 6:00 AM"; null for "until I show it". */
+export function backAt(until: number, now: number): string | null {
+  if (until >= HIDE_UNTIL_SHOWN) return null;
+  const time = new Date(until).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const day = (ms: number) => {
+    const d = new Date(ms);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+  const days = Math.round((day(until) - day(now)) / 86_400_000);
+  if (days <= 0) return `at ${time}`;
+  if (days === 1) return `tomorrow at ${time}`;
+  return `${new Date(until).toLocaleDateString('en-US', { weekday: 'long' })} at ${time}`;
 }
 
 /** Deep clone through JSON: settings are plain data. */

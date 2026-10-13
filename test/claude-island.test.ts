@@ -192,6 +192,16 @@ describe('the reply window', () => {
     expect(lastReply()).toEqual(['r2', 'pass']);
   });
 
+  it('while the island is hidden, prompts go back to the terminal and chats do not wait', async () => {
+    const hidden = await boot({}, (s) => (s.island.hiddenUntil = Date.now() + 3_600_000));
+    stubTracker(hidden.act, [session({})], { 100: [50] });
+    emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'p1', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    expect(lastReply()).toEqual(['p1', 'decline']);
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1' });
+    await tick(0);
+    expect(lastReply()).toEqual(['r1', 'pass']);
+  });
+
   it('switching to the chat window releases the chat', async () => {
     const { act } = await boot();
     stubTracker(act, [session({})], { 100: [50, 10] });

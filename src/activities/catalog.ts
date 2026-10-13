@@ -136,6 +136,28 @@ export const CATALOG: ActivityMeta[] = [
     options: [{ key: 'folder', type: 'text', label: 'Folder', default: '', placeholder: 'Downloads (default)' }],
   },
   {
+    id: 'land',
+    name: 'Land',
+    description:
+      'Send files to your other computers on the same network, like AirDrop. Drag files onto the island, pick a computer, Send. The other computer needs Island open and accepts first. Files are encrypted on the way and never leave your network.',
+    icon: 'land',
+    category: 'network',
+    enabled: true,
+    priority: 'medium',
+    // Persistent: a transfer stays on the pill while it goes (it is only active then).
+    behavior: B(true, true, true, true),
+    options: [
+      {
+        key: 'visible',
+        type: 'toggle',
+        label: 'Let computers nearby send me files',
+        help: 'They see this computer and can offer it files; you accept each one. On Windows, allow Island through the firewall on private networks the first time it asks.',
+        default: true,
+      },
+      { key: 'name', type: 'text', label: 'Name others see', help: "Empty: this computer's own name.", default: '', placeholder: "This computer's name" },
+    ],
+  },
+  {
     id: 'timer',
     name: 'Timer',
     description: 'Timers, a stopwatch and focus sessions that live in the island.',

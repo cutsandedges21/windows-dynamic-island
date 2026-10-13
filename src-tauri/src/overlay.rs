@@ -138,8 +138,10 @@ fn build(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
         .closable(false)
         .visible(false)
         .background_color(tauri::window::Color(0, 0, 0, 0));
-    #[cfg(windows)]
-    let win = win.drag_and_drop(false);
+    // Files dragged onto the pill reach the island (Land); the page gets them as Tauri's
+    // drag-drop events. Only the pill takes the mouse, so a drop anywhere else lands on
+    // whatever is under the island. Mirrors draw only.
+    let win = win.drag_and_drop(label == LABEL);
     // On a Mac: on every desktop, and the first click on the pill counts even while another app is in front.
     #[cfg(target_os = "macos")]
     let win = win.visible_on_all_workspaces(true).accept_first_mouse(true);

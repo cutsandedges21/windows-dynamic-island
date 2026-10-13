@@ -313,6 +313,8 @@ html.peek #stage {
 @keyframes c-catch { from { opacity: 0; transform: translate(-4px, -6px) rotate(-30deg); } to { opacity: 1; transform: none; } }
 .c-fall { animation: c-fall 0.9s cubic-bezier(0.5, 0, 0.7, 1) 1 both; }
 @keyframes c-fall { 0% { opacity: 0; transform: translateY(-6px); } 20% { opacity: 1; } 70% { opacity: 1; transform: translateY(12px); } 100% { opacity: 0; transform: translateY(14px) scale(0.6); } }
+.c-fly { animation: c-fly 1.5s cubic-bezier(0.3, 0.6, 0.4, 1) 1 both; }
+@keyframes c-fly { 0% { opacity: 0; transform: translate(-8px, 7px) scale(0.5) rotate(-12deg); } 20% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; transform: translate(9px, -11px) scale(1) rotate(6deg); } }
 .c-bob { animation: c-bob 1s ease-in-out infinite; }
 @keyframes c-bob { 0%, 100% { transform: translateY(-1.5px); } 50% { transform: translateY(1.5px); } }
 .c-ring { animation: c-ring 0.16s linear infinite; }
@@ -885,7 +887,7 @@ html.reduce .bubble-costume * { animation: none !important; }
 .sb-text { font: 400 13px/1.45 var(--font); }
 .sb-text.sz-sm { font-size: 12px; }
 .sb-text .tx { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text; }
-.sb-text.bubble .tx {
+.sb-text.boxed .tx {
   max-height: calc(var(--lines, 8) * 1.45em);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1027,6 +1029,107 @@ html.reduce .bubble-costume * { animation: none !important; }
 .sb-rows .rbtn { flex: none; width: 24px; height: 24px; opacity: 0; transition: opacity 0.15s ease; }
 .sb-rows .rbtn .bi { width: 13px; height: 13px; }
 .sb-rows .row:hover .rbtn { opacity: 1; }
+
+/* people: round avatars to pick from (Land's nearby devices) */
+.sb-people {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 2px 2px;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+.sb-people::-webkit-scrollbar { display: none; }
+.sb-people .person {
+  flex: none;
+  width: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px 7px;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  cursor: default;
+}
+.sb-people .person.act { cursor: pointer; transition: background-color 0.16s ease; }
+.sb-people .person.act:hover { background: rgba(var(--ink), 0.07); }
+.sb-people .av {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 3px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(150deg, hsl(var(--hue) 72% 64%), hsl(calc(var(--hue) + 38) 62% 46%));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 4px 12px -6px hsl(var(--hue) 70% 40%);
+  outline: 2.5px solid transparent;
+  outline-offset: 3px;
+  transition: outline-color 0.18s ease, transform 0.25s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.sb-people .person.selected .av { outline-color: var(--accent); transform: scale(1.04); }
+/* a transfer's ring takes the place of the picked outline */
+.sb-people .person.ringed .av { outline-color: transparent; }
+.sb-people .ini { font: 700 18px/1 var(--font); color: #fff; letter-spacing: 0.02em; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28); }
+.sb-people .pring {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) calc(var(--p, 0) * 360deg), rgba(var(--ink), 0.14) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px));
+  pointer-events: none;
+}
+.sb-people .pring.spin { animation: pring-spin 1.1s linear infinite; }
+@keyframes pring-spin { to { transform: rotate(360deg); } }
+.sb-people .pbadge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 21px;
+  height: 21px;
+  box-sizing: border-box;
+  padding: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+.sb-people .pbadge .ico { width: 100%; height: 100%; display: block; stroke-width: 3; }
+.sb-people .person.tone-good .pbadge { background: var(--good); }
+.sb-people .person.tone-bad .pbadge { background: var(--bad); }
+.sb-people .pn {
+  max-width: 100%;
+  font: 600 12px/1.2 var(--font);
+  text-align: center;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.sb-people .ps { max-width: 100%; font: 500 11px/1.2 var(--font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sb-people .person.tone-good .ps { color: var(--good); }
+.sb-people .person.tone-bad .ps { color: var(--bad); }
+.sb-people .person.tone-accent .ps { color: var(--accent); }
+.sb-people .pe-empty { width: 100%; display: flex; align-items: center; gap: 14px; padding: 8px 6px 10px; }
+.sb-people .pe-text { font: 500 12px/1.4 var(--font); color: var(--muted); }
+/* searching: rings going out from a dot */
+.sb-people .pe-scan { position: relative; flex: none; width: 44px; height: 44px; display: grid; place-items: center; color: var(--accent); }
+.sb-people .pe-scan i { position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid currentColor; opacity: 0; animation: pe-scan 2.4s ease-out infinite; }
+.sb-people .pe-scan i + i { animation-delay: 1.2s; }
+.sb-people .pe-dot { width: 22px; height: 22px; }
+.sb-people .pe-dot .ico { width: 100%; height: 100%; display: block; }
+@keyframes pe-scan { 0% { opacity: 0.8; transform: scale(0.35); } 100% { opacity: 0; transform: scale(1.15); } }
+.reduce .sb-people .pe-scan i, .reduce .sb-people .pring.spin { animation: none; }
+.sbtn:disabled { opacity: 0.38; cursor: default; }
+.sbtn:disabled:hover { filter: none; }
+.sbtn.style-secondary:disabled:hover { background: rgba(var(--ink), 0.11); }
 .sb-rows .rb { flex: none; font: 600 10.5px/18px var(--font); padding: 0 6px; border-radius: 9px; background: rgba(var(--ink), 0.12); color: var(--muted); }
 
 /* question options */
@@ -1060,6 +1163,11 @@ html.reduce .bubble-costume * { animation: none !important; }
 /* the reply window draining */
 .sb-countdown { position: relative; height: 3px; border-radius: 2px; background: rgba(var(--ink), 0.1); overflow: hidden; color: var(--claude); }
 .sb-countdown .cf { position: absolute; inset: 0; transform-origin: 0 50%; background: currentColor; }
+/* orange stays Claude's: other countdowns take their own tone */
+.sb-countdown.tone-accent { color: var(--accent); }
+.sb-countdown.tone-good { color: var(--good); }
+.sb-countdown.tone-warn { color: var(--warn); }
+.sb-countdown.tone-bad { color: var(--bad); }
 
 /* ------------------------------------------------------------------ tiles (open island) */
 

@@ -10,6 +10,7 @@ import { requireHello } from '../../core/hello';
 import { native, type ClaudeEnv, type MenuItem } from '../../core/native';
 import type { PetSignal } from '../../core/pet';
 import type { Seg, Tone } from '../../core/segments';
+import { hiddenNow } from '../../core/settings';
 import type { Block, SheetButton, SheetRow, SheetView, Tile } from '../../core/sheet';
 import { BaseActivity, chime } from '../base';
 import { chatUrl, DesktopChats, type DesktopChat } from './desktop';
@@ -345,7 +346,7 @@ export class ClaudeActivity extends BaseActivity {
     const sid = ev.session_id ?? '';
     if (kind === 'permission' && ev.request_id) {
       const cfg = this.ctx.config();
-      const canShow = cfg.enabled && cfg.interactive && cfg.interrupt && !this.ctx.settings().general.dnd;
+      const canShow = cfg.enabled && cfg.interactive && cfg.interrupt && !this.ctx.settings().general.dnd && !hiddenNow(this.ctx.settings().island, Date.now());
       if (canShow) {
         void native.hookReply(ev.request_id, 'ack');
         this.ctx.alert('glow', 'claude');
@@ -397,6 +398,7 @@ export class ClaudeActivity extends BaseActivity {
       this.ctx.log('stop', { session: sid.slice(0, 8), held: false, why });
     };
     if (o.replyWindowSeconds <= 0 || !cfg.enabled || !cfg.interactive || this.ctx.settings().general.dnd) return pass('off');
+    if (hiddenNow(this.ctx.settings().island, Date.now())) return pass('hidden');
     let looking = false;
     try {
       looking = await this.isLookingAt(sid, ev);

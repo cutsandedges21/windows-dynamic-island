@@ -5,6 +5,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { emit, emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -211,6 +212,65 @@ export interface MenuItem {
   items?: MenuItem[];
 }
 
+/** Land (src-tauri/src/land.rs): a computer nearby that takes files. */
+export interface LandPeer {
+  id: string;
+  name: string;
+  /** 'windows' | 'macos' | 'linux' | 'other' */
+  os: string;
+}
+export interface LandInfo {
+  id: string;
+  name: string;
+  visible: boolean;
+  peers: LandPeer[];
+  /** Land's first start on this computer: the system is asking about the firewall or the local network now. */
+  fresh: boolean;
+}
+/** One dropped item of a transfer: a file, or a folder and the files in it. */
+export interface LandItem {
+  name: string;
+  size: number;
+  files: number;
+  dir: boolean;
+}
+export type LandState = 'waiting' | 'asking' | 'sending' | 'receiving' | 'done' | 'declined' | 'failed' | 'cancelled';
+/** One transfer, as Rust reports it on every change and as bytes move ('land-transfer'). */
+export interface LandTransfer {
+  id: string;
+  dir: 'out' | 'in';
+  peer: LandPeer;
+  state: LandState;
+  done: number;
+  total: number;
+  count: number;
+  /** The dropped files and folders (the first 20; count and total cover them all). */
+  items: LandItem[];
+  error: string | null;
+  /** What arrived, as saved: a file, or the folder a dropped folder became. */
+  saved: string[];
+  folder: string | null;
+  /** When an offer stops waiting for an answer (epoch ms). */
+  expires: number | null;
+}
+/** A dropped path before it is sent. */
+export interface LandStaged {
+  path: string;
+  name: string;
+  size: number;
+  dir: boolean;
+  files: number;
+  error: string | null;
+}
+export type Tried<T> = { ok: true; value: T } | { ok: false; error: string };
+
+/** Files dragged over the island and dropped on it; positions in CSS px. */
+export type FileDrop =
+  | { type: 'enter'; paths: string[]; x: number; y: number }
+  | { type: 'over'; x: number; y: number }
+  | { type: 'drop'; paths: string[]; x: number; y: number }
+  | { type: 'leave' };
+
 const mockSettingsKey = 'island:settings';
 
 async function call<T>(cmd: string, args: Record<string, unknown> = {}, fallback: T): Promise<T> {
@@ -220,6 +280,16 @@ async function call<T>(cmd: string, args: Record<string, unknown> = {}, fallback
   } catch (err) {
     console.warn(`native ${cmd} failed`, err);
     return fallback;
+  }
+}
+
+/** A command whose error message the caller shows (Land says why it cannot start or send). */
+async function tryCall<T>(cmd: string, args: Record<string, unknown>): Promise<Tried<T>> {
+  if (!isTauri) return { ok: false, error: 'This needs the Island app.' };
+  try {
+    return { ok: true, value: await invoke<T>(cmd, args) };
+  } catch (err) {
+    return { ok: false, error: String(err) };
   }
 }
 
@@ -235,6 +305,54 @@ export async function on<T>(event: string, cb: Handler<T>): Promise<UnlistenFn> 
   if (!set) localBus.set(event, (set = new Set()));
   set.add(cb as Handler<unknown>);
   return () => set!.delete(cb as Handler<unknown>);
+}
+
+/**
+ * Files dragged onto the island. Tauri reports them for the island window (the pill is the
+ * only part that takes the mouse, so the only part a drop reaches); the browser preview uses
+ * HTML drag events, with file names standing in for paths.
+ */
+export async function onFileDrop(cb: (e: FileDrop) => void): Promise<UnlistenFn> {
+  if (isTauri) {
+    return getCurrentWebview().onDragDropEvent(({ payload: p }) => {
+      // Tauri gives physical pixels; the island works in CSS px.
+      const k = window.devicePixelRatio || 1;
+      if (p.type === 'leave') cb({ type: 'leave' });
+      else if (p.type === 'over') cb({ type: 'over', x: p.position.x / k, y: p.position.y / k });
+      else cb({ type: p.type, paths: p.paths, x: p.position.x / k, y: p.position.y / k });
+    });
+  }
+  const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  let inside = 0;
+  const enter = (e: DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (inside++ === 0) cb({ type: 'enter', paths: ['files'], x: e.clientX, y: e.clientY });
+  };
+  const over = (e: DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    cb({ type: 'over', x: e.clientX, y: e.clientY });
+  };
+  const leave = () => {
+    if (inside > 0 && --inside === 0) cb({ type: 'leave' });
+  };
+  const drop = (e: DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    inside = 0;
+    cb({ type: 'drop', paths: Array.from(e.dataTransfer?.files ?? []).map((f) => f.name), x: e.clientX, y: e.clientY });
+  };
+  window.addEventListener('dragenter', enter);
+  window.addEventListener('dragover', over);
+  window.addEventListener('dragleave', leave);
+  window.addEventListener('drop', drop);
+  return () => {
+    window.removeEventListener('dragenter', enter);
+    window.removeEventListener('dragover', over);
+    window.removeEventListener('dragleave', leave);
+    window.removeEventListener('drop', drop);
+  };
 }
 
 /** Demo mode only: deliver an event as if Rust had sent it. */
@@ -393,6 +511,18 @@ export const native = {
   quit: () => call('app_quit', {}, undefined),
   autostartGet: () => call<boolean>('autostart_get', {}, false),
   autostartSet: (enabled: boolean) => call<boolean>('autostart_set', { enabled }, false),
+
+  /** Turns Land on, or updates its name and whether it takes files (null name: the computer's). */
+  landStart: (name: string | null, visible: boolean) => tryCall<LandInfo>('land_start', { name, visible }),
+  landStop: () => call('land_stop', {}, undefined),
+  /** Asks every device nearby to say who it is; the list as it stands. */
+  landScan: () => call<LandPeer[]>('land_scan', {}, []),
+  /** Starts sending; the transfer's id, or why it cannot. */
+  landSend: (peer: string, paths: string[]) => tryCall<string>('land_send', { peer, paths }),
+  landAnswer: (id: string, accept: boolean) => call<boolean>('land_answer', { id, accept }, false),
+  landCancel: (id: string) => call<boolean>('land_cancel', { id }, false),
+  landStage: (paths: string[]) =>
+    call<LandStaged[]>('land_stage', { paths }, paths.map((p) => ({ path: p, name: p.split(/[\\/]/).pop() || p, size: 0, dir: false, files: 1, error: null }))),
 };
 
 export type Native = typeof native;

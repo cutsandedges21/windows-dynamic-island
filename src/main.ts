@@ -25,4 +25,6 @@ if (native.demo && island) {
   Object.assign(window, { native, emitLocal });
   if (new URLSearchParams(location.search).has('fill')) void import('./dev/fill').then((m) => m.fillPreview(island, native, emitLocal));
   if (new URLSearchParams(location.search).has('pet')) void import('./dev/pet').then((m) => m.petPreview());
+  const land = new URLSearchParams(location.search).get('land');
+  if (land !== null) void import('./dev/land').then((m) => m.landPreview(island, native, land));
 }

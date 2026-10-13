@@ -193,7 +193,7 @@ export class UsageClient {
     }
     const res = await native.usageFetch(this.deps.getVersion());
     if (res.noToken) return this.fail('no_token', 'Sign in to Claude Code to see limits', BASE_INTERVAL_MS);
-    if (res.status === 0) return this.fail('network', 'Offline, retrying', this.backoff());
+    if (res.status === 0) return this.fail('network', "Can't reach Claude, retrying", Math.min(this.backoff(), MAX_INTERVAL_MS));
     if (res.status === 401) return this.fail('expired', 'Use Claude Code once to refresh it', EXPIRED_RECHECK_MS);
     if (res.status === 429) {
       this.last429At = this.now();

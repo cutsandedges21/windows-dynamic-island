@@ -85,6 +85,7 @@ const P: Record<string, string> = {
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.5h.01"/>',
   power: '<path d="M12 3v8.5M6.8 6.3a8 8 0 1010.4 0"/>',
   eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+  'eye-off': '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/><path d="M4 4l16 16"/>',
   code: '<path d="M8.5 7l-5 5 5 5M15.5 7l5 5-5 5M13.5 4.5l-3 15"/>',
   branch: '<circle cx="6.5" cy="5.5" r="2"/><circle cx="6.5" cy="18.5" r="2"/><circle cx="17.5" cy="7.5" r="2"/><path d="M6.5 7.5v9M17.5 9.5a6 6 0 01-6 6h-5"/>',
   send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
@@ -97,6 +98,10 @@ const P: Record<string, string> = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 20.5a8 8 0 0116 0"/>',
   gamepad: '<path d="M7.5 8h9a4.5 4.5 0 014.4 5.4l-.7 3.5a2.4 2.4 0 01-4 1.3L13.6 16h-3.2l-2.6 2.2a2.4 2.4 0 01-4-1.3l-.7-3.5A4.5 4.5 0 017.5 8z"/><path d="M7.8 10.8v3.4M6.1 12.5h3.4"/><circle cx="15.6" cy="11.6" r=".7" fill="currentColor"/><circle cx="17.4" cy="13.4" r=".7" fill="currentColor"/>',
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor"/>',
+  // Land: a file's arc coming down onto the ground.
+  land: '<path d="M3.5 20h17"/><path d="M4.5 4.5c6.2 0 10.6 4 11.9 10.6"/><path d="M13.3 13.1l3.1 2.4 2.3-3.2"/>',
+  file: '<path d="M6.5 3h7.5l4.5 4.5V20a1 1 0 01-1 1h-11a1 1 0 01-1-1V4a1 1 0 011-1z"/><path d="M13.5 3v5h5"/>',
+  laptop: '<rect x="4.5" y="5" width="15" height="10.5" rx="1.5"/><path d="M2.5 19h19"/>',
 };
 
 export type IconName = keyof typeof P | string;

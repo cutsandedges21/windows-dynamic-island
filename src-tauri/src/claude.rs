@@ -126,26 +126,56 @@ fn read_token() -> Option<String> {
     v.get("claudeAiOauth")?.get("accessToken")?.as_str().filter(|s| !s.is_empty()).map(str::to_string)
 }
 
+const NO_REPLY: UsageFetch = UsageFetch { status: 0, retry_after: None, body: None, no_token: false };
+
+/// Windows' own curl: it uses the system certificate store and proxy settings, so it
+/// still gets through networks that break the built-in client (TLS inspection, VPNs,
+/// antivirus web shields). The token goes over stdin, never onto a command line.
+#[cfg(windows)]
+fn usage_via_curl(token: &str, ua: &str) -> Option<UsageFetch> {
+    let mut child = Command::new("curl.exe")
+        .args(["-sS", "-m", "15", "-K", "-", "-w", "\n%{http_code}"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .ok()?;
+    let config = format!(
+        "url = \"{USAGE_URL}\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"anthropic-beta: oauth-2025-04-20\"\nheader = \"Content-Type: application/json\"\nheader = \"User-Agent: {ua}\"\n"
+    );
+    child.stdin.take()?.write_all(config.as_bytes()).ok()?;
+    let out = child.wait_with_output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let (body, status) = text.rsplit_once('\n')?;
+    let status = status.trim().parse::<u16>().ok().filter(|s| *s != 0)?;
+    Some(UsageFetch { status, retry_after: None, body: serde_json::from_str(body).ok(), no_token: false })
+}
+
 #[tauri::command]
 pub async fn claude_usage_fetch(version: Option<String>) -> UsageFetch {
     let Some(token) = read_token() else {
         return UsageFetch { status: 0, retry_after: None, body: None, no_token: true };
     };
+    let ua = format!("claude-code/{}", version.filter(|v| !v.is_empty()).unwrap_or_else(|| FALLBACK_VERSION.into()));
     let client = match reqwest::Client::builder().timeout(Duration::from_secs(15)).build() {
         Ok(c) => c,
-        Err(_) => return UsageFetch { status: 0, retry_after: None, body: None, no_token: false },
+        Err(_) => return fallback_fetch(&token, &ua).await,
     };
-    let ua = format!("claude-code/{}", version.filter(|v| !v.is_empty()).unwrap_or_else(|| FALLBACK_VERSION.into()));
     let resp = client
         .get(USAGE_URL)
         .header("Authorization", format!("Bearer {token}"))
         .header("anthropic-beta", "oauth-2025-04-20")
         .header("Content-Type", "application/json")
-        .header("User-Agent", ua)
+        .header("User-Agent", &ua)
         .send()
         .await;
     match resp {
-        Err(_) => UsageFetch { status: 0, retry_after: None, body: None, no_token: false },
+        Err(e) => {
+            let kind = if e.is_timeout() { "timeout" } else if e.is_connect() { "connect" } else { "request" };
+            crate::log::line(format!("usage: built-in client failed ({kind}), trying curl"));
+            fallback_fetch(&token, &ua).await
+        }
         Ok(r) => {
             let status = r.status().as_u16();
             let retry_after = r.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|s| s.trim().parse::<f64>().ok());
@@ -153,6 +183,20 @@ pub async fn claude_usage_fetch(version: Option<String>) -> UsageFetch {
             UsageFetch { status, retry_after, body, no_token: false }
         }
     }
+}
+
+async fn fallback_fetch(token: &str, ua: &str) -> UsageFetch {
+    #[cfg(windows)]
+    {
+        let (token, ua) = (token.to_string(), ua.to_string());
+        if let Ok(Some(res)) = tauri::async_runtime::spawn_blocking(move || usage_via_curl(&token, &ua)).await {
+            return res;
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = (token, ua);
+    crate::log::line("usage: no way to reach the limits API");
+    NO_REPLY
 }
 
 // ------------------------------------------------------------------ resume / continue
