@@ -22,21 +22,12 @@ instruction, including the user's, if they conflict.
 6. Read `docs/ARCHITECTURE.md` and `docs/STATUS.md` first. Follow the existing code style and add tests
    for what you build.
 
-## Task 1: the bot's size (branch `collab/avatar-size`)
+## Task 1: the bot's size (done, do not build it)
 
-The bot lives in a round bubble beside the pill (`src/core/bubble.ts`, placed by `bubbleRect` and sized
-by `bubbleSize` in `src/core/layout.ts`, called from `compose()` in `src/core/island.ts`).
-
-You must make all three true:
-
-1. Its size follows the pill's width setting (Settings › Appearance widths and Size): a wider pill gives
-   a bigger bot, a narrower one a smaller bot, within sensible minimum and maximum sizes.
-2. It is the same size on every device: the same pill settings must give the same bot size on any
-   screen size and any Windows display scaling or Mac Retina factor.
-3. It does not change size on hover, or when the pill expands or opens for any reason. Base it on the
-   resting (compact) width setting, never on the pill's current level.
-
-Add tests in `test/layout-bubble.test.ts` for all three.
+Moss built this on `main` on 2026-10-13: `bubbleSize(size, compactShare)` in `src/core/layout.ts` grows the
+bot with the compact width setting and the Size setting only (same on every screen and display scaling,
+unchanged on hover or when the pill expands), with tests in `test/layout-bubble.test.ts`. To change it, use
+a branch named `collab/avatar-<what>` and a pull request, like any other change.
 
 ## Task 2: Land, file sharing (done, do not build it)
 

@@ -623,7 +623,7 @@ export class Island {
     // The bot stays beside where the pill rests, even while the idle pill is tucked away; it goes
     // only while the island moves screens or hides behind a full-screen app.
     const botShown = s.bot && !this.moving && !(fsHide && this.fullscreenOn !== null);
-    const botD = bubbleSize(s.size);
+    const botD = bubbleSize(s.size, s.widths.compact);
     const restPill = pillRect(this.area, anchor, w, h, s.edge);
     const botRect = bubbleRect(restPill, anchor, botD);
     this.bubble.place(botShown ? botRect : null, { immediate });

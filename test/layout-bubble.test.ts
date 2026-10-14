@@ -16,10 +16,37 @@ function pillAt(anchor: Anchor, level: Level): Rect {
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 describe('the bubble', () => {
-  it('is as tall as the compact pill, for every size', () => {
+  it('is as tall as the compact pill at the default width, for every size', () => {
     expect(bubbleSize('medium')).toBe(heightFor('compact', 'medium'));
     expect(bubbleSize('small')).toBe(heightFor('compact', 'small'));
     expect(bubbleSize('large')).toBe(heightFor('compact', 'large'));
+  });
+
+  it('grows with the pill width setting, within limits', () => {
+    const at = (share: number) => bubbleSize('medium', share);
+    expect(at(0.08)).toBeLessThan(at(0.12));
+    expect(at(0.2)).toBeGreaterThan(at(0.12));
+    expect(at(0.06)).toBeGreaterThanOrEqual(Math.round(36 * 0.8));
+    expect(at(0.9)).toBeLessThanOrEqual(Math.round(36 * 1.45));
+    expect(at(Number.NaN)).toBe(at(0.12));
+  });
+
+  it('is the same on every screen for the same settings, though the pill itself is not', () => {
+    const share = 0.2;
+    const small = pillSize({ width: 1280, height: 720 }, normalizeWidths({ compact: share }), 'compact', edge, 'medium', 'horizontal');
+    const big = pillSize({ width: 3840, height: 2160 }, normalizeWidths({ compact: share }), 'compact', edge, 'medium', 'horizontal');
+    expect(big.w).not.toBe(small.w);
+    // bubbleSize takes no screen at all: only the settings decide.
+    expect(bubbleSize.length).toBe(1);
+    expect(bubbleSize('medium', share)).toBe(bubbleSize('medium', share));
+  });
+
+  it('keeps its size whatever the pill does (hover, expanded, open)', () => {
+    const d = bubbleSize('medium', 0.2);
+    for (const level of ['idle', 'compact', 'expanded', 'maximum'] as const) {
+      const b = bubbleRect(pillAt('top', level), 'top', d);
+      expect([b.w, b.h]).toEqual([d, d]);
+    }
   });
 
   for (const anchor of ['top', 'bottom', 'left', 'right'] as const) {
