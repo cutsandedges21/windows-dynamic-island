@@ -15,13 +15,20 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 #[cfg(windows)]
-use windows::Win32::Foundation::{HWND, POINT};
+use windows::core::{w, Interface, BOOL};
+#[cfg(windows)]
+use windows::Win32::Foundation::{HWND, LPARAM, POINT};
+#[cfg(windows)]
+use windows::Win32::System::Ole::{IDropTarget, RegisterDragDrop};
+#[cfg(windows)]
+use windows::Win32::System::Threading::GetCurrentProcessId;
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_LBUTTON, VK_RBUTTON};
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE,
-    SWP_ASYNCWINDOWPOS, SWP_NOMOVE, SWP_NOSIZE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    EnumChildWindows, GetCursorPos, GetParent, GetPropW, GetWindowLongPtrW, GetWindowThreadProcessId, SetWindowLongPtrW,
+    SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_ASYNCWINDOWPOS, SWP_NOMOVE, SWP_NOSIZE, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW,
 };
 
 use crate::monitors::{self, MonitorInfo};
@@ -92,6 +99,72 @@ fn hwnd_of(win: &WebviewWindow) -> Option<HWND> {
 #[cfg(windows)]
 pub fn hwnd_raw(app: &AppHandle) -> isize {
     window(app).and_then(|w| hwnd_of(&w)).map(|h| h.0 as isize).unwrap_or(0)
+}
+
+// Files dropped on the pill. wry gives the page its drop target once, on the child windows
+// that exist when the page is made. The island's page is made hidden at startup, before
+// WebView2 creates the windows that end up under the pointer (its Chrome_WidgetWin_1, the
+// legacy render window, the D3D window), so those had none and Windows showed "not allowed"
+// for every file dragged onto the pill. Each of them now gets wry's own target, so drops
+// arrive as Tauri's drag-drop events, as in any other window.
+
+#[cfg(windows)]
+fn owner(hwnd: HWND) -> u32 {
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    pid
+}
+
+/// The drop target RegisterDragDrop recorded for a window: OLE keeps it in this property.
+#[cfg(windows)]
+fn drop_target(hwnd: HWND) -> *mut core::ffi::c_void {
+    unsafe { GetPropW(hwnd, w!("OleDropTargetInterface")).0 }
+}
+
+/// WebView2's windows (other processes) in the island's tree that no drop target answers for.
+#[cfg(windows)]
+fn without_drop_target(top: HWND) -> Vec<isize> {
+    unsafe extern "system" fn collect(hwnd: HWND, data: LPARAM) -> BOOL {
+        let list = unsafe { &mut *(data.0 as *mut Vec<isize>) };
+        list.push(hwnd.0 as isize);
+        true.into()
+    }
+    let mut all: Vec<isize> = Vec::new();
+    unsafe {
+        let _ = EnumChildWindows(Some(top), Some(collect), LPARAM(&mut all as *mut _ as isize));
+    }
+    let me = unsafe { GetCurrentProcessId() };
+    all.into_iter()
+        .filter(|&h| {
+            let hwnd = HWND(h as *mut _);
+            owner(hwnd) != me && drop_target(hwnd).is_null()
+        })
+        .collect()
+}
+
+/// Gives each of them the target of its nearest ancestor in this process (wry's, on
+/// Chrome_WidgetWin_0). Main thread only: the OLE apartment that target lives in.
+#[cfg(windows)]
+fn share_drop_target(top: HWND) -> usize {
+    let me = unsafe { GetCurrentProcessId() };
+    let mut given = 0;
+    for h in without_drop_target(top) {
+        let hwnd = HWND(h as *mut _);
+        let mut up = unsafe { GetParent(hwnd) }.unwrap_or_default();
+        while !up.is_invalid() {
+            let raw = drop_target(up);
+            if !raw.is_null() && owner(up) == me {
+                if let Some(target) = unsafe { IDropTarget::from_raw_borrowed(&raw) } {
+                    if unsafe { RegisterDragDrop(hwnd, target) }.is_ok() {
+                        given += 1;
+                    }
+                }
+                break;
+            }
+            up = unsafe { GetParent(up) }.unwrap_or_default();
+        }
+    }
+    given
 }
 
 /// A Mac window that cannot become key never takes the keyboard from the app in front.
@@ -271,6 +344,8 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
         let mut last_fg = Instant::now() - Duration::from_secs(5);
         #[cfg(windows)]
         let mut last_info: Option<ForegroundInfo> = None;
+        #[cfg(windows)]
+        let mut last_drop_check = Instant::now() - Duration::from_secs(5);
         let mut was_left = false;
         let mut was_right = false;
         let mut was_ctrl = false;
@@ -310,6 +385,21 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
                             }
                         }
                     }
+                }
+            }
+
+            // WebView2 makes the windows under the pointer after the page's drop target was set,
+            // and may make them again (a GPU or renderer restart): see share_drop_target.
+            #[cfg(windows)]
+            if own != 0 && last_drop_check.elapsed() >= Duration::from_secs(2) {
+                last_drop_check = Instant::now();
+                if !without_drop_target(HWND(own as *mut _)).is_empty() {
+                    let _ = app.run_on_main_thread(move || {
+                        let given = share_drop_target(HWND(own as *mut _));
+                        if given > 0 {
+                            crate::log::line(format!("island: file drops: drop target shared with {given} WebView2 windows"));
+                        }
+                    });
                 }
             }
 
