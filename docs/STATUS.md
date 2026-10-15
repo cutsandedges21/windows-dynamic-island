@@ -316,3 +316,4 @@ switch and glow all still untested on screen by Moss.
 - The privacy note in Settings now lists Send to my phone (ntfy.sh).
 - Checked: tsc, 449 Vitest (new: phone 1, claude-pushes 6, Claude on the phone 6; the setup's helper list gained phone), cargo tests for topics, tags and Phone Link's lines; ntfy round trips (UTF-8, tag, priority) on throwaway topics. release/Island.exe rebuilt from the tree (still labelled 0.2.6) and running. `tauri.mjs release` hit EBUSY copying over the running exe: stop Island, copy `target\release\island.exe`, start it.
 - Not yet tried: Phone with an Android phone; the Windows toast Phone Link makes for Island's own ntfy pushes (the island skips them, Windows still shows them).
+- Committed as de42b16 and pushed to main (Moss: "push"; no version bump, no release).
