@@ -129,15 +129,22 @@ fn run(app: AppHandle) {
     }
 }
 
+/// Whether Windows lets Island read notifications (setup says so when it does not):
+/// allowed | denied | unspecified | unavailable.
+#[tauri::command]
+pub async fn phone_link_access() -> String {
+    tauri::async_runtime::spawn_blocking(access).await.unwrap_or_else(|_| "unavailable".into())
+}
+
 /// Turns watching on or off (the Phone activity starts and stops it) and says whether
-/// Windows lets Island read notifications: allowed | denied | unspecified | unavailable.
+/// Windows lets Island read notifications.
 #[tauri::command]
 pub async fn phone_link_watch(app: AppHandle, on: bool) -> String {
     WATCH.store(on, Ordering::Relaxed);
     if on && !STARTED.swap(true, Ordering::SeqCst) {
         std::thread::spawn(move || run(app));
     }
-    tauri::async_runtime::spawn_blocking(access).await.unwrap_or_else(|_| "unavailable".into())
+    phone_link_access().await
 }
 
 #[cfg(test)]

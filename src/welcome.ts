@@ -1,5 +1,6 @@
 // The first-run setup, in the whole Activities window: two questions that fill the Control
-// Center, then this PC and the Local AI model that suits it, then a look at the result.
+// Center, then this PC and the Local AI model that suits it, then your phone, then a look at
+// the result.
 // The island opens it on first run (settings.general.onboarded is false); Settings › Run
 // setup again opens it later.
 
@@ -12,7 +13,7 @@ import { native } from './core/native';
 import { applyPlan, glanceChoices, planActivities, previewCells, suggestGlance, USES, type Facts, type Plan, type Use } from './core/onboarding';
 import { platform, thisComputer } from './core/platform';
 import { springAnimate } from './core/renderer';
-import { cloneSettings, type Settings } from './core/settings';
+import { cloneSettings, newPhoneTopic, type Settings } from './core/settings';
 import { springs } from './core/spring';
 import { h } from './dom';
 import { downloadingName, modelPicker, type PickerHost } from './models-ui';
@@ -25,7 +26,7 @@ export interface WelcomeHost {
   done(): void;
 }
 
-const STEPS = ['hello', 'uses', 'glance', 'ai', 'done'] as const;
+const STEPS = ['hello', 'uses', 'glance', 'ai', 'phone', 'done'] as const;
 type Step = (typeof STEPS)[number];
 
 /** Where the flow is. Kept outside the page so a redraw of the window keeps the answers. */
@@ -108,6 +109,7 @@ function move(by: number): void {
   const step = STEPS[flow.step];
   if (step === 'glance') suggest();
   if (step === 'ai') void checkModel();
+  if (step === 'phone') void checkAccess();
   paint(true);
 }
 
@@ -186,6 +188,8 @@ function content(step: Step, host: WelcomeHost): Node[] {
         h('p', { class: 'lead', text: `Local AI answers questions without the internet, and nothing you ask leaves this computer. Island checked ${thisComputer()} and marked the model that suits it. Click a model to download it and use it. You can switch any time in Activities › Local AI.` }),
         modelPicker(pickerHost(host), 'cards'),
       ];
+    case 'phone':
+      return phone(host);
     case 'done':
       return done(host);
   }
@@ -202,6 +206,7 @@ function hello(): Node[] {
     h('ul', { class: 'w-points' }, [
       point('grid', 'A Control Center made for you', 'Click the island for a panel of tiles, picked from your answers.'),
       point('spark', `An AI that runs on ${thisComputer()}`, 'Island checks your memory and graphics and recommends the model that suits them.'),
+      point('phone', 'Works with your phone', platform === 'macos' ? "If you want, the island's notifications on your phone too." : "If you want, the island's notifications on your phone, and your phone's on the island."),
       point('settings', 'Nothing is final', 'Change any of it later in Activities and Settings.'),
     ]),
   ];
@@ -246,6 +251,107 @@ function pickerHost(host: WelcomeHost): PickerHost {
       refreshFoot();
     },
   };
+}
+
+/** Whether Windows lets Island read notifications (Phone Link's arrive that way); '' until asked. */
+let phoneAccess = '';
+
+async function checkAccess(): Promise<void> {
+  if (platform === 'macos') return;
+  const access = await native.phoneLinkAccess();
+  if (access === phoneAccess) return;
+  phoneAccess = access;
+  if (STEPS[flow.step] === 'phone') paint();
+}
+
+/**
+ * Your phone, both ways, each spelled out step by step: Island's notifications pushed to the
+ * ntfy app, and the phone's shown on the island through Windows' Phone Link. Turning pushes on
+ * saves at once (the topic is made then), so Send a test works on this screen.
+ */
+function phone(host: WelcomeHost): Node[] {
+  const g = host.settings().general;
+  const on = g.phonePush && g.phoneTopic !== '';
+  const mac = platform === 'macos';
+  const toPhone = h('section', { class: 'w-card' }, [
+    cardHead('send', 'Island → your phone', "Get the island's notifications on your phone, even away from your desk: Claude Code finishing, asking a question or needing your permission, a timer ending, someone sending you files with Land."),
+    option('bell', 'Send notifications to my phone', on ? 'On. Now do these steps on your phone:' : 'Free, with the ntfy app.', on, (v) => setPhonePush(host, v)),
+    on ? ntfySteps(g.phoneTopic) : null,
+  ]);
+  const fromPhone = mac
+    ? null
+    : h('section', { class: 'w-card' }, [
+        cardHead('phone', 'Your phone → Island', "See your phone's notifications on the island: who a message is from and what it says. Windows' Phone Link app brings them over from your phone and Island shows them, so there is nothing to switch on here."),
+        phoneLinkSteps(),
+      ]);
+  return [
+    h('h1', { text: 'Your phone and Island' }),
+    h('p', {
+      class: 'lead',
+      text: mac
+        ? 'Island can send its notifications to your phone. It is optional, and you can also set it up later in Settings › Notifications.'
+        : 'Island can share notifications with your phone, both ways. Both are optional, and you can also set them up later in Settings › Notifications.',
+    }),
+    h('div', { class: 'w-cards' }, [toPhone, fromPhone]),
+  ];
+}
+
+function cardHead(ic: string, title: string, text: string): HTMLElement {
+  return h('div', { class: 'w-card-head' }, [h('span', { class: 'w-point-icon', html: icon(ic) }), h('div', {}, [h('b', { text: title }), h('p', { class: 'muted', text })])]);
+}
+
+/** One numbered step: what to do in bold, then how. */
+function stepItem(what: string, how: string, extra: Node | null = null): HTMLElement {
+  return h('li', {}, [h('b', { text: what }), h('span', { class: 'muted', text: ` ${how}` }), extra]);
+}
+
+/** Turning pushes on makes the topic and saves at once. */
+function setPhonePush(host: WelcomeHost, on: boolean): void {
+  const next = cloneSettings(host.settings());
+  next.general.phonePush = on;
+  if (on && !next.general.phoneTopic) next.general.phoneTopic = newPhoneTopic();
+  host.save(next);
+  paint();
+}
+
+function ntfySteps(topic: string): HTMLElement {
+  const status = h('span', { class: 'w-status muted' });
+  const say = (text: string) => (status.textContent = text);
+  const copy = h('button', { class: 'btn', text: 'Copy', title: 'Copy the topic', onclick: () => void native.clipboardSetText(topic).then((ok) => say(ok ? 'Copied.' : '')) });
+  const test = h('button', {
+    class: 'btn primary',
+    text: 'Send a test',
+    onclick: () => {
+      say('Sending…');
+      void native.phonePush(topic, 'Island', 'Your phone is connected. Island notifications show up here now.').then((ok) => say(ok ? 'Sent. It should show on your phone within a few seconds.' : 'Could not reach ntfy.sh. Check the internet connection.'));
+    },
+  });
+  return h('div', { class: 'w-card-body' }, [
+    h('ol', { class: 'w-steps' }, [
+      stepItem('Install ntfy on your phone.', 'It is free: search "ntfy" in the App Store or Google Play.'),
+      stepItem('Open ntfy, tap +, type this topic and tap Subscribe.', 'Type it exactly, it is your private address.', h('div', { class: 'w-topic' }, [h('code', { text: topic }), copy])),
+      stepItem('Allow notifications', 'when ntfy asks, or the pushes stay silent.'),
+      stepItem('Check that it works.', 'A push should arrive on your phone.', h('div', { class: 'w-test' }, [test, status])),
+    ]),
+    h('p', { class: 'w-fine', text: 'Pushes go through ntfy.sh, a free notification service. Anyone who knows the topic can read them, so keep it to yourself. Claude Code\'s can be turned off in Activities › Claude Code.' }),
+  ]);
+}
+
+function phoneLinkSteps(): HTMLElement {
+  const blocked = phoneAccess === 'denied' || phoneAccess === 'unspecified';
+  return h('div', { class: 'w-card-body' }, [
+    h('ol', { class: 'w-steps' }, [
+      stepItem('Open Phone Link and pair your phone.', 'It comes with Windows and works with iPhone and Android.', h('div', { class: 'w-test' }, [h('button', { class: 'btn', text: 'Open Phone Link', onclick: () => void native.open('ms-phone://') })])),
+      stepItem('Let it share notifications.', "Phone Link walks you through it. On an iPhone it asks you to let this PC show notifications, in the iPhone's Bluetooth settings."),
+      stepItem('That is all.', 'New notifications from your phone show on the island for a few seconds.'),
+    ]),
+    blocked
+      ? h('div', { class: 'w-warn' }, [
+          h('span', { text: "Windows doesn't let apps read notifications right now, so Island can't see Phone Link's. Turn on notification access in Windows Settings." }),
+          h('button', { class: 'btn', text: 'Open Windows Settings', onclick: () => void native.open('ms-settings:privacy-notifications') }),
+        ])
+      : null,
+  ]);
 }
 
 function done(host: WelcomeHost): Node[] {

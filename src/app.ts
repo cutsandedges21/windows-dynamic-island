@@ -12,7 +12,7 @@ import { levelWidth, normalizeWidths, type Anchor, type Level } from './core/lay
 import { isTauri, native, on, sendTo, type MonitorInfo } from './core/native';
 import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
-import { ACCENTS, backAt, cloneSettings, HIDE_CHOICES, hideUntil, migrate, type ActivityConfig, type Settings } from './core/settings';
+import { ACCENTS, backAt, cloneSettings, HIDE_CHOICES, hideUntil, migrate, newPhoneTopic, type ActivityConfig, type Settings } from './core/settings';
 import { springs } from './core/spring';
 import { h } from './dom';
 import { modelPicker } from './models-ui';
@@ -752,12 +752,12 @@ function settingsPage(): HTMLElement {
       row(mac ? 'Open at login' : 'Start with Windows', null, toggle(g.startWithWindows, (v) => { g.startWithWindows = v; save(true); void native.autostartSet(v); })),
       // A Mac build cannot update itself yet (updater.rs), so it offers no switch that does nothing.
       ...(mac ? [] : [row('Update automatically', 'When a newer Island is released, it downloads in the background and Island restarts into it.', toggle(g.autoUpdate, (v) => { g.autoUpdate = v; save(true); }))]),
-      row('Run setup again', 'The two questions and the Local AI model. Your Control Center is rebuilt from the answers.', h('button', { class: 'btn', text: 'Run setup', onclick: () => go('welcome') })),
+      row('Run setup again', 'The two questions, the Local AI model and your phone. Your Control Center is rebuilt from the answers.', h('button', { class: 'btn', text: 'Run setup', onclick: () => go('welcome') })),
     ]),
     section('Notifications', [
       row(mac ? 'Mac notifications' : 'Windows notifications', 'A notification for moments that need you (Claude sessions, timers).', toggle(g.notifications, (v) => { g.notifications = v; save(true); })),
       row('Sounds', 'A soft chime when something finishes or needs you.', toggle(g.sounds, (v) => { g.sounds = v; save(true); })),
-      row('Send to my phone', 'The same notifications, pushed to the free ntfy app on your phone, wherever it is.', toggle(g.phonePush, (v) => { g.phonePush = v; if (v && !g.phoneTopic) g.phoneTopic = newTopic(); save(true); render(); })),
+      row('Send to my phone', 'The same notifications, pushed to the free ntfy app on your phone, wherever it is.', toggle(g.phonePush, (v) => { g.phonePush = v; if (v && !g.phoneTopic) g.phoneTopic = newPhoneTopic(); save(true); render(); })),
       ...(g.phonePush && g.phoneTopic ? [phoneRow(g)] : []),
     ]),
     section('Keyboard shortcuts', [
@@ -794,12 +794,6 @@ function hideRow(i: Settings['island'], mac: boolean): HTMLElement {
     h('button', { class: 'btn ghost', text: c.label, onclick: () => { i.hiddenUntil = hideUntil(c.id, Date.now()); save(true); render(); } }),
   ));
   return stacked(row('Hide the island', `The pill and the bot leave the screen for a while; Claude's prompts go back to the terminal meanwhile. Also in the island's right-click menu and ${where}.`, choices));
-}
-
-/** A private ntfy topic. Knowing it is all it takes to read the pushes, so it is long and random. */
-function newTopic(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(12));
-  return `island-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 
 /** The topic to subscribe to on the phone, with Copy and a test push. */

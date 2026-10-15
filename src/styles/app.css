@@ -265,6 +265,26 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 .w-tile-name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .w-more { margin-top: 10px; font-size: 12.5px; }
 .w-note { display: flex; gap: 10px; align-items: center; margin-top: 16px; color: var(--muted); }
+
+/* Your phone (setup): two cards, each with numbered steps. */
+.w-cards { display: grid; gap: 12px; }
+.w-card { display: grid; gap: 12px; padding: 16px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); }
+.w-card-head { display: flex; gap: 12px; align-items: flex-start; }
+.w-card-head p { margin: 2px 0 0; font-size: 13px; }
+.w-card .w-option { background: rgba(255, 255, 255, 0.03); }
+.w-card .w-option:hover { background: var(--card-hi); }
+.w-card-body { display: grid; gap: 10px; }
+.w-steps { margin: 0; padding-left: 22px; display: grid; gap: 10px; }
+.w-steps li { padding-left: 2px; }
+.w-steps li::marker { color: var(--accent); font-weight: 700; }
+.w-steps .muted { font-size: 13px; }
+.w-topic { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.w-topic code { font: 600 17px/1.2 ui-monospace, 'Cascadia Mono', Consolas, monospace; letter-spacing: 0.5px; padding: 8px 12px; border-radius: 8px; background: rgba(0, 0, 0, 0.35); border: 1px solid var(--line); user-select: all; overflow-wrap: anywhere; }
+.w-test { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.w-status { font-size: 12.5px; }
+.w-fine { margin: 0; font-size: 12px; color: var(--muted); }
+.w-warn { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 10px; font-size: 13px; background: rgba(227, 179, 79, 0.1); border: 1px solid rgba(227, 179, 79, 0.35); }
+.w-warn .btn { flex: none; }
 .w-note .ico { color: var(--accent); }
 
 /* ------------------------------------------------------------------ Local AI models (src/models-ui.ts) */

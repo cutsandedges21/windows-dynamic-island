@@ -94,6 +94,12 @@ export interface Settings {
   };
 }
 
+/** A private ntfy topic for Send to my phone. Knowing it is all it takes to read the pushes, so it is long and random. */
+export function newPhoneTopic(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return `island-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
+}
+
 /** Orange stays Claude's colour, so the island's own default is sky. */
 export const ACCENTS: Record<string, string> = {
   sky: '#6aa6e8',

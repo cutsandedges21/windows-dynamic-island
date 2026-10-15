@@ -516,6 +516,8 @@ export const native = {
   trayUpdate: (tooltip: string, alert: boolean, menu: MenuItem[]) => call('tray_update', { tooltip, alert, menu }, undefined),
   hotkeysSet: (keys: Array<{ id: string; accel: string }>) => call<string[]>('hotkeys_set', { keys }, []),
   notify: (title: string, body: string) => call('notify', { title, body }, undefined),
+  /** Whether Windows lets Island read notifications, which is how Phone Link's arrive. */
+  phoneLinkAccess: () => call<'allowed' | 'denied' | 'unspecified' | 'unavailable'>('phone_link_access', {}, 'unavailable'),
   /** Starts or stops reading Phone Link's notifications; says whether Windows lets Island read them. */
   phoneLinkWatch: (on: boolean) => call<'allowed' | 'denied' | 'unspecified' | 'unavailable'>('phone_link_watch', { on }, 'unavailable'),
   /** One push to the phone's ntfy app; true when ntfy.sh took it. */

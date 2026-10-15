@@ -18,7 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
 const SCHEMES: &[&str] = &[
     "https", "http", "vscode", "vscode-insiders", "vscodium", "cursor", "windsurf", "claude", "ms-settings",
-    "ms-screenclip", "spotify", "msteams", "zoommtg", "zoomus", "mailto",
+    "ms-screenclip", "ms-phone", "spotify", "msteams", "zoommtg", "zoomus", "mailto",
 ];
 
 fn wide(s: &str) -> Vec<u16> {
@@ -255,6 +255,7 @@ mod tests {
         assert!(scheme_ok("https://example.com"));
         assert!(scheme_ok("cursor://anthropic.claude-code/open?session=abc"));
         assert!(scheme_ok("claude://claude.ai/chat/x"));
+        assert!(scheme_ok("ms-phone://"));
         assert!(!scheme_ok("file:///C:/Windows/System32/calc.exe"));
         assert!(!scheme_ok("javascript:alert(1)"));
         assert!(!scheme_ok("https://a\nb"));

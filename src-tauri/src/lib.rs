@@ -182,6 +182,7 @@ pub fn run() {
             app::hotkeys_set,
             app::notify,
             phone::phone_push,
+            phonelink::phone_link_access,
             phonelink::phone_link_watch,
             app::app_open,
             app::app_quit,
