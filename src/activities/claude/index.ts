@@ -17,13 +17,16 @@ import { chatUrl, DesktopChats, type DesktopChat } from './desktop';
 import { afterModifiersReleased, deepLink, focusSession, selectWindow } from './focus';
 import { HookState, questionsOf, type HookEvent, type PermissionCard, type ReplyHold } from './hooks';
 import { EDITOR_HOSTS } from './procinfo';
-import { describeTool, joinPath } from './status';
+import { askText, permissionText, PushGate, pushFor, type PushKind } from './pushes';
+import { describeTool, joinPath, projectName } from './status';
 import { ClosedHistory, SessionTracker, type ClosedView, type SessionView, type TrackerEvent } from './tracker';
 import { UsageClient, WeeklyTokens, weekWindowStart, type UsageData, type UsageState } from './usage';
 
 interface Options {
   sessionHotkeys: boolean;
   notifications: boolean;
+  /** Its moments also go to the phone (Settings › Notifications › Send to my phone). */
+  phone: boolean;
   showLimits: boolean;
   showDesktop: boolean;
   finishedSeconds: number;
@@ -91,6 +94,8 @@ export class ClaudeActivity extends BaseActivity {
   private selected: string | null = null;
   private inputFor: string | null = null;
   private readonly finished = new Map<string, number>();
+  /** Each moment goes to the phone once. */
+  private readonly pushes = new PushGate();
   private notice: { text: string; tone: Tone; icon: string; until: number } | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
   /** Chats that finished while the user was looking at them: no card, they saw it. */
@@ -107,6 +112,7 @@ export class ClaudeActivity extends BaseActivity {
     return {
       sessionHotkeys: o.sessionHotkeys !== false,
       notifications: o.notifications !== false,
+      phone: o.phone !== false,
       showLimits: o.showLimits !== false,
       showDesktop: o.showDesktop !== false,
       finishedSeconds: Number(o.finishedSeconds) || 8,
@@ -345,6 +351,8 @@ export class ClaudeActivity extends BaseActivity {
     const kind = this.hooks.apply(ev);
     const sid = ev.session_id ?? '';
     if (kind === 'permission' && ev.request_id) {
+      if (ev.tool_name === 'AskUserQuestion') this.askToPhone(sid, ev);
+      else this.toPhone(sid, 'permission', permissionText(ev.tool_name, ev.tool_input), `${ev.tool_name}:${JSON.stringify(ev.tool_input ?? null).slice(0, 300)}`, ev.cwd);
       const cfg = this.ctx.config();
       const canShow = cfg.enabled && cfg.interactive && cfg.interrupt && !this.ctx.settings().general.dnd && !hiddenNow(this.ctx.settings().island, Date.now());
       if (canShow) {
@@ -371,10 +379,13 @@ export class ClaudeActivity extends BaseActivity {
     if (sid && ((kind === 'tool' && ev.tool_name === 'AskUserQuestion' && ev.hook_event_name === 'PreToolUse') || kind === 'note')) {
       if (kind === 'note' && ev.notification_type === 'idle_prompt') {
         this.ctx.surface({ key: `note:${sid}`, ms: 6000, level: 'expanded', bump: false });
+        this.toPhone(sid, 'waiting', ev.message ?? '', '', ev.cwd);
       } else {
         this.ctx.surface({ key: `note:${sid}`, ms: 15000, level: 'expanded' });
         this.ctx.alert('glow', 'claude');
         this.saw('claude-asks', `claude:note:${sid}`);
+        if (kind === 'note') this.toPhone(sid, 'needs', ev.message ?? '', '', ev.cwd);
+        else this.askToPhone(sid, ev);
       }
     }
     this.pollSoon(150);
@@ -609,7 +620,7 @@ export class ClaudeActivity extends BaseActivity {
     if (prev && Date.now() - prev < 5000) return;
     this.finished.set(id, Date.now());
     if (this.opts().onlyOtherChats) void this.announceUnlessLooking(id, ev);
-    else this.announceFinished(id);
+    else this.announceFinished(id, ev);
   }
 
   /** "Only pop up for other chats": a chat the user is looking at finishes quietly. */
@@ -622,17 +633,20 @@ export class ClaudeActivity extends BaseActivity {
         this.ctx.log('finish: foreground check failed', String(err));
       }
     }
-    if (!looking) return this.announceFinished(id);
+    if (!looking) return this.announceFinished(id, ev);
     this.looking.add(id);
     this.ctx.log('finished quietly', { session: id.slice(0, 8) });
     this.ctx.update();
   }
 
-  private announceFinished(id: string): void {
+  private announceFinished(id: string, ev?: HookEvent): void {
     this.ctx.surface({ key: `done:${id}`, ms: this.opts().finishedSeconds * 1000, level: 'expanded' });
     const s = this.sessions.find((x) => x.id === id);
-    this.saw(s?.status === 'errored' ? 'claude-error' : 'claude-done', `claude:done:${id}`);
+    const errored = s?.status === 'errored';
+    this.saw(errored ? 'claude-error' : 'claude-done', `claude:done:${id}`);
     if (this.ctx.settings().general.sounds) chime('done');
+    const said = ev?.last_assistant_message?.trim() || s?.lastAssistantText || '';
+    this.toPhone(id, errored ? 'error' : 'done', errored ? [s?.label, said].filter(Boolean).join('\n') : said, '', ev?.cwd);
     this.ctx.update();
   }
 
@@ -641,7 +655,24 @@ export class ClaudeActivity extends BaseActivity {
     this.ctx.alert('shake');
     this.saw('claude-asks', `claude:needs:${session.id}`);
     this.ctx.alert('glow', 'claude');
-    if (this.opts().notifications) this.ctx.notify(session.displayTitle, `Needs you in ${session.project}. Alt+Shift+0 to switch.`);
+    // The phone gets this from toPhone, once, however many ways the moment is reported.
+    if (this.opts().notifications) this.ctx.notify(session.displayTitle, `Needs you in ${session.project}. Alt+Shift+0 to switch.`, false);
+    this.toPhone(session.id, 'needs', `${session.label} · ${session.project}`, '', session.cwd);
+  }
+
+  /** A moment of this chat on the phone, once: hooks and polling report the same one twice. */
+  private toPhone(sid: string, kind: PushKind, detail: string, key = '', cwd?: string): void {
+    const o = this.opts();
+    if (!sid || !o.phone || !this.ctx.push || o.hiddenSessions.includes(sid)) return;
+    if (!this.pushes.allow(sid, kind, Date.now(), key)) return;
+    const s = this.sessions.find((x) => x.id === sid);
+    const p = pushFor(kind, s?.displayTitle || (cwd ? projectName(cwd) : '') || 'Claude Code', detail);
+    this.ctx.push(p.title, p.body, { tag: p.tag, priority: p.priority });
+  }
+
+  private askToPhone(sid: string, ev: HookEvent): void {
+    const text = askText(ev.tool_input);
+    this.toPhone(sid, 'asks', text, text.slice(0, 160), ev.cwd);
   }
 
   private flash(text: string, tone: Tone, icon = 'info', ms = 3000): void {

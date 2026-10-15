@@ -45,6 +45,11 @@ Turn on the hooks for the rest: **Activities › Claude Code › Install hooks�
 
 Other programs can push their own activities: see `docs/ACTIVITY-API.md`.
 
+## Your phone
+
+- **Island → phone.** Settings › Notifications › **Send to my phone** sends the island's notifications, plus Claude Code's finished turns, errors, questions and permission requests, to the free **ntfy** app (iPhone and Android). Install ntfy, tap **+**, paste the topic Island shows, Subscribe, then **Send a test**. The text goes through ntfy.sh, and anyone with the topic can read it, so keep it private.
+- **Phone → island.** Pair your phone once in Windows' **Phone Link** app; the **Phone** activity then shows its notifications on the island (sender and text). Windows only.
+
 ## Build it
 
 ```sh

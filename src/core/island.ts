@@ -439,8 +439,14 @@ export class Island {
         this.schedule();
       },
       cardOpen: () => this.open && this.cardFor === id,
-      notify: (title, body) => {
-        if (this.settings.general.notifications && !this.settings.general.dnd) void native.notify(title, body);
+      notify: (title, body, phone = true) => {
+        const g = this.settings.general;
+        if (g.dnd) return;
+        if (g.notifications) void native.notify(title, body);
+        if (phone) this.toPhone(title, body);
+      },
+      push: (title, body, look) => {
+        if (!this.settings.general.dnd) this.toPhone(title, body, look);
       },
       log: (...parts) => void native.log(`${id}: ${parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ')}`),
       setOptions: (patch) => {
@@ -451,6 +457,12 @@ export class Island {
         this.schedule();
       },
     };
+  }
+
+  /** Settings › Notifications › Send to my phone (src-tauri/src/phone.rs). */
+  private toPhone(title: string, body: string, look: { tag?: string; priority?: number } = {}): void {
+    const g = this.settings.general;
+    if (g.phonePush && g.phoneTopic) void native.phonePush(g.phoneTopic, title, body, look.tag, look.priority);
   }
 
   private surface(id: string, opts: SurfaceOptions = {}): void {

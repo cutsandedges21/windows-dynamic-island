@@ -23,6 +23,7 @@ import { VercelActivity } from './integrations/vercel';
 import { LocalActivity } from './local';
 import { MusicActivity } from './music';
 import { NetworkActivity } from './network';
+import { PhoneActivity } from './phone';
 import { QuickActivity } from './quick';
 import { ScreenshotsActivity } from './screenshots';
 import { ServersActivity } from './servers';
@@ -43,6 +44,7 @@ export function createRegistry(): Map<string, () => Activity> {
     ['sound', () => new SoundActivity()],
     ['screenshots', () => new ScreenshotsActivity()],
     ['calls', () => new CallsActivity()],
+    ['phone', () => new PhoneActivity()],
     ['devices', () => new DevicesActivity()],
     ['external', () => new ExternalActivity()],
     ['system', () => new SystemActivity()],

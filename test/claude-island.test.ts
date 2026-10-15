@@ -464,6 +464,75 @@ describe('limits reset', () => {
   });
 });
 
+// ---------------------------------------------------------------- the phone
+
+describe('moments on the phone', () => {
+  type Pushed = { title: string; body: string; look?: { tag?: string; priority?: number } };
+  async function bootWithPhone(options: Record<string, unknown> = {}) {
+    const { act } = await boot(options);
+    const pushes: Pushed[] = [];
+    const notes: unknown[][] = [];
+    const ctx = (act as unknown as { ctx: ActivityContext }).ctx;
+    ctx.push = (title, body, look) => void pushes.push({ title, body, look });
+    ctx.notify = (...a) => void notes.push(a);
+    stubTracker(act, [session({})], { 100: [50, 10] });
+    return { act, pushes, notes };
+  }
+  const bash = (command: string) => ({ hook_event_name: 'PermissionRequest', session_id: 'S1', tool_name: 'Bash', tool_input: { command } });
+  const question = { questions: [{ question: 'Which auth?', options: [{ label: 'OAuth' }, { label: 'Magic link' }] }] };
+
+  it('a finished turn sends its last message', async () => {
+    const { pushes } = await bootWithPhone();
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1', last_assistant_message: 'Parser fixed.' });
+    await tick(0);
+    expect(pushes).toEqual([{ title: 'Done · Fix the parser', body: 'Parser fixed.', look: { tag: 'white_check_mark', priority: 3 } }]);
+  });
+
+  it('a permission request is sent once, and a different one again', async () => {
+    const { pushes } = await bootWithPhone();
+    emit('hook', { ...bash('npm test'), request_id: 'r1' });
+    emit('hook', { hook_event_name: 'Notification', session_id: 'S1', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' });
+    await tick(0);
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0]).toMatchObject({ title: 'Needs permission · Fix the parser', body: 'Running command: npm test', look: { tag: 'lock', priority: 4 } });
+    emit('hook', { ...bash('npm run build'), request_id: 'r2' });
+    await tick(0);
+    expect(pushes.map((p) => p.body)).toEqual(['Running command: npm test', 'Running command: npm run build']);
+  });
+
+  it('a question arrives twice (PreToolUse, PermissionRequest) and is sent once, with its options', async () => {
+    const { pushes } = await bootWithPhone();
+    emit('hook', { hook_event_name: 'PreToolUse', session_id: 'S1', tool_name: 'AskUserQuestion', tool_input: question });
+    emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'r1', tool_name: 'AskUserQuestion', tool_input: question });
+    await tick(0);
+    expect(pushes).toEqual([{ title: 'Question · Fix the parser', body: 'Which auth?\n1. OAuth\n2. Magic link', look: { tag: 'question', priority: 4 } }]);
+  });
+
+  it('"waiting for your input" right after a finished turn adds nothing', async () => {
+    const { pushes } = await bootWithPhone();
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1', last_assistant_message: 'Done.' });
+    await tick(60_000);
+    emit('hook', { hook_event_name: 'Notification', session_id: 'S1', notification_type: 'idle_prompt', message: 'Claude is waiting for your input' });
+    await tick(0);
+    expect(pushes.map((p) => p.title)).toEqual(['Done · Fix the parser']);
+  });
+
+  it('a chat that needs you shows a Windows toast that stays off the phone, and one push', async () => {
+    const { act, pushes, notes } = await bootWithPhone();
+    (act as unknown as { announceNeedsYou(s: SessionView): void }).announceNeedsYou(session({ needsYou: true, label: 'Needs permission' }));
+    expect(notes).toEqual([['Fix the parser', 'Needs you in app. Alt+Shift+0 to switch.', false]]);
+    expect(pushes).toEqual([{ title: 'Needs you · Fix the parser', body: 'Needs permission · app', look: { tag: 'bell', priority: 4 } }]);
+  });
+
+  it('sends nothing with its phone option off', async () => {
+    const { pushes } = await bootWithPhone({ phone: false });
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1', last_assistant_message: 'Done.' });
+    emit('hook', { ...bash('npm test'), request_id: 'r1' });
+    await tick(0);
+    expect(pushes).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------- helpers
 
 describe('helpers', () => {

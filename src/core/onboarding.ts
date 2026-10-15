@@ -107,7 +107,7 @@ export interface Answers {
  * finished download, low battery, files sent from a computer nearby) but only get a tile
  * when picked.
  */
-export const HELPERS = ['sound', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land'];
+export const HELPERS = ['sound', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'phone'];
 
 /** Grid order: what you act on first, then what you glance at, then occasional helpers. */
 const GRID_ORDER = ['claude', 'local', 'ask', 'music', 'calendar', 'weather', 'timer', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'sound', 'downloads', 'land', 'screenshots', 'clipboard'];

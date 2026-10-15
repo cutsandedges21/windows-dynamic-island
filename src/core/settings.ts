@@ -83,6 +83,10 @@ export interface Settings {
     onboarded: boolean;
     /** Install newer Island.exe releases from GitHub on their own (src-tauri/src/updater.rs). */
     autoUpdate: boolean;
+    /** The same notifications also go to the ntfy app on a phone (src-tauri/src/phone.rs). */
+    phonePush: boolean;
+    /** The private ntfy.sh topic the phone subscribes to; made when phone pushes are first turned on. */
+    phoneTopic: string;
   };
   privacy: {
     clipboardContent: boolean;
@@ -158,6 +162,8 @@ export function defaultSettings(): Settings {
       activitiesHotkey: 'Alt+Shift+A',
       onboarded: false,
       autoUpdate: true,
+      phonePush: false,
+      phoneTopic: '',
     },
     privacy: { clipboardContent: true, screenshotPreview: true },
   };

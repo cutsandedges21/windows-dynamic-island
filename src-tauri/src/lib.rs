@@ -33,6 +33,9 @@ mod msgwin;
 mod net;
 mod nowindow;
 mod overlay;
+mod phone;
+#[cfg_attr(target_os = "macos", path = "mac/phonelink.rs")]
+mod phonelink;
 #[cfg_attr(target_os = "macos", path = "mac/pipe.rs")]
 mod pipe;
 #[cfg_attr(target_os = "macos", path = "mac/procs.rs")]
@@ -178,6 +181,8 @@ pub fn run() {
             app::tray_update,
             app::hotkeys_set,
             app::notify,
+            phone::phone_push,
+            phonelink::phone_link_watch,
             app::app_open,
             app::app_quit,
             app::autostart_get,

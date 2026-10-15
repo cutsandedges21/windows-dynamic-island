@@ -103,6 +103,14 @@ Land sends files between computers on the same network that run Island, like Air
 
 **Tests.** `land.rs` covers the packets, names, the local-network rule and whole transfers over loopback (consent, decline, cancel, a key that does not match, never overwriting); two ignored tests run against real things: two devices finding each other on this computer's network, and offering a file to the Island running here (`cargo test --lib land::tests::offer_the_island -- --ignored --nocapture`). `test/land.test.ts` covers the activity. Browser preview: `/?land` (card after a drop), `/?land=drag`, `/?land=ask`, `/?land=send`.
 
+## Phone
+
+Both directions use what is already there instead of a companion app: an iPhone app cannot read other apps' notifications, so the phone's side is Phone Link's Bluetooth sharing.
+
+- **To the phone** (`src-tauri/src/phone.rs`, `phone_push`): one JSON POST to `https://ntfy.sh/` per push (`topic`, `title`, `message`, an emoji `tag`, `priority`); JSON because ntfy's header form only takes ASCII. The topic (`island-` and 24 hex characters, made when Settings › Notifications › Send to my phone is first turned on) is the only secret. `ActivityContext.notify(title, body, phone?)` shows a Windows notification and pushes; `push(title, body, look)` only pushes. Quiet holds both.
+- **Claude's moments** (`src/activities/claude/pushes.ts`): finished (with the last message), error, a question (with numbered options), a permission request (what it wants to run), needs you, and "your turn" after a quiet spell. Claude Code reports one moment several ways (PreToolUse and PermissionRequest for a question, then the permission_prompt Notification, then polling), so `PushGate` sends each once per chat. Activities › Claude Code › Send to my phone turns them off.
+- **From the phone** (`src-tauri/src/phonelink.rs`, `src/activities/phone.ts`): Phone Link shows the phone's notifications as Windows toasts. `UserNotificationListener` (allowed for unpackaged apps when Settings › Privacy › Notifications lets apps read notifications) is polled every 2 s while the Phone activity runs; only toasts from `Microsoft.YourPhone_*` pass, as `phone-note` events (an iPhone's lines: app, sender, text). The activity shows each for 6 s and skips the ntfy app's, which are Island's own pushes coming back. Nothing is stored.
+
 ## Build notes
 
 - The Cargo target directory lives outside OneDrive (`%LOCALAPPDATA%\windows-dynamic-island\target`, set by `scripts/tauri.mjs`), because OneDrive would otherwise sync several GB of build output. A bare `cargo test`/`cargo build` in the repo uses `./target` instead (4.8 GB of it was found and deleted on 2026-10-09): set `CARGO_TARGET_DIR` to the folder above first.

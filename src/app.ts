@@ -669,6 +669,7 @@ function privacyNote(mac: boolean): string {
     'weather (Open-Meteo)',
     'a calendar link',
     'the integrations you connect',
+    'Send to my phone (the notification text goes through ntfy.sh)',
     ...(mac ? [] : ["the Games ping (the game's server, or 1.1.1.1)"]),
     'the Local AI models you choose to download',
   ];
@@ -756,6 +757,8 @@ function settingsPage(): HTMLElement {
     section('Notifications', [
       row(mac ? 'Mac notifications' : 'Windows notifications', 'A notification for moments that need you (Claude sessions, timers).', toggle(g.notifications, (v) => { g.notifications = v; save(true); })),
       row('Sounds', 'A soft chime when something finishes or needs you.', toggle(g.sounds, (v) => { g.sounds = v; save(true); })),
+      row('Send to my phone', 'The same notifications, pushed to the free ntfy app on your phone, wherever it is.', toggle(g.phonePush, (v) => { g.phonePush = v; if (v && !g.phoneTopic) g.phoneTopic = newTopic(); save(true); render(); })),
+      ...(g.phonePush && g.phoneTopic ? [phoneRow(g)] : []),
     ]),
     section('Keyboard shortcuts', [
       row('Open or close the island', null, hotkey('toggleHotkey', 'island.toggle')),
@@ -791,6 +794,28 @@ function hideRow(i: Settings['island'], mac: boolean): HTMLElement {
     h('button', { class: 'btn ghost', text: c.label, onclick: () => { i.hiddenUntil = hideUntil(c.id, Date.now()); save(true); render(); } }),
   ));
   return stacked(row('Hide the island', `The pill and the bot leave the screen for a while; Claude's prompts go back to the terminal meanwhile. Also in the island's right-click menu and ${where}.`, choices));
+}
+
+/** A private ntfy topic. Knowing it is all it takes to read the pushes, so it is long and random. */
+function newTopic(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return `island-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** The topic to subscribe to on the phone, with Copy and a test push. */
+function phoneRow(g: Settings['general']): HTMLElement {
+  const status = h('span', { class: 'muted', text: '' });
+  const test = async (): Promise<void> => {
+    status.textContent = 'Sending…';
+    const ok = await native.phonePush(g.phoneTopic, 'Island', 'Your phone is connected. Island notifications show up here now.');
+    status.textContent = ok ? 'Sent. Check your phone.' : 'Could not reach ntfy.sh. Check the connection.';
+  };
+  const buttons = h('div', { class: 'hide-choices' }, [
+    h('button', { class: 'btn ghost', text: 'Copy topic', onclick: () => { void native.clipboardSetText(g.phoneTopic); status.textContent = 'Copied.'; } }),
+    h('button', { class: 'btn', text: 'Send a test', onclick: () => void test() }),
+    status,
+  ]);
+  return stacked(row(`Topic: ${g.phoneTopic}`, 'On your iPhone: install ntfy from the App Store, tap +, paste this topic, Subscribe, and allow notifications. Keep the topic private: anyone who has it can read these.', buttons));
 }
 
 /** Island's data folder (log, relay, models), as Rust reports it on this system. */

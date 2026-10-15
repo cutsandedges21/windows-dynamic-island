@@ -96,7 +96,10 @@ export interface ActivityContext {
   close(): void;
   isOpen(): boolean;
   isPrimary(): boolean;
-  notify(title: string, body: string): void;
+  /** A Windows notification (if on), pushed to the phone too (if on); `phone: false` keeps it off the phone. */
+  notify(title: string, body: string, phone?: boolean): void;
+  /** Only to the phone (Settings › Notifications › Send to my phone); Quiet holds it like a notification. */
+  push?(title: string, body: string, look?: { tag?: string; priority?: number }): void;
   log(...parts: unknown[]): void;
   /** Saves option values the activity keeps for itself (hidden chats, a cleared list). */
   setOptions?(patch: Record<string, unknown>): void;

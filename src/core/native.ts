@@ -384,6 +384,15 @@ const DEMO_MONITOR: MonitorInfo = {
   taskbar: 'bottom',
 };
 
+/** One of the phone's notifications, as Phone Link mirrored it (src-tauri/src/phonelink.rs). */
+export interface PhoneNote {
+  id: number;
+  /** The phone app it came from ("Messages"), when Phone Link says. */
+  app: string;
+  title: string;
+  body: string;
+}
+
 export const native = {
   isTauri,
   demo,
@@ -507,6 +516,11 @@ export const native = {
   trayUpdate: (tooltip: string, alert: boolean, menu: MenuItem[]) => call('tray_update', { tooltip, alert, menu }, undefined),
   hotkeysSet: (keys: Array<{ id: string; accel: string }>) => call<string[]>('hotkeys_set', { keys }, []),
   notify: (title: string, body: string) => call('notify', { title, body }, undefined),
+  /** Starts or stops reading Phone Link's notifications; says whether Windows lets Island read them. */
+  phoneLinkWatch: (on: boolean) => call<'allowed' | 'denied' | 'unspecified' | 'unavailable'>('phone_link_watch', { on }, 'unavailable'),
+  /** One push to the phone's ntfy app; true when ntfy.sh took it. */
+  phonePush: (topic: string, title: string, body: string, tag?: string, priority?: number) =>
+    call<boolean>('phone_push', { topic, title, body, tag: tag ?? null, priority: priority ?? null }, false),
   openApp: (page: string | null = null) => call('app_open', { page }, undefined),
   quit: () => call('app_quit', {}, undefined),
   autostartGet: () => call<boolean>('autostart_get', {}, false),

@@ -29,7 +29,7 @@ describe('planActivities', () => {
   it('puts the picks on the grid and keeps the helpers on but off the grid', () => {
     const plan = planActivities(answers({ uses: ['gaming'], glance: ['system', 'network', 'sound'], ai: true }), desktop);
     expect(plan.picked).toEqual(['local', 'game', 'system', 'network', 'sound']);
-    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land']);
+    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'phone']);
     expect(plan.enabled).toEqual([...plan.picked, ...plan.hidden]);
   });
 
