@@ -368,3 +368,11 @@ switch and glow all still untested on screen by Moss.
 - **Fixed on the way**: Land's stop flag used `watch::Sender::send`, which drops the value when nothing listens, so a stopping Land could wipe waiting sends. Now `send_replace`.
 - **Checked**: 146 cargo lib tests (4 new), 464 Vitest (1 new), tsc. Details: ARCHITECTURE › Land, LAND-ANYWHERE slice 5.
 - Still uncommitted.
+
+## 2026-10-16, 17:35: v0.2.9, Land anywhere
+
+- **v0.2.9 published as the Latest release** (github.com/cutsandedges21/windows-dynamic-island/releases/tag/v0.2.9). Tag on eec4842 ("Version 0.2.9"; the feature is 571944f). Only asset: Island.exe (14,259,200 bytes, sha256 f8813d53…c764), built from that commit with a clean tree; ProductVersion 0.2.9. `releases/latest/download/Island.exe` serves the same bytes.
+- Notes: friends on any network (Land code, one-tap nearby, online status, direct or relay, end-to-end encrypted), resume after a drop, waiting sends for friends who are offline, only friends can send. Both computers need 0.2.9.
+- macOS CI passed on ed87c96 (check 5 min, build + smoke test 21 min).
+- Moss's PC runs it: `start v0.2.9`, `update: removed Island.old.exe`, `land: on as MossLaptop …, anywhere as b61d13db01`, `island ready`.
+- Not yet tried: two real computers on different networks; a Mac.
