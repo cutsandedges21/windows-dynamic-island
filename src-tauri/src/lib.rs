@@ -9,6 +9,7 @@ mod agenda;
 #[cfg_attr(target_os = "macos", path = "mac/audio.rs")]
 mod audio;
 mod land;
+mod anywhere;
 mod chat;
 mod claude;
 #[cfg_attr(target_os = "macos", path = "mac/dnd.rs")]
@@ -211,6 +212,13 @@ pub fn run() {
             land::land_answer,
             land::land_cancel,
             land::land_stage,
+            land::land_me,
+            land::land_friends,
+            land::land_friends_online,
+            land::land_friend_add,
+            land::land_friend_add_nearby,
+            land::land_friend_answer,
+            land::land_friend_remove,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Island");

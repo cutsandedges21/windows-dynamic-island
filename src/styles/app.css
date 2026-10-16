@@ -335,4 +335,6 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 .models-wait { padding: 8px 0; }
 .local-panel { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--line); }
 .local-panel h3 { font-size: 13px; margin: 10px 0 8px; }
+/* Land's code (Activities › Land): one line to select and copy. */
+.land-code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; user-select: all; word-break: break-all; padding: 4px 6px; border-radius: 6px; background: var(--line); }
 @media (max-width: 900px) { .specs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

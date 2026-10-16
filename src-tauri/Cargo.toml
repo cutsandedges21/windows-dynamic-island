@@ -33,11 +33,21 @@ sha2 = "0.10"
 snow = "0.10"
 socket2 = { version = "0.6", features = ["all"] }
 if-addrs = "0.15"
+# Land anywhere (src/anywhere.rs): QUIC between Islands on any network, dialled by public
+# key; straight through the routers when possible, through a relay otherwise. Default
+# features without metrics (ring for TLS, UPnP/NAT-PMP port mapping, the fast macOS path).
+iroh = { version = "1.3", default-features = false, features = ["tls-ring", "portmapper", "fast-apple-datapath"] }
+# Base32 for friend codes; already in the tree through iroh.
+data-encoding = "2"
 # Windows Hello. The 0.3 line, which adds the Windows backend, only has release
 # candidates so far. The copy in vendor/ is 0.3.0-rc.3 with one fix: Tauri 2.12 builds on
 # `windows` 0.62 and the published plugin on 0.61, so its window handle did not type-check
 # (see the note above window_hwnd in vendor/tauri-plugin-biometry/src/windows.rs).
 tauri-plugin-biometry = { path = "vendor/tauri-plugin-biometry" }
+
+[dev-dependencies]
+# Tests run a real iroh relay on this computer (src/anywhere.rs `local_relay`). Test builds only.
+iroh-relay = { version = "1.3", default-features = false, features = ["server", "test-utils", "tls-ring"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-registry = "0.5"

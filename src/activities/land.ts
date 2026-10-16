@@ -6,7 +6,7 @@
 
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { baseName, bytes, clip, percent, rate } from '../core/format';
-import { native, type LandPeer, type LandStaged, type LandTransfer } from '../core/native';
+import { native, type LandFriend, type LandFriendAsk, type LandPeer, type LandStaged, type LandTransfer } from '../core/native';
 import type { PetSignal } from '../core/pet';
 import type { Seg } from '../core/segments';
 import type { Block, Person, SheetRow, SheetView, Tile } from '../core/sheet';
@@ -14,7 +14,7 @@ import { platform } from '../core/platform';
 import { hiddenNow } from '../core/settings';
 import { BaseActivity } from './base';
 
-type Options = { visible: boolean; name: string };
+type Options = { visible: boolean; name: string; anywhere: boolean; relay: string };
 
 /** A transfer as the island keeps it: Rust's report, plus timing and a smoothed speed. */
 export interface Live extends LandTransfer {
@@ -32,6 +32,8 @@ const KEEP_MS = 30 * 60000;
 const KEEP_MAX = 6;
 /** While the card is open it asks who is around this often. */
 const SCAN_MS = 4000;
+/** While the card is open it asks which friends are online this often (each check dials them). */
+const ONLINE_MS = 20000;
 /** How long the other side has to accept (land.rs ASK_FOR). */
 const ASK_MS = 120000;
 /** Land's first start says what it is this long. */
@@ -39,7 +41,7 @@ export const INTRO_MS = 15000;
 /** Card lines for files and transfers before "+N more". */
 const FILE_ROWS = 4;
 const TRANSFER_ROWS = 4;
-const ACTIVE: ReadonlySet<string> = new Set(['waiting', 'asking', 'sending', 'receiving']);
+const ACTIVE: ReadonlySet<string> = new Set(['waiting', 'asking', 'sending', 'receiving', 'paused', 'queued']);
 
 /** "Moss's MacBook Air" → "MM", "DESKTOP-K2L3M4" → "DK", "studio" → "ST". */
 export function initials(name: string): string {
@@ -71,11 +73,20 @@ export function what(t: Pick<LandTransfer, 'items' | 'count'>): string {
 export class LandActivity extends BaseActivity {
   private me: { id: string; name: string; visible: boolean } | null = null;
   private error: string | null = null;
+  /** Why the relay setting is not used (n0's relays are, instead). */
+  private relayError: string | null = null;
   private peers: LandPeer[] = [];
   private staged: LandStaged[] = [];
   /** Devices picked to send to. */
   private readonly picked = new Set<string>();
   private readonly transfers = new Map<string, Live>();
+  /** Friends on other networks (src-tauri/src/anywhere.rs). */
+  private friends: LandFriend[] = [];
+  /** Which friends answered the last check; null before the first. */
+  private online: Set<string> | null = null;
+  private lastOnline = 0;
+  /** Islands asking to be friends, waiting for this user; when each arrived. */
+  private readonly friendAsks = new Map<string, LandFriendAsk & { since: number }>();
   /** Something to say on the card for a moment (why a send did not start). */
   private note: { text: string; at: number } | null = null;
   private lastScan = 0;
@@ -90,6 +101,8 @@ export class LandActivity extends BaseActivity {
   protected async init(): Promise<void> {
     this.listen<LandPeer[]>('land-peers', (list) => this.onPeers(list));
     this.listen<LandTransfer>('land-transfer', (t) => this.onTransfer(t));
+    this.listen<LandFriendAsk>('land-friend-ask', (a) => this.onFriendAsk(a));
+    this.listen<LandFriend[]>('land-friends', (list) => this.onFriends(list));
     this.every(1000, () => this.tick());
     if (native.demo) {
       this.me = { id: 'demo', name: 'This PC', visible: true };
@@ -110,16 +123,18 @@ export class LandActivity extends BaseActivity {
 
   private opts(): Options {
     const o = this.ctx.options<Partial<Options>>();
-    return { visible: o.visible !== false, name: typeof o.name === 'string' ? o.name : '' };
+    return { visible: o.visible !== false, name: typeof o.name === 'string' ? o.name : '', anywhere: o.anywhere !== false, relay: typeof o.relay === 'string' ? o.relay : '' };
   }
 
   private async connect(): Promise<void> {
     const o = this.opts();
-    const r = await native.landStart(o.name.trim() || null, o.visible);
+    const r = await native.landStart(o.name.trim() || null, o.visible, o.anywhere, o.relay.trim() || null);
     if (!this.alive) return;
     if (r.ok) {
       this.me = { id: r.value.id, name: r.value.name, visible: r.value.visible };
       this.error = null;
+      this.relayError = r.value.relayError ?? null;
+      this.friends = [...(r.value.friends ?? [])];
       this.onPeers(r.value.peers);
       // Windows asks to let Island through the firewall (a Mac, to find devices on the network)
       // right now: the island says why.
@@ -139,7 +154,42 @@ export class LandActivity extends BaseActivity {
 
   private onPeers(list: LandPeer[]): void {
     this.peers = [...list];
-    for (const id of [...this.picked]) if (!list.some((p) => p.id === id)) this.picked.delete(id);
+    this.unpickGone();
+    this.ctx.update();
+  }
+
+  private onFriends(list: LandFriend[]): void {
+    this.friends = [...list];
+    this.unpickGone();
+    this.ctx.update();
+  }
+
+  /** Someone who left the list is no longer picked. */
+  private unpickGone(): void {
+    for (const id of [...this.picked]) if (!this.everyone().some((p) => p.id === id)) this.picked.delete(id);
+  }
+
+  /** Who can get files: the computers nearby, then the friends on other networks. A friend who
+   * is nearby shows once, as the computer nearby (its announced key is the friend's id), so a
+   * send goes the fast way. */
+  private everyone(): LandPeer[] {
+    const near = new Set(this.peers.flatMap((p) => (p.anywhere ? [p.id, p.anywhere] : [p.id])));
+    return [...this.peers, ...this.friends.filter((f) => !near.has(f.id)).map((f) => ({ id: f.id, name: f.name, os: '' }))];
+  }
+
+  /** A friend's id, or a computer nearby whose announced key is a friend's. */
+  private isFriend(id: string): boolean {
+    const key = this.peers.find((p) => p.id === id)?.anywhere ?? id;
+    return this.friends.some((f) => f.id === key);
+  }
+
+  /** Dials each friend (3 s each, in Rust) to see who is online; at most every ONLINE_MS while the card is open. */
+  private async checkOnline(): Promise<void> {
+    if (native.demo || !this.friends.length) return;
+    this.lastOnline = Date.now();
+    const ids = await native.landFriendsOnline();
+    if (!this.alive) return;
+    this.online = new Set(ids);
     this.ctx.update();
   }
 
@@ -173,6 +223,24 @@ export class LandActivity extends BaseActivity {
     this.ctx.notify(`${t.peer.name} wants to send you files`, `${what(t)} · ${bytes(t.total)}. Accept or decline in the island.`);
   }
 
+  /** Someone asks to be friends: the island asks (urgent), and Windows too; later events clear it. */
+  private onFriendAsk(a: LandFriendAsk): void {
+    if (a.state !== 'asking') {
+      this.friendAsks.delete(a.id);
+      this.ctx.update();
+      return;
+    }
+    // The island is hidden for a while: nobody would see the question, so the answer is no.
+    if (hiddenNow(this.ctx.settings().island, Date.now())) {
+      void native.landFriendAnswer(a.id, 'no');
+      return;
+    }
+    this.friendAsks.set(a.id, { ...a, since: Date.now() });
+    this.ctx.alert('shake');
+    this.ctx.notify(`${a.from.name} wants to be friends`, 'Friends can send each other files from anywhere. Answer in the island.');
+    this.ctx.update();
+  }
+
   private finished(t: Live): void {
     // Declining one yourself needs no announcement.
     if (t.dir === 'in' && t.state === 'declined' && t.error === 'Declined.') return;
@@ -194,8 +262,9 @@ export class LandActivity extends BaseActivity {
       this.note = null;
       this.ctx.update();
     }
-    // While the card is open, keep the list of devices fresh.
+    // While the card is open, keep the list of devices fresh, and who of the friends is online.
     if (this.ctx.cardOpen?.() && now - this.lastScan >= SCAN_MS) void this.scan();
+    if (this.ctx.cardOpen?.() && this.friends.length && now - this.lastOnline >= ONLINE_MS) void this.checkOnline();
   }
 
   private async scan(): Promise<void> {
@@ -215,11 +284,25 @@ export class LandActivity extends BaseActivity {
     return best;
   }
 
+  /** A friend request waiting for this user (the oldest first). */
+  private friendAsking(): (LandFriendAsk & { since: number }) | null {
+    let best: (LandFriendAsk & { since: number }) | null = null;
+    for (const a of this.friendAsks.values()) if (!best || a.since < best.since) best = a;
+    return best;
+  }
+
   /** The transfer the pill follows: the one that started first. */
   private lead(): Live | null {
     let best: Live | null = null;
-    for (const t of this.transfers.values()) if (ACTIVE.has(t.state) && t.state !== 'asking' && (!best || t.since < best.since)) best = t;
+    // A send waiting for a friend who is away can wait days: it stays in the card, off the pill.
+    for (const t of this.transfers.values()) if (ACTIVE.has(t.state) && t.state !== 'asking' && t.state !== 'queued' && (!best || t.since < best.since)) best = t;
     return best;
+  }
+
+  private waitingCount(): number {
+    let n = 0;
+    for (const t of this.transfers.values()) if (t.state === 'queued') n++;
+    return n;
   }
 
   private justEnded(now: number): Live | null {
@@ -232,11 +315,12 @@ export class LandActivity extends BaseActivity {
     return best;
   }
 
-  /** Who Send goes to: the devices picked, or the only one around. */
+  /** Who Send goes to: the ones picked, or the only one there is. */
   private targets(): LandPeer[] {
-    const picked = this.peers.filter((p) => this.picked.has(p.id));
+    const all = this.everyone();
+    const picked = all.filter((p) => this.picked.has(p.id));
     if (picked.length) return picked;
-    return this.peers.length === 1 ? [this.peers[0]] : [];
+    return all.length === 1 ? [all[0]] : [];
   }
 
   private stagedFiles(): number {
@@ -248,12 +332,13 @@ export class LandActivity extends BaseActivity {
   }
 
   private frac(t: Live): number | null {
-    if (t.state === 'waiting') return null;
+    if (t.state === 'waiting' || t.state === 'queued') return null;
     return t.total > 0 ? t.done / t.total : 1;
   }
 
   private progressText(t: Live): string {
-    if (t.state === 'waiting') return 'Waiting';
+    if (t.state === 'waiting' || t.state === 'queued') return 'Waiting';
+    if (t.state === 'paused') return 'Paused';
     return percent(this.frac(t) ?? 0);
   }
 
@@ -276,6 +361,16 @@ export class LandActivity extends BaseActivity {
         beam: { tone: 'accent', motion: 'pulse', urgent: true },
       };
     }
+    const fr = this.friendAsking();
+    if (fr) {
+      return {
+        active: true,
+        weight: 'foreground',
+        urgent: { key: `friend:${fr.id}`, level: 'maximum' },
+        summary: `${fr.from.name} wants to be friends`,
+        beam: { tone: 'accent', motion: 'pulse', urgent: true },
+      };
+    }
     const lead = this.lead();
     if (lead) {
       const f = this.frac(lead);
@@ -295,6 +390,8 @@ export class LandActivity extends BaseActivity {
   chip(): ChipView | null {
     const ask = this.asking();
     if (ask) return { icon: 'land', label: clip(ask.peer.name, 14), tone: 'accent', pulse: true };
+    const fr = this.friendAsking();
+    if (fr) return { icon: 'user', label: clip(fr.from.name, 14), tone: 'accent', pulse: true };
     const lead = this.lead();
     if (lead) return { icon: lead.dir === 'out' ? 'upload' : 'download', label: this.progressText(lead), tone: 'accent' };
     return null;
@@ -317,9 +414,27 @@ export class LandActivity extends BaseActivity {
       return segs;
     }
 
+    const fr = this.friendAsking();
+    if (fr) {
+      const segs: Seg[] = [
+        { t: 'icon', key: 'icon', icon: 'user', tone: 'accent', anim: 'pulse', prio: 0 },
+        { t: 'text', key: 'who', text: fr.from.name, weight: 'semibold', prio: 1, min: 50 },
+      ];
+      if (compact) return segs;
+      if (!env.vertical) segs.push({ t: 'text', key: 'what', text: 'wants to be friends', tone: 'muted', prio: 4, min: 60 });
+      segs.push(
+        { t: 'button', key: 'no', icon: 'x', label: env.vertical ? undefined : 'Not now', action: 'friend-no', arg: fr.id, style: 'secondary', side: 'end', prio: 2, tip: 'Not now' },
+        { t: 'button', key: 'yes', icon: 'plus', label: env.vertical ? undefined : 'Add', action: 'friend-add', arg: fr.id, style: 'primary', side: 'end', prio: 1, tip: 'Add: you can send each other files from anywhere' },
+      );
+      return segs;
+    }
+
     const lead = this.lead();
     if (lead) {
-      const icon: Seg = { t: 'icon', key: 'icon', icon: lead.dir === 'out' ? 'upload' : 'download', tone: 'accent', anim: 'bob', prio: 0 };
+      const icon: Seg =
+        lead.state === 'paused'
+          ? { t: 'icon', key: 'icon', icon: 'pause', tone: 'muted', prio: 0 }
+          : { t: 'icon', key: 'icon', icon: lead.dir === 'out' ? 'upload' : 'download', tone: 'accent', anim: 'bob', prio: 0 };
       const pct: Seg = { t: 'text', key: 'pct', text: this.progressText(lead), weight: 'semibold', side: 'end', prio: 0 };
       if (compact) return [icon, pct];
       const segs: Seg[] = [
@@ -358,7 +473,8 @@ export class LandActivity extends BaseActivity {
   /** Receiving: an arrow drops over the bot; sending: one goes up; an offer: it waves at you. */
   override pet(): PetSignal {
     const lead = this.lead();
-    const mood = this.asking() ? 'needs-you' : lead ? (lead.dir === 'out' ? 'uploading' : 'downloading') : null;
+    const moving = lead && lead.state !== 'paused' ? lead : null;
+    const mood = this.asking() || this.friendAsking() ? 'needs-you' : moving ? (moving.dir === 'out' ? 'uploading' : 'downloading') : null;
     return { mood, moment: this.petMoment };
   }
 
@@ -379,14 +495,17 @@ export class LandActivity extends BaseActivity {
     }
     const n = this.peers.length;
     const files = this.stagedFiles();
-    const value = files ? `${plural(files, 'file')} ready` : this.error ? 'Off' : n ? `${n} nearby` : 'No one nearby';
+    const waiting = this.waitingCount();
+    const value = files ? `${plural(files, 'file')} ready` : this.error ? 'Off' : waiting ? `${waiting} waiting` : n ? `${n} nearby` : 'No one nearby';
     return { key: 'land', tone: 'accent', action: 'card', tip: 'Send files to a computer nearby', body: { k: 'stat', icon: 'land', label: 'Land', value, sub: files ? 'Pick a device' : 'Drop files on the island' } };
   }
 
   sheet(env: SheetEnv): SheetView | null {
     if (env.reason === 'urgent') {
       const ask = this.asking();
-      return ask ? this.askCard(ask, env) : null;
+      if (ask) return this.askCard(ask, env);
+      const fr = this.friendAsking();
+      return fr ? this.friendCard(fr, env) : null;
     }
     if (env.reason === 'open') return this.card(env);
     if (env.reason === 'surfaced') return env.surfaced === 'intro' && this.introducing(env.now) ? this.introCard() : this.endCard(env.now);
@@ -419,6 +538,28 @@ export class LandActivity extends BaseActivity {
     }
     blocks.push({ t: 'text', key: 'where', text: 'Saved to Downloads. Sent encrypted, and only over this network.', tone: 'dim', size: 'sm' });
     return { key: `ask/${t.id}`, blocks };
+  }
+
+  /** Someone asks to be friends: who, what that means, and Block, Not now or Add. */
+  private friendCard(a: LandFriendAsk, env: SheetEnv): SheetView {
+    const os = osLabel(a.from.os);
+    const blocks: Block[] = [{ t: 'head', key: 'head', icon: 'user', tone: 'accent', title: `${a.from.name} wants to be friends`, sub: os ? `${os} · on any network` : 'On any network' }];
+    blocks.push({ t: 'text', key: 'what', text: 'Friends can send each other files from anywhere. Each send still waits for your Accept.', size: 'sm' });
+    if (a.expires) blocks.push({ t: 'countdown', key: 'left', until: a.expires, total: ASK_MS, tone: 'accent' });
+    if (env.interactive) {
+      blocks.push({
+        t: 'buttons',
+        key: 'answer',
+        align: 'fill',
+        items: [
+          { key: 'block', label: 'Block', icon: 'stop', action: 'friend-block', arg: a.id, style: 'secondary' },
+          { key: 'no', label: 'Not now', icon: 'x', action: 'friend-no', arg: a.id, style: 'secondary' },
+          { key: 'yes', label: 'Add', icon: 'plus', action: 'friend-add', arg: a.id, style: 'primary' },
+        ],
+      });
+    }
+    blocks.push({ t: 'text', key: 'only', text: 'Only add people you know. Not now holds their requests for 10 minutes; Block stops them for good.', tone: 'dim', size: 'sm' });
+    return { key: `friend/${a.id}`, blocks };
   }
 
   private introducing(now: number): boolean {
@@ -492,16 +633,18 @@ export class LandActivity extends BaseActivity {
     }
 
     const targets = new Set(this.targets().map((p) => p.id));
-    const people: Person[] = this.peers.map((p) => this.person(p, targets.has(p.id), env.now));
+    const all = this.everyone();
+    const people: Person[] = all.map((p) => this.person(p, targets.has(p.id), env.now));
     const empty = this.error
       ? `Land is off: ${this.error}`
-      : 'Looking for computers nearby. The other one needs Island open, on the same network.';
+      : 'Looking for computers nearby. The other one needs Island open, on the same network. Friends on other networks show here too once you add them (Activities › Land).';
     blocks.push({ t: 'people', key: 'peers', items: people, empty });
 
     if (this.staged.length) {
       const bad = this.staged.some((s) => s.error);
       const count = targets.size;
-      const label = count > 1 ? `Send to ${count} computers` : count === 1 ? `Send to ${clip(this.peers.find((p) => targets.has(p.id))!.name, 22)}` : n ? 'Pick a computer' : 'Send';
+      const pick = this.friends.length ? 'Pick who gets them' : 'Pick a computer';
+      const label = count > 1 ? `Send to ${count} computers` : count === 1 ? `Send to ${clip(all.find((p) => targets.has(p.id))!.name, 22)}` : all.length ? pick : 'Send';
       blocks.push({ t: 'buttons', key: 'send', align: 'fill', items: [{ key: 'send', label, icon: 'send', action: 'send', style: 'primary', disabled: !env.interactive || bad || count === 0 }] });
     }
     if (this.note) blocks.push({ t: 'text', key: 'note', text: this.note.text, tone: 'bad', size: 'sm' });
@@ -509,6 +652,7 @@ export class LandActivity extends BaseActivity {
     const list = [...this.transfers.values()].sort((a, b) => b.since - a.since).slice(0, TRANSFER_ROWS);
     if (list.length) blocks.push({ t: 'rows', key: 'transfers', items: list.map((t) => this.transferRow(t)) });
 
+    if (this.relayError) blocks.push({ t: 'text', key: 'relay', text: `${this.relayError} Friends far away go through n0's free relays instead (Activities › Land › Your relay).`, tone: 'bad', size: 'sm' });
     if (this.me) {
       const me = `Others see this computer as “${this.me.name}”.`;
       blocks.push({ t: 'text', key: 'me', text: this.me.visible ? me : `${me} It doesn't take files (Activities › Land).`, tone: 'dim', size: 'sm' });
@@ -517,14 +661,24 @@ export class LandActivity extends BaseActivity {
   }
 
   private person(p: LandPeer, selected: boolean, now: number): Person {
-    const out: Person = { key: p.id, name: p.name, sub: osLabel(p.os) || undefined, initials: initials(p.name), hue: hueOf(p.id), selected, action: 'pick', arg: p.id, tip: osLabel(p.os) ? `${p.name} · ${osLabel(p.os)}` : p.name };
+    const nearby = this.peers.some((x) => x.id === p.id);
+    const friend = this.isFriend(p.id);
+    const out: Person =
+      friend && !nearby
+        ? { key: p.id, name: p.name, sub: this.friendStatus(p.id), badge: 'globe', initials: initials(p.name), hue: hueOf(p.id), selected, action: 'pick', arg: p.id, tip: `${p.name} · a friend, on any network` }
+        : { key: p.id, name: p.name, sub: osLabel(p.os) || undefined, initials: initials(p.name), hue: hueOf(p.id), selected, action: 'pick', arg: p.id, tip: osLabel(p.os) ? `${p.name} · ${osLabel(p.os)}` : p.name };
+    // A friend who is nearby: the friend mark, and the fast way.
+    if (friend && nearby) {
+      out.badge = 'globe';
+      out.tip = `${p.name} · a friend, on this network`;
+    }
     // Its latest send from here shows on its avatar: a ring while it goes, then how it went.
     let t: Live | null = null;
     for (const x of this.transfers.values()) if (x.dir === 'out' && x.peer.id === p.id && (!t || x.since > t.since)) t = x;
     if (!t) return out;
     if (ACTIVE.has(t.state)) {
       out.progress = this.frac(t);
-      out.sub = t.state === 'waiting' ? 'Waiting…' : this.progressText(t);
+      out.sub = t.state === 'waiting' ? 'Waiting…' : t.state === 'queued' ? 'Sends when online' : this.progressText(t);
       out.tone = 'accent';
     } else if (t.ended !== null && now - t.ended < 10000) {
       const ok = t.state === 'done';
@@ -535,12 +689,23 @@ export class LandActivity extends BaseActivity {
     return out;
   }
 
+  /** Before the first check: "Friend"; then whether it answered. */
+  private friendStatus(id: string): string {
+    if (!this.online) return 'Friend';
+    return this.online.has(id) ? 'Online' : 'Not online';
+  }
+
   private transferRow(t: Live): SheetRow {
     const to = t.dir === 'out' ? `To ${t.peer.name}` : `From ${t.peer.name}`;
+    // A friend's transfer says whether it runs straight between the two computers or through a relay.
+    const how = t.via === 'relay' ? ' · through a relay' : t.via === 'direct' ? ' · direct' : '';
     let detail: string;
     if (t.state === 'waiting') detail = `Waiting for ${t.peer.name} to accept`;
+    else if (t.state === 'queued') detail = `Sends when ${t.peer.name} is online`;
     else if (t.state === 'asking') detail = 'Waiting for your answer';
-    else if (t.state === 'sending' || t.state === 'receiving') detail = `${percent(this.frac(t) ?? 0)} · ${bytes(t.done)} of ${bytes(t.total)}${t.speed >= 1 ? ` · ${rate(t.speed)}` : ''}`;
+    else if (t.state === 'sending' || t.state === 'receiving') detail = `${percent(this.frac(t) ?? 0)} · ${bytes(t.done)} of ${bytes(t.total)}${t.speed >= 1 ? ` · ${rate(t.speed)}` : ''}${how}`;
+    // The connection dropped after Accept: what arrived is kept, and it goes on by itself.
+    else if (t.state === 'paused') detail = `${percent(this.frac(t) ?? 0)} · ${t.error ?? 'Paused'}`;
     else if (t.state === 'done') detail = t.dir === 'out' ? `Sent · ${bytes(t.total)}` : 'Saved to Downloads';
     else detail = t.error ?? t.state;
     const active = ACTIVE.has(t.state);
@@ -572,6 +737,7 @@ export class LandActivity extends BaseActivity {
     void this.stage(paths);
     this.ctx.openCard?.();
     void this.scan();
+    void this.checkOnline();
     return true;
   }
 
@@ -593,15 +759,18 @@ export class LandActivity extends BaseActivity {
       case 'card':
         this.ctx.openCard?.();
         void this.scan();
+        void this.checkOnline();
         break;
-      case 'pick':
+      case 'pick': {
+        const all = this.everyone();
         if (this.picked.has(id)) this.picked.delete(id);
-        else if (this.peers.some((p) => p.id === id)) {
-          // With one computer around it is already the target; a tap on it keeps it.
-          if (this.peers.length === 1 && !this.picked.size) break;
+        else if (all.some((p) => p.id === id)) {
+          // With only one there it is already the target; a tap on it keeps it.
+          if (all.length === 1 && !this.picked.size) break;
           this.picked.add(id);
         }
         break;
+      }
       case 'unstage':
         this.staged = this.staged.filter((s) => s.path !== id);
         break;
@@ -619,6 +788,12 @@ export class LandActivity extends BaseActivity {
         break;
       case 'cancel':
         if (!native.demo) await native.landCancel(id);
+        break;
+      case 'friend-add':
+      case 'friend-no':
+      case 'friend-block':
+        if (!native.demo) await native.landFriendAnswer(id, name === 'friend-add' ? 'add' : name === 'friend-block' ? 'block' : 'no');
+        this.friendAsks.delete(id);
         break;
       case 'open':
         if (id) void native.open(id);

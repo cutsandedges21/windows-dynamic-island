@@ -42,7 +42,9 @@ function resetNative() {
   Object.assign(h.native, {
     isTauri: true,
     demo: false,
-    landStart: vi.fn(async (name: string | null, visible: boolean) => ({ ok: true, value: { id: 'me0000000000000a', name: name ?? 'DESKTOP-MOSS', visible, peers: [], fresh: false } })),
+    landStart: vi.fn(async (name: string | null, visible: boolean) => ({ ok: true, value: { id: 'me0000000000000a', name: name ?? 'DESKTOP-MOSS', visible, peers: [], fresh: false, friends: [] } })),
+    landFriendAnswer: vi.fn(async () => true),
+    landFriendsOnline: vi.fn(async () => []),
     landStop: vi.fn(async () => undefined),
     landScan: vi.fn(async () => []),
     landSend: vi.fn(async (peer: string) => ({ ok: true, value: `out-${peer}` })),
@@ -105,6 +107,15 @@ const transfer = (over: Partial<LandTransfer> = {}): LandTransfer => ({
   ...over,
 });
 
+const ALEX = { id: 'b0'.repeat(32), name: 'Alex', os: 'windows' };
+const FRIEND = { id: 'f1'.repeat(32), name: 'Alex', added: T0 - 86_400_000 };
+const SAM = { id: 'c2'.repeat(32), name: 'Sam', added: T0 };
+/** Land starts with these friends on other networks. */
+const withFriends = (friends: unknown[]) => {
+  h.native.landStart = vi.fn(async (name: string | null, visible: boolean) => ({ ok: true, value: { id: 'me0000000000000a', name: name ?? 'DESKTOP-MOSS', visible, peers: [], fresh: false, friends } }));
+};
+const friendAsk = (over: Record<string, unknown> = {}) => ({ id: 'friend-1', from: ALEX, state: 'asking', expires: T0 + 120_000, ...over });
+
 const block = <T extends Block['t']>(view: SheetView | null, t: T, key?: string) => view?.blocks.find((b) => b.t === t && (!key || b.key === key)) as Extract<Block, { t: T }> | undefined;
 
 /** Every level and orientation renders valid, fittable, icon-only-when-vertical segments. */
@@ -161,10 +172,74 @@ describe('land helpers', () => {
 describe('land', () => {
   it('starts with its name and visibility, and stops with the activity', async () => {
     const { act } = await boot({ name: ' Studio ', visible: false });
-    expect(h.native.landStart).toHaveBeenCalledWith('Studio', false);
+    expect(h.native.landStart).toHaveBeenCalledWith('Studio', false, true, null);
     expect(act.status().active).toBe(false);
     act.stop();
     expect(h.native.landStop).toHaveBeenCalled();
+  });
+
+  it('reaches friends on other networks unless that is turned off', async () => {
+    await boot({ anywhere: false });
+    expect(h.native.landStart).toHaveBeenCalledWith(null, true, false, null);
+  });
+
+  it('uses your own relay when one is set, and says so when the address is wrong', async () => {
+    h.native.landStart = vi.fn(async (name: string | null, visible: boolean) => ({ ok: true, value: { id: 'me0000000000000a', name: name ?? 'DESKTOP-MOSS', visible, peers: [], fresh: false, friends: [], relayError: '“relay.example.com” isn’t a relay address.' } }));
+    const { act } = await boot({ relay: ' https://relay.example.com ' });
+    expect(h.native.landStart).toHaveBeenCalledWith(null, true, true, 'https://relay.example.com');
+    const card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'text', 'relay')!.text).toContain('n0');
+  });
+
+  it('a friend request takes the island until answered: Block, Not now or Add', async () => {
+    const { act, calls } = await boot();
+    emit('land-friend-ask', friendAsk());
+    expect(calls.alert).toEqual([['shake']]);
+    expect(calls.notify[0]).toEqual(['Alex wants to be friends', 'Friends can send each other files from anywhere. Answer in the island.']);
+    expect(act.status()).toMatchObject({ active: true, urgent: { key: 'friend:friend-1', level: 'maximum' }, summary: 'Alex wants to be friends' });
+    expect(act.pet().mood).toBe('needs-you');
+    const card = act.sheet(sheetEnv('urgent'))!;
+    expect(block(card, 'head')).toMatchObject({ title: 'Alex wants to be friends' });
+    expect(block(card, 'countdown')).toMatchObject({ until: T0 + 120_000, total: 120_000 });
+    expect(block(card, 'buttons', 'answer')!.items.map((b) => [b.action, b.arg])).toEqual([
+      ['friend-block', 'friend-1'],
+      ['friend-no', 'friend-1'],
+      ['friend-add', 'friend-1'],
+    ]);
+    expect(block(act.sheet(sheetEnv('urgent', { interactive: false })), 'buttons', 'answer')).toBeUndefined();
+    smoke(act, 'friend request');
+
+    await act.action('friend-add', 'friend-1');
+    expect(h.native.landFriendAnswer).toHaveBeenCalledWith('friend-1', 'add');
+    emit('land-friend-ask', friendAsk({ state: 'added', expires: undefined }));
+    expect(act.status().urgent ?? null).toBeNull();
+  });
+
+  it('a file offer comes before a friend request', async () => {
+    const { act } = await boot();
+    emit('land-friend-ask', friendAsk());
+    emit('land-transfer', transfer({ id: 'in-7', dir: 'in', peer: LAB, state: 'asking' }));
+    expect(act.status().urgent?.key).toBe('ask:in-7');
+    emit('land-transfer', transfer({ id: 'in-7', dir: 'in', peer: LAB, state: 'declined', error: 'Declined.' }));
+    expect(act.status().urgent?.key).toBe('friend:friend-1');
+  });
+
+  it('a request whose asker gave up leaves the island', async () => {
+    const { act } = await boot();
+    emit('land-friend-ask', friendAsk());
+    expect(act.status().urgent?.key).toBe('friend:friend-1');
+    emit('land-friend-ask', friendAsk({ state: 'gone', expires: undefined }));
+    expect(act.status().urgent ?? null).toBeNull();
+  });
+
+  it('while the island is hidden, friend requests get a no at once and nothing pops up', async () => {
+    const settings = defaultSettings();
+    const { act, calls } = await boot();
+    (act as unknown as { ctx: ActivityContext }).ctx.settings = () => ({ ...settings, island: { ...settings.island, hiddenUntil: Date.now() + 3_600_000 } });
+    emit('land-friend-ask', friendAsk({ id: 'friend-2' }));
+    expect(h.native.landFriendAnswer).toHaveBeenCalledWith('friend-2', 'no');
+    expect(calls.alert).toEqual([]);
+    expect(calls.notify).toEqual([]);
   });
 
   it('its first start on a computer says what it is, as the system asks about the network', async () => {
@@ -262,6 +337,115 @@ describe('land', () => {
     act.drop(['C:\\b.txt']);
     await tick(0);
     expect(block(act.sheet(sheetEnv('open')), 'buttons', 'send')!.items[0].label).toBe('Send to LAB-DESKTOP-07');
+  });
+
+  it('friends on other networks show next to the computers nearby, and Send reaches them', async () => {
+    withFriends([FRIEND]);
+    h.native.landFriendsOnline = vi.fn(async () => [FRIEND.id]);
+    const { act } = await boot();
+    act.drop(['C:\\a.txt']);
+    await tick(0);
+    emit('land-peers', [MAC]);
+    const card = act.sheet(sheetEnv('open'))!;
+    const people = block(card, 'people')!.items;
+    expect(people.map((p) => p.key)).toEqual([MAC.id, FRIEND.id]);
+    expect(people[1]).toMatchObject({ name: 'Alex', initials: 'AL', badge: 'globe', sub: 'Online', selected: false });
+    // Two to choose from: nothing is picked for you.
+    expect(block(card, 'buttons', 'send')!.items[0]).toMatchObject({ label: 'Pick who gets them', disabled: true });
+    await act.action('pick', FRIEND.id);
+    expect(block(act.sheet(sheetEnv('open')), 'buttons', 'send')!.items[0].label).toBe('Send to Alex');
+    await act.action('send');
+    expect(h.native.landSend.mock.calls).toEqual([[FRIEND.id, ['C:\\a.txt']]]);
+  });
+
+  it('a friend on the same network shows once, as the computer nearby, and gets files the fast way', async () => {
+    withFriends([FRIEND]);
+    const { act } = await boot();
+    act.drop(['C:\\a.txt']);
+    await tick(0);
+    emit('land-peers', [{ ...MAC, anywhere: FRIEND.id }]);
+    const people = block(act.sheet(sheetEnv('open')), 'people')!.items;
+    expect(people.map((p) => p.key)).toEqual([MAC.id]);
+    expect(people[0]).toMatchObject({ name: "Moss's MacBook Air", badge: 'globe', sub: 'Mac', selected: true });
+    await act.action('send');
+    expect(h.native.landSend.mock.calls).toEqual([[MAC.id, ['C:\\a.txt']]]);
+  });
+
+  it('a lone friend is picked for you, like a lone computer', async () => {
+    withFriends([FRIEND]);
+    const { act } = await boot();
+    act.drop(['C:\\a.txt']);
+    await tick(0);
+    expect(block(act.sheet(sheetEnv('open')), 'buttons', 'send')!.items[0]).toMatchObject({ label: 'Send to Alex', disabled: false });
+  });
+
+  it('asks which friends are online when its card opens, then every 20 s while it is open', async () => {
+    withFriends([FRIEND, SAM]);
+    h.native.landFriendsOnline = vi.fn(async () => [SAM.id]);
+    const { act } = await boot();
+    let people = block(act.sheet(sheetEnv('open')), 'people')!.items;
+    expect(people.find((p) => p.key === FRIEND.id)!.sub).toBe('Friend');
+    await act.action('card');
+    await tick(0);
+    expect(h.native.landFriendsOnline).toHaveBeenCalledTimes(1);
+    people = block(act.sheet(sheetEnv('open')), 'people')!.items;
+    expect(people.find((p) => p.key === FRIEND.id)!.sub).toBe('Not online');
+    expect(people.find((p) => p.key === SAM.id)!.sub).toBe('Online');
+    await tick(5000);
+    expect(h.native.landFriendsOnline).toHaveBeenCalledTimes(1);
+    await tick(20000);
+    expect(h.native.landFriendsOnline).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps its friends as Rust reports them', async () => {
+    withFriends([FRIEND]);
+    const { act } = await boot();
+    expect(block(act.sheet(sheetEnv('open')), 'people')!.items.map((p) => p.key)).toEqual([FRIEND.id]);
+    emit('land-friends', [FRIEND, SAM]);
+    expect(block(act.sheet(sheetEnv('open')), 'people')!.items.map((p) => p.key)).toEqual([FRIEND.id, SAM.id]);
+    emit('land-friends', []);
+    expect(block(act.sheet(sheetEnv('open')), 'people')!.items).toEqual([]);
+  });
+
+  it('a send to a friend who is away waits in the card, not on the pill, and goes when they are back', async () => {
+    const { act } = await boot();
+    const far = transfer({ id: 'out-q', peer: { id: FRIEND.id, name: 'Alex', os: '' }, state: 'queued' });
+    emit('land-transfer', far);
+    expect(act.status().active).toBe(false);
+    const row = block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items[0];
+    expect(row.detail).toBe('Sends when Alex is online');
+    expect(row.button).toMatchObject({ action: 'cancel', arg: 'out-q' });
+    expect(act.tile(sheetEnv('open'))!.body).toMatchObject({ value: '1 waiting' });
+    emit('land-transfer', { ...far, state: 'sending', done: 5_000_000 });
+    expect(act.status()).toMatchObject({ active: true, summary: 'To Alex · 50%' });
+  });
+
+  it('a transfer whose connection dropped shows as paused, can be cancelled, and picks up again', async () => {
+    const { act } = await boot();
+    emit('land-transfer', transfer({ id: 'out-p', state: 'sending', done: 3_000_000 }));
+    emit('land-transfer', transfer({ id: 'out-p', state: 'paused', done: 3_000_000, error: "Connection to Moss's MacBook Air lost. Trying again…" }));
+    expect(act.status()).toMatchObject({ active: true, summary: "To Moss's MacBook Air · Paused" });
+    const segs = act.render(env('expanded'));
+    expect(segs.find((s) => s.key === 'icon')).toMatchObject({ icon: 'pause' });
+    expect(segs.find((s) => s.key === 'pct')).toMatchObject({ text: 'Paused' });
+    const row = block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items[0];
+    expect(row.detail).toContain('Trying again');
+    expect(row.button).toMatchObject({ action: 'cancel', arg: 'out-p' });
+    smoke(act, 'paused');
+    emit('land-transfer', transfer({ id: 'out-p', state: 'sending', done: 6_000_000 }));
+    expect(act.render(env('expanded')).find((s) => s.key === 'pct')).toMatchObject({ text: '60%' });
+  });
+
+  it('a transfer with a friend says how it goes: direct, or through a relay', async () => {
+    const { act } = await boot();
+    const far = transfer({ id: 'out-f', peer: { id: FRIEND.id, name: 'Alex', os: '' }, state: 'sending', done: 5_000_000, via: 'relay' });
+    emit('land-transfer', far);
+    const detail = () => block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items[0].detail;
+    expect(detail()).toContain('through a relay');
+    emit('land-transfer', { ...far, via: 'direct' });
+    expect(detail()).toContain('direct');
+    emit('land-transfer', transfer({ id: 'out-f', state: 'sending', done: 5_000_000, via: 'lan' }));
+    expect(detail()).not.toMatch(/direct|relay/);
   });
 
   it('a send that cannot start says why and keeps the files', async () => {

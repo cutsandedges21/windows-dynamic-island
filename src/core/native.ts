@@ -218,6 +218,8 @@ export interface LandPeer {
   name: string;
   /** 'windows' | 'macos' | 'linux' | 'other' */
   os: string;
+  /** Its key for friends on other networks, when it announced one (signed); matches a friend's id. */
+  anywhere?: string | null;
 }
 export interface LandInfo {
   id: string;
@@ -226,6 +228,31 @@ export interface LandInfo {
   peers: LandPeer[];
   /** Land's first start on this computer: the system is asking about the firewall or the local network now. */
   fresh: boolean;
+  /** Friends on other networks (empty while that is off). */
+  friends: LandFriend[];
+  /** Why the relay setting was not used (n0's relays are used instead). */
+  relayError?: string | null;
+}
+/** Land anywhere (src-tauri/src/anywhere.rs): an Island this one sends to and takes files from, on any network. */
+export interface LandFriend {
+  /** Its key (hex). */
+  id: string;
+  name: string;
+  /** When it was added (ms). */
+  added: number;
+}
+/** This Island's key and the code a friend pastes to add it. */
+export interface LandMe {
+  id: string;
+  code: string;
+}
+/** Someone asking to be friends ('land-friend-ask'); later events say how it ended. */
+export interface LandFriendAsk {
+  id: string;
+  from: LandPeer;
+  state: 'asking' | 'added' | 'declined' | 'blocked' | 'expired' | 'gone';
+  /** While asking: when the request expires (ms). */
+  expires?: number;
 }
 /** One dropped item of a transfer: a file, or a folder and the files in it. */
 export interface LandItem {
@@ -234,7 +261,9 @@ export interface LandItem {
   files: number;
   dir: boolean;
 }
-export type LandState = 'waiting' | 'asking' | 'sending' | 'receiving' | 'done' | 'declined' | 'failed' | 'cancelled';
+/** 'paused': the connection dropped after Accept; the sender tries again and the receiver keeps what arrived.
+ * 'queued': a friend who is away; the send waits (kept on disk) and goes when they come online. */
+export type LandState = 'waiting' | 'asking' | 'sending' | 'receiving' | 'paused' | 'queued' | 'done' | 'declined' | 'failed' | 'cancelled';
 /** One transfer, as Rust reports it on every change and as bytes move ('land-transfer'). */
 export interface LandTransfer {
   id: string;
@@ -252,6 +281,8 @@ export interface LandTransfer {
   folder: string | null;
   /** When an offer stops waiting for an answer (epoch ms). */
   expires: number | null;
+  /** How it goes: a computer nearby ('lan'), or a friend 'direct' or through a 'relay' (it can change midway). */
+  via?: 'lan' | 'direct' | 'relay' | null;
 }
 /** A dropped path before it is sent. */
 export interface LandStaged {
@@ -529,7 +560,19 @@ export const native = {
   autostartSet: (enabled: boolean) => call<boolean>('autostart_set', { enabled }, false),
 
   /** Turns Land on, or updates its name and whether it takes files (null name: the computer's). */
-  landStart: (name: string | null, visible: boolean) => tryCall<LandInfo>('land_start', { name, visible }),
+  landStart: (name: string | null, visible: boolean, anywhere: boolean, relay: string | null) => tryCall<LandInfo>('land_start', { name, visible, anywhere, relay }),
+  /** This Island's Land code (works with Land off). */
+  landMe: () => tryCall<LandMe>('land_me', {}),
+  landFriends: () => call<LandFriend[]>('land_friends', {}, []),
+  /** The friends whose Island answers right now (ids). */
+  landFriendsOnline: () => call<string[]>('land_friends_online', {}, []),
+  /** Asks the Island whose code this is to be friends; resolves when its user answers. */
+  landFriendAdd: (code: string) => tryCall<LandFriend>('land_friend_add', { code }),
+  /** Asks a computer nearby (its Land id) to be friends, with the key it announced: no code needed. */
+  landFriendAddNearby: (id: string) => tryCall<LandFriend>('land_friend_add_nearby', { id }),
+  landFriendAnswer: (id: string, reply: 'add' | 'no' | 'block') => call<boolean>('land_friend_answer', { id, reply }, false),
+  /** Removes a friend (they are not told), or blocks them too. */
+  landFriendRemove: (id: string, block: boolean) => tryCall<null>('land_friend_remove', { id, block }),
   landStop: () => call('land_stop', {}, undefined),
   /** Asks every device nearby to say who it is; the list as it stands. */
   landScan: () => call<LandPeer[]>('land_scan', {}, []),

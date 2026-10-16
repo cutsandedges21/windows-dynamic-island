@@ -156,6 +156,21 @@ export const CATALOG: ActivityMeta[] = [
         default: true,
       },
       { key: 'name', type: 'text', label: 'Name others see', help: "Empty: this computer's own name.", default: '', placeholder: "This computer's name" },
+      {
+        key: 'anywhere',
+        type: 'toggle',
+        label: 'Friends on other networks',
+        help: "Friends you add with your Land code can reach this computer from anywhere. When a direct path is blocked, n0's free relays pass the encrypted bytes; they see that two Islands connect, not the files.",
+        default: true,
+      },
+      {
+        key: 'relay',
+        type: 'text',
+        label: 'Your relay',
+        help: "Only when a direct path is blocked do bytes go through a relay. n0's free one passes about 1 MB/s. The address of your own iroh-relay server (like https://relay.example.com) makes that as fast as your server. Empty: n0's.",
+        default: '',
+        placeholder: "n0's free relays",
+      },
     ],
   },
   {
