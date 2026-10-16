@@ -332,3 +332,39 @@ switch and glow all still untested on screen by Moss.
 - Checked: 111 cargo lib tests, 450 Vitest.
 - **v0.2.8 published as the Latest release** (github.com/cutsandedges21/windows-dynamic-island/releases/tag/v0.2.8), tag on 1db5f39, only asset Island.exe (9,387,008 bytes, sha256 318b161f…2756); `releases/latest/download/Island.exe` serves the same bytes. Notes say what was wrong, why, and the fix. Moss's PC runs it (`start v0.2.8`, `update: removed Island.old.exe`, the drop-target line, `island ready`).
 - Not fixed, found on the way: tao recomputes the window's extended style on every `set_ignore_cursor_events`, which drops Island's own `WS_EX_NOACTIVATE`/`WS_EX_TOOLWINDOW` (live style over the pill: 0x40118), so a click on the pill may take focus and the island may show in Alt-Tab.
+
+## 2026-10-15, evening: Land anywhere, slices 1–2 (friends on other networks)
+
+- **Why** (Moss): drag and drop and send files to anyone across any network, like Blip. The plan is in `docs/LAND-ANYWHERE.md`. Blip relays transfers between networks through its own servers. Island uses iroh instead, which goes direct through most routers and relays only when it must.
+- **Slice 1** (`src-tauri/src/anywhere.rs`, `iroh 1.3`): this Island's key and Land code, and an endpoint that lets in only friends (and friend requests).
+- **Slice 2**: friend requests (Block / Not now / Add on the island), kept in `land-friends.json`. Activities › Land has the switch "Friends on other networks" (on), Your Land code with Copy, Add a friend, and the list with Remove / Block. The privacy note in Settings mentions n0's relays and key lookup. Details: ARCHITECTURE › Land, LAND-ANYWHERE slices 1–2.
+- **Checked**: 30 Land cargo tests and 455 Vitest; tsc clean. Through n0 for real: an endpoint found by key alone (relay `use1-1`, 5 s). Moss's running Island had a request sent with only its code 104 ms after it went out, then iroh moved to a direct path.
+- release/Island.exe rebuilt from the tree (14.0 MB, was 9.4 MB; still labelled 0.2.8) and running: `land: on as MossLaptop …, anywhere as b61d13db01`. It was built before the privacy-note line, which shows after the next build.
+- **Not yet**: sending to a friend (slice 3). Nearby computers can't be added in one tap yet (the LAN packet lacks the iroh key). No clickable links.
+- Also: deleted a stray 1 GB `./target` (from 10-13) inside OneDrive.
+- Uncommitted (Moss decides when to push).
+
+## 2026-10-15, late: Land anywhere, slice 3 (send files to friends on any network)
+
+- **What it does**: friends now show on Land's card after the computers nearby (globe badge; "Online" / "Not online" from a 3 s check when the card opens, then every 20 s). Pick one, Send: their island asks (Accept / Decline) like any offer. Transfer rows say "· direct" or "· through a relay".
+- **How**: Land's offer → files → saved exchange now runs over any stream. Over TCP + Noise for computers nearby (unchanged), over one QUIC stream for friends (`Wire::Plain`, `send_far`, `receive_far`, `Far::land_connections`). Transfers carry `via`. Someone who removed you gets nothing: "X isn't taking files from you". Details: ARCHITECTURE › Land, LAND-ANYWHERE slice 3.
+- **Checked**: 132 cargo lib tests (4 new in land.rs; all 30 earlier Land tests pass through the refactor), 460 Vitest (5 new), tsc. For real through n0 (`files_reach_a_friend_through_n0`): 2 MB arrived in 0.4 s the normal way and in 1.3 s with the relay only (about 1.5 MB/s, n0's free-relay limit).
+- release/Island.exe rebuilt (14.1 MB, still labelled 0.2.8; the build took 16 min) and running: `land: on as MossLaptop …, anywhere as b61d13db01` (same key, so the Land code is unchanged).
+- **Not yet**: a friend who is also on the same network shows twice (needs the iroh key in the LAN packet). Not tried between two real computers on different networks.
+- Uncommitted: Moss keeps it local until slice 3 is done; now it is.
+
+## 2026-10-16: Land anywhere, the gaps and slice 4 (resume after a drop)
+
+- **Friend nearby shows once** (gap 1): the LAN announcement carries the friend key, signed over the Land key (`ak`/`aks`; a borrowed key is dropped). A friend on the same network is one entry, the computer nearby, and gets files over TCP. Nearby Islands can be added without a code (Activities › Land › Add as friend).
+- **Relay speed** (gap 2): measured n0's free relay at 1.15 MB/s (20 MB relay-only). New setting Activities › Land › Your relay (an iroh-relay server's address); a bad address falls back to n0's and the card says so. Tested against a real relay running in the test. Server steps for Moss: LAND-ANYWHERE slice 6.
+- **Resume** (slice 4): a connection that drops after Accept pauses; the sender tries again for 30 minutes, and the receiver keeps the pieces for 2 hours and accepts the comeback without asking (`have`). Cancel while paused removes the pieces. Shown as Paused on the pill and in the card.
+- **Checked**: 142 cargo lib tests (10 new: signed announcement, marking, nearby friend over LAN, add nearby, own relay, relay address, 4 resume) plus 463 Vitest (3 new), tsc. The resume tests passed 5 runs in a row. Details: ARCHITECTURE › Land, LAND-ANYWHERE.
+- Still uncommitted (Moss: "keep it local").
+
+## 2026-10-16, later: Land anywhere slice 5 (send to a friend who is offline)
+
+- Moss won't run a relay server: the "Your relay" setting stays, empty; relayed transfers keep n0's free speed (about 1.15 MB/s). Direct paths are unaffected.
+- **Waiting sends**: a friend who can't be reached makes the send wait (`queued`, "Sends when Alex is online") instead of failing. It's kept in `land-queue.json` across restarts, wakes when that friend's Island is heard from (a starting Land says hello to its friends), tries every 2 minutes anyway, and gives up after 3 days. It stays off the pill; the tile says "1 waiting".
+- **Fixed on the way**: Land's stop flag used `watch::Sender::send`, which drops the value when nothing listens, so a stopping Land could wipe waiting sends. Now `send_replace`.
+- **Checked**: 146 cargo lib tests (4 new), 464 Vitest (1 new), tsc. Details: ARCHITECTURE › Land, LAND-ANYWHERE slice 5.
+- Still uncommitted.
