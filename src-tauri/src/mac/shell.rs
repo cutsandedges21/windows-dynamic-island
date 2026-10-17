@@ -85,17 +85,7 @@ pub struct HttpResponse {
 /// HTTPS GET for calendar feeds and weather; capped and time-limited.
 #[tauri::command]
 pub async fn http_get(url: String, max_bytes: Option<usize>) -> Option<HttpResponse> {
-    if !url.to_ascii_lowercase().starts_with("https://") {
-        return None;
-    }
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .user_agent(concat!("Island/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .ok()?;
-    let resp = client.get(&url).send().await.ok()?;
-    let status = resp.status().as_u16();
-    let bytes = resp.bytes().await.ok()?;
     let cap = max_bytes.unwrap_or(2 * 1024 * 1024).min(16 * 1024 * 1024);
-    Some(HttpResponse { status, body: String::from_utf8_lossy(&bytes[..bytes.len().min(cap)]).to_string() })
+    let (status, body) = crate::web::get_capped(&url, cap).await?;
+    Some(HttpResponse { status, body: String::from_utf8_lossy(&body).to_string() })
 }

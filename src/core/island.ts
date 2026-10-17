@@ -13,7 +13,7 @@ import { ChatBar, type ChatAction, type ChatView } from './chat';
 import { lookFor } from './looks';
 import { PetBrain, type PetSignal } from './pet';
 import { BorderGlow, type GlowSpec } from './glow';
-import { CELLS, hiddenTest, leadFirst, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
+import { CELLS, hiddenTest, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
 import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
 import { native, on, onFileDrop, sendTo, type FileDrop, type MenuItem } from './native';
 import { choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
@@ -98,6 +98,10 @@ export class Island {
   private gridDrag: { key: string; snap: GridPages; dims: Map<string, { w: number; h: number }>; size: { w: number; h: number }; preview: GridPages | null } | null = null;
   /** Segment key under the pointer: tells whose card a hover asks for. */
   private hoverKey: string | null = null;
+  /** The pointer is on the pill itself (not the card). */
+  private pointerOnPill = false;
+  /** Rust holds Ctrl+V for Land (the pointer rests on its icon). */
+  private pasteArmed = false;
   /** Light on the pill's edge and on an urgent card's, in the tone of whatever is happening. */
   private readonly pillGlow: BorderGlow;
   /** The bot in its bubble beside the pill. */
@@ -163,6 +167,11 @@ export class Island {
     await on<{ monitor: string; fullscreen: string | null; pid: number }>('foreground', (fg) => this.onForeground(fg));
     await on('pointer-outside', () => this.dismiss());
     await on<boolean>('peek', (on) => this.onPeek(on));
+    // Ctrl+V while the pointer rests on Land's icon: Land opens with what was copied.
+    await on('land-paste', () => {
+      const land = this.running.get('land');
+      if (land?.action) Promise.resolve(land.action('paste', null)).catch((err) => native.log(`land paste failed: ${String(err)}`));
+    });
     // The bot's eyes follow the pointer while Rust sees it near the island (the preview has no Rust).
     await on<{ x: number; y: number } | null>('pointer', (p) => this.bubble.lookAt(p));
     if (native.demo) window.addEventListener('pointermove', (e) => this.bubble.lookAt({ x: e.clientX, y: e.clientY }));
@@ -449,6 +458,7 @@ export class Island {
         if (!this.settings.general.dnd) this.toPhone(title, body, look);
       },
       log: (...parts) => void native.log(`${id}: ${parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ')}`),
+      setQuiet: (on) => this.setQuiet(on),
       setOptions: (patch) => {
         const cfg = this.settings.activities.config[id];
         if (!cfg) return;
@@ -460,9 +470,13 @@ export class Island {
   }
 
   /** Settings › Notifications › Send to my phone (src-tauri/src/phone.rs). */
-  private toPhone(title: string, body: string, look: { tag?: string; priority?: number } = {}): void {
+  private toPhone(title: string, body: string, look: { tag?: string; priority?: number; buttons?: Array<{ label: string; reply: string }> } = {}): void {
     const g = this.settings.general;
-    if (g.phonePush && g.phoneTopic) void native.phonePush(g.phoneTopic, title, body, look.tag, look.priority);
+    if (!g.phonePush || !g.phoneTopic) return;
+    // Buttons only with Answer Claude from my phone on; then Island listens for the taps while the request waits.
+    const answers = g.phoneApprove && g.phoneReplyTopic && look.buttons?.length ? look.buttons : null;
+    void native.phonePush(g.phoneTopic, title, body, look.tag, look.priority, answers ? g.phoneReplyTopic : undefined, answers ?? undefined);
+    if (answers) void native.phoneListen(g.phoneReplyTopic, 130);
   }
 
   private surface(id: string, opts: SurfaceOptions = {}): void {
@@ -525,9 +539,11 @@ export class Island {
     this.primaryId = primary;
     this.visibleIds = choice.visible;
     const pStatus = primary ? statuses.get(primary) : undefined;
+    // Chip-only activities (Land's icon) with nothing else on: the pill holds just their chips.
+    const loneChips = primary ? [] : choice.visible.filter((id) => statuses.get(id)?.chipOnly);
 
     // Level: resting compact, raised by events, hover, the user, or urgency.
-    let level: Level = primary ? 'compact' : 'idle';
+    let level: Level = primary || loneChips.length ? 'compact' : 'idle';
     const surf = primary ? this.surfaces.filter((x) => x.id === primary).sort((a, b) => b.at - a.at)[0] : undefined;
     if (surf) level = atLeast(level, surf.level);
     if (this.hover && s.hoverExpand && primary && !this.open) level = atLeast(level, 'expanded');
@@ -575,8 +591,9 @@ export class Island {
         segs = this.overflowSegments(choice.visible, statuses, vertical);
         viewKey = 'overflow';
       } else if (!primary) {
-        segs = this.open ? this.homeSegments(now, statuses, vertical) : [];
-        viewKey = this.open ? 'home' : 'idle';
+        const chips = loneChips.length ? this.secondarySegments(loneChips, statuses, level, now, vertical) : [];
+        segs = this.open ? this.homeSegments(now, statuses, vertical).concat(chips) : chips;
+        viewKey = this.open ? 'home' : chips.length ? 'chips' : 'idle';
       } else {
         const act = this.running.get(primary)!;
         const cfg = this.settings.activities.config[primary];
@@ -687,10 +704,26 @@ export class Island {
     });
   }
 
+  /**
+   * Hovering Land's icon (or Land itself on the pill): Rust holds Ctrl+V for Island meanwhile, and a
+   * press opens Land with what was copied (`land-paste`). It lets go the moment the pointer leaves.
+   */
+  private syncPasteArm(): void {
+    const key = this.pointerOnPill ? this.hoverKey : null;
+    const armed = key !== null && (key === 'chip/land' || key.startsWith('land/')) && this.running.has('land');
+    if (armed === this.pasteArmed) return;
+    this.pasteArmed = armed;
+    void native.pasteArm(armed);
+  }
+
   private secondarySegments(ids: string[], statuses: Map<string, ActivityStatus>, level: Level, now: number, vertical: boolean): Seg[] {
     const out: Seg[] = [];
     const compact = level === 'compact';
-    ids.slice(0, compact ? 2 : 8).forEach((id, i) => {
+    // Chip-only ones (Land's icon) always come, last in the row, and outrank the other chips:
+    // when room runs out, the others fold into "+N" first.
+    const only = (id: string) => statuses.get(id)?.chipOnly === true;
+    const shown = [...ids.filter((id) => !only(id)).slice(0, compact ? 2 : 8), ...ids.filter(only)];
+    shown.forEach((id, i) => {
       const act = this.running.get(id);
       if (!act) return;
       const meta = CATALOG_BY_ID.get(id) ?? act.meta;
@@ -702,8 +735,9 @@ export class Island {
         view = null;
       }
       const label = compact || vertical ? '' : view?.label ?? clip(statuses.get(id)?.summary ?? meta.name, 18);
+      const prio = only(id) ? 5 : (compact ? 8 : 6) + i;
       if (compact) {
-        out.push({ t: 'icon', key: `chip/${id}`, icon: view?.icon ?? meta.icon, tone: view?.tone ?? 'muted', size: 'sm', side: 'end', prio: 8 + i, tip: statuses.get(id)?.summary ?? meta.name });
+        out.push({ t: 'icon', key: `chip/${id}`, icon: view?.icon ?? meta.icon, tone: view?.tone ?? 'muted', size: 'sm', side: 'end', prio, tip: statuses.get(id)?.summary ?? meta.name });
       } else {
         out.push({
           t: 'chip',
@@ -713,10 +747,11 @@ export class Island {
           dot: view?.dot,
           pulse: view?.pulse,
           tone: view?.tone,
-          action: 'island:select',
-          arg: id,
+          // A chip can do something of its own (Land's opens its card); else a click brings it onto the pill.
+          action: view?.action ? `act:${id}:${view.action}` : 'island:select',
+          arg: view?.action ? undefined : id,
           side: 'end',
-          prio: 6 + i,
+          prio,
           max: 150,
           tip: statuses.get(id)?.summary ?? meta.name,
         });
@@ -732,7 +767,7 @@ export class Island {
       { t: 'text', key: 'home/time', text: timeOfDay(now), weight: 'semibold', prio: 0 },
       { t: 'text', key: 'home/date', text: d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }), tone: 'muted', size: 'sm', prio: 4 },
     ];
-    const quiet = [...statuses.entries()].filter(([id, st]) => st.active && id !== 'quick').length;
+    const quiet = [...statuses.entries()].filter(([id, st]) => st.active && !st.chipOnly && id !== 'quick').length;
     if (quiet) segs.push({ t: 'chip', key: 'home/more', label: `${quiet} active`, icon: 'stack', action: 'island:overflow', side: 'end', prio: 3 });
     const env: RenderEnv = { level: 'maximum', width: 400, height: 50, now, open: true, hover: false, surfaced: null, interactive: true, vertical };
     for (const id of this.settings.activities.order) {
@@ -932,7 +967,7 @@ export class Island {
         body: { k: 'dots', label: d.toLocaleDateString('en-US', { weekday: 'long' }), pct: dayPct, sub: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) },
       },
     ];
-    for (const id of leadFirst(this.settings.activities.order)) {
+    for (const id of this.settings.activities.order) {
       const act = this.running.get(id);
       if (!act?.tile) continue;
       const interactive = this.settings.activities.config[id]?.interactive ?? true;
@@ -1287,12 +1322,17 @@ export class Island {
         break;
       case 'island:hover':
       case 'island:sheet-hover':
+        if (action === 'island:hover') {
+          this.pointerOnPill = Boolean(arg);
+          this.syncPasteArm();
+        }
         this.setHover(Boolean(arg));
         return;
       case 'island:hover-key': {
         const key = typeof arg === 'string' ? arg : null;
         const moved = this.ownerOf(key) !== this.ownerOf(this.hoverKey);
         this.hoverKey = key;
+        this.syncPasteArm();
         if (!moved || !this.hover) return;
         break;
       }
@@ -1445,8 +1485,14 @@ export class Island {
   private dndWarned = false;
 
   private toggleQuiet(): void {
-    this.settings.general.dnd = !this.settings.general.dnd;
+    this.setQuiet(!this.settings.general.dnd);
+  }
+
+  private setQuiet(on: boolean): void {
+    if (this.settings.general.dnd === on) return;
+    this.settings.general.dnd = on;
     this.saveSettings();
+    this.schedule();
     const quiet = this.settings.general.dnd;
     void native.dndSet(quiet).then((r) => {
       native.log(`quiet ${quiet ? 'on' : 'off'} (windows: ${r.ok ? 'changed' : (r.reason ?? 'no answer')})`);
@@ -1532,7 +1578,7 @@ export class Island {
         console.error(err);
       }
     }
-    const active = [...statuses.values()].filter((s) => s.active && s.summary).length;
+    const active = [...statuses.values()].filter((s) => s.active && s.summary && !s.chipOnly).length;
     if (tooltip.length === 1 && active) tooltip.push(`${active} active`);
     const a = this.settings.island.anchor;
     // Hidden: one item brings it back (and says until when); shown: how long to hide it for.

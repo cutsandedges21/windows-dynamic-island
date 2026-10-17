@@ -1,7 +1,8 @@
 // Talking to the bot: a thin bar under the bot and the pill (Moss's option A; see chatBarRect in
-// layout.ts) and, past it, a card with the answer. The island itself never opens for it. Local AI
-// does the answering (src/activities/local.ts, its chat()); with the Claude switch on, Ask
-// Claude's backend answers instead. Text goes in through textContent only.
+// layout.ts) and, past it, a card with the answer. The island itself never opens for it, and this
+// is the only way to ask Island anything. Local AI does the answering (src/activities/local.ts,
+// its chat()); with the Claude switch on, Claude Code or an API key answers instead. Text goes in
+// through textContent only.
 
 import { SpringSet } from './animator';
 import { icon } from './icons';
@@ -20,7 +21,7 @@ export interface ChatView {
   /** Who answers: the local model's name, or "Claude". */
   model: string;
   brain: 'local' | 'claude';
-  /** Ask Claude has a backend (Claude Code, or an API key): the switch can offer it. */
+  /** Claude can answer (Claude Code, or an API key): the switch can offer it. */
   canClaude: boolean;
   /** No local model yet: the one Set up would download, and its size (null when Island can't run one). */
   needsModel: { model: string | null; download: string | null } | null;
@@ -29,6 +30,8 @@ export interface ChatView {
   copied: boolean;
   /** Questions and answers so far in this chat. */
   turns: number;
+  /** While the local model works: about how long is left ("~5 s"), from how long it has taken before. */
+  wait: string | null;
 }
 
 export type ChatAction = 'send' | 'stop' | 'new' | 'copy' | 'brain' | 'setup' | 'retry' | 'close';
@@ -168,7 +171,7 @@ export class ChatBar {
     this.local.classList.toggle('on', view.brain === 'local');
     this.claude.classList.toggle('on', view.brain === 'claude');
     this.claude.disabled = !view.canClaude;
-    this.claude.title = view.canClaude ? 'Ask Claude instead (Ask Claude\'s login or API key)' : 'Set up Ask Claude in Activities to use it here';
+    this.claude.title = view.canClaude ? 'Ask Claude instead (Claude Code or your API key)' : 'Set up Claude in Activities › Bot chat to use it here';
     this.input.placeholder = view.turns ? 'Follow up…' : 'Ask me anything…';
     this.renderCard(view);
   }
@@ -187,6 +190,13 @@ export class ChatBar {
       this.card.replaceChildren(...this.cardParts(kind, v));
     }
     this.card.classList.toggle('shown', kind !== 'none');
+    // The seconds left tick in place under "Thinking…" and "Writing…".
+    const sub = this.card.querySelector<HTMLElement>('.chat-sub');
+    if (sub && (kind === 'thinking' || kind === 'streaming')) {
+      const via = v.brain === 'claude' ? 'via Claude' : v.model;
+      const want = v.wait ? `${via} · ${v.wait}` : via;
+      if (sub.textContent !== want) sub.textContent = want;
+    }
     const text = this.card.querySelector<HTMLElement>('.chat-text');
     if (text) {
       const want = kind === 'error' ? v.error : kind === 'thinking' ? '' : v.answer;
@@ -230,7 +240,7 @@ export class ChatBar {
     switch (kind) {
       case 'needs': {
         const m = v.needsModel!;
-        const what = m.model ? `${m.model}${m.download ? ` · ${m.download} download` : ''}` : 'Install Ollama, or pick a model in Activities › Local AI.';
+        const what = m.model ? `${m.model}${m.download ? ` · ${m.download} download` : ''}` : 'Install Ollama, or pick a model in Activities › Bot chat.';
         const parts = [head('I need a brain first', what)];
         const buttons: HTMLElement[] = [];
         if (m.model) buttons.push(act('Set up', 'setup', 'primary', 'download'));

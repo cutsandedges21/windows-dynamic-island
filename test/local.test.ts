@@ -1,6 +1,6 @@
-// Local AI against a fake bridge: a question streams into the pill, Stop keeps what was
-// written, a late answer to an old question is ignored, and the activity hides itself
-// while no local model server is running.
+// Local AI, the bot's brain, against a fake bridge: a question streams into the bot's bar,
+// Stop keeps what was written, a late answer to an old question is ignored, and the pill only
+// ever shows a model downloading.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -18,8 +18,7 @@ vi.mock('../src/core/native', () => ({
 }));
 vi.mock('../src/core/bridge', () => ({ bridge: h.bridge, inTauri: true }));
 
-import type { ActivityContext, RenderEnv, SheetEnv } from '../src/core/activity';
-import { clip } from '../src/core/format';
+import type { ActivityContext, RenderEnv } from '../src/core/activity';
 import { hasIcon } from '../src/core/icons';
 import type { Level } from '../src/core/layout';
 import { fitSegments, fitVertical, type Seg } from '../src/core/segments';
@@ -96,11 +95,9 @@ const emit = (event: string, payload: unknown) => {
 };
 const tick = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
 
-/** `bot`: the island's bot is on, so Local AI is the bot's chat (the bar), not a pill, card and tile. */
-async function boot(options: Record<string, unknown> = {}, bot = false) {
+async function boot(options: Record<string, unknown> = {}) {
   const act = new LocalActivity();
   const settings = defaultSettings();
-  settings.island.bot = bot;
   const calls = { surface: [] as Array<{ key?: string }>, close: 0, open: 0 };
   const ctx: ActivityContext = {
     id: 'local',
@@ -123,13 +120,10 @@ async function boot(options: Record<string, unknown> = {}, bot = false) {
 }
 
 const env = (level: Level, over: Partial<RenderEnv> = {}): RenderEnv => ({ level, width: 400, height: 40, now: Date.now(), open: false, hover: false, surfaced: null, interactive: true, vertical: false, ...over });
-const sheetEnv: SheetEnv = { reason: 'urgent', now: T0, width: 360, vertical: false, interactive: true, surfaced: null };
-
 const texts = (segs: Seg[]) => segs.flatMap((s) => (s.t === 'text' ? [s.text] : []));
-const sheetText = (act: LocalActivity) => act.sheet(sheetEnv)?.blocks.flatMap((b) => (b.t === 'text' ? [b.text] : [])) ?? [];
 const askCall = (n = 0) => h.bridge.localAsk.mock.calls[n] as [number, string, Array<{ role: string; content: string }>];
 
-/** Opens the input and sends a question. `sent` settles once the activity has the reply (wrapped, so awaiting ask() does not wait for it). */
+/** Opens the bot's bar and sends a question. `sent` settles once the activity has the reply (wrapped, so awaiting ask() does not wait for it). */
 async function ask(act: LocalActivity, text = 'Capital of Canada?') {
   await act.action('ask', undefined);
   const sent = act.action('send', text);
@@ -232,14 +226,12 @@ describe('deviceFacts', () => {
   });
 });
 
-describe('LocalActivity', () => {
-  it('shows a bar and the seconds left while it waits for the answer', async () => {
+describe("LocalActivity, the bot's brain", () => {
+  it('says about how long is left while it waits for the answer', async () => {
     const { act } = await boot();
     await ask(act);
     await tick(3000);
-    const pill = act.render(env('expanded'));
-    expect(pill.find((s) => s.t === 'progress')).toMatchObject({ value: 0.375 });
-    expect(texts(pill)).toContain('~5 s');
+    expect(act.chat()).toMatchObject({ phase: 'thinking', wait: '~5 s' });
   });
 
   it('learns how long answers take on this PC', async () => {
@@ -248,19 +240,20 @@ describe('LocalActivity', () => {
     await tick(4000);
     reply.resolve({ ok: true, text: 'Ottawa.', cancelled: false });
     await sent;
+    expect(act.chat().wait).toBeNull();
     reply = deferred();
     h.bridge.localAsk.mockImplementation(() => reply.promise);
     void act.action('send', 'And Quebec?');
     await tick(0);
     // 8 s to start with, then 70% of that and 30% of the 4 s it took: 6.8 s.
-    expect(texts(act.render(env('expanded')))).toContain('~7 s');
+    expect(act.chat().wait).toBe('~7 s');
   });
 
-  it('the card shows the time running down too', async () => {
+  it('keeps counting down while it writes', async () => {
     const { act } = await boot();
     await ask(act);
     emit('local-delta', { id: askCall()[0], text: 'Otta' });
-    expect(act.sheet(sheetEnv)?.blocks.some((b) => b.t === 'countdown')).toBe(true);
+    expect(act.chat()).toMatchObject({ phase: 'streaming', wait: '~8 s' });
   });
 
   it('uses Ollama when it runs', async () => {
@@ -269,15 +262,13 @@ describe('LocalActivity', () => {
     expect(askCall()[4]).toBe('ollama');
   });
 
-  it("without Ollama, offers to set up Island's own model with its download size", async () => {
+  it("without Ollama, the bot's card offers Island's own model with its download size", async () => {
     resetBridge(false);
     const { act } = await boot();
-    const tile = act.tile(sheetEnv);
-    expect(JSON.stringify(tile)).toContain('"action":"setup"');
-    expect(JSON.stringify(tile)).toContain('2.5 GB');
+    expect(act.chat().needsModel).toEqual({ model: 'Qwen3 4B', download: '2.5 GB' });
   });
 
-  it("setup shows its progress, then answers with Island's own model", async () => {
+  it("setup shows its progress in the pill, then answers with Island's own model", async () => {
     resetBridge(false);
     const { act, calls } = await boot();
     await act.action('setup', undefined);
@@ -286,23 +277,25 @@ describe('LocalActivity', () => {
     const pill = act.render(env('expanded'));
     expect(pill.some((s) => s.t === 'progress' && Math.abs((s.value ?? 0) - 0.5) < 0.01)).toBe(true);
     expect(texts(pill).join(' ')).toContain('50%');
+    smoke(act, 'setup');
 
     bundled = SET_UP;
     emit('local-setup-end', { model: 'small', ok: true, error: null, cancelled: false });
     await tick(0);
-    expect(calls.surface.at(-1)?.key).toMatch(/^local-ready/);
-    expect(act.home().length).toBe(1);
+    expect(act.status().active).toBe(false);
+    expect(calls.surface).toEqual([]);
     await ask(act);
     expect(askCall()[4]).toBe('island');
     expect(askCall()[1]).toBe('small');
   });
 
-  it('a setup that cannot start says why', async () => {
+  it('a setup that cannot start says why on the card', async () => {
     resetBridge(false);
     h.bridge.localSetup.mockImplementation(async () => ({ ok: false, error: 'Not enough free space: Qwen3 4B needs 3.0 GB, the disk has 1.2 GB free.' }));
     const { act } = await boot();
     await act.action('setup', undefined);
-    expect(act.status().summary).toContain('Not enough free space');
+    expect(act.chat().phase).toBe('error');
+    expect(act.chat().error).toContain('Not enough free space');
   });
 
   it('a download that fails part-way says why', async () => {
@@ -311,7 +304,7 @@ describe('LocalActivity', () => {
     await act.action('setup', undefined);
     emit('local-setup-end', { model: 'small', ok: false, error: 'The download stopped. Next time it carries on where it left off.', cancelled: false });
     await tick(0);
-    expect(act.status().summary).toContain('The download stopped');
+    expect(act.chat().error).toContain('The download stopped');
   });
 
   it('follows a download started in the Activities window, and leaves its errors there', async () => {
@@ -322,7 +315,8 @@ describe('LocalActivity', () => {
     emit('local-setup-end', { model: 'tiny', ok: false, error: 'The disk is full.', cancelled: false });
     await tick(0);
     expect(act.status().active).toBe(false);
-    expect(calls.surface.filter((s) => /local-(error|ready)/.test(s.key ?? ''))).toHaveLength(0);
+    expect(act.chat().phase).toBe('idle');
+    expect(calls.surface).toEqual([]);
   });
 
   it('an Island model picked in Activities answers, even while Ollama runs', async () => {
@@ -333,13 +327,13 @@ describe('LocalActivity', () => {
     expect(askCall()[1]).toBe('small');
   });
 
-  it('a PC too small for any model hides Local AI', async () => {
+  it('a PC too small for any model has none to offer', async () => {
     resetBridge(false, { model: null, recommended: null, installed: false, ready: [], download: 0, gpu: null, settingUp: false });
     const { act } = await boot();
-    expect(act.tile(sheetEnv)).toBeNull();
+    expect(act.chat().needsModel).toEqual({ model: null, download: null });
   });
 
-  it('opening the input loads the model, once a minute at most', async () => {
+  it('opening the bar loads the model, once a minute at most', async () => {
     const { act } = await boot();
     await act.action('ask', undefined);
     await tick(0);
@@ -371,29 +365,25 @@ describe('LocalActivity', () => {
     expect(context).toMatch(/Time: Tuesday/);
   });
 
-  it('streams an answer into the pill and keeps the chat for a follow-up', async () => {
+  it('streams an answer into the bar, never the pill, and keeps the chat for a follow-up', async () => {
     const { act, calls } = await boot();
     const { sent } = await ask(act);
-    expect(texts(act.render(env('expanded')))).toContain('Thinking…');
-    expect(act.status().beam?.tone).toBe('violet');
+    expect(act.chat().phase).toBe('thinking');
+    expect(act.status().active).toBe(false);
+    expect(act.render(env('maximum'))).toEqual([]);
     const [id, model, messages] = askCall();
     expect(model).toBe('qwen3:1.7b');
     expect(messages).toEqual([{ role: 'user', content: 'Capital of Canada?' }]);
 
     emit('local-delta', { id, text: 'Otta' });
     emit('local-delta', { id: id + 1, text: 'someone else' });
-    expect(act.chip()?.label).toBe('Writing…');
-    // The words go on the card, never in the pill.
-    expect(texts(act.render(env('maximum')))).not.toContain('Otta');
-    expect(texts(act.render(env('maximum')))[0]).toBe('Writing…');
-    expect(sheetText(act)).toEqual(['Otta']);
+    expect(act.chat()).toMatchObject({ phase: 'streaming', answer: 'Otta' });
 
     reply.resolve({ ok: true, text: 'Ottawa.', cancelled: false });
     await sent;
-    expect(act.status().summary).toBe('Ottawa.');
-    expect(calls.surface.at(-1)?.key).toMatch(/^local-answer-/);
-    expect(texts(act.render(env('maximum')))).toEqual(['Answered']);
-    expect(sheetText(act)).toEqual(['Ottawa.']);
+    expect(act.chat()).toMatchObject({ phase: 'answer', answer: 'Ottawa.', turns: 2 });
+    expect(calls.surface).toEqual([]);
+    expect(calls.open).toBe(0);
 
     reply = deferred();
     h.bridge.localAsk.mockImplementation(() => reply.promise);
@@ -409,23 +399,21 @@ describe('LocalActivity', () => {
     emit('local-delta', { id, text: 'Ottawa is' });
     await act.action('stop', undefined);
     expect(h.bridge.localCancel).toHaveBeenCalledWith(id);
-    expect(act.status().summary).toBe('Ottawa is');
+    expect(act.chat()).toMatchObject({ phase: 'answer', answer: 'Ottawa is' });
     reply.resolve({ ok: false, cancelled: true });
     await sent;
-    expect(act.status().summary).toBe('Ottawa is');
-    expect(sheetText(act)).toEqual(['Ottawa is']);
+    expect(act.chat()).toMatchObject({ phase: 'answer', answer: 'Ottawa is' });
   });
 
   it('Stop before any words ends the moment and forgets the question', async () => {
-    const { act, calls } = await boot();
+    const { act } = await boot();
     const { sent } = await ask(act);
     await act.action('stop', undefined);
     expect(h.bridge.localCancel).toHaveBeenCalledWith(askCall()[0]);
-    expect(act.status().active).toBe(false);
-    expect(calls.close).toBe(1);
+    expect(act.chat().phase).toBe('idle');
     reply.resolve({ ok: true, text: 'too late', cancelled: false });
     await sent;
-    expect(act.status().active).toBe(false);
+    expect(act.chat()).toMatchObject({ phase: 'idle', answer: '' });
 
     reply = deferred();
     h.bridge.localAsk.mockImplementation(() => reply.promise);
@@ -441,8 +429,7 @@ describe('LocalActivity', () => {
     expect(h.bridge.localCancel).toHaveBeenCalledWith(askCall()[0]);
     reply.resolve({ ok: true, text: 'Ottawa.', cancelled: false });
     await sent;
-    expect(act.status().summary).not.toBe('Ottawa.');
-    expect(act.sheet(sheetEnv)).toBeNull();
+    expect(act.chat()).toMatchObject({ phase: 'idle', answer: '', turns: 0 });
   });
 
   it('stopping the activity stops the model', async () => {
@@ -457,7 +444,8 @@ describe('LocalActivity', () => {
     const { sent } = await ask(act);
     reply.resolve({ ok: false, error: 'qwen3:1.7b is not installed. Run: ollama pull qwen3:1.7b', cancelled: false });
     await sent;
-    expect(act.status().summary).toContain('not installed');
+    expect(act.chat()).toMatchObject({ phase: 'error' });
+    expect(act.chat().error).toContain('not installed');
     reply = deferred();
     h.bridge.localAsk.mockImplementation(() => reply.promise);
     void act.action('retry', undefined);
@@ -465,66 +453,39 @@ describe('LocalActivity', () => {
     expect(askCall(1)[2]).toEqual([{ role: 'user', content: 'Capital of Canada?' }]);
   });
 
-  it('hides while no server runs, says why if asked, and shows up once one starts', async () => {
+  it('with no server, a question says why, and the card stops asking for a brain once one starts', async () => {
     resetBridge(false, { model: null, installed: false, download: 0, gpu: null, settingUp: false });
     const { act } = await boot();
-    expect(act.home()).toEqual([]);
-    expect(act.tile(sheetEnv)).toBeNull();
+    expect(act.chat().needsModel).not.toBeNull();
     const { sent } = await ask(act);
     await sent;
     expect(h.bridge.localAsk).not.toHaveBeenCalled();
-    expect(act.status().summary).toBe(clip(NO_SERVER, 60));
+    expect(act.chat().error).toBe(NO_SERVER);
     await act.action('cancel', undefined);
 
     h.bridge.localStatus.mockImplementation(async () => ({ running: true, models: MODELS }));
     await tick(30_000);
-    expect(act.home().length).toBe(1);
-    expect(act.tile(sheetEnv)).not.toBeNull();
-  });
-
-  it('renders every phase', async () => {
-    const { act } = await boot();
-    smoke(act, 'idle');
-    await act.action('ask', undefined);
-    smoke(act, 'compose');
-    const sent = act.action('send', 'Capital of Canada?');
-    await tick(0);
-    smoke(act, 'thinking');
-    emit('local-delta', { id: askCall()[0], text: 'Ottawa is the capital of Canada, on the Ottawa River in Ontario.' });
-    smoke(act, 'streaming');
-    reply.resolve({ ok: true, text: 'Ottawa.', cancelled: false });
-    await sent;
-    smoke(act, 'answer');
-    await act.action('new', undefined);
-    reply = deferred();
-    h.bridge.localAsk.mockImplementation(() => reply.promise);
-    const failed = act.action('send', 'Again?');
-    await tick(0);
-    reply.resolve({ ok: false, error: 'Lost the connection to the model.', cancelled: false });
-    await failed;
-    smoke(act, 'error');
+    expect(act.chat().needsModel).toBeNull();
   });
 });
 
-describe('the bot\'s chat', () => {
-  it('stays out of the pill, its card, Control Center and the open island', async () => {
-    const { act, calls } = await boot({}, true);
+describe("the bot's chat", () => {
+  it('stays out of the pill, Control Center and the open island', async () => {
+    const { act, calls } = await boot();
     const { sent } = await ask(act);
     expect(act.status().active).toBe(false);
-    expect(act.tile(sheetEnv)).toBeNull();
-    expect(act.sheet(sheetEnv)).toBeNull();
-    expect(act.home()).toEqual([]);
-    expect(act.chip()).toBeNull();
+    expect(act.render(env('maximum'))).toEqual([]);
     reply.resolve({ ok: true, text: 'Ottawa.', cancelled: false });
     await sent;
     expect(act.status().active).toBe(false);
     expect(calls.open).toBe(0);
+    expect(calls.close).toBe(0);
     expect(calls.surface).toEqual([]);
   });
 
   it('the bar shows it thinking, writing, then the answer, and keeps the chat for a follow-up', async () => {
     resetBridge(true, SET_UP);
-    const { act } = await boot({}, true);
+    const { act } = await boot();
     const { sent } = await ask(act);
     expect(act.chat().phase).toBe('thinking');
     expect(act.chat().question).toBe('Capital of Canada?');
@@ -535,24 +496,24 @@ describe('the bot\'s chat', () => {
     expect(act.chat()).toMatchObject({ phase: 'answer', answer: 'Ottawa.', turns: 2, brain: 'local' });
   });
 
-  it('the Claude switch asks through Ask Claude, and a new chat goes back to the local model', async () => {
+  it('the Claude switch asks Claude with the backend chosen here, and a new chat goes back to the local model', async () => {
     resetBridge(true, SET_UP);
-    h.bridge.askBackends = vi.fn(async () => ({ claudeCode: true, api: false }));
-    const { act } = await boot({}, true);
+    h.bridge.askBackends = vi.fn(async () => ({ claudeCode: true, api: true }));
+    const { act } = await boot({ backend: 'api' });
     await tick(0);
     expect(act.chat().canClaude).toBe(true);
     await act.action('brain', 'claude');
     await act.action('send', 'Capital of Canada?');
     expect(h.bridge.localAsk).not.toHaveBeenCalled();
-    expect(h.bridge.askClaude).toHaveBeenCalledWith('claude-code', [{ role: 'user', content: 'Capital of Canada?' }]);
-    expect(act.chat()).toMatchObject({ phase: 'answer', answer: 'Ottawa.', model: 'Claude', brain: 'claude' });
+    expect(h.bridge.askClaude).toHaveBeenCalledWith('api', [{ role: 'user', content: 'Capital of Canada?' }]);
+    expect(act.chat()).toMatchObject({ phase: 'answer', answer: 'Ottawa.', model: 'Claude', brain: 'claude', wait: null });
     await act.action('new', undefined);
     expect(act.chat()).toMatchObject({ phase: 'idle', brain: 'local', turns: 0 });
   });
 
   it('with no model yet it asks for a brain: what to download and how big, and Claude if it can answer', async () => {
     resetBridge(false, NOT_SET_UP);
-    const { act } = await boot({}, true);
+    const { act } = await boot();
     await tick(0);
     expect(act.chat().needsModel).toEqual({ model: 'Qwen3 4B', download: expect.stringMatching(/GB/) });
     expect(act.chat().canClaude).toBe(false);

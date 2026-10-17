@@ -14,7 +14,7 @@ use windows::Win32::System::Performance::{
     PdhAddEnglishCounterW, PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhOpenQueryW, PDH_FMT_COUNTERVALUE_ITEM_W,
     PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY,
 };
-use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+use windows::Win32::System::Power::{CallNtPowerInformation, GetSystemPowerStatus, SystemBatteryState, SYSTEM_BATTERY_STATE, SYSTEM_POWER_STATUS};
 use windows::Win32::System::SystemInformation::{GetSystemInfo, GlobalMemoryStatusEx, MEMORYSTATUSEX, SYSTEM_INFO};
 use windows::Win32::System::Threading::{GetProcessTimes, GetSystemTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 
@@ -29,6 +29,8 @@ pub struct PowerState {
     charging: bool,
     saver: bool,
     seconds_left: Option<f64>,
+    /// While it charges: how long until it is full.
+    seconds_to_full: Option<f64>,
 }
 
 pub fn power() -> PowerState {
@@ -37,14 +39,56 @@ pub fn power() -> PowerState {
         return PowerState::default();
     }
     let no_battery = s.BatteryFlag & 128 != 0 || s.BatteryFlag == 255;
+    let percent = (s.BatteryLifePercent <= 100 && !no_battery).then_some(s.BatteryLifePercent as f64);
+    let charging = s.BatteryFlag & 8 != 0;
     PowerState {
         has_battery: !no_battery,
-        percent: (s.BatteryLifePercent <= 100 && !no_battery).then_some(s.BatteryLifePercent as f64),
+        percent,
         ac: s.ACLineStatus == 1,
-        charging: s.BatteryFlag & 8 != 0,
+        charging,
         saver: s.SystemStatusFlag == 1,
         seconds_left: (s.BatteryLifeTime != u32::MAX && s.ACLineStatus != 1).then_some(s.BatteryLifeTime as f64),
+        seconds_to_full: if charging { seconds_to_full(percent) } else { forget_rate() },
     }
+}
+
+/// The charge rate, smoothed: it swings from one reading to the next.
+static RATE: Mutex<Option<f64>> = Mutex::new(None);
+
+fn forget_rate() -> Option<f64> {
+    *RATE.lock().unwrap() = None;
+    None
+}
+
+/// How long until the battery is full, from what Windows says comes in (mW) and what is
+/// stored (mWh). Windows doesn't say how much a full battery holds today (only when it was
+/// new), so the percentage gives it: a worn battery isn't counted as its new size.
+fn seconds_to_full(percent: Option<f64>) -> Option<f64> {
+    let mut b = SYSTEM_BATTERY_STATE::default();
+    let size = std::mem::size_of::<SYSTEM_BATTERY_STATE>() as u32;
+    let ok = unsafe { CallNtPowerInformation(SystemBatteryState, None, 0, Some(&mut b as *mut _ as *mut _), size) }.is_ok();
+    // A negative rate is a discharge; 0x80000000 is "unknown".
+    let fresh = b.Rate as i32 as f64;
+    if !ok || !b.Charging || fresh <= 0.0 {
+        return forget_rate();
+    }
+    let rate = {
+        let mut r = RATE.lock().unwrap();
+        let smooth = r.map_or(fresh, |old| old * 0.7 + fresh * 0.3);
+        *r = Some(smooth);
+        smooth
+    };
+    time_to_full(percent?, b.RemainingCapacity as f64, rate)
+}
+
+/// What is missing over the rate it comes in at, to the minute; None for what can't be right.
+fn time_to_full(percent: f64, stored_mwh: f64, rate_mw: f64) -> Option<f64> {
+    if !(1.0..100.0).contains(&percent) || stored_mwh <= 0.0 || rate_mw <= 0.0 {
+        return None;
+    }
+    let missing = stored_mwh * (100.0 - percent) / percent;
+    let secs = missing / rate_mw * 3600.0;
+    (secs.is_finite() && (60.0..=24.0 * 3600.0).contains(&secs)).then(|| (secs / 60.0).round() * 60.0)
 }
 
 pub fn emit_power(app: &AppHandle) {
@@ -232,4 +276,22 @@ pub async fn sys_sample(with_top: bool) -> SysSample {
     })
     .await
     .unwrap_or(SysSample { cpu: 0.0, mem_used: 0.0, mem_total: 0.0, gpu: None, top: None })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::time_to_full;
+
+    #[test]
+    fn full_in_is_what_is_missing_over_the_rate() {
+        // Half full with 25 Wh stored (so 50 Wh when full), 25 W coming in: an hour.
+        assert_eq!(time_to_full(50.0, 25_000.0, 25_000.0), Some(3600.0));
+        // To the minute.
+        assert_eq!(time_to_full(80.0, 40_000.0, 21_000.0), Some(1740.0));
+        // Full, empty readings, no charge coming in, or a day and more: nothing to say.
+        assert_eq!(time_to_full(100.0, 50_000.0, 20_000.0), None);
+        assert_eq!(time_to_full(0.0, 0.0, 20_000.0), None);
+        assert_eq!(time_to_full(50.0, 25_000.0, 0.0), None);
+        assert_eq!(time_to_full(1.0, 500.0, 1.0), None);
+    }
 }

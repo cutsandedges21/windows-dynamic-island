@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use serde::Serialize;
-use windows::core::{w, PCWSTR};
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
@@ -224,26 +224,9 @@ pub struct HttpResponse {
 /// HTTPS GET for calendar feeds and weather; capped and time-limited.
 #[tauri::command]
 pub async fn http_get(url: String, max_bytes: Option<usize>) -> Option<HttpResponse> {
-    let lower = url.to_ascii_lowercase();
-    if !lower.starts_with("https://") {
-        return None;
-    }
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .user_agent(concat!("Island/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .ok()?;
-    let resp = client.get(&url).send().await.ok()?;
-    let status = resp.status().as_u16();
-    let bytes = resp.bytes().await.ok()?;
     let cap = max_bytes.unwrap_or(2 * 1024 * 1024).min(16 * 1024 * 1024);
-    let slice = &bytes[..bytes.len().min(cap)];
-    Some(HttpResponse { status, body: String::from_utf8_lossy(slice).to_string() })
-}
-
-#[allow(dead_code)]
-fn _unused() -> PCWSTR {
-    w!("")
+    let (status, body) = crate::web::get_capped(&url, cap).await?;
+    Some(HttpResponse { status, body: String::from_utf8_lossy(&body).to_string() })
 }
 
 #[cfg(test)]

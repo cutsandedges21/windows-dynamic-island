@@ -87,6 +87,10 @@ export interface Settings {
     phonePush: boolean;
     /** The private ntfy.sh topic the phone subscribes to; made when phone pushes are first turned on. */
     phoneTopic: string;
+    /** Claude's permission pushes carry Allow and Deny buttons that answer from the phone. */
+    phoneApprove: boolean;
+    /** The second private topic those buttons post to; made when phoneApprove is first turned on. */
+    phoneReplyTopic: string;
   };
   privacy: {
     clipboardContent: boolean;
@@ -170,6 +174,8 @@ export function defaultSettings(): Settings {
       autoUpdate: true,
       phonePush: false,
       phoneTopic: '',
+      phoneApprove: false,
+      phoneReplyTopic: '',
     },
     privacy: { clipboardContent: true, screenshotPreview: true },
   };
@@ -217,6 +223,12 @@ export function migrate(saved: unknown): Settings {
     for (const o of m.options) if (o.type === 'secret') delete merged.options[o.key];
     if (!['high', 'medium', 'low'].includes(merged.priority)) merged.priority = def.priority;
     out.activities.config[m.id] = merged;
+  }
+  // 0.3.0: Ask Claude's choice of backend moved into the bot's chat (Local AI's entry); its key keeps its name.
+  const askOpts = isObj(savedCfg.ask) && isObj(savedCfg.ask.options) ? savedCfg.ask.options : null;
+  const localOpts = isObj(savedCfg.local) && isObj(savedCfg.local.options) ? savedCfg.local.options : null;
+  if (askOpts && (askOpts.backend === 'api' || askOpts.backend === 'claude-code') && !(localOpts && 'backend' in localOpts) && out.activities.config.local) {
+    out.activities.config.local.options.backend = askOpts.backend;
   }
   // Order: saved order of known ids, then any new activities in catalog order.
   const known = new Set(CATALOG.map((m) => m.id));

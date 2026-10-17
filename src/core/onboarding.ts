@@ -30,7 +30,7 @@ export const USES: Option<Use>[] = [
 const USE_EXTRAS: Record<Use, string[]> = {
   school: [],
   work: [],
-  coding: ['claude', 'ask', 'servers'],
+  coding: ['claude', 'servers'],
   gaming: ['game'],
   media: [],
   calls: ['calls'],
@@ -110,10 +110,13 @@ export interface Answers {
 export const HELPERS = ['sound', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'phone'];
 
 /** Grid order: what you act on first, then what you glance at, then occasional helpers. */
-const GRID_ORDER = ['claude', 'local', 'ask', 'music', 'calendar', 'weather', 'timer', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'sound', 'downloads', 'land', 'screenshots', 'clipboard'];
+const GRID_ORDER = ['claude', 'music', 'calendar', 'weather', 'timer', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'sound', 'downloads', 'land', 'screenshots', 'clipboard'];
+
+/** The bot's brain: switched on by the AI step, never a tile (the bot is the way in). */
+const BRAIN = 'local';
 
 /** Activities the setup switches on or off. The rest (integrations with keys, Quick Actions) keep their state. */
-const MANAGED = new Set([...GRID_ORDER, ...HELPERS]);
+const MANAGED = new Set([...GRID_ORDER, ...HELPERS, BRAIN]);
 
 export interface Plan {
   /** Tiles on the grid, in this order. */
@@ -127,16 +130,12 @@ export interface Plan {
 export function planActivities(a: Answers, facts: Facts): Plan {
   const offered = new Set(glanceChoices(facts).map((g) => g.id));
   const wanted = new Set([...a.glance.filter((id) => offered.has(id)), ...a.uses.flatMap((u) => USE_EXTRAS[u])]);
-  if (!facts.claudeCode) {
-    wanted.delete('claude');
-    wanted.delete('ask');
-  }
-  if (a.ai) wanted.add('local');
+  if (!facts.claudeCode) wanted.delete('claude');
   const picked = GRID_ORDER.filter((id) => wanted.has(id));
   const helpers = HELPERS.filter((id) => id !== 'battery' || facts.laptop);
   // A Mac switches on only what it can run yet.
   const here = (id: string) => availableHere(id, facts.platform ?? 'windows');
-  const enabled = [...new Set([...picked, ...helpers])].filter(here);
+  const enabled = [...new Set([...picked, ...helpers, ...(a.ai ? [BRAIN] : [])])].filter(here);
   return { picked: picked.filter(here), enabled, hidden: enabled.filter((id) => !picked.includes(id)) };
 }
 
@@ -159,8 +158,6 @@ export function applyPlan(s: Settings, plan: Plan, city: string): Settings {
 const PREVIEW_CELLS: Record<string, [number, number]> = {
   music: [2, 2],
   claude: [2, 1],
-  local: [2, 1],
-  ask: [2, 1],
   calendar: [2, 1],
   weather: [2, 1],
   game: [2, 1],

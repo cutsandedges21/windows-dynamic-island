@@ -29,7 +29,15 @@ export interface PermissionCard {
   input: unknown;
   cwd: string;
   at: number;
+  /**
+   * A question held before Claude Code asks it (its PreToolUse): the chat shows nothing until
+   * the island answers or lets it go. Answering there is what works in the VS Code extension too.
+   */
+  early?: boolean;
 }
+
+/** How long a question the island held counts as already seen, when Claude Code asks it after all. */
+const EARLY_MS = 10 * 60_000;
 
 /** A finished turn whose Stop hook waits for a reply typed in the island. */
 export interface ReplyHold {
@@ -89,6 +97,8 @@ export class HookState {
   readonly asks = new Map<string, { questions: AskQuestion[]; at: number }>();
   /** Each chat's final message, straight from the Stop hook. */
   readonly lastMessage = new Map<string, { text: string; at: number }>();
+  /** Chats whose question the island held in PreToolUse, and when. */
+  readonly earlyAsked = new Map<string, number>();
   lastEventAt = 0;
 
   /** Folds one event in; returns what kind of moment it was. */
@@ -107,6 +117,12 @@ export class HookState {
           if (ev.tool_name === 'AskUserQuestion') {
             const questions = questionsOf(ev.tool_input);
             if (questions.length) this.asks.set(sid, { questions, at: now });
+            // island-hook waits on a question here: the island answers it before Claude Code asks.
+            if (ev.request_id) {
+              this.cards.push({ requestId: ev.request_id, sessionId: sid, tool: 'AskUserQuestion', input: ev.tool_input ?? null, cwd: ev.cwd ?? '', at: now, early: true });
+              this.earlyAsked.set(sid, now);
+              return 'permission';
+            }
           }
         }
         return 'tool';
@@ -115,6 +131,7 @@ export class HookState {
           this.current.delete(sid);
           this.asks.delete(sid);
           this.notes.delete(sid);
+          this.earlyAsked.delete(sid);
         }
         // A tool ran, so any card for this session was answered (here or in the terminal).
         this.cards = this.cards.filter((c) => c.sessionId !== sid);
@@ -131,6 +148,7 @@ export class HookState {
           this.current.delete(sid);
           this.asks.delete(sid);
           this.notes.delete(sid);
+          this.earlyAsked.delete(sid);
           this.cards = this.cards.filter((c) => c.sessionId !== sid);
           // A new turn ended: an older reply window for this chat is stale.
           this.holds = this.holds.filter((h) => h.sessionId !== sid);
@@ -157,7 +175,14 @@ export class HookState {
   private forget(sid: string): void {
     this.asks.delete(sid);
     this.notes.delete(sid);
+    this.earlyAsked.delete(sid);
     this.holds = this.holds.filter((h) => h.sessionId !== sid);
+  }
+
+  /** The island held this chat's question already (and let it go to the chat, or it ran out). */
+  askedEarly(sid: string, now = Date.now()): boolean {
+    const at = this.earlyAsked.get(sid);
+    return at !== undefined && now - at < EARLY_MS;
   }
 
   take(requestId: string): PermissionCard | null {

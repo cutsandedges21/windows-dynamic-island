@@ -2,8 +2,9 @@
 //
 // `\\.\pipe\island-<sid>`, one instance per connection. Every hook event is
 // forwarded to the island as `hook`; lines marked {"island":"activity"} become
-// `external-activity` (the activity API for other programs). PermissionRequest
-// and Stop keep their connection open until the island answers.
+// `external-activity` (the activity API for other programs). PermissionRequest,
+// Stop and AskUserQuestion's PreToolUse keep their connection open until the
+// island answers.
 //
 // Claude Code is never blocked by us:
 //   * island-hook gives the connection 300 ms and exits cleanly if we are closed;
@@ -149,9 +150,11 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
     }
     let event = payload.get("hook_event_name").and_then(Value::as_str).unwrap_or_default().to_string();
     let session: String = payload.get("session_id").and_then(Value::as_str).unwrap_or("").chars().take(8).collect();
-    let (limit, window) = match event.as_str() {
-        "PermissionRequest" => (DECISION_TIMEOUT, DECISION_TIMEOUT),
-        "Stop" => (REPLY_MAX, REPLY_DEFAULT),
+    let tool = payload.get("tool_name").and_then(Value::as_str).unwrap_or_default().to_string();
+    let (limit, window) = match (event.as_str(), tool.as_str()) {
+        // A question waits in the island before Claude Code asks it (see island-hook's waits_for).
+        ("PermissionRequest", _) | ("PreToolUse", "AskUserQuestion") => (DECISION_TIMEOUT, DECISION_TIMEOUT),
+        ("Stop", _) => (REPLY_MAX, REPLY_DEFAULT),
         _ => {
             crate::log::line(format!("hook {event} session={session}"));
             let _ = app.emit_to(ISLAND, "hook", payload);

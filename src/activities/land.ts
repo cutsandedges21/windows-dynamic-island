@@ -1,20 +1,23 @@
 // Land: send files to the other computers on this network that run Island, like AirDrop.
 // Drop files on the island and it opens on Land's card: the files, the computers nearby,
 // and Send. The other computer's user accepts or declines; nothing arrives without that.
+// Text goes the same way: paste a link or a note in the card, pick who, Send; the other
+// island shows it with Copy (and Open, for a link). Any phone gets them too: "Send to a
+// phone" shows a QR code its camera opens in the browser (src-tauri/src/land/share.rs).
 // Finding computers, the encryption and the transfers are Rust (src-tauri/src/land.rs);
 // this keeps what the island shows: the files waiting to go, who is around, the transfers.
 
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
-import { baseName, bytes, clip, percent, rate } from '../core/format';
-import { native, type LandFriend, type LandFriendAsk, type LandPeer, type LandStaged, type LandTransfer } from '../core/native';
+import { baseName, bytes, clip, clock, percent, rate } from '../core/format';
+import { native, type LandFriend, type LandFriendAsk, type LandPeer, type LandStaged, type LandTransfer, type ShareInfo } from '../core/native';
 import type { PetSignal } from '../core/pet';
 import type { Seg } from '../core/segments';
-import type { Block, Person, SheetRow, SheetView, Tile } from '../core/sheet';
+import type { Block, Person, SheetButton, SheetRow, SheetView, Tile } from '../core/sheet';
 import { platform } from '../core/platform';
 import { hiddenNow } from '../core/settings';
 import { BaseActivity } from './base';
 
-type Options = { visible: boolean; name: string; anywhere: boolean; relay: string };
+type Options = { visible: boolean; name: string; anywhere: boolean; tile: boolean };
 
 /** A transfer as the island keeps it: Rust's report, plus timing and a smoothed speed. */
 export interface Live extends LandTransfer {
@@ -36,6 +39,8 @@ const SCAN_MS = 4000;
 const ONLINE_MS = 20000;
 /** How long the other side has to accept (land.rs ASK_FOR). */
 const ASK_MS = 120000;
+/** How long a phone share works (land/share.rs SHARE_FOR). */
+const SHARE_MS = 15 * 60000;
 /** Land's first start says what it is this long. */
 export const INTRO_MS = 15000;
 /** Card lines for files and transfers before "+N more". */
@@ -64,19 +69,32 @@ export function osLabel(os: string): string {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** "photo.jpg", "Trip", or "3 files". */
-export function what(t: Pick<LandTransfer, 'items' | 'count'>): string {
+/** The longest text one send carries (land/transfer.rs MAX_TEXT). */
+export const MAX_TEXT = 20_000;
+
+/** One web address and nothing else: it can be opened. */
+export function isLink(text: string): boolean {
+  return /^https?:\/\/\S+$/i.test(text.trim());
+}
+
+/** "photo.jpg", "Trip", "3 files", or for text "a link" / "a note". */
+export function what(t: Pick<LandTransfer, 'items' | 'count' | 'text'>): string {
+  if (t.text) return isLink(t.text) ? 'a link' : 'a note';
   if (t.items.length === 1) return t.items[0].name;
   return plural(t.count, 'file');
 }
 
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 export class LandActivity extends BaseActivity {
   private me: { id: string; name: string; visible: boolean } | null = null;
   private error: string | null = null;
-  /** Why the relay setting is not used (n0's relays are, instead). */
-  private relayError: string | null = null;
   private peers: LandPeer[] = [];
   private staged: LandStaged[] = [];
+  /** Text to send instead of files (pasted or typed in the card). */
+  private stagedText: string | null = null;
+  /** What a phone can fetch right now: its QR code, and what it opened. */
+  private share: (ShareInfo & { opened: number; last: string | null }) | null = null;
   /** Devices picked to send to. */
   private readonly picked = new Set<string>();
   private readonly transfers = new Map<string, Live>();
@@ -103,6 +121,7 @@ export class LandActivity extends BaseActivity {
     this.listen<LandTransfer>('land-transfer', (t) => this.onTransfer(t));
     this.listen<LandFriendAsk>('land-friend-ask', (a) => this.onFriendAsk(a));
     this.listen<LandFriend[]>('land-friends', (list) => this.onFriends(list));
+    this.listen<{ state: string; name?: string; opened?: number }>('land-share', (e) => this.onShare(e));
     this.every(1000, () => this.tick());
     if (native.demo) {
       this.me = { id: 'demo', name: 'This PC', visible: true };
@@ -123,17 +142,16 @@ export class LandActivity extends BaseActivity {
 
   private opts(): Options {
     const o = this.ctx.options<Partial<Options>>();
-    return { visible: o.visible !== false, name: typeof o.name === 'string' ? o.name : '', anywhere: o.anywhere !== false, relay: typeof o.relay === 'string' ? o.relay : '' };
+    return { visible: o.visible !== false, name: typeof o.name === 'string' ? o.name : '', anywhere: o.anywhere !== false, tile: o.tile === true };
   }
 
   private async connect(): Promise<void> {
     const o = this.opts();
-    const r = await native.landStart(o.name.trim() || null, o.visible, o.anywhere, o.relay.trim() || null);
+    const r = await native.landStart(o.name.trim() || null, o.visible, o.anywhere);
     if (!this.alive) return;
     if (r.ok) {
       this.me = { id: r.value.id, name: r.value.name, visible: r.value.visible };
       this.error = null;
-      this.relayError = r.value.relayError ?? null;
       this.friends = [...(r.value.friends ?? [])];
       this.onPeers(r.value.peers);
       // Windows asks to let Island through the firewall (a Mac, to find devices on the network)
@@ -220,7 +238,8 @@ export class LandActivity extends BaseActivity {
       return;
     }
     this.ctx.alert('shake');
-    this.ctx.notify(`${t.peer.name} wants to send you files`, `${what(t)} · ${bytes(t.total)}. Accept or decline in the island.`);
+    if (t.text) this.ctx.notify(`${t.peer.name} sent you ${what(t)}`, `${clip(t.text.replace(/\s+/g, ' '), 120)} · Copy it in the island.`);
+    else this.ctx.notify(`${t.peer.name} wants to send you files`, `${what(t)} · ${bytes(t.total)}. Accept or decline in the island.`);
   }
 
   /** Someone asks to be friends: the island asks (urgent), and Windows too; later events clear it. */
@@ -241,6 +260,18 @@ export class LandActivity extends BaseActivity {
     this.ctx.update();
   }
 
+  /** A phone opened a shared file, or the share ended. */
+  private onShare(e: { state: string; name?: string; opened?: number }): void {
+    if (!this.share) return;
+    if (e.state === 'ended') this.share = null;
+    else if (e.state === 'opened') {
+      this.share.opened = e.opened ?? this.share.opened + 1;
+      this.share.last = e.name ?? null;
+      this.saw('land-sent', 'land:phone');
+    }
+    this.ctx.update();
+  }
+
   private finished(t: Live): void {
     // Declining one yourself needs no announcement.
     if (t.dir === 'in' && t.state === 'declined' && t.error === 'Declined.') return;
@@ -258,6 +289,10 @@ export class LandActivity extends BaseActivity {
 
   private tick(): void {
     const now = Date.now();
+    if (this.share && now >= this.share.expires) {
+      this.share = null;
+      this.ctx.update();
+    }
     if (this.note && now - this.note.at > 8000) {
       this.note = null;
       this.ctx.update();
@@ -344,7 +379,7 @@ export class LandActivity extends BaseActivity {
 
   private endText(t: Live): string {
     const name = t.peer.name;
-    if (t.state === 'done') return t.dir === 'out' ? `Sent to ${name}` : `${what(t)} from ${name}`;
+    if (t.state === 'done') return t.dir === 'out' ? `Sent to ${name}` : `${cap(what(t))} from ${name}`;
     return t.error ?? (t.state === 'declined' ? `${name} declined` : t.state === 'cancelled' ? 'Cancelled' : 'Failed');
   }
 
@@ -384,6 +419,9 @@ export class LandActivity extends BaseActivity {
     const end = this.justEnded(Date.now());
     if (end) return { active: true, weight: 'foreground', summary: this.endText(end) };
     if (this.introducing(Date.now())) return { active: true, weight: 'foreground', summary: 'Land is on' };
+    if (this.share) return { active: true, weight: 'background', summary: 'Sharing with a phone' };
+    // Always on the pill as a little icon (Moss): hover it and press Ctrl+V to send what you copied.
+    if (this.me || native.demo) return { active: true, weight: 'background', chipOnly: true, summary: 'Land · hover here and press Ctrl+V to send what you copied' };
     return { active: false };
   }
 
@@ -394,6 +432,9 @@ export class LandActivity extends BaseActivity {
     if (fr) return { icon: 'user', label: clip(fr.from.name, 14), tone: 'accent', pulse: true };
     const lead = this.lead();
     if (lead) return { icon: lead.dir === 'out' ? 'upload' : 'download', label: this.progressText(lead), tone: 'accent' };
+    if (this.share) return { icon: 'phone', label: clock(Math.max(0, this.share.expires - Date.now())), tone: 'accent' };
+    // At rest: the icon alone; a click opens Land's card.
+    if (this.me || native.demo) return { icon: 'land', label: '', tone: 'muted', action: 'card' };
     return null;
   }
 
@@ -406,11 +447,10 @@ export class LandActivity extends BaseActivity {
         { t: 'text', key: 'who', text: ask.peer.name, weight: 'semibold', prio: 1, min: 50 },
       ];
       if (compact) return segs;
-      if (!env.vertical) segs.push({ t: 'text', key: 'what', text: `wants to send ${what(ask)}`, tone: 'muted', prio: 4, min: 60 });
-      segs.push(
-        { t: 'button', key: 'no', icon: 'x', label: env.vertical ? undefined : 'Decline', action: 'decline', arg: ask.id, style: 'secondary', side: 'end', prio: 2, tip: 'Decline' },
-        { t: 'button', key: 'yes', icon: 'check', label: env.vertical ? undefined : 'Accept', action: 'accept', arg: ask.id, style: 'primary', side: 'end', prio: 1, tip: 'Accept: save to Downloads' },
-      );
+      if (!env.vertical) segs.push({ t: 'text', key: 'what', text: ask.text ? `sent you ${what(ask)}` : `wants to send ${what(ask)}`, tone: 'muted', prio: 4, min: 60 });
+      segs.push({ t: 'button', key: 'no', icon: 'x', label: env.vertical ? undefined : 'Decline', action: 'decline', arg: ask.id, style: 'secondary', side: 'end', prio: 2, tip: 'Decline' });
+      if (ask.text) segs.push({ t: 'button', key: 'yes', icon: 'copy', label: env.vertical ? undefined : 'Copy', action: 'accept-copy', arg: ask.id, style: 'primary', side: 'end', prio: 1, tip: 'Copy it' });
+      else segs.push({ t: 'button', key: 'yes', icon: 'check', label: env.vertical ? undefined : 'Accept', action: 'accept', arg: ask.id, style: 'primary', side: 'end', prio: 1, tip: 'Accept: save to Downloads' });
       return segs;
     }
 
@@ -449,6 +489,16 @@ export class LandActivity extends BaseActivity {
     }
 
     const end = this.justEnded(env.now);
+    if (!end && !this.introducing(env.now) && this.share) {
+      const segs: Seg[] = [{ t: 'icon', key: 'icon', icon: 'phone', tone: 'accent', prio: 0 }];
+      if (env.vertical) return segs;
+      segs.push({ t: 'text', key: 'share', text: compact ? 'Phone' : 'Sharing with a phone', weight: 'semibold', prio: 1 });
+      if (!compact) {
+        segs.push({ t: 'text', key: 'left', text: clock(Math.max(0, this.share.expires - env.now)), tone: 'muted', side: 'end', prio: 3 });
+        if (env.interactive) segs.push({ t: 'button', key: 'qr', icon: 'land', label: env.level === 'maximum' ? 'Show code' : undefined, action: 'card', style: 'secondary', side: 'end', prio: 2, tip: 'Show the QR code' });
+      }
+      return segs;
+    }
     if (!end && this.introducing(env.now)) {
       const segs: Seg[] = [{ t: 'icon', key: 'icon', icon: 'land', tone: 'accent', prio: 0 }];
       if (env.vertical) return segs;
@@ -456,7 +506,13 @@ export class LandActivity extends BaseActivity {
       if (!compact) segs.push({ t: 'text', key: 'how', text: 'drop files here to send them', tone: 'muted', prio: 4, min: 80 });
       return segs;
     }
-    if (!end) return [];
+    if (!end) {
+      // At rest Land is its icon; it is the pill's own content only when nothing else is on it.
+      if (!this.me && !native.demo) return [];
+      const rest: Seg[] = [{ t: 'icon', key: 'rest', icon: 'land', tone: 'muted', prio: 0, tip: 'Land' }];
+      if (!compact && !env.vertical) rest.push({ t: 'text', key: 'hint', text: 'Ctrl+V here to send what you copied', tone: 'muted', size: 'sm', prio: 3, min: 80 });
+      return rest;
+    }
     const good = end.state === 'done';
     const segs: Seg[] = [
       { t: 'icon', key: 'icon', icon: good ? 'check' : end.state === 'cancelled' ? 'x' : 'alert', tone: good ? 'good' : end.state === 'cancelled' ? 'muted' : 'bad', prio: 0 },
@@ -482,6 +538,8 @@ export class LandActivity extends BaseActivity {
 
   tile(env: SheetEnv): Tile | null {
     void env;
+    // Land's place is the icon on the pill; the tile only for those who switch it on.
+    if (!this.opts().tile) return null;
     const lead = this.lead();
     if (lead) {
       const f = this.frac(lead);
@@ -496,7 +554,7 @@ export class LandActivity extends BaseActivity {
     const n = this.peers.length;
     const files = this.stagedFiles();
     const waiting = this.waitingCount();
-    const value = files ? `${plural(files, 'file')} ready` : this.error ? 'Off' : waiting ? `${waiting} waiting` : n ? `${n} nearby` : 'No one nearby';
+    const value = this.share ? 'Sharing with a phone' : files ? `${plural(files, 'file')} ready` : this.stagedText ? 'Text ready' : this.error ? 'Off' : waiting ? `${waiting} waiting` : n ? `${n} nearby` : 'No one nearby';
     return { key: 'land', tone: 'accent', action: 'card', tip: 'Send files to a computer nearby', body: { k: 'stat', icon: 'land', label: 'Land', value, sub: files ? 'Pick a device' : 'Drop files on the island' } };
   }
 
@@ -512,8 +570,27 @@ export class LandActivity extends BaseActivity {
     return null;
   }
 
+  /** Someone sent text: what it says, and Copy, Open (a link) or Decline. */
+  private textCard(t: Live, text: string, env: SheetEnv): SheetView {
+    const link = isLink(text);
+    const blocks: Block[] = [
+      { t: 'head', key: 'head', icon: 'land', tone: 'accent', title: `${t.peer.name} sent you ${what(t)}`, sub: osLabel(t.peer.os) || undefined },
+      { t: 'text', key: 'text', text, bubble: true, lines: 8 },
+    ];
+    if (t.expires) blocks.push({ t: 'countdown', key: 'left', until: t.expires, total: ASK_MS, tone: 'accent' });
+    if (env.interactive) {
+      const items: SheetButton[] = [{ key: 'no', label: 'Decline', icon: 'x', action: 'decline', arg: t.id, style: 'secondary' }];
+      if (link) items.push({ key: 'open', label: 'Open', icon: 'external', action: 'accept-open', arg: t.id, style: 'secondary' });
+      items.push({ key: 'yes', label: 'Copy', icon: 'copy', action: 'accept-copy', arg: t.id, style: 'primary' });
+      blocks.push({ t: 'buttons', key: 'answer', align: 'fill', items });
+    }
+    blocks.push({ t: 'text', key: 'where', text: 'Sent encrypted. Nothing is copied or opened until you choose.', tone: 'dim', size: 'sm' });
+    return { key: `ask/${t.id}`, blocks };
+  }
+
   /** Someone wants to send files here: who, what, and Accept or Decline. */
   private askCard(t: Live, env: SheetEnv): SheetView {
+    if (t.text) return this.textCard(t, t.text, env);
     const blocks: Block[] = [{ t: 'head', key: 'head', icon: 'land', tone: 'accent', title: `${t.peer.name} wants to send you`, sub: `${what(t)} · ${bytes(t.total)}` }];
     const rows: SheetRow[] = t.items.slice(0, FILE_ROWS).map((it, i) => ({
       key: `f${i}`,
@@ -597,12 +674,28 @@ export class LandActivity extends BaseActivity {
     };
   }
 
+  /** Sharing with a phone: the code to scan, the address, what was opened, and Stop. */
+  private shareCard(s: NonNullable<LandActivity['share']>, env: SheetEnv): SheetView {
+    const what = s.count ? `${plural(s.count, 'file')} · ${bytes(s.bytes)}` : 'A note';
+    const blocks: Block[] = [
+      { t: 'head', key: 'head', icon: 'phone', tone: 'accent', title: 'Scan with your phone', sub: `${what} · works for 15 minutes`, buttons: [{ key: 'back', icon: 'grid', action: 'island:card-close', style: 'ghost', tip: 'Control Center' }] },
+      { t: 'qr', key: 'qr', size: s.size, cells: s.qr, caption: s.url },
+      { t: 'countdown', key: 'left', until: s.expires, total: SHARE_MS, tone: 'accent' },
+      { t: 'text', key: 'how', text: "Point the phone's camera at the code and tap the link. The phone must be on the same Wi-Fi as this computer.", tone: 'muted', size: 'sm' },
+    ];
+    if (s.opened) blocks.push({ t: 'text', key: 'opened', text: s.last ? `A phone opened ${s.last}.` : 'A phone opened it.', tone: 'good', size: 'sm' });
+    if (env.interactive) blocks.push({ t: 'buttons', key: 'stop', align: 'fill', items: [{ key: 'stop', label: 'Stop sharing', icon: 'stop', action: 'share-stop', style: 'secondary' }] });
+    blocks.push({ t: 'text', key: 'note', text: "Not on the phone? Some Wi-Fi (schools, cafés) keeps devices from seeing each other. Anyone on this Wi-Fi who knows the address could open it too, so stop once it's done.", tone: 'dim', size: 'sm' });
+    return { key: 'share', wide: true, blocks };
+  }
+
   /** The Land card in the open island: the files, who is nearby, Send, and the transfers. */
   private card(env: SheetEnv): SheetView {
+    if (this.share && this.share.expires > env.now) return this.shareCard(this.share, env);
     const files = this.stagedFiles();
     const size = this.stagedBytes();
     const n = this.peers.length;
-    const sub = files ? `${plural(files, 'file')} · ${bytes(size)}` : n ? `${plural(n, 'computer')} nearby` : 'Send files to a computer nearby';
+    const sub = files ? `${plural(files, 'file')} · ${bytes(size)}` : this.stagedText ? `${cap(what({ items: [], count: 0, text: this.stagedText }))} to send` : n ? `${plural(n, 'computer')} nearby` : 'Send files to a computer nearby';
     const head: Block = {
       t: 'head',
       key: 'head',
@@ -611,7 +704,7 @@ export class LandActivity extends BaseActivity {
       title: 'Land',
       sub,
       buttons: [
-        ...(this.staged.length ? [{ key: 'clear', icon: 'x', action: 'clear', style: 'ghost' as const, tip: 'Remove the files' }] : []),
+        ...(this.staged.length || this.stagedText ? [{ key: 'clear', icon: 'x', action: 'clear', style: 'ghost' as const, tip: this.stagedText ? 'Remove the text' : 'Remove the files' }] : []),
         { key: 'back', icon: 'grid', action: 'island:card-close', style: 'ghost' as const, tip: 'Control Center' },
       ],
     };
@@ -628,8 +721,12 @@ export class LandActivity extends BaseActivity {
       }));
       if (this.staged.length > FILE_ROWS) rows.push({ key: 'more', title: `and ${plural(this.staged.length - FILE_ROWS, 'more item')}`, tone: 'muted' });
       blocks.push({ t: 'rows', key: 'files', items: rows });
+    } else if (this.stagedText) {
+      const link = isLink(this.stagedText);
+      blocks.push({ t: 'rows', key: 'files', items: [{ key: 'text', icon: link ? 'globe' : 'edit', title: clip(this.stagedText.replace(/\s+/g, ' '), 90), detail: link ? 'Link' : `Note · ${plural(this.stagedText.length, 'character')}`, button: { key: 'rm', icon: 'x', action: 'clear', style: 'ghost', tip: 'Remove' } }] });
     } else {
-      blocks.push({ t: 'text', key: 'hint', text: 'Drag files or folders onto the island, then pick who gets them.', tone: 'muted', size: 'sm' });
+      blocks.push({ t: 'text', key: 'hint', text: 'Drag files or folders onto the island, or paste a link or a note below, then pick who gets it.', tone: 'muted', size: 'sm' });
+      blocks.push({ t: 'input', key: 'text', placeholder: 'Paste a link or type a note, then Enter', action: 'stage-text' });
     }
 
     const targets = new Set(this.targets().map((p) => p.id));
@@ -640,19 +737,20 @@ export class LandActivity extends BaseActivity {
       : 'Looking for computers nearby. The other one needs Island open, on the same network. Friends on other networks show here too once you add them (Activities › Land).';
     blocks.push({ t: 'people', key: 'peers', items: people, empty });
 
-    if (this.staged.length) {
+    if (this.staged.length || this.stagedText) {
       const bad = this.staged.some((s) => s.error);
       const count = targets.size;
       const pick = this.friends.length ? 'Pick who gets them' : 'Pick a computer';
       const label = count > 1 ? `Send to ${count} computers` : count === 1 ? `Send to ${clip(all.find((p) => targets.has(p.id))!.name, 22)}` : all.length ? pick : 'Send';
       blocks.push({ t: 'buttons', key: 'send', align: 'fill', items: [{ key: 'send', label, icon: 'send', action: 'send', style: 'primary', disabled: !env.interactive || bad || count === 0 }] });
+      // Any phone, no app: a QR code its camera opens.
+      blocks.push({ t: 'buttons', key: 'phone', align: 'fill', items: [{ key: 'phone', label: 'Send to a phone', icon: 'phone', action: 'share-phone', style: 'secondary', disabled: !env.interactive || bad || native.demo }] });
     }
     if (this.note) blocks.push({ t: 'text', key: 'note', text: this.note.text, tone: 'bad', size: 'sm' });
 
     const list = [...this.transfers.values()].sort((a, b) => b.since - a.since).slice(0, TRANSFER_ROWS);
     if (list.length) blocks.push({ t: 'rows', key: 'transfers', items: list.map((t) => this.transferRow(t)) });
 
-    if (this.relayError) blocks.push({ t: 'text', key: 'relay', text: `${this.relayError} Friends far away go through n0's free relays instead (Activities › Land › Your relay).`, tone: 'bad', size: 'sm' });
     if (this.me) {
       const me = `Others see this computer as “${this.me.name}”.`;
       blocks.push({ t: 'text', key: 'me', text: this.me.visible ? me : `${me} It doesn't take files (Activities › Land).`, tone: 'dim', size: 'sm' });
@@ -706,6 +804,7 @@ export class LandActivity extends BaseActivity {
     else if (t.state === 'sending' || t.state === 'receiving') detail = `${percent(this.frac(t) ?? 0)} · ${bytes(t.done)} of ${bytes(t.total)}${t.speed >= 1 ? ` · ${rate(t.speed)}` : ''}${how}`;
     // The connection dropped after Accept: what arrived is kept, and it goes on by itself.
     else if (t.state === 'paused') detail = `${percent(this.frac(t) ?? 0)} · ${t.error ?? 'Paused'}`;
+    else if (t.state === 'done' && t.text) detail = t.dir === 'out' ? 'Sent' : 'Received';
     else if (t.state === 'done') detail = t.dir === 'out' ? `Sent · ${bytes(t.total)}` : 'Saved to Downloads';
     else detail = t.error ?? t.state;
     const active = ACTIVE.has(t.state);
@@ -734,6 +833,12 @@ export class LandActivity extends BaseActivity {
 
   drop(paths: string[]): boolean {
     if (!this.me && !native.demo) return false;
+    // One thing at a time: dropped files take the place of text waiting to go, and of a share.
+    this.stagedText = null;
+    if (this.share) {
+      this.share = null;
+      void native.landShareStop();
+    }
     void this.stage(paths);
     this.ctx.openCard?.();
     void this.scan();
@@ -776,8 +881,61 @@ export class LandActivity extends BaseActivity {
         break;
       case 'clear':
         this.staged = [];
+        this.stagedText = null;
         this.note = null;
         break;
+      case 'share-phone': {
+        const paths = this.staged.filter((s) => !s.error).map((s) => s.path);
+        if (!paths.length && !this.stagedText) break;
+        const r = await native.landShareStart(paths, paths.length ? null : this.stagedText);
+        if (!this.alive) return;
+        if (r.ok) {
+          this.share = { ...r.value, opened: 0, last: null };
+          this.note = null;
+        } else this.note = { text: r.error, at: Date.now() };
+        break;
+      }
+      case 'share-stop':
+        this.share = null;
+        void native.landShareStop();
+        break;
+      case 'paste': {
+        // Ctrl+V on Land's icon: what was copied goes to Land's card, ready to send.
+        const pasted = await native.clipboardPaste();
+        if (!this.alive) return;
+        if (this.share) {
+          this.share = null;
+          void native.landShareStop();
+        }
+        if (pasted.files.length) {
+          this.stagedText = null;
+          this.staged = [];
+          await this.stage(pasted.files);
+        } else if (pasted.text?.trim()) {
+          await this.action('stage-text', pasted.text);
+        } else {
+          this.note = { text: 'Nothing to send yet: copy a link, a note or files, then hover Land and press Ctrl+V.', at: Date.now() };
+        }
+        this.ctx.openCard?.();
+        void this.scan();
+        void this.checkOnline();
+        break;
+      }
+      case 'stage-text': {
+        const text = typeof arg === 'string' ? arg.trim() : '';
+        if (!text) break;
+        if (text.length > MAX_TEXT) {
+          this.note = { text: `That is more than ${MAX_TEXT.toLocaleString('en-US')} characters. Send it as a file instead.`, at: Date.now() };
+          break;
+        }
+        // One thing at a time: text takes the place of files waiting to go.
+        this.staged = [];
+        this.stagedText = text;
+        this.note = null;
+        void this.scan();
+        void this.checkOnline();
+        break;
+      }
       case 'send':
         await this.send();
         break;
@@ -786,6 +944,16 @@ export class LandActivity extends BaseActivity {
         if (native.demo) this.demoAnswer(id, name === 'accept');
         else await native.landAnswer(id, name === 'accept');
         break;
+      case 'accept-copy':
+      case 'accept-open': {
+        // Text: taking it is copying (or opening) it.
+        const text = this.transfers.get(id)?.text;
+        if (!text) break;
+        if (!native.demo) await native.landAnswer(id, true);
+        if (name === 'accept-open' && isLink(text)) void native.openUrl(text.trim());
+        else void native.clipboardSetText(text);
+        break;
+      }
       case 'cancel':
         if (!native.demo) await native.landCancel(id);
         break;
@@ -807,9 +975,10 @@ export class LandActivity extends BaseActivity {
     this.ctx.update();
   }
 
-  /** Every picked computer gets the files; the list empties once they are on their way. */
+  /** Every picked computer gets the files (or the text); the list empties once they are on their way. */
   private async send(): Promise<void> {
     const to = this.targets();
+    if (this.stagedText) return this.sendText(to, this.stagedText);
     const paths = this.staged.filter((s) => !s.error).map((s) => s.path);
     if (!to.length || !paths.length) return;
     if (native.demo) {
@@ -825,6 +994,18 @@ export class LandActivity extends BaseActivity {
     if (!this.alive) return;
     if (failures.length) this.note = { text: failures.join(' '), at: Date.now() };
     if (failures.length < to.length) this.staged = [];
+  }
+
+  private async sendText(to: LandPeer[], text: string): Promise<void> {
+    if (!to.length || native.demo) return;
+    const failures: string[] = [];
+    for (const p of to) {
+      const r = await native.landSendText(p.id, text);
+      if (!r.ok) failures.push(to.length > 1 ? `${p.name}: ${r.error}` : r.error);
+    }
+    if (!this.alive) return;
+    if (failures.length) this.note = { text: failures.join(' '), at: Date.now() };
+    if (failures.length < to.length) this.stagedText = null;
   }
 
   // ---------------------------------------------------------------- browser preview

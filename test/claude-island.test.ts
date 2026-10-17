@@ -52,13 +52,13 @@ const emit = (event: string, payload: unknown) => {
 };
 const tick = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
 
-type Calls = { surface: Array<{ key?: string; ms?: number; level?: string }>; log: unknown[][] };
+type Calls = { surface: Array<{ key?: string; ms?: number; level?: string }>; log: unknown[][]; push: unknown[][] };
 
 async function boot(options: Record<string, unknown> = {}, tweak: (s: ReturnType<typeof defaultSettings>) => void = () => {}) {
   const act = new ClaudeActivity();
   const settings = defaultSettings();
   tweak(settings);
-  const calls: Calls = { surface: [], log: [] };
+  const calls: Calls = { surface: [], log: [], push: [] };
   const ctx: ActivityContext = {
     id: 'claude',
     config: () => settings.activities.config.claude,
@@ -72,6 +72,7 @@ async function boot(options: Record<string, unknown> = {}, tweak: (s: ReturnType
     isOpen: () => false,
     isPrimary: () => true,
     notify: () => {},
+    push: (...a) => void calls.push.push(a),
     log: (...a) => void calls.log.push(a),
   };
   await act.start(ctx);
@@ -363,6 +364,56 @@ describe('permission and question cards', () => {
     await act.action!('answer-text:q3', 'Only formatting');
     expect(JSON.parse(lastReply()[1]).updatedInput.answers).toEqual({ 'Framework?': 'Next', 'Extras?': 'Only formatting' });
   });
+
+  // The VS Code extension keeps its own question box beside a PermissionRequest hook, so the
+  // island answers a question in its PreToolUse, before Claude Code asks it.
+  it('a question is held before Claude Code asks it, and answered from the island', async () => {
+    const { act } = await boot();
+    stubTracker(act, [session({ entrypoint: 'claude-vscode' })], { 100: [50] });
+    const questions = [{ question: 'Ship it?', options: [{ label: 'Yes' }, { label: 'Not yet' }] }];
+    emit('hook', { hook_event_name: 'PreToolUse', session_id: 'S1', request_id: 'e1', tool_name: 'AskUserQuestion', tool_input: { questions } });
+    await tick(0);
+    expect(h.native.hookReply).toHaveBeenCalledWith('e1', 'ack');
+    const card = act.sheet!(senv('urgent'));
+    expect(card?.key).toBe('ask:e1');
+    await act.action!('pick', block(card, 'choices')!.items[0].arg);
+    expect(lastReply()).toEqual(['e1', JSON.stringify({ kind: 'answer', updatedInput: { questions, answers: { 'Ship it?': 'Yes' } } })]);
+  });
+
+  it('a held question goes straight to its chat when the user is looking at it', async () => {
+    const { act } = await boot();
+    stubTracker(act, [session({})], { 100: [50] });
+    h.native.foregroundPid.mockResolvedValue(50);
+    emit('hook', { hook_event_name: 'PreToolUse', session_id: 'S1', request_id: 'e1', tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Ok?' }] } });
+    await tick(0);
+    expect(lastReply()).toEqual(['e1', 'decline']);
+    expect(act.sheet!(senv('urgent'))?.key).not.toBe('ask:e1');
+    // Claude Code then asks it in the chat; its permission hook is not shown a second time.
+    emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'p1', tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Ok?' }] } });
+    expect(lastReply()).toEqual(['p1', 'decline']);
+    expect(h.native.hookReply).not.toHaveBeenCalledWith('p1', 'ack');
+  });
+
+  it('switching to the chat lets a held question go there', async () => {
+    const { act } = await boot();
+    stubTracker(act, [session({})], { 100: [50] });
+    emit('hook', { hook_event_name: 'PreToolUse', session_id: 'S1', request_id: 'e1', tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Ok?' }] } });
+    await tick(0);
+    expect(lastReply()).toEqual(['e1', 'ack']);
+    emit('foreground', { pid: 777 });
+    expect(lastReply()).toEqual(['e1', 'ack']);
+    emit('foreground', { pid: 50 });
+    expect(lastReply()).toEqual(['e1', 'decline']);
+    expect(act.sheet!(senv('urgent'))?.key).not.toBe('ask:e1');
+  });
+
+  it('other tools still pass through PreToolUse without a card', async () => {
+    const { act } = await boot();
+    stubTracker(act, [session({})], { 100: [50] });
+    emit('hook', { hook_event_name: 'PreToolUse', session_id: 'S1', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    await tick(0);
+    expect(h.native.hookReply).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------- notifications and hover
@@ -609,5 +660,67 @@ describe('the pill', () => {
     stubTracker(act, [session({ status: 'working', label: 'Working', tone: 'working' }), session({ id: 'S2', sessionId: 'S2', pid: 200, slot: 2 })], { 100: [50], 200: [60] });
     expect(act.render(renv('compact')).map((x) => (x.t === 'text' ? x.text : x.t))).toEqual(['dot', 'Claude ×2', '1 working']);
     expect(act.render(renv('expanded'))[0]).toMatchObject({ t: 'icon', key: 'mark' });
+  });
+});
+
+// ---------------------------------------------------------------- answering from the phone
+
+describe('answering from the phone', () => {
+  const onPhone = (s: ReturnType<typeof defaultSettings>, approve = true) => {
+    s.general.phonePush = true;
+    s.general.phoneTopic = 'island-aaaaaaaaaaaaaaaaaaaaaaaa';
+    s.general.phoneApprove = approve;
+    s.general.phoneReplyTopic = 'island-bbbbbbbbbbbbbbbbbbbbbbbb';
+  };
+  const permission = (id = 'p1') => emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: id, tool_name: 'Bash', tool_input: { command: 'npm test' } });
+  const buttonsOf = (calls: { push: unknown[][] }) => (calls.push.at(-1)?.[2] as { buttons?: Array<{ label: string; reply: string }> }).buttons;
+
+  it("a permission push carries Allow and Deny, and a tap answers that request once", async () => {
+    const { act, calls } = await boot({}, onPhone);
+    stubTracker(act, [session({})], { 100: [50] });
+    permission();
+    const buttons = buttonsOf(calls)!;
+    expect(buttons.map((b) => b.label)).toEqual(['Allow', 'Deny']);
+    expect(buttons[0].reply).toMatch(/^allow [0-9a-f]{32}$/);
+    emit('phone-reply', { message: 'allow 00000000000000000000000000000000' });
+    expect(lastReply()).toEqual(['p1', 'ack']);
+    emit('phone-reply', { message: buttons[0].reply });
+    expect(lastReply()).toEqual(['p1', 'allow']);
+    // The same tap again does nothing.
+    h.native.hookReply.mockClear();
+    emit('phone-reply', { message: buttons[0].reply });
+    expect(h.native.hookReply).not.toHaveBeenCalled();
+  });
+
+  it('Deny from the phone denies', async () => {
+    const { act, calls } = await boot({}, onPhone);
+    stubTracker(act, [session({})], { 100: [50] });
+    permission();
+    emit('phone-reply', { message: buttonsOf(calls)![1].reply });
+    expect(lastReply()).toEqual(['p1', 'deny']);
+  });
+
+  it('with Windows Hello asked before Allow, the phone only gets Deny', async () => {
+    const { act, calls } = await boot({ requireHello: true }, onPhone);
+    stubTracker(act, [session({})], { 100: [50] });
+    permission();
+    expect(buttonsOf(calls)!.map((b) => b.label)).toEqual(['Deny']);
+  });
+
+  it('no buttons with the setting off, or for a request nobody waits on', async () => {
+    const off = await boot({}, (s) => onPhone(s, false));
+    stubTracker(off.act, [session({})], { 100: [50] });
+    permission();
+    expect(buttonsOf(off.calls)).toBeUndefined();
+
+    resetNative();
+    const quiet = await boot({}, (s) => {
+      onPhone(s);
+      s.general.dnd = true;
+    });
+    stubTracker(quiet.act, [session({})], { 100: [50] });
+    permission('p2');
+    expect(lastReply()).toEqual(['p2', 'decline']);
+    expect(quiet.calls.push.length === 0 || buttonsOf(quiet.calls) === undefined).toBe(true);
   });
 });

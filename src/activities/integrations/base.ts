@@ -1,5 +1,5 @@
-// The shared half of every integration activity (GitHub, Vercel, Stripe, Notion, n8n,
-// Cal.com, Resend). While the activity runs, which is while it is enabled, it asks
+// The shared half of every integration activity (GitHub, Vercel, Notion). While the
+// activity runs, which is while it is enabled, it asks
 // `integration_poll` for a snapshot on a schedule, waits longer after failures, compares each
 // snapshot with the last one and surfaces what changed, and draws the pill, the chip and the
 // service's tile in the open island. A service only says what its snapshot means: how to
@@ -170,7 +170,7 @@ export abstract class IntegrationActivity<S extends object> extends BaseActivity
     if (change.tone === 'bad') this.ctx.alert('shake');
     if (loud) this.ctx.alert('glow', change.tone);
     // The bot reacts by how it went; a payment coming in gets its own coin.
-    const reaction = change.key.startsWith('stripe:') && change.key.endsWith(':paid') ? 'payment' : change.tone === 'good' ? 'good-news' : change.tone === 'bad' ? 'bad-news' : change.tone === 'warn' ? 'warning' : 'info';
+    const reaction = change.tone === 'good' ? 'good-news' : change.tone === 'bad' ? 'bad-news' : change.tone === 'warn' ? 'warning' : 'info';
     this.saw(reaction, `${this.meta.id}:${change.key}`);
     this.ctx.update();
   }

@@ -6,7 +6,7 @@
 
 import { CATALOG_BY_ID } from './activities/catalog';
 import { bridge } from './core/bridge';
-import { leadFirst, packGrid } from './core/grid';
+import { packGrid } from './core/grid';
 import { icon } from './core/icons';
 import { activeValue } from './core/models';
 import { native } from './core/native';
@@ -368,7 +368,7 @@ function done(host: WelcomeHost): Node[] {
 /** The grid as the island will lay it out (the island's own day tile first), first page only. */
 function preview(plan: Plan): HTMLElement {
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-  const items = [{ key: 'island/day', w: 1, h: 1 }, ...leadFirst(plan.picked).map((id) => ({ key: id, ...previewCells(id) }))];
+  const items = [{ key: 'island/day', w: 1, h: 1 }, ...plan.picked.map((id) => ({ key: id, ...previewCells(id) }))];
   const slots = packGrid(items, 4, 4);
   const first = slots.filter((s) => s.page === 0);
   const grid = h('div', { class: 'w-grid' });

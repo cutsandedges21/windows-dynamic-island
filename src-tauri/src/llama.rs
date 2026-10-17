@@ -662,7 +662,7 @@ async fn ensure_plan(plan: &Plan) -> Result<u16, String> {
     let started = std::time::Instant::now();
     if let Err(why) = wait_ready(port, LOAD_LIMIT, || matches!(child.try_wait(), Ok(None))).await {
         let _ = child.kill();
-        crate::log::line("llama: failed to start".to_string());
+        crate::log::line("llama: failed to start");
         return Err(why);
     }
     crate::log::line(format!("llama: {} ready in {:.1}s{}", plan.tier.id, started.elapsed().as_secs_f32(), if plan.gpu.is_some() { " on the GPU" } else { "" }));
@@ -713,7 +713,7 @@ fn start_reaper() {
             if slot.as_ref().is_some_and(|r| r.last.elapsed() > IDLE) {
                 if let Some(mut running) = slot.take() {
                     let _ = running.child.kill();
-                    crate::log::line("llama: stopped after 5 idle minutes".to_string());
+                    crate::log::line("llama: stopped after 5 idle minutes");
                 }
             }
         }

@@ -114,6 +114,11 @@ pub fn on_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
     if event.state() != ShortcutState::Pressed {
         return;
     }
+    // Ctrl+V on Land's icon (held only while the pointer rests there).
+    if crate::overlay::is_paste(shortcut) {
+        crate::overlay::paste_fired(app);
+        return;
+    }
     let id = app.state::<Hotkeys>().0.lock().unwrap().get(&shortcut.id()).cloned();
     if let Some(id) = id {
         crate::log::line(format!("hotkey {id}"));
@@ -141,6 +146,8 @@ pub fn hotkeys_set(app: AppHandle, state: tauri::State<'_, Hotkeys>, keys: Vec<H
             Err(_) => failed.push(k.id),
         }
     }
+    drop(map);
+    crate::overlay::paste_restore(&app);
     failed
 }
 
@@ -178,7 +185,7 @@ pub fn open_app(app: &AppHandle, page: Option<String>) {
             .center()
             .background_color(Color(0, 0, 0, 0))
             .effects(EffectsBuilder::new().effect(Effect::Mica).build())
-            .initialization_script(&format!("window.__ISLAND_PAGE__ = {page};"))
+            .initialization_script(format!("window.__ISLAND_PAGE__ = {page};"))
             .build();
         OPENING.store(false, Ordering::SeqCst);
         match built {

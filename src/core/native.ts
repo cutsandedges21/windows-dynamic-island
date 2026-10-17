@@ -166,6 +166,8 @@ export interface PowerState {
   charging: boolean;
   saver: boolean;
   secondsLeft: number | null;
+  /** While it charges: how long until it is full (Windows only; absent elsewhere). */
+  secondsToFull?: number | null;
 }
 export interface SysSample {
   cpu: number;
@@ -230,8 +232,6 @@ export interface LandInfo {
   fresh: boolean;
   /** Friends on other networks (empty while that is off). */
   friends: LandFriend[];
-  /** Why the relay setting was not used (n0's relays are used instead). */
-  relayError?: string | null;
 }
 /** Land anywhere (src-tauri/src/anywhere.rs): an Island this one sends to and takes files from, on any network. */
 export interface LandFriend {
@@ -283,6 +283,8 @@ export interface LandTransfer {
   expires: number | null;
   /** How it goes: a computer nearby ('lan'), or a friend 'direct' or through a 'relay' (it can change midway). */
   via?: 'lan' | 'direct' | 'relay' | null;
+  /** A text send (a link, a note) instead of files. */
+  text?: string | null;
 }
 /** A dropped path before it is sent. */
 export interface LandStaged {
@@ -294,6 +296,21 @@ export interface LandStaged {
   error: string | null;
 }
 export type Tried<T> = { ok: true; value: T } | { ok: false; error: string };
+/** Files (or text) shared with a phone: the address and its QR code (src-tauri/src/land/share.rs). */
+export interface ShareInfo {
+  url: string;
+  /** The QR code: `size` modules a side, row by row, '1' for dark. */
+  qr: string;
+  size: number;
+  expires: number;
+  count: number;
+  bytes: number;
+}
+/** A button on a phone push: a tap posts `reply` to the reply topic (src-tauri/src/phone.rs). */
+export interface PushButton {
+  label: string;
+  reply: string;
+}
 
 /** Files dragged over the island and dropped on it; positions in CSS px. */
 export type FileDrop =
@@ -535,6 +552,10 @@ export const native = {
   clipboardSetText: (text: string) => call<boolean>('clipboard_set_text', { text }, false),
   clipboardCopyImage: (path: string) => call<boolean>('clipboard_copy_image', { path }, false),
   clipboardHistory: () => call('clipboard_history', {}, undefined),
+  /** What Ctrl+V on Land's icon pastes: files copied in Explorer, or text. */
+  clipboardPaste: () => call<{ files: string[]; text: string | null }>('clipboard_paste', {}, { files: [], text: null }),
+  /** Ctrl+V goes to Land while the pointer rests on its icon (Rust holds it as a hotkey meanwhile). */
+  pasteArm: (armed: boolean) => call<undefined>('island_paste_arm', { armed }, undefined),
   ports: () => call<PortRow[]>('ports_listening', {}, []),
   httpGet: (url: string, maxBytes = 2 * 1024 * 1024) => call<{ status: number; body: string } | null>('http_get', { url, maxBytes }, null),
 
@@ -552,15 +573,17 @@ export const native = {
   /** Starts or stops reading Phone Link's notifications; says whether Windows lets Island read them. */
   phoneLinkWatch: (on: boolean) => call<'allowed' | 'denied' | 'unspecified' | 'unavailable'>('phone_link_watch', { on }, 'unavailable'),
   /** One push to the phone's ntfy app; true when ntfy.sh took it. */
-  phonePush: (topic: string, title: string, body: string, tag?: string, priority?: number) =>
-    call<boolean>('phone_push', { topic, title, body, tag: tag ?? null, priority: priority ?? null }, false),
+  phonePush: (topic: string, title: string, body: string, tag?: string, priority?: number, replyTopic?: string, buttons?: PushButton[]) =>
+    call<boolean>('phone_push', { topic, title, body, tag: tag ?? null, priority: priority ?? null, replyTopic: replyTopic ?? null, buttons: buttons ?? null }, false),
+  /** Hands what is posted to the reply topic to the island (`phone-reply`) for `seconds` more. */
+  phoneListen: (topic: string, seconds: number) => call<boolean>('phone_listen', { topic, seconds }, false),
   openApp: (page: string | null = null) => call('app_open', { page }, undefined),
   quit: () => call('app_quit', {}, undefined),
   autostartGet: () => call<boolean>('autostart_get', {}, false),
   autostartSet: (enabled: boolean) => call<boolean>('autostart_set', { enabled }, false),
 
   /** Turns Land on, or updates its name and whether it takes files (null name: the computer's). */
-  landStart: (name: string | null, visible: boolean, anywhere: boolean, relay: string | null) => tryCall<LandInfo>('land_start', { name, visible, anywhere, relay }),
+  landStart: (name: string | null, visible: boolean, anywhere: boolean) => tryCall<LandInfo>('land_start', { name, visible, anywhere }),
   /** This Island's Land code (works with Land off). */
   landMe: () => tryCall<LandMe>('land_me', {}),
   landFriends: () => call<LandFriend[]>('land_friends', {}, []),
@@ -578,6 +601,9 @@ export const native = {
   landScan: () => call<LandPeer[]>('land_scan', {}, []),
   /** Starts sending; the transfer's id, or why it cannot. */
   landSend: (peer: string, paths: string[]) => tryCall<string>('land_send', { peer, paths }),
+  landSendText: (peer: string, text: string) => tryCall<string>('land_send_text', { peer, text }),
+  landShareStart: (paths: string[], text: string | null) => tryCall<ShareInfo>('land_share_start', { paths, text }),
+  landShareStop: () => call<undefined>('land_share_stop', {}, undefined),
   landAnswer: (id: string, accept: boolean) => call<boolean>('land_answer', { id, accept }, false),
   landCancel: (id: string) => call<boolean>('land_cancel', { id }, false),
   landStage: (paths: string[]) =>

@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   hiddenTest,
-  leadFirst,
   moveTile,
   packGrid,
   pageCount,
@@ -280,19 +279,6 @@ describe('hidden tiles', () => {
   it('putting a tile back undoes either kind of entry', () => {
     expect(unhide(['weather/weather', 'sound', 'devices'], 'sound/sound')).toEqual(['weather/weather', 'devices']);
     expect(unhide(['weather/weather'], 'weather/weather')).toEqual([]);
-  });
-});
-
-describe('the default layout', () => {
-  it('opens with Local AI right after the day tile: top and centre on four columns', () => {
-    expect(leadFirst(['claude', 'music', 'local', 'timer'])).toEqual(['local', 'claude', 'music', 'timer']);
-    const slots = packGrid([item('island/day'), item('local', 2), item('claude', 2), item('music', 2, 2)], 4, 4);
-    expect(map(slots).slice(0, 2)).toEqual(['island/day@0:0,0', 'local@0:1,0']);
-  });
-
-  it('leaves an order without Local AI as it is', () => {
-    const order = ['claude', 'music'];
-    expect(leadFirst(order)).toBe(order);
   });
 });
 

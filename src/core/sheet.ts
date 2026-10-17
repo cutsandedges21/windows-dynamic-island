@@ -92,6 +92,8 @@ export type Block =
   | { t: 'countdown'; key: string; until: number; total: number; tone?: Tone }
   /** A row of avatars to pick from; `empty` (with a searching pulse) when there are none. */
   | { t: 'people'; key: string; items: Person[]; empty?: string }
+  /** A QR code: `size` modules a side, `cells` row by row with '1' for dark. */
+  | { t: 'qr'; key: string; size: number; cells: string; caption?: string }
   /**
    * The Control Center grid. `items` already know where they sit (the island
    * packed them); `tray` holds the ones taken off the grid, shown while editing.
@@ -185,6 +187,29 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
         return b;
     }
   });
+}
+
+/** A QR code as one SVG path, black on a white square with a quiet zone around it. */
+function qrSvg(size: number, cells: string): SVGSVGElement {
+  const ns = 'http://www.w3.org/2000/svg';
+  const quiet = 3;
+  const side = size + quiet * 2;
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${side} ${side}`);
+  svg.setAttribute('shape-rendering', 'crispEdges');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'QR code');
+  const bg = document.createElementNS(ns, 'rect');
+  bg.setAttribute('width', String(side));
+  bg.setAttribute('height', String(side));
+  bg.setAttribute('fill', '#fff');
+  let d = '';
+  for (let i = 0; i < Math.min(cells.length, size * size); i++) if (cells[i] === '1') d += `M${(i % size) + quiet} ${Math.floor(i / size) + quiet}h1v1h-1z`;
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', d);
+  path.setAttribute('fill', '#000');
+  svg.append(bg, path);
+  return svg;
 }
 
 const GAP = 8;
@@ -675,6 +700,12 @@ export class SheetRenderer {
       case 'people': {
         const e = make('div', 'sb sb-people');
         this.fillPeople(e, b);
+        return e;
+      }
+      case 'qr': {
+        const e = make('div', 'sb sb-qr');
+        e.append(qrSvg(b.size, b.cells));
+        if (b.caption) e.append(make('div', 'qc', b.caption));
         return e;
       }
       case 'tiles': {

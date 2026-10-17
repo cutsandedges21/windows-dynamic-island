@@ -2,7 +2,6 @@
 // activity means one entry here and one in catalog.ts.
 
 import type { Activity } from '../core/activity';
-import { AskActivity } from './ask';
 import { BatteryActivity } from './battery';
 import { LandActivity } from './land';
 import { CalendarActivity } from './calendar';
@@ -13,12 +12,8 @@ import { DevicesActivity } from './devices';
 import { DownloadsActivity } from './downloads';
 import { ExternalActivity } from './external';
 import { GameActivity } from './game';
-import { CalcomActivity } from './integrations/calcom';
 import { GithubActivity } from './integrations/github';
-import { N8nActivity } from './integrations/n8n';
 import { NotionActivity } from './integrations/notion';
-import { ResendActivity } from './integrations/resend';
-import { StripeActivity } from './integrations/stripe';
 import { VercelActivity } from './integrations/vercel';
 import { LocalActivity } from './local';
 import { MusicActivity } from './music';
@@ -54,14 +49,9 @@ export function createRegistry(): Map<string, () => Activity> {
     ['network', () => new NetworkActivity()],
     ['servers', () => new ServersActivity()],
     ['quick', () => new QuickActivity()],
-    ['ask', () => new AskActivity()],
     ['local', () => new LocalActivity()],
     ['github', () => new GithubActivity()],
     ['vercel', () => new VercelActivity()],
-    ['n8n', () => new N8nActivity()],
-    ['stripe', () => new StripeActivity()],
-    ['calcom', () => new CalcomActivity()],
-    ['resend', () => new ResendActivity()],
     ['notion', () => new NotionActivity()],
   ]);
 }

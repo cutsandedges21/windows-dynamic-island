@@ -4,6 +4,12 @@
 // its place, start it and quit. The new process waits for the old one to be gone
 // before the single-instance check, or that check would send it straight back,
 // then deletes Island.old.exe: one exe is left, under its own name.
+//
+// Only a signed release is installed. Its notes carry `<!-- island-signature: <base64> -->`:
+// an Ed25519 signature, by the key whose public half is UPDATE_KEY, over the version and the
+// SHA-256 of the exe (scripts/sign-release.mjs makes it). Someone who gets into the GitHub
+// account or swaps the asset still can't make Islands run their exe. Pre-releases are skipped:
+// they are for people who download them on purpose.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,6 +17,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde::Deserialize;
+use sha2::Digest;
 use tauri::{AppHandle, Emitter};
 
 const REPO: &str = "cutsandedges21/windows-dynamic-island";
@@ -23,6 +30,11 @@ const EVERY: Duration = Duration::from_secs(6 * 3600);
 /// Flag passed to the new exe: `--after-update <old pid> <old version>`.
 const AFTER_UPDATE: &str = "--after-update";
 
+/// The public half of the release signing key (its private half never leaves Moss's PC).
+const UPDATE_KEY: &str = "5da0eca13f185218ba00e673a955772d6e92e5285bbbfb52221e1932d05b6115";
+/// Where the signature sits in a release's notes (an HTML comment, invisible on GitHub).
+const SIGNATURE_TAG: &str = "<!-- island-signature:";
+
 /// Settings › Startup › Update automatically. Off until the island says otherwise.
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -31,6 +43,11 @@ struct Release {
     tag_name: String,
     #[serde(default)]
     draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+    /// The release notes, where the signature is.
+    #[serde(default)]
+    body: Option<String>,
     #[serde(default)]
     assets: Vec<Asset>,
 }
@@ -50,11 +67,11 @@ fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
     Some(v)
 }
 
-/// The newest release (pre-releases count) that ships an Island.exe and is newer than `current`.
-fn newest<'a>(releases: &'a [Release], current: (u64, u64, u64)) -> Option<(&'a Release, &'a Asset)> {
+/// The newest full release that ships an Island.exe and is newer than `current`.
+fn newest(releases: &[Release], current: (u64, u64, u64)) -> Option<(&Release, &Asset)> {
     releases
         .iter()
-        .filter(|r| !r.draft)
+        .filter(|r| !r.draft && !r.prerelease)
         .filter_map(|r| Some((r, parse_version(&r.tag_name)?, r.assets.iter().find(|a| a.name.eq_ignore_ascii_case(ASSET))?)))
         .filter(|(_, v, _)| *v > current)
         .max_by_key(|(_, v, _)| *v)
@@ -96,6 +113,11 @@ async fn check(app: &AppHandle) -> Result<(), String> {
     if bytes.len() as u64 != asset.size || !bytes.starts_with(b"MZ") {
         return Err(format!("update: download is not a whole exe ({} of {} bytes)", bytes.len(), asset.size));
     }
+    let version = release.tag_name.trim().trim_start_matches(['v', 'V']);
+    let signature = signature_in(release.body.as_deref().unwrap_or("")).ok_or_else(|| format!("update: {} is not signed, so it was not installed", release.tag_name))?;
+    if !signed_by(UPDATE_KEY, version, &bytes, &signature) {
+        return Err(format!("update: {}'s signature does not match its exe, so it was not installed", release.tag_name));
+    }
     std::fs::write(&temp, &bytes).map_err(|e| format!("update: cannot write beside the exe: {e}"))?;
     swap_in(&exe, &temp, &dir)?;
 
@@ -107,6 +129,30 @@ async fn check(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| format!("update: installed but could not restart: {e}"))?;
     app.exit(0);
     Ok(())
+}
+
+/// The bytes a release signs: the version it installs and the exe's SHA-256, together, so an
+/// old signed exe can't come back labelled as a newer version.
+fn signed_message(version: &str, exe: &[u8]) -> Vec<u8> {
+    let digest: String = sha2::Sha256::digest(exe).iter().map(|b| format!("{b:02x}")).collect();
+    format!("island-update\n{version}\n{digest}").into_bytes()
+}
+
+/// The signature in a release's notes, if there is one.
+fn signature_in(body: &str) -> Option<[u8; 64]> {
+    use base64::Engine;
+    let start = body.find(SIGNATURE_TAG)? + SIGNATURE_TAG.len();
+    let rest = &body[start..];
+    let text = rest[..rest.find("-->")?].trim();
+    let bytes = base64::engine::general_purpose::STANDARD.decode(text).ok()?;
+    <[u8; 64]>::try_from(bytes.as_slice()).ok()
+}
+
+/// Whether `signature` is `key_hex`'s over this version and exe.
+fn signed_by(key_hex: &str, version: &str, exe: &[u8], signature: &[u8; 64]) -> bool {
+    let Some(key) = data_encoding::HEXLOWER_PERMISSIVE.decode(key_hex.as_bytes()).ok().and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok()) else { return false };
+    let Ok(key) = iroh::PublicKey::from_bytes(&key) else { return false };
+    key.verify(&signed_message(version, exe), &iroh::Signature::from_bytes(signature)).is_ok()
 }
 
 /// Running exe → Island.old.exe (the new process deletes it, see tidy), the
@@ -222,7 +268,46 @@ mod tests {
 
     fn rel(tag: &str, draft: bool, with_exe: bool) -> Release {
         let assets = if with_exe { vec![Asset { name: "Island.exe".into(), size: 1, browser_download_url: String::new() }] } else { vec![] };
-        Release { tag_name: tag.into(), draft, assets }
+        Release { tag_name: tag.into(), draft, prerelease: false, body: None, assets }
+    }
+
+    /// A key like the real one, and the line sign-release.mjs would paste into the notes.
+    fn signed_notes(key: &iroh::SecretKey, version: &str, exe: &[u8]) -> String {
+        use base64::Engine;
+        let sig = key.sign(&signed_message(version, exe));
+        format!("What's new.\n\n<!-- island-signature: {} -->\n", base64::engine::general_purpose::STANDARD.encode(sig.to_bytes()))
+    }
+
+    #[test]
+    fn only_an_exe_signed_for_its_version_passes() {
+        let key = iroh::SecretKey::generate();
+        let public = data_encoding::HEXLOWER.encode(key.public().as_bytes());
+        let exe = b"MZ the new island";
+        let notes = signed_notes(&key, "0.3.0", exe);
+        let sig = signature_in(&notes).expect("the signature is found in the notes");
+        assert!(signed_by(&public, "0.3.0", exe, &sig));
+        assert!(!signed_by(&public, "0.3.0", b"MZ something else", &sig), "another exe");
+        assert!(!signed_by(&public, "9.9.9", exe, &sig), "an old exe relabelled as a newer version");
+        let stranger = data_encoding::HEXLOWER.encode(iroh::SecretKey::generate().public().as_bytes());
+        assert!(!signed_by(&stranger, "0.3.0", exe, &sig), "signed by someone else's key");
+        assert!(signature_in("Notes without a signature").is_none());
+        assert!(signature_in("<!-- island-signature: not base64 -->").is_none());
+        assert!(!signed_by("nope", "0.3.0", exe, &sig));
+    }
+
+    #[test]
+    fn the_message_matches_sign_release_mjs() {
+        // scripts/sign-release.mjs signs "island-update", the version and the exe's SHA-256, a line each.
+        let m = String::from_utf8(signed_message("0.3.0", b"abc")).unwrap();
+        assert_eq!(m, "island-update\n0.3.0\nba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    }
+
+    #[test]
+    fn pre_releases_are_skipped() {
+        let mut pre = rel("v0.5.0", false, true);
+        pre.prerelease = true;
+        let list = vec![rel("v0.2.0", false, true), pre];
+        assert_eq!(newest(&list, (0, 1, 0)).map(|(r, _)| r.tag_name.as_str()), Some("v0.2.0"));
     }
 
     #[test]

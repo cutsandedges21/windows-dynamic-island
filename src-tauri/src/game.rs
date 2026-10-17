@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use windows::core::{GUID, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, LocalFree, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, HLOCAL, WIN32_ERROR};
-use windows::Win32::NetworkManagement::IpHelper::{GetExtendedTcpTable, IcmpCloseHandle, IcmpCreateFile, IcmpSendEcho, ICMP_ECHO_REPLY, MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_CONNECTIONS};
+use windows::Win32::NetworkManagement::IpHelper::{GetExtendedTcpTable, IcmpCloseHandle, IcmpCreateFile, IcmpSendEcho, ICMP_ECHO_REPLY, MIB_TCPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_CONNECTIONS};
 use windows::Win32::Networking::WinSock::AF_INET;
 use windows::Win32::Security::Authorization::ConvertStringSidToSidW;
 use windows::Win32::Security::{LookupAccountSidW, PSID, SID_NAME_USE};
@@ -475,7 +475,7 @@ fn tcp_peer(pid: u32) -> Option<Ipv4Addr> {
             return None;
         }
         let table = &*(buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
-        let rows = std::slice::from_raw_parts(table.table.as_ptr() as *const MIB_TCPROW_OWNER_PID, table.dwNumEntries as usize);
+        let rows = std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
         // Game traffic rarely runs over the web ports; prefer anything else.
         let mut web = None;
         for row in rows.iter().filter(|r| r.dwOwningPid == pid && r.dwState == 5) {

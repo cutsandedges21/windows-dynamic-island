@@ -20,7 +20,8 @@ import { hasIcon } from '../src/core/icons';
 import type { Level } from '../src/core/layout';
 import { fitSegments, fitVertical } from '../src/core/segments';
 import { defaultSettings } from '../src/core/settings';
-import { BatteryActivity } from '../src/activities/battery';
+import { BatteryActivity, batteryTime } from '../src/activities/battery';
+import { TimerActivity } from '../src/activities/timer';
 import { CalendarActivity } from '../src/activities/calendar';
 import { CallsActivity } from '../src/activities/calls';
 import { ClipboardActivity } from '../src/activities/clipboard';
@@ -189,6 +190,17 @@ describe('battery', () => {
     expect(act.status().active).toBe(true);
   });
 
+  it('says how long it lasts on battery, and how long until it is full while it charges', async () => {
+    expect(batteryTime({ charging: false, ac: false, secondsLeft: 7800, secondsToFull: null })).toBe('2 h 10 min left');
+    expect(batteryTime({ charging: true, ac: true, secondsLeft: null, secondsToFull: 2400 })).toBe('Full in 40 min');
+    expect(batteryTime({ charging: true, ac: true, secondsLeft: null })).toBe('');
+    expect(batteryTime({ charging: false, ac: true, secondsLeft: 7800, secondsToFull: null }), 'plugged in and not charging: no countdown').toBe('');
+    h.native.powerState = vi.fn(async () => power({ ac: true, charging: true, percent: 60, secondsLeft: null, secondsToFull: 3600 }));
+    const { act } = await boot(new BatteryActivity(), { lowAt: 20, showCharging: true });
+    expect(act.render(env('maximum')).find((s) => s.key === 'left')).toMatchObject({ text: 'Full in 1 h' });
+    expect(JSON.stringify(act.tile())).toContain('Full in 1 h');
+  });
+
   it('ignores machines without a battery and honours showCharging', async () => {
     h.native.powerState = vi.fn(async () => power({ hasBattery: false, percent: null }));
     const none = await boot(new BatteryActivity(), { lowAt: 20 });
@@ -204,6 +216,80 @@ describe('battery', () => {
     const segs = keep.act.render(env('maximum'));
     expect(segs.find((s) => s.key === 'icon')).toMatchObject({ icon: 'bolt', tone: 'good' });
     expect(segs.find((s) => s.key === 'pct')).toMatchObject({ text: '60%' });
+  });
+});
+
+describe('focus and Quiet', () => {
+  /** A timer whose context keeps options and Quiet the way the island does. */
+  async function focusTimer(options: Record<string, unknown> = {}, quietAlready = false) {
+    const quiet: boolean[] = [];
+    const booted = await boot(new TimerActivity(), { focusMinutes: 25, breakMinutes: 5, ...options }, (s) => {
+      s.general.dnd = quietAlready;
+    });
+    const settings = booted.act['ctx'].settings();
+    Object.assign(booted.act['ctx'], {
+      setQuiet: (on: boolean) => {
+        quiet.push(on);
+        settings.general.dnd = on;
+      },
+      setOptions: (patch: Record<string, unknown>) => Object.assign(booted.options, patch),
+    });
+    return { ...booted, quiet, settings };
+  }
+
+  it('a focus round turns Quiet on; its end turns it off before the done notification', async () => {
+    const { act, calls, quiet, settings } = await focusTimer();
+    act.action('focus', undefined);
+    expect(quiet).toEqual([true]);
+    let quietWhenNotified: boolean | null = null;
+    act['ctx'].notify = (...a: unknown[]) => {
+      quietWhenNotified = settings.general.dnd;
+      calls.notify.push(a);
+    };
+    await tick(25 * 60_000 + 500);
+    expect(quiet).toEqual([true, false]);
+    expect(calls.notify.at(-1)?.[0]).toBe('Focus session done');
+    expect(quietWhenNotified).toBe(false);
+    // The break stays loud; the next round is quiet again.
+    act.action('next', undefined);
+    expect(quiet).toEqual([true, false]);
+    act.action('next', undefined);
+    expect(quiet).toEqual([true, false, true]);
+    act.action('stop', undefined);
+    expect(quiet).toEqual([true, false, true, false]);
+  });
+
+  it('leaves Quiet alone when the user turned it on, or switched the option off', async () => {
+    const already = await focusTimer({}, true);
+    already.act.action('focus', undefined);
+    already.act.action('stop', undefined);
+    expect(already.quiet).toEqual([]);
+    expect(already.settings.general.dnd).toBe(true);
+
+    const off = await focusTimer({ quietFocus: false });
+    off.act.action('focus', undefined);
+    expect(off.quiet).toEqual([]);
+  });
+
+  it('a plain timer is not a focus round', async () => {
+    const { act, quiet } = await focusTimer();
+    act.action('start', 5);
+    expect(quiet).toEqual([]);
+  });
+
+  it('Quiet left on by a round that Island closed during goes at the next start', async () => {
+    const quiet: boolean[] = [];
+    const options: Record<string, unknown> = { quietByFocus: true };
+    const act = new TimerActivity();
+    const settings = defaultSettings();
+    settings.general.dnd = true;
+    await act.start({
+      id: 'timer', config: () => settings.activities.config.timer, options: () => options as never, settings: () => settings,
+      update: () => {}, surface: () => {}, alert: () => {}, open: () => {}, close: () => {}, isOpen: () => false, isPrimary: () => true, notify: () => {}, log: () => {},
+      setQuiet: (on) => void quiet.push(on), setOptions: (patch) => void Object.assign(options, patch),
+    });
+    expect(quiet).toEqual([false]);
+    expect(options.quietByFocus).toBe(false);
   });
 });
 

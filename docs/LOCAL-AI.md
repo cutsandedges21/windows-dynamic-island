@@ -1,5 +1,7 @@
 # Local AI
 
+> Since 0.3.0 (2026-10-16) the bot is the only way to ask (Moss): Local AI has no pill, card or tile of its own, and its settings are Activities › Bot chat. The slices below describe how it was built.
+
 An assistant that runs on this PC: questions never leave the computer, and it works offline. Built in slices, each one shippable on its own. Slice 1 is done.
 
 ```

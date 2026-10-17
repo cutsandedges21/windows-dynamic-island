@@ -32,14 +32,35 @@ fn roots() -> Vec<PathBuf> {
 
 /// Only paths under the user's profile folders are readable from the webview.
 pub fn allowed(path: &Path) -> bool {
+    allowed_in(path, &roots())
+}
+
+fn allowed_in(path: &Path, roots: &[PathBuf]) -> bool {
     if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return false;
     }
-    let lower = path.to_string_lossy().to_lowercase().replace('/', "\\");
-    roots().iter().any(|r| {
-        let root = r.to_string_lossy().to_lowercase().replace('/', "\\");
-        !root.is_empty() && lower.starts_with(&root)
+    let norm = |p: &Path| p.to_string_lossy().to_lowercase().replace('/', "\\");
+    let lower = norm(path);
+    roots.iter().any(|r| {
+        let root = norm(r);
+        let root = root.trim_end_matches('\\');
+        // The root itself or something in it; not a sibling that only starts with its name ("Downloads2").
+        let inside = !root.is_empty() && (lower == root || lower.strip_prefix(root).is_some_and(|rest| rest.starts_with('\\')));
+        inside && !through_link(r, path)
     })
+}
+
+/// A link or junction below the root could lead anywhere on the disk, so a path through one is refused.
+fn through_link(root: &Path, path: &Path) -> bool {
+    let skip = root.components().count();
+    let mut at = PathBuf::new();
+    for (i, c) in path.components().enumerate() {
+        at.push(c);
+        if i >= skip && std::fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_symlink()) {
+            return true;
+        }
+    }
+    false
 }
 
 fn mtime_ms(meta: &std::fs::Metadata) -> f64 {
@@ -514,6 +535,40 @@ pub fn debounce() -> Duration {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn only_inside_a_root_and_not_a_lookalike_sibling() {
+        let root = std::env::temp_dir().join(format!("island-fsx-{}", std::process::id()));
+        let roots = vec![root.join("Downloads")];
+        assert!(super::allowed_in(&root.join("Downloads").join("a.txt"), &roots));
+        assert!(super::allowed_in(&root.join("Downloads"), &roots));
+        assert!(!super::allowed_in(&root.join("Downloads2").join("a.txt"), &roots), "a sibling that starts with the root's name");
+        assert!(!super::allowed_in(&root.join("Downloads").join("..").join("x"), &roots));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_below_a_root_is_refused() {
+        let root = std::env::temp_dir().join(format!("island-fsx-j-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        std::fs::create_dir_all(root.join("elsewhere")).unwrap();
+        std::fs::write(root.join("elsewhere").join("secret.txt"), "x").unwrap();
+        let made = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(root.join("home").join("link"))
+            .arg(root.join("elsewhere"))
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !made {
+            return; // no junctions here (another file system): nothing to check
+        }
+        let roots = vec![root.join("home")];
+        assert!(!super::allowed_in(&root.join("home").join("link").join("secret.txt"), &roots));
+        assert!(super::allowed_in(&root.join("home").join("plain.txt"), &roots));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     use super::*;
 
     #[test]

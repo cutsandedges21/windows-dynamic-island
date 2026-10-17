@@ -50,6 +50,10 @@ const MAX_ASKING: usize = 3;
 const QUIET_AFTER_NO: Duration = Duration::from_secs(10 * 60);
 /// One friend-request message, as JSON.
 const MAX_MESSAGE: usize = 4096;
+/// Requests shown per hour, whoever sends them: new keys cost nothing, so a per-sender limit
+/// alone can't stop someone with your code from filling the island with requests.
+const MAX_SHOWN: usize = 6;
+const SHOWN_WINDOW: Duration = Duration::from_secs(3600);
 
 fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -66,25 +70,9 @@ pub enum Relays {
     /// n0's relays only, never a direct path: two networks that can't reach each other (tests).
     #[cfg(test)]
     N0RelayOnly,
-    /// Our own relay (an iroh-relay server), with n0's key lookup to find friends by key.
-    Mine(iroh::RelayUrl),
     /// A relay running in the test itself (self-signed certificate), relay only, no lookup.
     #[cfg(test)]
     Local(iroh::RelayMap),
-}
-
-/// A relay address from the setting: a web address, like https://relay.example.com.
-pub fn relay_url(text: &str) -> Result<iroh::RelayUrl, String> {
-    let text = text.trim();
-    let bad = || format!("\u{201c}{text}\u{201d} isn't a relay address. It looks like https://relay.example.com.");
-    if !text.starts_with("https://") {
-        return Err(bad());
-    }
-    let url: iroh::RelayUrl = text.parse().map_err(|_| bad())?;
-    if url.host_str().is_none_or(|h| h.trim_matches('.').is_empty()) {
-        return Err(bad());
-    }
-    Ok(url)
 }
 
 /// What Land needs to start Land anywhere.
@@ -181,7 +169,6 @@ impl Anywhere {
             Relays::N0 => Endpoint::builder(presets::N0),
             #[cfg(test)]
             Relays::N0RelayOnly => Endpoint::builder(presets::N0).clear_ip_transports(),
-            Relays::Mine(url) => Endpoint::builder(presets::N0).relay_mode(iroh::RelayMode::custom([url])),
             #[cfg(test)]
             Relays::Local(map) => Endpoint::builder(presets::Minimal)
                 .relay_mode(iroh::RelayMode::Custom(map))
@@ -340,6 +327,8 @@ pub struct Far {
     asks: Mutex<HashMap<String, (String, oneshot::Sender<Reply>)>>,
     /// Islands this user said no to, and when.
     quiet: Mutex<HashMap<String, Instant>>,
+    /// When the requests of the last `SHOWN_WINDOW` were shown.
+    shown: Mutex<std::collections::VecDeque<Instant>>,
     emit: Emit,
     ask_for: Duration,
     seq: AtomicU64,
@@ -395,6 +384,7 @@ impl Far {
             book: Mutex::new(loaded),
             asks: Mutex::default(),
             quiet: Mutex::default(),
+            shown: Mutex::default(),
             emit,
             ask_for,
             seq: AtomicU64::new(0),
@@ -617,12 +607,16 @@ impl Far {
 
     /// Shows the request and waits for the user; None if the asker gave up first.
     async fn prompt(&self, conn: &Connection, from: &str, name: &str, os: &str) -> Option<Value> {
-        let quiet = self.quiet.lock().unwrap().get(from).is_some_and(|t| t.elapsed() < QUIET_AFTER_NO);
+        let quiet = {
+            let mut quiet = self.quiet.lock().unwrap();
+            quiet.retain(|_, t| t.elapsed() < QUIET_AFTER_NO);
+            quiet.contains_key(from)
+        };
         let busy = quiet || {
             let asks = self.asks.lock().unwrap();
             asks.len() >= MAX_ASKING || asks.values().any(|(f, _)| f == from)
         };
-        if busy {
+        if busy || !self.may_show() {
             return Some(json!({ "t": "no", "why": "busy" }));
         }
         let id = format!("friend-{:x}-{}", now_ms(), self.seq.fetch_add(1, Ordering::Relaxed));
@@ -662,6 +656,22 @@ impl Far {
         reply
     }
 
+    /// Room for one more request on screen this hour; counts it when there is.
+    fn may_show(&self) -> bool {
+        let mut shown = self.shown.lock().unwrap();
+        while shown.front().is_some_and(|t| t.elapsed() >= SHOWN_WINDOW) {
+            shown.pop_front();
+        }
+        if shown.len() >= MAX_SHOWN {
+            if shown.len() == MAX_SHOWN {
+                crate::log::line("land: too many friend requests this hour; the next ones are turned away");
+            }
+            return false;
+        }
+        shown.push_back(Instant::now());
+        true
+    }
+
     /// Answers every waiting request with no and closes the endpoint.
     pub async fn close(&self) {
         for (_, (_, tx)) in self.asks.lock().unwrap().drain() {
@@ -696,14 +706,6 @@ pub(crate) mod tests {
         let url: iroh::RelayUrl = format!("https://{}", server.https_addr().unwrap()).parse().unwrap();
         let map: iroh::RelayMap = iroh::RelayConfig::new(url.clone(), None).into();
         (map, url, server)
-    }
-
-    #[test]
-    fn a_relay_address_is_a_web_address() {
-        assert_eq!(relay_url(" https://relay.example.com ").unwrap().to_string(), "https://relay.example.com/");
-        for bad in ["relay.example.com", "ftp://relay.example.com", "https://", "hello"] {
-            assert!(relay_url(bad).is_err(), "{bad}");
-        }
     }
 
     fn temp_file(tag: &str) -> std::path::PathBuf {

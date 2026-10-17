@@ -18,13 +18,15 @@ use windows::Win32::System::SystemInformation::GetLocalTime;
 use crate::claude::{config_dir, hook_exe_path};
 
 /// Every event the island reacts to, with the hook timeout written to settings.json.
-/// PermissionRequest waits for a human, so it gets the decision timeout + 10 s.
-/// Stop may wait for a reply typed in the island (at most 290 s in island-hook).
+/// PermissionRequest waits for a human, so it gets the decision timeout + 10 s, and so does
+/// PreToolUse, where a question (AskUserQuestion) waits for its answer from the island;
+/// every other tool passes through it at once. Stop may wait for a reply typed in the
+/// island (at most 290 s in island-hook).
 pub const HOOK_EVENTS: &[(&str, u64)] = &[
     ("SessionStart", 10),
     ("SessionEnd", 10),
     ("UserPromptSubmit", 10),
-    ("PreToolUse", 10),
+    ("PreToolUse", 120),
     ("PostToolUse", 10),
     ("PermissionRequest", 120),
     ("Notification", 10),
@@ -328,8 +330,9 @@ fn unified_diff(before: &str, after: &str) -> String {
     }
     let mut keep = vec![false; out.len()];
     for idx in changed {
-        for k in idx.saturating_sub(3)..(idx + 4).min(out.len()) {
-            keep[k] = true;
+        let end = (idx + 4).min(out.len());
+        for k in keep.iter_mut().take(end).skip(idx.saturating_sub(3)) {
+            *k = true;
         }
     }
     let mut result = String::new();

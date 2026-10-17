@@ -50,6 +50,7 @@ mod store;
 #[cfg_attr(target_os = "macos", path = "mac/system.rs")]
 mod system;
 mod updater;
+mod web;
 
 use std::sync::Arc;
 
@@ -74,7 +75,7 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, shortcut, event| app::on_shortcut(app, shortcut, event))
+                .with_handler(app::on_shortcut)
                 .build(),
         )
         .plugin(tauri_plugin_notification::init())
@@ -85,6 +86,7 @@ pub fn run() {
         .manage(pipe::Pending::default())
         .manage(app::Hotkeys::default())
         .manage(land::LandState::default())
+        .manage(land::share::ShareState::default())
         .setup(move |app| {
             // A Mac menu bar app: no Dock icon, no app menu.
             #[cfg(target_os = "macos")]
@@ -108,6 +110,7 @@ pub fn run() {
             system::start(handle.clone());
             game::start();
             updater::tidy();
+            std::thread::spawn(secrets::forget_retired);
             updater::start(handle.clone());
             if let Some(from) = updated_from.clone() {
                 updater::announce(handle.clone(), from);
@@ -123,6 +126,8 @@ pub fn run() {
             overlay::island_place,
             overlay::island_set_hit,
             overlay::island_set_peek,
+            overlay::island_paste_arm,
+            msgwin::clipboard_paste,
             overlay::island_show,
             overlay::island_mirrors,
             overlay::mirror_hello,
@@ -183,6 +188,7 @@ pub fn run() {
             app::hotkeys_set,
             app::notify,
             phone::phone_push,
+            phone::phone_listen,
             phonelink::phone_link_access,
             phonelink::phone_link_watch,
             app::app_open,
@@ -209,6 +215,9 @@ pub fn run() {
             land::land_stop,
             land::land_scan,
             land::land_send,
+            land::land_send_text,
+            land::share::land_share_start,
+            land::share::land_share_stop,
             land::land_answer,
             land::land_cancel,
             land::land_stage,

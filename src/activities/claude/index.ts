@@ -96,6 +96,8 @@ export class ClaudeActivity extends BaseActivity {
   private readonly finished = new Map<string, number>();
   /** Each moment goes to the phone once. */
   private readonly pushes = new PushGate();
+  /** One-time codes on the phone's Allow and Deny buttons, and the request each answers. */
+  private readonly phoneCodes = new Map<string, string>();
   private notice: { text: string; tone: Tone; icon: string; until: number } | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
   /** Chats that finished while the user was looking at them: no card, they saw it. */
@@ -129,6 +131,8 @@ export class ClaudeActivity extends BaseActivity {
 
   protected async init(): Promise<void> {
     this.listen<HookEvent>('hook', (ev) => this.onHook(ev));
+    // Allow or Deny tapped on the phone (Settings › Notifications › Answer Claude from my phone).
+    this.listen<{ message: string }>('phone-reply', (r) => this.fromPhone(String(r?.message ?? '')));
     // Unanswered in time: the terminal asks now (or the chat ends its turn), so the card goes.
     this.listen<{ request_id: string }>('hook-expired', ({ request_id }) => {
       const card = this.hooks.take(request_id);
@@ -351,19 +355,30 @@ export class ClaudeActivity extends BaseActivity {
     const kind = this.hooks.apply(ev);
     const sid = ev.session_id ?? '';
     if (kind === 'permission' && ev.request_id) {
-      if (ev.tool_name === 'AskUserQuestion') this.askToPhone(sid, ev);
-      else this.toPhone(sid, 'permission', permissionText(ev.tool_name, ev.tool_input), `${ev.tool_name}:${JSON.stringify(ev.tool_input ?? null).slice(0, 300)}`, ev.cwd);
-      const cfg = this.ctx.config();
-      const canShow = cfg.enabled && cfg.interactive && cfg.interrupt && !this.ctx.settings().general.dnd && !hiddenNow(this.ctx.settings().island, Date.now());
-      if (canShow) {
-        void native.hookReply(ev.request_id, 'ack');
-        this.ctx.alert('glow', 'claude');
-        this.saw('claude-asks', `claude:ask:${ev.request_id}`);
-        if (this.ctx.settings().general.sounds) chime('attention');
-      } else {
-        // Nobody will see the card: let the terminal ask right away.
+      const question = ev.tool_name === 'AskUserQuestion';
+      const early = ev.hook_event_name === 'PreToolUse';
+      if (question && !early && this.hooks.askedEarly(sid)) {
+        // The island held this question before Claude Code asked it and let it go to the chat: it is asked there now.
         this.hooks.take(ev.request_id);
         void native.hookReply(ev.request_id, 'decline');
+      } else {
+        const cfg = this.ctx.config();
+        const canShow = cfg.enabled && cfg.interactive && cfg.interrupt && !this.ctx.settings().general.dnd && !hiddenNow(this.ctx.settings().island, Date.now());
+        if (question) this.askToPhone(sid, ev);
+        // Only a request that waits for an answer gets buttons on the phone.
+        else this.toPhone(sid, 'permission', permissionText(ev.tool_name, ev.tool_input), `${ev.tool_name}:${JSON.stringify(ev.tool_input ?? null).slice(0, 300)}`, ev.cwd, canShow ? ev.request_id : undefined);
+        if (!canShow) {
+          // Nobody will see the card: let the terminal ask right away.
+          this.hooks.take(ev.request_id);
+          void native.hookReply(ev.request_id, 'decline');
+        } else if (early) {
+          void this.holdQuestion(ev.request_id, sid, ev);
+        } else {
+          void native.hookReply(ev.request_id, 'ack');
+          this.ctx.alert('glow', 'claude');
+          this.saw('claude-asks', `claude:ask:${ev.request_id}`);
+          if (this.ctx.settings().general.sounds) chime('attention');
+        }
       }
     }
     if (kind === 'stop' && sid) {
@@ -439,6 +454,33 @@ export class ClaudeActivity extends BaseActivity {
     this.ctx.update();
   }
 
+  /**
+   * A question before Claude Code asks it. A user looking at its chat answers it there, as
+   * always: it goes at once. Anyone else gets the card, and the chat waits for the answer.
+   * The answer must come within the pipe's 900 ms, like a Stop's.
+   */
+  private async holdQuestion(requestId: string, sid: string, ev: HookEvent): Promise<void> {
+    let looking = false;
+    try {
+      looking = await this.isLookingAt(sid, ev);
+    } catch (err) {
+      this.ctx.log('question: foreground check failed', String(err));
+    }
+    if (looking) {
+      this.hooks.take(requestId);
+      void native.hookReply(requestId, 'decline');
+      this.ctx.log('question', { session: sid.slice(0, 8), held: false, why: 'looking' });
+      this.ctx.update();
+      return;
+    }
+    void native.hookReply(requestId, 'ack');
+    this.ctx.log('question', { session: sid.slice(0, 8), held: true });
+    this.ctx.alert('glow', 'claude');
+    this.saw('claude-asks', `claude:ask:${requestId}`);
+    if (this.ctx.settings().general.sounds) chime('attention');
+    this.ctx.update();
+  }
+
   /** The process chain of a chat's Claude Code process, itself first. */
   private chainOf(pid: number): number[] {
     const probe = this.tracker?.probe;
@@ -473,6 +515,16 @@ export class ClaudeActivity extends BaseActivity {
       if (h.held) continue;
       const s = this.sessions.find((x) => x.id === h.sessionId);
       if (s && this.chainOf(s.pid).includes(pid)) this.release(h, 'switched to the chat');
+    }
+    // A held question goes to its chat once the user is there: Claude Code asks it as usual.
+    for (const c of this.hooks.cards.filter((x) => x.early)) {
+      const s = this.sessions.find((x) => x.id === c.sessionId);
+      if (!s || !this.chainOf(s.pid).includes(pid)) continue;
+      this.hooks.take(c.requestId);
+      this.picks.delete(c.requestId);
+      void native.hookReply(c.requestId, 'decline');
+      this.ctx.log('question released', { session: c.sessionId.slice(0, 8), why: 'switched to the chat' });
+      this.ctx.update();
     }
   }
 
@@ -660,14 +712,46 @@ export class ClaudeActivity extends BaseActivity {
     this.toPhone(session.id, 'needs', `${session.label} · ${session.project}`, '', session.cwd);
   }
 
-  /** A moment of this chat on the phone, once: hooks and polling report the same one twice. */
-  private toPhone(sid: string, kind: PushKind, detail: string, key = '', cwd?: string): void {
+  /**
+   * A moment of this chat on the phone, once: hooks and polling report the same one twice.
+   * `requestId`: a permission request waiting here, which the phone can answer.
+   */
+  private toPhone(sid: string, kind: PushKind, detail: string, key = '', cwd?: string, requestId?: string): void {
     const o = this.opts();
     if (!sid || !o.phone || !this.ctx.push || o.hiddenSessions.includes(sid)) return;
     if (!this.pushes.allow(sid, kind, Date.now(), key)) return;
     const s = this.sessions.find((x) => x.id === sid);
     const p = pushFor(kind, s?.displayTitle || (cwd ? projectName(cwd) : '') || 'Claude Code', detail);
-    this.ctx.push(p.title, p.body, { tag: p.tag, priority: p.priority });
+    this.ctx.push(p.title, p.body, { tag: p.tag, priority: p.priority, buttons: requestId ? this.phoneButtons(requestId) : undefined });
+  }
+
+  /**
+   * Allow and Deny for the phone, each posting its word and a one-time code. With Windows
+   * Hello asked before Allow, the phone can't skip it: Deny only.
+   */
+  private phoneButtons(requestId: string): Array<{ label: string; reply: string }> | undefined {
+    if (!this.ctx.settings().general.phoneApprove) return undefined;
+    const code = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+    this.phoneCodes.set(code, requestId);
+    // Only the requests that can still be waiting are kept.
+    if (this.phoneCodes.size > 40) this.phoneCodes.delete(this.phoneCodes.keys().next().value!);
+    const deny = { label: 'Deny', reply: `deny ${code}` };
+    return this.opts().requireHello ? [deny] : [{ label: 'Allow', reply: `allow ${code}` }, deny];
+  }
+
+  /** A button tapped on the phone: answers the request it was for, if that still waits. */
+  private fromPhone(message: string): void {
+    const m = /^(allow|deny) ([0-9a-f]{32})$/.exec(message.trim());
+    if (!m) return;
+    const requestId = this.phoneCodes.get(m[2]);
+    if (!requestId) return;
+    this.phoneCodes.delete(m[2]);
+    if (!this.hooks.cards.some((c) => c.requestId === requestId)) return;
+    // The phone never answers Allow past Windows Hello (it was only given Deny then).
+    if (m[1] === 'allow' && this.opts().requireHello) return;
+    this.ctx.log('permission answered from the phone', { decision: m[1] });
+    this.answer(requestId, m[1] === 'allow' ? 'allow' : 'deny');
+    this.flash(m[1] === 'allow' ? 'Allowed from your phone' : 'Denied from your phone', m[1] === 'allow' ? 'good' : 'warn', m[1] === 'allow' ? 'check' : 'x');
   }
 
   private askToPhone(sid: string, ev: HookEvent): void {

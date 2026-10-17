@@ -65,7 +65,8 @@ export function choosePrimary(
   const newest = [...surfaces].sort((a, b) => b.at - a.at)[0];
   if (newest) return { primary: newest.id, surfaced: newest.key, urgent: false, visible: order(visible, newest.id) };
 
-  const top = visible.find((c) => c.config.persistent);
+  // A chip-only activity (Land's icon) never takes the pill: it sits beside whatever does, or alone.
+  const top = visible.find((c) => c.config.persistent && !c.status.chipOnly);
   return { primary: top?.id ?? null, surfaced: null, urgent: false, visible: order(visible, top?.id ?? null) };
 }
 

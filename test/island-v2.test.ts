@@ -46,6 +46,24 @@ describe('settings v2', () => {
       pages: [['island/day', null, 'claude/claude'], [null, 'music/music']],
     });
   });
+
+  it('0.3.0: what Ask Claude answered with moves into the bot chat, and the removed activities go', () => {
+    const raw = defaultSettings() as unknown as Record<string, any>;
+    // Saved by 0.2.9: Ask Claude had the choice, Local AI had no such option.
+    delete raw.activities.config.local.options.backend;
+    raw.activities.config.ask = { enabled: true, options: { backend: 'api' } };
+    raw.activities.config.stripe = { enabled: true, options: {} };
+    raw.activities.order = ['stripe', 'ask', ...raw.activities.order];
+    const s = migrate(raw);
+    expect(s.activities.config.local.options.backend).toBe('api');
+    expect(s.activities.config.ask).toBeUndefined();
+    expect(s.activities.config.stripe).toBeUndefined();
+    expect(s.activities.order).not.toContain('ask');
+    expect(s.activities.order).not.toContain('stripe');
+    // A choice already made in the bot chat wins.
+    raw.activities.config.local = { ...raw.activities.config.local, options: { backend: 'claude-code' } };
+    expect(migrate(raw).activities.config.local.options.backend).toBe('claude-code');
+  });
 });
 
 describe('priority', () => {

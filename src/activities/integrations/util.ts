@@ -117,17 +117,6 @@ export function safeUrl(url: unknown, origin?: string): string | null {
 
 // ------------------------------------------------------------------ numbers and names
 
-/** Stripe amounts are in the currency's smallest unit, and how many decimals that is depends on the currency. */
-export function formatMoney(minor: number, currency: string, signed = false): string {
-  const code = /^[A-Za-z]{3}$/.test(currency) ? currency.toUpperCase() : 'USD';
-  try {
-    const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: code, signDisplay: signed ? 'exceptZero' : 'auto' });
-    return money.format(minor / 10 ** (money.resolvedOptions().maximumFractionDigits ?? 2));
-  } catch {
-    return `${(minor / 100).toFixed(2)} ${code}`;
-  }
-}
-
 /** 1234 becomes 1.2k. */
 export function compactCount(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1).replace(/\.0$/, '')}k` : String(n);
@@ -156,7 +145,3 @@ export function parseRepoList(text: unknown): string[] {
   return out;
 }
 
-/** n8n puts the failing node on one line and its message on the next; the pill has one line. */
-export function oneLine(text: string | null | undefined): string {
-  return (text ?? '').split('\n').map((s) => s.trim()).filter(Boolean).join(': ');
-}

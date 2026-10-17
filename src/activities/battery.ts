@@ -2,7 +2,6 @@
 
 import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv } from '../core/activity';
-import { duration } from '../core/format';
 import { native, type PowerState } from '../core/native';
 import type { Seg, Tone } from '../core/segments';
 import type { Tile } from '../core/sheet';
@@ -18,13 +17,23 @@ const CRITICAL = 10;
 /** Windows' estimate is only believable up to a couple of days. */
 const MAX_LEFT_S = 48 * 3600;
 
-/** "25 min left", "2 h 10 min left"; empty when the estimate is unknown or absurd. */
-function timeLeft(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0 || seconds > MAX_LEFT_S) return '';
+/** "25 min", "2 h 10 min"; empty when the estimate is unknown or absurd. */
+function span(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0 || seconds > MAX_LEFT_S) return '';
   const min = Math.max(1, Math.round(seconds / 60));
-  if (min < 60) return `${min} min left`;
+  if (min < 60) return `${min} min`;
   const h = Math.floor(min / 60);
-  return min % 60 ? `${h} h ${min % 60} min left` : `${h} h left`;
+  return min % 60 ? `${h} h ${min % 60} min` : `${h} h`;
+}
+
+/** How long it lasts on battery ("2 h 10 min left") or until it is full ("Full in 40 min"); empty when unknown. */
+export function batteryTime(p: Pick<PowerState, 'charging' | 'ac' | 'secondsLeft' | 'secondsToFull'>): string {
+  if (p.charging) {
+    const full = span(p.secondsToFull);
+    return full ? `Full in ${full}` : '';
+  }
+  const left = p.ac ? '' : span(p.secondsLeft);
+  return left ? `${left} left` : '';
 }
 
 export class BatteryActivity extends BaseActivity {
@@ -158,7 +167,7 @@ export class BatteryActivity extends BaseActivity {
     if (!p?.hasBattery) return null;
     const pct = Math.round(p.percent ?? 0);
     const head = p.charging ? 'Charging' : p.ac ? 'Plugged in' : 'On battery';
-    const sub = pct >= 100 && (p.ac || p.charging) ? 'Full' : p.secondsLeft !== null ? timeLeft(p.secondsLeft) : '';
+    const sub = pct >= 100 && (p.ac || p.charging) ? 'Full' : batteryTime(p);
     return { key: 'battery', span: 2, body: { k: 'battery', pct, charging: p.charging, head, sub } };
   }
 
@@ -179,8 +188,9 @@ export class BatteryActivity extends BaseActivity {
       segs.push({ t: 'text', key: 'label', text: label, tone: low ? 'bad' : 'muted', prio: 4 });
     }
     segs.push({ t: 'progress', key: 'bar', value: pct / 100, tone, w: env.level === 'maximum' ? 150 : 90, side: 'center', prio: 5 });
-    if (env.level === 'maximum' && !env.vertical && p.secondsLeft !== null) {
-      segs.push({ t: 'text', key: 'left', text: `${duration(p.secondsLeft * 1000)} left`, tone: 'muted', size: 'sm', side: 'end', prio: 6 });
+    const time = batteryTime(p);
+    if (env.level === 'maximum' && !env.vertical && time) {
+      segs.push({ t: 'text', key: 'left', text: time, tone: 'muted', size: 'sm', side: 'end', prio: 6 });
     }
     return segs;
   }

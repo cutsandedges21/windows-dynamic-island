@@ -28,14 +28,15 @@ describe('suggestGlance', () => {
 describe('planActivities', () => {
   it('puts the picks on the grid and keeps the helpers on but off the grid', () => {
     const plan = planActivities(answers({ uses: ['gaming'], glance: ['system', 'network', 'sound'], ai: true }), desktop);
-    expect(plan.picked).toEqual(['local', 'game', 'system', 'network', 'sound']);
-    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'phone']);
+    expect(plan.picked).toEqual(['game', 'system', 'network', 'sound']);
+    // The bot's brain is on with the AI step, but has no tile: the bot is the way in.
+    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'phone', 'local']);
     expect(plan.enabled).toEqual([...plan.picked, ...plan.hidden]);
   });
 
-  it('only adds Claude Code and Ask Claude when Claude Code is on this PC', () => {
+  it('only adds Claude Code when Claude Code is on this PC', () => {
     expect(planActivities(answers({ uses: ['coding'] }), desktop).picked).toEqual(['servers']);
-    expect(planActivities(answers({ uses: ['coding'] }), { ...desktop, claudeCode: true }).picked).toEqual(['claude', 'ask', 'servers']);
+    expect(planActivities(answers({ uses: ['coding'] }), { ...desktop, claudeCode: true }).picked).toEqual(['claude', 'servers']);
   });
 
   it('on a Mac, plans only what a Mac can run', () => {
@@ -45,7 +46,6 @@ describe('planActivities', () => {
     expect(plan.enabled).not.toContain('claude');
     expect(plan.enabled).not.toContain('battery');
     expect(plan.picked).toContain('timer');
-    expect(plan.picked).toContain('ask');
     expect(glanceChoices(mac).map((g) => g.id)).not.toContain('music');
   });
 

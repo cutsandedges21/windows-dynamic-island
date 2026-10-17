@@ -10,9 +10,9 @@ export const ISLAND = 'island:';
 /** Answers at 17 tok/s on a laptop CPU (i7-12650H) with no thinking step first. */
 export const SUGGESTED_MODEL = 'llama3.2:3b';
 export const NO_SERVER = "Ollama isn't running. Start it, or get it from ollama.com.";
-export const SET_UP_FIRST = 'Set up Local AI first: tap Set up on its tile.';
+export const SET_UP_FIRST = 'Set up a model first: tap Set up on the bot\'s card.';
 export const STILL_DOWNLOADING = 'Your model is still downloading. Ask again once it is done.';
-export const NOT_DOWNLOADED = "That model isn't downloaded. Pick one in Activities › Local AI.";
+export const NOT_DOWNLOADED = "That model isn't downloaded. Pick one in Activities › Bot chat.";
 
 export const isEmbedding = (m: LocalModel) => /embed/i.test(m.name) || /bert$/i.test(m.family);
 

@@ -24,6 +24,19 @@ fn entry(name: &str) -> Result<Entry, String> {
     Entry::new(SERVICE, name).map_err(|e| e.to_string())
 }
 
+/// Keys of services Island no longer talks to (Stripe, n8n, Cal.com and Resend were removed in
+/// 0.3.0): taken out of the keychain so they don't linger there.
+const RETIRED: &[&str] = &["stripe.key", "n8n.key", "calcom.key", "resend.key"];
+
+/// Removes the retired keys; only a key that was there is logged.
+pub fn forget_retired() {
+    for name in RETIRED {
+        if entry(name).is_ok_and(|e| e.delete_credential().is_ok()) {
+            crate::log::line(format!("secret removed: {name} (Island no longer uses that service)"));
+        }
+    }
+}
+
 /// The stored value, if there is a non-empty one. Rust-side only.
 pub fn get(name: &str) -> Option<String> {
     entry(name).ok()?.get_password().ok().filter(|v| !v.is_empty())

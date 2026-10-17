@@ -5,11 +5,11 @@ A new install opens the Activities window on a full-window welcome page (`src/we
 1. **Welcome.** What Island is, in three lines.
 2. **What do you use this PC for?** School, Work, Coding, Gaming, Music and videos, Calls and meetings, Creating. Pick any.
 3. **What do you want to see at a glance?** Eleven tiles, ticked in advance from screen 2 (and Battery on a laptop). Weather asks for a city.
-4. **Your own AI, on this PC.** This PC's processor, memory, graphics and free disk, then every Local AI model as a card. The one `plan()` picks for this PC says **Recommended**. Clicking a card downloads it and makes it the model that answers. Models too big for this PC are greyed out with what they need. Ollama's models, when Ollama runs, are listed below with **Use**. Skip leaves Local AI off.
+4. **Your own AI, on this PC.** This PC's processor, memory, graphics and free disk, then every Local AI model as a card. The one `plan()` picks for this PC says **Recommended**. Clicking a card downloads it and makes it the model that answers. Models too big for this PC are greyed out with what they need. Ollama's models, when Ollama runs, are listed below with **Use**. Skip leaves Local AI off. The model answers when the bot is clicked (the only way to ask, since 0.3.0); it gets no tile.
 5. **Your phone and Island.** Both directions, each as numbered steps. *Island → your phone*: a switch, **Send notifications to my phone**, saves at once and makes the private ntfy topic; the steps (install ntfy, tap +, type the topic shown large with Copy, allow notifications) end with **Send a test**, and a line says the text goes through ntfy.sh and the topic must stay private. *Your phone → Island* (Windows only): **Open Phone Link** (`ms-phone://`), pair the phone, let it share notifications; the Phone activity is already on. When Windows does not let apps read notifications, a note says so with **Open Windows Settings** (`ms-settings:privacy-notifications`). Nothing here is required; Continue goes on either way.
 6. **You are all set.** A preview of the Control Center as the island will pack it, and Finish. Finish saves everything, opens the island on the new grid, and shows the Activities page.
 
-The same model list, as rows with Use / Download / Resume / Cancel / Delete, sits in **Activities › Local AI › Models** (`src/models-ui.ts`). Downloads run in Rust and carry on when the window closes. The pill shows their progress and says "Local AI is ready" at the end.
+The same model list, as rows with Use / Download / Resume / Cancel / Delete, sits in **Activities › Bot chat › Models** (`src/models-ui.ts`). Downloads run in Rust and carry on when the window closes. The pill shows their progress and says "Local AI is ready" at the end.
 
 ## How answers become activities
 
@@ -17,11 +17,11 @@ The same model list, as rows with Use / Download / Resume / Cancel / Delete, sit
 
 | Answer | Puts on the grid |
 | --- | --- |
-| Coding | Claude Code, Ask Claude (only when Claude Code is on this PC), Local Servers |
+| Coding | Claude Code (only when Claude Code is on this PC), Local Servers |
 | Gaming | Games |
 | Calls and meetings | Mic & Camera |
 | A glance tick | that activity's tile |
-| A model picked on screen 4 | Local AI |
+| A model picked on screen 4 | Local AI (on, no tile: the bot is its way in) |
 
 Helpers stay switched on but off the grid unless picked: Sound, Downloads, Screenshots, Devices, Other apps, and Battery on a laptop. They still pop up for their events (the volume, a finished download, a USB drive). `grid.hidden` takes an activity id for this (`hiddenTest` in `src/core/grid.ts`), and "+" in grid edit mode brings such a tile back. Integrations with keys (GitHub, Vercel…) and Quick Actions keep whatever state they had. The grid order follows the answers; sizes and any arranged pages reset.
 

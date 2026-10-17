@@ -32,6 +32,6 @@ a branch named `collab/avatar-<what>` and a pull request, like any other change.
 ## Task 2: Land, file sharing (done, do not build it)
 
 Moss built this on `main` on 2026-10-13 (it was called Blip in the first version of this file; it is
-**Land** now). Code: `src-tauri/src/land.rs` and `src/activities/land.ts`; how it works is in
+**Land** now). Code: `src-tauri/src/land/` (one file per part since 0.3.0) and `src/activities/land.ts`; how it works is in
 `docs/ARCHITECTURE.md` › Land. To fix or improve it, use a branch named `collab/land-<what>` and a
 pull request, like any other change.

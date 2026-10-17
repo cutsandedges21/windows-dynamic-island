@@ -13,7 +13,7 @@ describe('platform', () => {
   });
 
   it('a Mac runs the OS-free activities and labels the rest', () => {
-    for (const id of ['timer', 'weather', 'calendar', 'downloads', 'ask', 'local', 'github', 'notion']) expect(availableHere(id, 'macos')).toBe(true);
+    for (const id of ['timer', 'weather', 'calendar', 'downloads', 'local', 'github', 'notion']) expect(availableHere(id, 'macos')).toBe(true);
     expect(unavailableReason('music', 'macos')).toBe('Coming to Mac');
     expect(unavailableReason('claude', 'macos')).toBe('Coming to Mac');
     expect(unavailableReason('game', 'macos')).toBe('Windows only');

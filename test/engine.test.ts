@@ -162,6 +162,19 @@ describe('priority', () => {
     expect(c.primary).toBe('downloads');
   });
 
+  it('a chip-only activity sits beside whatever has the pill, and never takes it', () => {
+    const now = 1000;
+    const land = cand('land', { weight: 'background', chipOnly: true }, 'high', 0);
+    const system = cand('system', { weight: 'background' }, 'low', 5);
+    let c = choosePrimary([land, system], { selected: null, surfaces: [], now, dnd: false });
+    expect(c.primary).toBe('system');
+    expect(c.visible).toEqual(['system', 'land']);
+    // Alone it is still only a chip: the island draws the chips by themselves.
+    c = choosePrimary([land], { selected: null, surfaces: [], now, dnd: false });
+    expect(c.primary).toBeNull();
+    expect(c.visible).toEqual(['land']);
+  });
+
   it('a surfaced event shows briefly unless do-not-disturb is on; interrupts need the setting', () => {
     const music = cand('music', {}, 'low');
     const battery = cand('battery', { weight: 'background' }, 'low', 1, { persistent: false });

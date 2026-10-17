@@ -27,6 +27,8 @@ interface TimerState {
 
 const DONE_SHOW_MS = 60000;
 
+type Options = { focusMinutes: number; breakMinutes: number; quietFocus: boolean; quietByFocus: boolean };
+
 export class TimerActivity extends BaseActivity {
   private t: TimerState | null = null;
 
@@ -36,6 +38,30 @@ export class TimerActivity extends BaseActivity {
 
   protected init(): void {
     this.every(250, () => this.check());
+    // Island closed during a focus round: the Quiet it turned on goes with the round.
+    if (this.ctx.options<Partial<Options>>().quietByFocus) this.quietOff();
+  }
+
+  protected override dispose(): void {
+    this.quietOff();
+  }
+
+  // ---------------------------------------------------------------- Quiet while focusing
+
+  /** A focus round begins: Quiet on, unless the user switched that off or turned Quiet on themselves. */
+  private quietOn(): void {
+    const o = this.ctx.options<Partial<Options>>();
+    if (o.quietFocus === false || !this.ctx.setQuiet || this.ctx.settings().general.dnd) return;
+    this.ctx.setQuiet(true);
+    // Kept with the options, so a restart mid-round still turns it off.
+    this.ctx.setOptions?.({ quietByFocus: true });
+  }
+
+  /** The round is over (a break, done, stopped): the Quiet it turned on goes. */
+  private quietOff(): void {
+    if (!this.ctx.options<Partial<Options>>().quietByFocus) return;
+    this.ctx.setOptions?.({ quietByFocus: false });
+    if (this.ctx.settings().general.dnd) this.ctx.setQuiet?.(false);
   }
 
   status(): ActivityStatus {
@@ -56,6 +82,7 @@ export class TimerActivity extends BaseActivity {
   // ---------------------------------------------------------------- control
 
   startTimer(ms: number, label = 'Timer'): void {
+    this.quietOff();
     this.t = { mode: 'timer', label, endsAt: Date.now() + ms, totalMs: ms, remainingMs: ms, startedAt: null, bankedMs: 0, running: true, phase: 'focus', round: 1, doneAt: null };
     this.ctx.surface({ key: 'start', ms: 2500 });
     this.saw('timer-start', 'timer:start');
@@ -63,14 +90,17 @@ export class TimerActivity extends BaseActivity {
   }
 
   startStopwatch(): void {
+    this.quietOff();
     this.t = { mode: 'stopwatch', label: 'Stopwatch', endsAt: null, totalMs: 0, remainingMs: 0, startedAt: Date.now(), bankedMs: 0, running: true, phase: 'focus', round: 1, doneAt: null };
     this.ctx.surface({ key: 'start', ms: 2000 });
     this.ctx.update();
   }
 
   startFocus(round = 1, phase: 'focus' | 'break' = 'focus'): void {
-    const o = this.ctx.options<{ focusMinutes: number; breakMinutes: number }>();
+    const o = this.ctx.options<Partial<Options>>();
     const ms = (phase === 'focus' ? Number(o.focusMinutes) || 25 : Number(o.breakMinutes) || 5) * 60000;
+    if (phase === 'focus') this.quietOn();
+    else this.quietOff();
     this.t = {
       mode: 'focus',
       label: phase === 'focus' ? 'Focus' : 'Break',
@@ -110,6 +140,8 @@ export class TimerActivity extends BaseActivity {
       t.remainingMs = 0;
       t.endsAt = null;
       t.doneAt = now;
+      // Quiet would hold the "done" notification it is about to send.
+      if (t.mode === 'focus') this.quietOff();
       this.ctx.alert('shake');
       this.saw('timer-done', 'timer:done');
       this.ctx.alert('glow', t.mode === 'focus' ? 'bad' : 'warn');
@@ -299,6 +331,7 @@ export class TimerActivity extends BaseActivity {
       case 'stop':
       case 'dismiss':
         this.t = null;
+        this.quietOff();
         this.ctx.close();
         break;
     }

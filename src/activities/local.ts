@@ -1,17 +1,18 @@
-// Local AI: ask a model that runs on this PC. The question never leaves the computer and
-// it works offline. The model is one of Island's own (downloaded from Activities › Local
-// AI or the welcome screen) or Ollama's (src-tauri/src/local.rs). The answer streams into
-// the pill while it is written, and Stop really stops the model, so a question you gave up
-// on does not keep the CPU busy. Violet, not orange: orange is Claude's alone.
+// Local AI: the bot's brain. Click the bot, type in the bar under it, and a model that runs on
+// this PC answers there (Moss: the bot is the one way in; src/core/chat.ts draws the bar and its
+// card). The question never leaves the computer and it works offline. The model is one of
+// Island's own (downloaded from the bot's card, Activities › Bot chat or the welcome screen) or
+// Ollama's (src-tauri/src/local.rs). With the bar's Claude switch on, Claude answers instead,
+// through Claude Code or an API key (ask.ts picks which). Stop really stops the model, so a
+// question you gave up on does not keep the CPU busy. The pill only shows a model downloading.
 
-import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
+import type { ActivityStatus, RenderEnv } from '../core/activity';
 import { bridge, type Bundled, type ChatTurn, type DeviceInfo, type LocalDelta, type LocalStatus, type SetupEnd, type SetupProgress } from '../core/bridge';
-import { bytes, clip, plainText, rate } from '../core/format';
+import { bytes, plainText, rate } from '../core/format';
 import { chooseBackend } from '../core/models';
 import { native, type Agenda, type AudioState, type MediaState, type NetSample, type PowerState, type SysSample } from '../core/native';
-import { platform, thisComputer } from '../core/platform';
+import { platform } from '../core/platform';
 import type { Seg } from '../core/segments';
-import type { SheetButton, SheetView, Tile } from '../core/sheet';
 import type { ChatView } from '../core/chat';
 import type { PetSignal } from '../core/pet';
 import { NO_BACKEND, pickBackend, trimHistory } from './ask';
@@ -20,19 +21,17 @@ import { BaseActivity } from './base';
 // Model choice lives in core/models.ts, shared with the model picker; these stay importable from here.
 export { chooseBackend, NO_SERVER, pickModel, SET_UP_FIRST, SUGGESTED_MODEL } from '../core/models';
 
-type Phase = 'idle' | 'setup' | 'compose' | 'thinking' | 'streaming' | 'answer' | 'error';
+type Phase = 'idle' | 'setup' | 'thinking' | 'streaming' | 'answer' | 'error';
 
-/** How long "Local AI is ready" stays after setup. */
-const READY_MS = 6000;
 /** The first guess at how long an answer takes, before this PC has answered anything. */
 const FIRST_ESTIMATE = 8000;
 /** How much each new answer moves the estimate. */
 const LEARN = 0.3;
 
 /**
- * The wait bar: how full it is and the seconds left, from how long answers have taken on
+ * The wait: how far along it is and the seconds left, from how long answers have taken on
  * this PC. No model can say beforehand how long it will be, so once the estimate runs out
- * the bar says "Almost done…" rather than show a number that is wrong.
+ * it says "Almost done…" rather than show a number that is wrong.
  */
 export function countdown(elapsed: number, estimate: number): { value: number | null; text: string } {
   const left = estimate - elapsed;
@@ -43,12 +42,10 @@ export function countdown(elapsed: number, estimate: number): { value: number | 
 const STATUS_EVERY = 30_000;
 const COPIED_MS = 1800;
 
-/** Opening the input loads the model at most this often (Rust asks Ollama to keep it 30 minutes). */
+/** Opening the bar loads the model at most this often (Rust asks Ollama to keep it 30 minutes). */
 const WARM_EVERY = 60_000;
 /** How long to wait for the PC's facts; anything slower is left out of the question. */
 const FACTS_WAIT = 1500;
-
-const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 const gbText = (bytes: number) => `${(bytes / 1e9).toFixed(1)} GB`;
 
@@ -113,7 +110,7 @@ export function deviceFacts(s: DeviceSnapshot, now: Date): string {
   if (p && !p.hasBattery) add('Power', 'plugged in, no battery');
   if (p?.hasBattery) {
     const state = p.charging ? 'charging' : p.ac ? 'plugged in, not charging' : 'on battery';
-    const left = p.secondsLeft ? `, about ${hours(p.secondsLeft)} left` : '';
+    const left = p.charging && p.secondsToFull ? `, full in about ${hours(p.secondsToFull)}` : !p.charging && p.secondsLeft ? `, about ${hours(p.secondsLeft)} left` : '';
     add('Battery', `${p.percent ?? '?'}%, ${state}${p.saver ? ', battery saver on' : ''}${left}`);
   }
   const n = s.net;
@@ -188,10 +185,6 @@ export class LocalActivity extends BaseActivity {
   private asking = 0;
   /** Bumps on every question, Stop and New chat, so a late reply to an old one is ignored. */
   private turn = 0;
-  /** One card per question, kept from the first words to the end so it is patched, not rebuilt. */
-  private cardKey = '';
-  /** The user tapped away while waiting: keep working, and come back with the answer. */
-  private waitDismissed = false;
   private copiedAt = 0;
   /** The local server answered the last check. */
   private available = false;
@@ -199,18 +192,17 @@ export class LocalActivity extends BaseActivity {
   /** Island's own runtime, as of the last check. */
   private bundled: Bundled | null = null;
   private progress: SetupProgress | null = null;
-  /** The download under way was started from this activity's tile, so its failure is shown here. */
+  /** The download under way was started from the bot's card, so its failure is shown there. */
   private ownSetup = false;
-  private readyUntil = 0;
   /** When the question being answered was sent, and how long its answer should take. */
   private startedAt = 0;
   private estimate = FIRST_ESTIMATE;
   /** Backend and model of the last question, the key answer times are learned under. */
   private lastKey = '';
   private learned = new Map<string, number>();
-  /** Who answers in the bot's chat: the local model, or Ask Claude's backend (the bar's switch). */
+  /** Who answers: the local model, or Claude (the bar's switch). */
   private brain: 'local' | 'claude' = 'local';
-  /** Ask Claude has a backend, as of the last check. */
+  /** Claude can answer (Claude Code is installed, or an API key is saved), as of the last check. */
   private canClaude = false;
   /** When the last answer arrived (the bot winks). */
   private answeredAt = 0;
@@ -229,7 +221,7 @@ export class LocalActivity extends BaseActivity {
     });
     this.listen<SetupEnd>('local-setup-end', (e) => void this.setupEnded(e));
     this.every(STATUS_EVERY, () => void this.refresh(), true);
-    // The wait bar moves while a question is out.
+    // The seconds left move while a question is out.
     this.every(500, () => {
       if (this.phase === 'thinking' || this.phase === 'streaming') this.ctx.update();
     });
@@ -254,7 +246,7 @@ export class LocalActivity extends BaseActivity {
     return status;
   }
 
-  /** Whether Ask Claude could answer the bot's chat (Claude Code installed, or an API key saved). */
+  /** Whether Claude could answer (Claude Code installed, or an API key saved). */
   private async checkClaude(): Promise<void> {
     const can = pickBackend(this.askChoice(), await bridge.askBackends()) !== null;
     if (!this.alive || can === this.canClaude) return;
@@ -262,16 +254,9 @@ export class LocalActivity extends BaseActivity {
     this.ctx.update();
   }
 
+  /** How Claude answers: Claude Code or the API key (Activities › Bot chat). */
   private askChoice(): unknown {
-    return this.ctx.settings().activities.config.ask?.options?.backend;
-  }
-
-  /**
-   * With the bot on, its chat bar under the bot is Local AI's face: the pill, its card, the
-   * Control Center tile and the island opening all stay out of it.
-   */
-  private viaBot(): boolean {
-    return this.ctx.settings().island.bot === true;
+    return this.ctx.options<{ backend?: string }>().backend;
   }
 
   /** Loads the model while the question is typed, so the answer does not wait seconds for it. */
@@ -306,27 +291,11 @@ export class LocalActivity extends BaseActivity {
 
   // ---------------------------------------------------------------- state
 
+  /** Only a model downloading shows in the pill; questions and answers are the bot's bar. */
   status(): ActivityStatus {
-    if (this.viaBot() && this.phase !== 'setup') return { active: false };
-    const busy = { tone: 'violet' as const, motion: 'orbit' as const };
-    switch (this.phase) {
-      case 'setup': {
-        const value = this.setupShare();
-        return { active: true, weight: 'foreground', summary: `Setting up Local AI${value == null ? '' : ` · ${Math.round(value * 100)}%`}`, beam: { tone: 'violet', motion: 'progress', value: value ?? 0 } };
-      }
-      case 'compose':
-        return { active: true, weight: 'foreground', urgent: { key: 'local-input', level: 'maximum' }, summary: 'Local AI' };
-      case 'thinking':
-        return { active: true, weight: 'foreground', urgent: this.waitDismissed ? null : { key: `local-wait-${this.turn}`, level: 'expanded' }, summary: 'Thinking…', beam: busy };
-      case 'streaming':
-        return { active: true, weight: 'foreground', urgent: this.waitDismissed ? null : { key: `local-stream-${this.turn}`, level: 'maximum' }, summary: clip(oneLine(this.answer), 60), beam: busy };
-      case 'answer':
-        return { active: true, weight: 'foreground', urgent: { key: `local-answer-${this.turn}`, level: 'maximum' }, summary: clip(oneLine(this.answer), 60) };
-      case 'error':
-        return { active: true, weight: 'foreground', urgent: { key: `local-error-${this.turn}`, level: 'expanded' }, summary: clip(this.error, 60) };
-      default:
-        return Date.now() < this.readyUntil ? { active: true, weight: 'background', summary: 'Local AI is ready' } : { active: false };
-    }
+    if (this.phase !== 'setup') return { active: false };
+    const value = this.setupShare();
+    return { active: true, weight: 'foreground', summary: `Setting up Local AI${value == null ? '' : ` · ${Math.round(value * 100)}%`}`, beam: { tone: 'violet', motion: 'progress', value: value ?? 0 } };
   }
 
   /** How much of the setup download is done, 0..1, or null before the first numbers. */
@@ -335,7 +304,7 @@ export class LocalActivity extends BaseActivity {
     return p && p.total > 0 ? Math.min(1, p.done / p.total) : null;
   }
 
-  /** The tile's Set up: downloads the model recommended for this PC. */
+  /** The card's Set up: downloads the model recommended for this PC. */
   private async setup(): Promise<void> {
     if (this.phase === 'setup') return;
     this.phase = 'setup';
@@ -350,7 +319,7 @@ export class LocalActivity extends BaseActivity {
     this.fail(started.error);
   }
 
-  /** A download ended, wherever it was started: say Local AI is ready, or why it is not. */
+  /** A download ended, wherever it was started: the bot's card says why it failed, if it started there. */
   private async setupEnded(e: SetupEnd): Promise<void> {
     const mine = this.ownSetup;
     this.ownSetup = false;
@@ -358,31 +327,8 @@ export class LocalActivity extends BaseActivity {
     if (this.phase === 'setup') this.phase = 'idle';
     await this.refresh();
     if (!this.alive) return;
-    if (e.ok && this.phase === 'idle' && !this.viaBot()) {
-      this.readyUntil = Date.now() + READY_MS;
-      this.ctx.surface({ key: `local-ready-${this.turn}`, level: 'expanded', ms: READY_MS });
-    } else if (!e.ok && !e.cancelled && mine) {
-      // A download started in the Activities window shows its failure there instead.
-      return this.fail(e.error || 'The download failed.');
-    }
-    this.ctx.update();
-  }
-
-  chip(): ChipView | null {
-    if (this.viaBot()) return null;
-    if (this.phase === 'thinking') return { icon: 'spark', label: 'Thinking…', tone: 'violet', pulse: true };
-    if (this.phase === 'streaming') return { icon: 'spark', label: 'Writing…', tone: 'violet', pulse: true };
-    if (this.phase === 'answer') return { icon: 'spark', label: 'Answered', tone: 'good' };
-    return null;
-  }
-
-  /** The user tapped away from an urgent moment. */
-  dismiss(key: string): void {
-    if (key.startsWith('local-wait') || key.startsWith('local-stream')) {
-      this.waitDismissed = true;
-    } else if ((key === 'local-input' && this.phase === 'compose') || (key.startsWith('local-answer') && this.phase === 'answer') || (key.startsWith('local-error') && this.phase === 'error')) {
-      this.endMoment();
-    }
+    // A download started in the Activities window shows its failure there instead.
+    if (!e.ok && !e.cancelled && mine) return this.fail(e.error || 'The download failed.');
     this.ctx.update();
   }
 
@@ -413,8 +359,6 @@ export class LocalActivity extends BaseActivity {
     const turn = ++this.turn;
     this.phase = 'thinking';
     this.answer = '';
-    this.cardKey = `local-card-${turn}`;
-    this.waitDismissed = false;
     this.startedAt = Date.now();
     this.estimate = this.estimateFor(this.lastKey);
     this.ctx.update();
@@ -436,14 +380,13 @@ export class LocalActivity extends BaseActivity {
     if (answer) {
       this.learn(this.lastKey, Date.now() - this.startedAt);
       this.keep(answer);
-      if (!this.viaBot()) this.ctx.surface({ key: `local-answer-${this.turn}`, level: 'maximum', ms: 8000 });
     } else {
       this.fail(reply.error || 'The model sent no answer.');
     }
     this.ctx.update();
   }
 
-  /** The bot's chat with the Claude switch on: Ask Claude's backend answers, all at once. */
+  /** The Claude switch on: Claude Code or the API key answers, all at once. */
   private async sendToClaude(turn: number): Promise<void> {
     this.model = 'Claude';
     const backend = pickBackend(this.askChoice(), await bridge.askBackends());
@@ -480,26 +423,15 @@ export class LocalActivity extends BaseActivity {
   private fail(why: string): void {
     this.error = why;
     this.phase = 'error';
-    if (!this.viaBot()) this.ctx.surface({ key: `local-error-${this.turn}`, level: 'expanded', ms: 6000 });
     this.ctx.update();
   }
 
   async action(name: string, arg: unknown): Promise<void> {
     switch (name) {
       case 'ask':
-        // The bot's bar is already open for typing: only load the model meanwhile.
-        if (this.viaBot()) {
-          if (this.brain === 'local') void this.warm();
-          void this.checkClaude();
-          break;
-        }
-        if (this.phase === 'thinking' || this.phase === 'streaming') {
-          this.waitDismissed = false;
-        } else {
-          this.phase = 'compose';
-          void this.warm();
-        }
-        this.ctx.open();
+        // The bot's bar opened for typing: load the model meanwhile.
+        if (this.brain === 'local') void this.warm();
+        void this.checkClaude();
         break;
       case 'brain':
         // Only between questions: an answer on its way keeps the brain that started it.
@@ -518,12 +450,8 @@ export class LocalActivity extends BaseActivity {
         // What was written so far stays as the answer; with nothing written, the moment ends.
         const partial = this.phase === 'streaming' ? this.answer : '';
         this.stopAsking();
-        if (partial) {
-          this.keep(partial);
-        } else {
-          this.endMoment();
-          if (!this.viaBot()) this.ctx.close();
-        }
+        if (partial) this.keep(partial);
+        else this.endMoment();
         break;
       }
       case 'retry': {
@@ -536,7 +464,6 @@ export class LocalActivity extends BaseActivity {
       case 'cancel':
         if (this.phase === 'thinking' || this.phase === 'streaming') this.stopAsking();
         this.endMoment();
-        if (!this.viaBot()) this.ctx.close();
         break;
       case 'new':
         this.stopAsking();
@@ -545,12 +472,7 @@ export class LocalActivity extends BaseActivity {
         this.error = '';
         // A new chat starts on the local model again.
         this.brain = 'local';
-        if (this.viaBot()) {
-          this.phase = 'idle';
-          break;
-        }
-        this.phase = 'compose';
-        this.ctx.open();
+        this.phase = 'idle';
         break;
       case 'copy':
         if (this.answer) {
@@ -565,123 +487,28 @@ export class LocalActivity extends BaseActivity {
 
   // ---------------------------------------------------------------- view
 
-  /** A starter for the open, idle island, while a local server is running. */
-  home(): Seg[] {
-    if (this.viaBot()) return [];
-    // Another model downloading in the background does not stop the one that is ready.
-    if ((this.phase !== 'idle' && this.phase !== 'setup') || !this.available) return [];
-    return [{ t: 'button', key: 'local', icon: 'spark', label: 'Local AI', action: 'ask', style: 'secondary', prio: 5, tip: `Ask the model on ${thisComputer()}` }];
-  }
-
+  /** A model downloading: the pill shows how far it is. */
   render(env: RenderEnv): Seg[] {
+    if (this.phase !== 'setup') return [];
     const roomy = env.level === 'expanded' || env.level === 'maximum';
-    const label = (text: string) => (env.vertical ? undefined : text);
-    switch (this.phase) {
-      case 'setup': {
-        const value = this.setupShare();
-        const what = this.progress?.stage === 'runtime' ? 'Getting the runtime' : 'Downloading the model';
-        const segs: Seg[] = [
-          { t: 'icon', key: 'icon', icon: 'download', tone: 'violet', anim: 'pulse', prio: 0 },
-          { t: 'text', key: 'status', text: roomy && !env.vertical ? what : 'Setting up', weight: 'semibold', prio: 0 },
-        ];
-        if (!env.vertical) segs.push({ t: 'progress', key: 'bar', value, tone: 'violet', w: env.level === 'maximum' ? 140 : 80, side: 'center', prio: 3 });
-        if (value != null) segs.push({ t: 'text', key: 'share', text: `${Math.round(value * 100)}%`, tone: 'muted', side: 'end', prio: 2 });
-        return segs;
-      }
-      case 'compose':
-        return [
-          { t: 'icon', key: 'icon', icon: 'spark', tone: 'violet', prio: 0 },
-          { t: 'input', key: 'prompt', placeholder: this.history.length ? 'Follow up…' : 'Ask Local AI…', action: 'send', cancel: 'cancel', prio: 0, min: 220 },
-          { t: 'button', key: 'cancel', icon: 'x', action: 'cancel', style: 'ghost', side: 'end', prio: 1, tip: 'Cancel (Esc)' },
-        ];
-      // The answer itself only ever goes on the card: the pill just says where it is at.
-      case 'thinking':
-      case 'streaming': {
-        const writing = this.phase === 'streaming';
-        const segs: Seg[] = [
-          { t: 'icon', key: 'icon', icon: 'spark', tone: 'violet', anim: 'pulse', prio: 0 },
-          { t: 'text', key: 'status', text: writing ? 'Writing…' : 'Thinking…', weight: 'semibold', prio: 0 },
-        ];
-        if (!env.vertical) {
-          const wait = countdown(Date.now() - this.startedAt, this.estimate);
-          segs.push(
-            { t: 'progress', key: 'wait', value: wait.value, tone: 'violet', w: env.level === 'maximum' ? 120 : 70, side: 'center', prio: 2 },
-            { t: 'text', key: 'left', text: wait.text, tone: 'muted', prio: 1 },
-          );
-        }
-        if (!writing && roomy && !env.vertical) segs.push({ t: 'text', key: 'question', text: clip(oneLine(this.lastQuestion()), 90), tone: 'muted', prio: 4, min: 60 });
-        if (roomy) segs.push({ t: 'button', key: 'stop', icon: 'stop', label: label('Stop'), action: 'stop', style: 'secondary', side: 'end', prio: 1, tip: 'Stop the model' });
-        return segs;
-      }
-      case 'answer':
-        return [
-          { t: 'icon', key: 'icon', icon: 'spark', tone: 'violet', prio: 0 },
-          { t: 'text', key: 'ready', text: 'Answered', weight: 'semibold', prio: 0 },
-        ];
-      case 'error': {
-        const segs: Seg[] = [{ t: 'icon', key: 'icon', icon: 'alert', tone: 'warn', prio: 0 }];
-        if (!env.vertical) segs.push({ t: 'text', key: 'error', text: clip(this.error, 160), prio: 1, min: 80, tip: this.error });
-        if (roomy) {
-          segs.push(
-            { t: 'button', key: 'retry', icon: 'refresh', label: label('Retry'), action: 'retry', style: 'secondary', side: 'end', prio: 1, tip: 'Ask again' },
-            { t: 'button', key: 'cancel', icon: 'x', action: 'cancel', style: 'ghost', side: 'end', prio: 2, tip: 'Dismiss' },
-          );
-        }
-        return segs;
-      }
-      default:
-        if (Date.now() >= this.readyUntil) return [];
-        return [
-          { t: 'icon', key: 'icon', icon: 'check', tone: 'good', prio: 0 },
-          { t: 'text', key: 'ready', text: 'Local AI is ready', weight: 'semibold', prio: 0 },
-          { t: 'button', key: 'ask', icon: 'spark', label: label('Ask'), action: 'ask', style: 'secondary', side: 'end', prio: 1, tip: 'Ask Local AI' },
-        ];
-    }
+    const value = this.setupShare();
+    const what = this.progress?.stage === 'runtime' ? 'Getting the runtime' : 'Downloading the model';
+    const segs: Seg[] = [
+      { t: 'icon', key: 'icon', icon: 'download', tone: 'violet', anim: 'pulse', prio: 0 },
+      { t: 'text', key: 'status', text: roomy && !env.vertical ? what : 'Setting up', weight: 'semibold', prio: 0 },
+    ];
+    if (!env.vertical) segs.push({ t: 'progress', key: 'bar', value, tone: 'violet', w: env.level === 'maximum' ? 140 : 80, side: 'center', prio: 3 });
+    if (value != null) segs.push({ t: 'text', key: 'share', text: `${Math.round(value * 100)}%`, tone: 'muted', side: 'end', prio: 2 });
+    return segs;
   }
 
-  /** The answer on a card: growing while it is written, then with a box for the follow-up. */
-  sheet(_env: SheetEnv): SheetView | null {
-    if (this.viaBot()) return null;
-    if (this.phase === 'streaming') {
-      return {
-        key: this.cardKey,
-        blocks: [
-          { t: 'head', key: 'head', icon: 'spark', tone: 'violet', title: 'Local AI', sub: this.model, buttons: [{ key: 'stop', icon: 'stop', label: 'Stop', action: 'stop', style: 'secondary' }] },
-          { t: 'countdown', key: 'left', until: this.startedAt + this.estimate, total: this.estimate, tone: 'violet' },
-          { t: 'text', key: 'answer', text: this.answer, bubble: true, lines: 12 },
-        ],
-      };
-    }
-    if (this.phase !== 'answer') return null;
-    const copied = Date.now() - this.copiedAt < COPIED_MS;
-    return {
-      key: this.cardKey,
-      blocks: [
-        {
-          t: 'head',
-          key: 'head',
-          icon: 'spark',
-          tone: 'violet',
-          title: 'Local AI',
-          sub: clip(`${this.model} · ${oneLine(this.lastQuestion())}`, 70),
-          buttons: [
-            { key: 'copy', icon: copied ? 'check' : 'copy', label: copied ? 'Copied' : 'Copy', action: 'copy', style: 'secondary' },
-            { key: 'new', icon: 'plus', label: 'New chat', action: 'new', style: 'ghost' },
-          ],
-        },
-        { t: 'text', key: 'answer', text: this.answer, bubble: true, lines: 12 },
-        { t: 'input', key: 'follow', placeholder: 'Follow up…', action: 'send' },
-      ],
-    };
-  }
-
-  /** The bot's chat bar and card (src/core/chat.ts): what to show now. */
+  /** The bot's bar and card (src/core/chat.ts): what to show now. */
   chat(): ChatView {
     const b = this.bundled;
     const busy = this.phase === 'thinking' || this.phase === 'streaming';
     const needsModel = !this.available && !busy && this.phase !== 'setup' ? { model: b?.model ?? null, download: b?.model ? gbText(b.download) : null } : null;
     return {
-      phase: this.phase === 'compose' ? 'idle' : this.phase,
+      phase: this.phase,
       question: this.lastQuestion(),
       answer: this.answer,
       error: this.error,
@@ -692,24 +519,8 @@ export class LocalActivity extends BaseActivity {
       setupShare: this.setupShare(),
       copied: Date.now() - this.copiedAt < COPIED_MS,
       turns: this.history.length,
+      // Claude answers all at once, so only the local model has a time to count down.
+      wait: busy && this.brain === 'local' ? countdown(Date.now() - this.startedAt, this.estimate).text : null,
     };
-  }
-
-  tile(_env: SheetEnv): Tile | null {
-    if (this.viaBot()) return null;
-    if (!this.available && (this.phase === 'idle' || this.phase === 'setup')) {
-      // No Ollama: offer Island's own model, if this PC can run one.
-      const b = this.bundled;
-      if (!b?.model) return null;
-      const share = this.setupShare();
-      const sub = this.phase === 'setup' ? `Downloading${share == null ? '…' : ` ${Math.round(share * 100)}%`}` : `${b.model} · ${gbText(b.download)} download`;
-      const buttons: SheetButton[] = this.phase === 'setup' ? [] : [{ key: 'setup', icon: 'download', label: 'Set up', action: 'setup', style: 'primary' }];
-      return { key: 'local', span: 2, tone: 'violet', body: { k: 'actions', icon: 'spark', label: 'Local AI', sub, buttons } };
-    }
-    const chatting = this.history.length > 0;
-    const buttons: SheetButton[] = [{ key: 'ask', icon: 'spark', label: chatting ? 'Follow up' : 'Ask', action: 'ask', style: 'primary' }];
-    if (chatting) buttons.push({ key: 'new', icon: 'plus', label: 'New chat', action: 'new', style: 'ghost' });
-    const sub = this.phase === 'thinking' ? 'Thinking…' : this.phase === 'streaming' ? 'Writing…' : this.answer && chatting ? clip(oneLine(this.answer), 48) : `Runs on ${thisComputer()}`;
-    return { key: 'local', span: 2, tone: 'violet', body: { k: 'actions', icon: 'spark', label: 'Local AI', sub, buttons } };
   }
 }

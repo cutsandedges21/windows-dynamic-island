@@ -741,7 +741,7 @@ function privacyNote(mac: boolean): string {
   ];
   const list = `${online.slice(0, -1).join(', ')} and ${online[online.length - 1]}`;
   const update = mac ? '' : ' With Update automatically on, it also asks GitHub for a newer Island every 6 hours.';
-  return `Island only goes online for what you turn on: ${list}.${update} Questions to Local AI never leave ${thisComputer()}.`;
+  return `Island only goes online for what you turn on: ${list}.${update} Questions the bot answers with Local never leave ${thisComputer()}.`;
 }
 
 function settingsPage(): HTMLElement {
@@ -825,6 +825,19 @@ function settingsPage(): HTMLElement {
       row('Sounds', 'A soft chime when something finishes or needs you.', toggle(g.sounds, (v) => { g.sounds = v; save(true); })),
       row('Send to my phone', 'The same notifications, pushed to the free ntfy app on your phone, wherever it is.', toggle(g.phonePush, (v) => { g.phonePush = v; if (v && !g.phoneTopic) g.phoneTopic = newPhoneTopic(); save(true); render(); })),
       ...(g.phonePush && g.phoneTopic ? [phoneRow(g)] : []),
+      ...(g.phonePush && g.phoneTopic && !mac
+        ? [
+            row(
+              'Answer Claude from my phone',
+              "Claude Code's permission pushes get Allow and Deny buttons. With Windows Hello asked before Allow (Activities › Claude Code), the phone can only Deny. Anyone who can read your topic could tap them too, so keep it to yourself.",
+              toggle(g.phoneApprove, (v) => {
+                g.phoneApprove = v;
+                if (v && !g.phoneReplyTopic) g.phoneReplyTopic = newPhoneTopic();
+                save(true);
+              }),
+            ),
+          ]
+        : []),
     ]),
     section('Keyboard shortcuts', [
       row('Open or close the island', null, hotkey('toggleHotkey', 'island.toggle')),

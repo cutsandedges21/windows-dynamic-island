@@ -140,7 +140,7 @@ export const CATALOG: ActivityMeta[] = [
     id: 'land',
     name: 'Land',
     description:
-      'Send files to your other computers on the same network, like AirDrop. Drag files onto the island, pick a computer, Send. The other computer needs Island open and accepts first. Files are encrypted on the way and never leave your network.',
+      "Send files, links and notes to your other computers, friends and phones, like AirDrop. Land is the little icon on the pill: click it, drop files on the island, or hover it and press Ctrl+V to send what you copied. The other side accepts first, and everything is encrypted on the way.",
     icon: 'land',
     category: 'network',
     enabled: true,
@@ -157,19 +157,18 @@ export const CATALOG: ActivityMeta[] = [
       },
       { key: 'name', type: 'text', label: 'Name others see', help: "Empty: this computer's own name.", default: '', placeholder: "This computer's name" },
       {
+        key: 'tile',
+        type: 'toggle',
+        label: 'Tile in Control Center',
+        help: 'Land lives on the pill as a little icon. Turn this on for a Land tile in Control Center as well.',
+        default: false,
+      },
+      {
         key: 'anywhere',
         type: 'toggle',
         label: 'Friends on other networks',
         help: "Friends you add with your Land code can reach this computer from anywhere. When a direct path is blocked, n0's free relays pass the encrypted bytes; they see that two Islands connect, not the files.",
         default: true,
-      },
-      {
-        key: 'relay',
-        type: 'text',
-        label: 'Your relay',
-        help: "Only when a direct path is blocked do bytes go through a relay. n0's free one passes about 1 MB/s. The address of your own iroh-relay server (like https://relay.example.com) makes that as fast as your server. Empty: n0's.",
-        default: '',
-        placeholder: "n0's free relays",
       },
     ],
   },
@@ -185,6 +184,13 @@ export const CATALOG: ActivityMeta[] = [
     options: [
       { key: 'focusMinutes', type: 'number', label: 'Focus length', default: 25, min: 5, max: 120, unit: 'min' },
       { key: 'breakMinutes', type: 'number', label: 'Break length', default: 5, min: 1, max: 60, unit: 'min' },
+      {
+        key: 'quietFocus',
+        type: 'toggle',
+        label: 'Quiet while focusing',
+        help: "A focus round turns Quiet on: nothing pops up and notifications wait, in Island and in Windows. The break, or stopping, turns it off again. Quiet you turned on yourself is left alone.",
+        default: true,
+      },
     ],
   },
   {
@@ -380,33 +386,9 @@ export const CATALOG: ActivityMeta[] = [
     options: [],
   },
   {
-    id: 'ask',
-    name: 'Ask Claude',
-    description: 'Ask a question from the island and read the answer there. Uses Claude Code, or an API key that can search the web.',
-    icon: 'chat',
-    category: 'productivity',
-    enabled: true,
-    priority: 'medium',
-    behavior: B(true, false, true, true),
-    options: [
-      {
-        key: 'backend',
-        type: 'choice',
-        label: 'Answer with',
-        help: 'Claude Code uses your own Claude login and needs no key. The API key can search the web.',
-        default: 'claude-code',
-        choices: [
-          { value: 'claude-code', label: 'Claude Code' },
-          { value: 'api', label: 'API key' },
-        ],
-      },
-      { key: 'apiKey', type: 'secret', label: 'Anthropic API key', help: 'Only for the API key option. console.anthropic.com › API keys.', placeholder: 'sk-ant-…', secret: 'ask.apikey', default: '' },
-    ],
-  },
-  {
     id: 'local',
-    name: 'Local AI',
-    description: 'Ask a model that runs on your computer. Nothing leaves it, and it works offline. Island recommends a model that suits your computer; download or switch models below, or use Ollama.',
+    name: 'Bot chat',
+    description: "Click the bot and ask it anything; Local or Claude answers, switched on the bar. Local is a model on your computer: nothing leaves it, and it works offline. Island recommends a model that suits your computer; download or switch models below, or use Ollama.",
     icon: 'spark',
     category: 'productivity',
     enabled: true,
@@ -415,6 +397,18 @@ export const CATALOG: ActivityMeta[] = [
     options: [
       // Set by the model list (src/models-ui.ts), not typed: 'island:<id>' is one of Island's own models, anything else an Ollama model, empty lets Island choose.
       { key: 'model', type: 'text', label: 'Model', help: 'Pick it in the model list.', default: '', placeholder: 'Let Island choose' },
+      {
+        key: 'backend',
+        type: 'choice',
+        label: 'Claude answers with',
+        help: 'Claude Code uses your own Claude login and needs no key. The API key can search the web.',
+        default: 'claude-code',
+        choices: [
+          { value: 'claude-code', label: 'Claude Code' },
+          { value: 'api', label: 'API key' },
+        ],
+      },
+      { key: 'apiKey', type: 'secret', label: 'Anthropic API key', help: 'Only for the API key option. console.anthropic.com › API keys.', placeholder: 'sk-ant-…', secret: 'ask.apikey', default: '' },
     ],
   },
   {
@@ -443,61 +437,6 @@ export const CATALOG: ActivityMeta[] = [
     options: [
       { key: 'token', type: 'secret', label: 'Access token', help: 'vercel.com › Account Settings › Tokens.', placeholder: 'Vercel token', secret: 'vercel.token', default: '' },
       { key: 'team', type: 'text', label: 'Team', help: 'A team slug or ID. Empty: your personal account.', default: '', placeholder: 'my-team or team_…' },
-    ],
-  },
-  {
-    id: 'n8n',
-    name: 'n8n',
-    description: 'A workflow execution that fails, with the node that broke and its message.',
-    icon: 'code',
-    category: 'developer',
-    enabled: false,
-    priority: 'medium',
-    behavior: B(true, false, true, false),
-    options: [
-      { key: 'url', type: 'text', label: 'Instance address', help: 'Where your n8n runs.', default: '', placeholder: 'https://n8n.example.com' },
-      { key: 'key', type: 'secret', label: 'API key', help: 'n8n › Settings › n8n API.', placeholder: 'n8n API key', secret: 'n8n.key', default: '' },
-      { key: 'showSuccess', type: 'toggle', label: 'Show successful runs too', help: 'A small nod for every run that works, which is a lot for busy workflows.', default: false },
-    ],
-  },
-  {
-    id: 'stripe',
-    name: 'Stripe',
-    description: 'New payments, failed payments and refunds, and your balance.',
-    icon: 'bolt',
-    category: 'productivity',
-    enabled: false,
-    priority: 'low',
-    behavior: B(true, false, true, false),
-    options: [
-      { key: 'key', type: 'secret', label: 'Restricted key', help: 'dashboard.stripe.com › Developers › API keys. A restricted key with read access to Balance and Charges is enough.', placeholder: 'rk_live_… or sk_live_…', secret: 'stripe.key', default: '' },
-    ],
-  },
-  {
-    id: 'calcom',
-    name: 'Cal.com',
-    description: 'Your next booked call, with a Join button, and bookings that arrive or are cancelled.',
-    icon: 'calendar',
-    category: 'productivity',
-    enabled: false,
-    priority: 'medium',
-    behavior: B(true, true, true, false),
-    options: [
-      { key: 'key', type: 'secret', label: 'API key', help: 'app.cal.com › Settings › Developer › API keys.', placeholder: 'cal_live_…', secret: 'calcom.key', default: '' },
-      { key: 'leadMinutes', type: 'number', label: 'Show a call this early', default: 15, min: 1, max: 120, unit: 'min' },
-    ],
-  },
-  {
-    id: 'resend',
-    name: 'Resend',
-    description: 'Emails that bounce, fail or are marked as spam, and how many you sent today.',
-    icon: 'send',
-    category: 'productivity',
-    enabled: false,
-    priority: 'low',
-    behavior: B(true, false, true, false),
-    options: [
-      { key: 'key', type: 'secret', label: 'API key', help: 'resend.com › API Keys. It needs full access to read emails.', placeholder: 're_…', secret: 'resend.key', default: '' },
     ],
   },
   {

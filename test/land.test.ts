@@ -23,7 +23,7 @@ import type { LandPeer, LandTransfer } from '../src/core/native';
 import { fitSegments, fitVertical } from '../src/core/segments';
 import { defaultSettings } from '../src/core/settings';
 import { mapActions, type Block, type SheetView } from '../src/core/sheet';
-import { LandActivity, ENDED_MS, hueOf, INTRO_MS, initials, osLabel, what } from '../src/activities/land';
+import { LandActivity, ENDED_MS, hueOf, INTRO_MS, initials, isLink, osLabel, what } from '../src/activities/land';
 
 const T0 = Date.parse('2026-10-13T12:00:00Z');
 const MAC: LandPeer = { id: 'a1b2c3d4e5f60718', name: "Moss's MacBook Air", os: 'macos' };
@@ -48,6 +48,12 @@ function resetNative() {
     landStop: vi.fn(async () => undefined),
     landScan: vi.fn(async () => []),
     landSend: vi.fn(async (peer: string) => ({ ok: true, value: `out-${peer}` })),
+    landSendText: vi.fn(async (peer: string) => ({ ok: true, value: `text-${peer}` })),
+    landShareStart: vi.fn(async () => ({ ok: true, value: { url: 'http://192.168.1.20:51234/0123456789abcdef0123456789abcdef/', qr: '1'.repeat(441), size: 21, expires: T0 + 15 * 60_000, count: 1, bytes: 1000 } })),
+    landShareStop: vi.fn(async () => undefined),
+    clipboardPaste: vi.fn(async () => ({ files: [], text: 'https://example.com/a' })),
+    openUrl: vi.fn(async () => true),
+    clipboardSetText: vi.fn(async () => true),
     landAnswer: vi.fn(async () => true),
     landCancel: vi.fn(async () => true),
     landStage: vi.fn(async (paths: string[]) => paths.map((p) => ({ path: p, name: p.split('\\').pop(), size: 1000, dir: !p.includes('.'), files: p.includes('.') ? 1 : 12, error: null }))),
@@ -172,23 +178,15 @@ describe('land helpers', () => {
 describe('land', () => {
   it('starts with its name and visibility, and stops with the activity', async () => {
     const { act } = await boot({ name: ' Studio ', visible: false });
-    expect(h.native.landStart).toHaveBeenCalledWith('Studio', false, true, null);
-    expect(act.status().active).toBe(false);
+    expect(h.native.landStart).toHaveBeenCalledWith('Studio', false, true);
+    expect(act.status()).toMatchObject({ active: true, chipOnly: true });
     act.stop();
     expect(h.native.landStop).toHaveBeenCalled();
   });
 
   it('reaches friends on other networks unless that is turned off', async () => {
     await boot({ anywhere: false });
-    expect(h.native.landStart).toHaveBeenCalledWith(null, true, false, null);
-  });
-
-  it('uses your own relay when one is set, and says so when the address is wrong', async () => {
-    h.native.landStart = vi.fn(async (name: string | null, visible: boolean) => ({ ok: true, value: { id: 'me0000000000000a', name: name ?? 'DESKTOP-MOSS', visible, peers: [], fresh: false, friends: [], relayError: '“relay.example.com” isn’t a relay address.' } }));
-    const { act } = await boot({ relay: ' https://relay.example.com ' });
-    expect(h.native.landStart).toHaveBeenCalledWith(null, true, true, 'https://relay.example.com');
-    const card = act.sheet(sheetEnv('open'))!;
-    expect(block(card, 'text', 'relay')!.text).toContain('n0');
+    expect(h.native.landStart).toHaveBeenCalledWith(null, true, false);
   });
 
   it('a friend request takes the island until answered: Block, Not now or Add', async () => {
@@ -252,7 +250,7 @@ describe('land', () => {
     expect(block(card, 'text', 'ask')!.text).toContain('firewall');
     smoke(act, 'intro');
     await tick(INTRO_MS + 1000);
-    expect(act.status().active).toBe(false);
+    expect(act.status()).toMatchObject({ chipOnly: true });
     // Later starts (the key is there now) say nothing.
     resetNative();
     const again = await boot();
@@ -261,7 +259,7 @@ describe('land', () => {
 
   it('says why when it cannot start, and takes no drops then', async () => {
     h.native.landStart = vi.fn(async () => ({ ok: false, error: 'Land cannot take files: access denied' }));
-    const { act } = await boot();
+    const { act } = await boot({ tile: true });
     expect(act.accepts()).toBeNull();
     expect(act.drop(['C:\\x.txt'])).toBe(false);
     const card = act.sheet(sheetEnv('open'));
@@ -270,7 +268,7 @@ describe('land', () => {
   });
 
   it('a drop stages the files, opens its card and looks for computers', async () => {
-    const { act, calls } = await boot();
+    const { act, calls } = await boot({ tile: true });
     expect(act.accepts()).toBe('Drop to send with Land');
     expect(act.drop(['C:\\Users\\m\\Trip', 'C:\\Users\\m\\notes.txt'])).toBe(true);
     await tick(0);
@@ -408,10 +406,10 @@ describe('land', () => {
   });
 
   it('a send to a friend who is away waits in the card, not on the pill, and goes when they are back', async () => {
-    const { act } = await boot();
+    const { act } = await boot({ tile: true });
     const far = transfer({ id: 'out-q', peer: { id: FRIEND.id, name: 'Alex', os: '' }, state: 'queued' });
     emit('land-transfer', far);
-    expect(act.status().active).toBe(false);
+    expect(act.status()).toMatchObject({ chipOnly: true });
     const row = block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items[0];
     expect(row.detail).toBe('Sends when Alex is online');
     expect(row.button).toMatchObject({ action: 'cancel', arg: 'out-q' });
@@ -463,7 +461,7 @@ describe('land', () => {
   });
 
   it('shows a send going: waiting, a filling ring and bar, then sent with the bot pleased', async () => {
-    const { act, calls } = await boot();
+    const { act, calls } = await boot({ tile: true });
     emit('land-peers', [MAC]);
     emit('land-transfer', transfer());
     expect(act.status()).toMatchObject({ active: true, summary: "To Moss's MacBook Air · Waiting", beam: { motion: 'orbit' } });
@@ -490,7 +488,7 @@ describe('land', () => {
     expect(block(act.sheet(sheetEnv('open')), 'people')!.items[0]).toMatchObject({ badge: 'check', tone: 'good', sub: 'Sent' });
     smoke(act, 'sent');
     await tick(ENDED_MS + 1000);
-    expect(act.status().active).toBe(false);
+    expect(act.status()).toMatchObject({ chipOnly: true });
     // The card still lists it for a while.
     expect(block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items[0].detail).toBe('Sent · 9.5 MB');
   });
@@ -585,7 +583,7 @@ describe('land', () => {
     expect(h.native.landAnswer).toHaveBeenCalledWith('in-3', false);
     emit('land-transfer', transfer({ id: 'in-3', dir: 'in', state: 'declined', error: 'Declined.' }));
     expect(calls.surface).toEqual([]);
-    expect(act.status().active).toBe(false);
+    expect(act.status()).toMatchObject({ chipOnly: true });
   });
 
   it('keeps a short history of transfers', async () => {
@@ -599,5 +597,160 @@ describe('land', () => {
     await tick(31 * 60_000);
     emit('land-transfer', transfer({ id: 'new' }));
     expect(block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items.map((r) => r.key)).toEqual(['new']);
+  });
+});
+
+describe('text and links', () => {
+  it('tells a link from a note', () => {
+    expect(isLink(' https://example.com/a?b=1 ')).toBe(true);
+    expect(isLink('see https://example.com')).toBe(false);
+    expect(isLink('ftp://example.com')).toBe(false);
+    expect(what({ items: [], count: 0, text: 'https://x.dev' })).toBe('a link');
+    expect(what({ items: [], count: 0, text: 'dinner at 7' })).toBe('a note');
+  });
+
+  it('a link pasted in the card goes to the computer picked, and the card empties', async () => {
+    const { act } = await boot();
+    emit('land-peers', [MAC, LAB]);
+    let card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'input', 'text')?.action).toBe('stage-text');
+    await act.action('stage-text', '  https://example.com/recipe  ');
+    card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'input', 'text')).toBeUndefined();
+    expect(block(card, 'rows', 'files')!.items[0]).toMatchObject({ title: 'https://example.com/recipe', detail: 'Link' });
+    await act.action('pick', LAB.id);
+    await act.action('send');
+    expect(h.native.landSendText).toHaveBeenCalledWith(LAB.id, 'https://example.com/recipe');
+    expect(h.native.landSend).not.toHaveBeenCalled();
+    expect(block(act.sheet(sheetEnv('open'))!, 'input', 'text')).toBeDefined();
+  });
+
+  it('dropped files take the place of text waiting to go', async () => {
+    const { act } = await boot();
+    emit('land-peers', [MAC]);
+    await act.action('stage-text', 'a note');
+    act.drop(['C:\\x\\photo.jpg']);
+    await tick(0);
+    await act.action('send');
+    expect(h.native.landSend).toHaveBeenCalledWith(MAC.id, ['C:\\x\\photo.jpg']);
+    expect(h.native.landSendText).not.toHaveBeenCalled();
+  });
+
+  it('text that arrives shows what it says; Copy takes it and copies it', async () => {
+    const { act, calls } = await boot();
+    emit('land-transfer', transfer({ id: 'in-t', dir: 'in', state: 'asking', count: 0, total: 0, items: [], text: 'dinner at 7?', expires: T0 + 120_000 }));
+    expect(calls.notify[0]).toEqual(["Moss's MacBook Air sent you a note", 'dinner at 7? · Copy it in the island.']);
+    const card = act.sheet(sheetEnv('urgent'))!;
+    expect(block(card, 'text', 'text')!.text).toBe('dinner at 7?');
+    const buttons = block(card, 'buttons', 'answer')!.items.map((b) => b.action);
+    expect(buttons).toEqual(['decline', 'accept-copy']);
+    smoke(act, 'text offer');
+    await act.action('accept-copy', 'in-t');
+    expect(h.native.landAnswer).toHaveBeenCalledWith('in-t', true);
+    expect(h.native.clipboardSetText).toHaveBeenCalledWith('dinner at 7?');
+  });
+
+  it('a link that arrives can be opened instead', async () => {
+    const { act } = await boot();
+    emit('land-transfer', transfer({ id: 'in-l', dir: 'in', state: 'asking', count: 0, total: 0, items: [], text: 'https://example.com/recipe', expires: T0 + 120_000 }));
+    const buttons = block(act.sheet(sheetEnv('urgent'))!, 'buttons', 'answer')!.items.map((b) => b.action);
+    expect(buttons).toEqual(['decline', 'accept-open', 'accept-copy']);
+    await act.action('accept-open', 'in-l');
+    expect(h.native.landAnswer).toHaveBeenCalledWith('in-l', true);
+    expect(h.native.openUrl).toHaveBeenCalledWith('https://example.com/recipe');
+    expect(h.native.clipboardSetText).not.toHaveBeenCalled();
+  });
+
+  it('text that is too long is not staged', async () => {
+    const { act } = await boot();
+    await act.action('stage-text', 'x'.repeat(20_001));
+    expect(block(act.sheet(sheetEnv('open'))!, 'text', 'note')!.text).toContain('more than 20,000 characters');
+  });
+});
+
+describe('to any phone', () => {
+  it('Send to a phone shows a QR code for the files, and Stop ends it', async () => {
+    const { act } = await boot();
+    act.drop(['C:\\x\\photo.jpg']);
+    await tick(0);
+    const button = block(act.sheet(sheetEnv('open'))!, 'buttons', 'phone')!.items[0];
+    expect(button).toMatchObject({ label: 'Send to a phone', action: 'share-phone' });
+    await act.action('share-phone');
+    expect(h.native.landShareStart).toHaveBeenCalledWith(['C:\\x\\photo.jpg'], null);
+    const card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'head')!.title).toBe('Scan with your phone');
+    expect(block(card, 'qr')).toMatchObject({ size: 21, caption: 'http://192.168.1.20:51234/0123456789abcdef0123456789abcdef/' });
+    expect(act.status()).toMatchObject({ active: true, summary: 'Sharing with a phone' });
+    smoke(act, 'sharing');
+    emit('land-share', { state: 'opened', name: 'photo.jpg', opened: 1 });
+    expect(block(act.sheet(sheetEnv('open'))!, 'text', 'opened')!.text).toBe('A phone opened photo.jpg.');
+    await act.action('share-stop');
+    expect(h.native.landShareStop).toHaveBeenCalled();
+    expect(block(act.sheet(sheetEnv('open'))!, 'qr')).toBeUndefined();
+  });
+
+  it('a note goes to a phone too, and the code stops working after 15 minutes', async () => {
+    const { act } = await boot();
+    await act.action('stage-text', 'meet at the library');
+    await act.action('share-phone');
+    expect(h.native.landShareStart).toHaveBeenCalledWith([], 'meet at the library');
+    expect(block(act.sheet(sheetEnv('open'))!, 'qr')).toBeDefined();
+    await tick(15 * 60_000 + 1000);
+    expect(block(act.sheet(sheetEnv('open'))!, 'qr')).toBeUndefined();
+    expect(act.status().summary).not.toBe('Sharing with a phone');
+  });
+
+  it("says why when the phone can't be reached", async () => {
+    h.native.landShareStart = vi.fn(async () => ({ ok: false, error: "This computer isn't on a network a phone can reach (no Wi-Fi or Ethernet address)." }));
+    const { act } = await boot();
+    act.drop(['C:\\x\\photo.jpg']);
+    await tick(0);
+    await act.action('share-phone');
+    expect(block(act.sheet(sheetEnv('open'))!, 'text', 'note')!.text).toContain("isn't on a network a phone can reach");
+  });
+});
+
+describe('the icon on the pill', () => {
+  it('Land is always there as a little icon that opens its card, and only beside something else', async () => {
+    const { act, calls } = await boot();
+    expect(act.status()).toMatchObject({ active: true, weight: 'background', chipOnly: true });
+    expect(act.chip()).toEqual({ icon: 'land', label: '', tone: 'muted', action: 'card' });
+    expect(act.render(env('compact')).map((s) => s.key)).toEqual(['rest']);
+    smoke(act, 'rest');
+    await act.action('card');
+    expect(calls.openCard).toBe(1);
+  });
+
+  it('has no Control Center tile unless asked for', async () => {
+    const off = await boot();
+    expect(off.act.tile(sheetEnv('open'))).toBeNull();
+    resetNative();
+    const on = await boot({ tile: true });
+    expect(on.act.tile(sheetEnv('open'))).not.toBeNull();
+  });
+
+  it('Ctrl+V on the icon opens the card with the text that was copied, ready to send', async () => {
+    const { act, calls } = await boot();
+    emit('land-peers', [MAC]);
+    await act.action('paste');
+    expect(calls.openCard).toBe(1);
+    const card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'rows', 'files')!.items[0]).toMatchObject({ title: 'https://example.com/a', detail: 'Link' });
+    await act.action('send');
+    expect(h.native.landSendText).toHaveBeenCalledWith(MAC.id, 'https://example.com/a');
+  });
+
+  it('files copied in Explorer come in as files, and an empty clipboard says what to do', async () => {
+    h.native.clipboardPaste = vi.fn(async () => ({ files: ['C:\\x\\Trip'], text: null }));
+    const { act } = await boot();
+    await act.action('paste');
+    expect(h.native.landStage).toHaveBeenCalledWith(['C:\\x\\Trip']);
+    expect(block(act.sheet(sheetEnv('open'))!, 'rows', 'files')!.items[0].title).toBe('Trip');
+
+    resetNative();
+    h.native.clipboardPaste = vi.fn(async () => ({ files: [], text: null }));
+    const empty = await boot();
+    await empty.act.action('paste');
+    expect(block(empty.act.sheet(sheetEnv('open'))!, 'text', 'note')!.text).toContain('Nothing to send yet');
   });
 });

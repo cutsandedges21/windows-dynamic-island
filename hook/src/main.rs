@@ -8,9 +8,10 @@
 //! Hard rule: never block Claude Code.
 //! * No pipe (Island is closed) → exit 0 at once with nothing on stdout.
 //! * Every step runs under a deadline enforced by the main thread.
-//! * Only PermissionRequest and Stop wait for an answer. No answer means empty
-//!   stdout, and Claude Code carries on exactly as if Island were not installed.
-//!   Island answers a Stop within milliseconds unless it is showing a reply box.
+//! * Only PermissionRequest, Stop and AskUserQuestion's PreToolUse wait for an answer.
+//!   No answer means empty stdout, and Claude Code carries on exactly as if Island were
+//!   not installed. Island answers a Stop within milliseconds unless it is showing a
+//!   reply box, and lets a question go at once when its chat is the window in front.
 
 use std::io::{Read, Write};
 use std::sync::mpsc;
@@ -100,12 +101,8 @@ fn main() {
 }
 
 fn hook_mode() {
-    let Some((payload, event)) = read_event() else { std::process::exit(0) };
-    let wait = match event.as_str() {
-        "PermissionRequest" => Some(DECISION_BUDGET),
-        "Stop" => Some(REPLY_BUDGET),
-        _ => None,
-    };
+    let Some((payload, event, tool)) = read_event() else { std::process::exit(0) };
+    let wait = waits_for(&event, &tool);
     let waits_for_answer = wait.is_some();
 
     // The worker owns every blocking call. If it overruns the budget we stop
@@ -125,6 +122,17 @@ fn hook_mode() {
     std::process::exit(0);
 }
 
+/// How long an event may wait for the island. A question is answered before it is asked
+/// (PreToolUse), the documented way that works wherever Claude Code runs: the VS Code
+/// extension shows its own question box alongside a PermissionRequest hook and keeps it.
+fn waits_for(event: &str, tool: &str) -> Option<Duration> {
+    match (event, tool) {
+        ("PermissionRequest", _) | ("PreToolUse", "AskUserQuestion") => Some(DECISION_BUDGET),
+        ("Stop", _) => Some(REPLY_BUDGET),
+        _ => None,
+    }
+}
+
 /// One line, no control characters: what gets typed into the session's prompt.
 fn clean_prompt(text: &str) -> String {
     text.replace("\r\n", " ")
@@ -142,6 +150,8 @@ fn clean_prompt(text: &str) -> String {
 ///
 /// PermissionRequest: `allow` | `deny` | {"kind":"deny","message"} |
 ///   {"kind":"answer","updatedInput"} (AskUserQuestion answered in the island).
+/// PreToolUse: {"kind":"answer","updatedInput"} only: the question runs with the answers
+///   filled in, without asking. Nothing else is ever said there.
 /// Stop: {"kind":"reply","text"}: Claude keeps going with the user's reply.
 fn output_json(event: &str, answer: &str) -> Option<String> {
     let answer = answer.trim();
@@ -168,6 +178,13 @@ fn output_json(event: &str, answer: &str) -> Option<String> {
             };
             Some(json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": decision } }).to_string())
         }
+        "PreToolUse" if kind == "answer" => {
+            let input = parsed.as_ref()?.get("updatedInput")?.clone();
+            if !input.is_object() {
+                return None;
+            }
+            Some(json!({ "hookSpecificOutput": { "hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": input } }).to_string())
+        }
         "Stop" if kind == "reply" => {
             let text = parsed.as_ref()?.get("text").and_then(Value::as_str)?.trim();
             if text.is_empty() {
@@ -185,7 +202,7 @@ fn one_line(text: &str) -> String {
     clean_prompt(text).chars().take(MAX_REPLY_LEN).collect()
 }
 
-fn read_event() -> Option<(String, String)> {
+fn read_event() -> Option<(String, String, String)> {
     let mut raw = Vec::new();
     if std::io::stdin().read_to_end(&mut raw).is_err() || raw.is_empty() {
         return None;
@@ -204,6 +221,7 @@ fn read_event() -> Option<(String, String)> {
         .filter(|s| !s.is_empty())
         .unwrap_or(arg_event);
     map.insert("hook_event_name".into(), serde_json::Value::String(event.clone()));
+    let tool = map.get("tool_name").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     for field in DROPPED_FIELDS {
         map.remove(*field);
     }
@@ -224,20 +242,18 @@ fn read_event() -> Option<(String, String)> {
     truncate_strings(&mut payload);
     let mut line = payload.to_string();
     line.push('\n');
-    Some((line, event))
+    Some((line, event, tool))
 }
 
 fn truncate_strings(value: &mut serde_json::Value) {
     match value {
-        serde_json::Value::String(s) => {
-            if s.len() > MAX_FIELD_LEN {
-                let mut end = MAX_FIELD_LEN;
-                while end > 0 && !s.is_char_boundary(end) {
-                    end -= 1;
-                }
-                s.truncate(end);
-                s.push('…');
+        serde_json::Value::String(s) if s.len() > MAX_FIELD_LEN => {
+            let mut end = MAX_FIELD_LEN;
+            while end > 0 && !s.is_char_boundary(end) {
+                end -= 1;
             }
+            s.truncate(end);
+            s.push('…');
         }
         serde_json::Value::Array(items) => items.iter_mut().for_each(truncate_strings),
         serde_json::Value::Object(map) => map.values_mut().for_each(truncate_strings),
@@ -299,6 +315,29 @@ mod tests {
         assert_eq!(v["hookSpecificOutput"]["decision"]["behavior"], "allow");
         assert_eq!(v["hookSpecificOutput"]["decision"]["updatedInput"]["answers"]["Which?"], "A");
         assert!(output_json("PermissionRequest", r#"{"kind":"answer","updatedInput":"nope"}"#).is_none());
+    }
+
+    #[test]
+    fn a_question_is_answered_before_it_is_asked() {
+        let answer = r#"{"kind":"answer","updatedInput":{"questions":[{"question":"Which?","options":[{"label":"A"}]}],"answers":{"Which?":"A"}}}"#;
+        let v = out("PreToolUse", answer);
+        assert_eq!(v["hookSpecificOutput"]["hookEventName"], "PreToolUse");
+        assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "allow");
+        assert_eq!(v["hookSpecificOutput"]["updatedInput"]["answers"]["Which?"], "A");
+        assert_eq!(v["hookSpecificOutput"]["updatedInput"]["questions"][0]["question"], "Which?", "the questions go back as they came");
+        // PreToolUse never allows or denies anything else from the island.
+        assert!(output_json("PreToolUse", "allow").is_none());
+        assert!(output_json("PreToolUse", "deny").is_none());
+        assert!(output_json("PreToolUse", r#"{"kind":"answer","updatedInput":"nope"}"#).is_none());
+    }
+
+    #[test]
+    fn only_questions_wait_among_pre_tool_uses() {
+        assert_eq!(waits_for("PreToolUse", "AskUserQuestion"), Some(DECISION_BUDGET));
+        assert_eq!(waits_for("PreToolUse", "Bash"), None);
+        assert_eq!(waits_for("PermissionRequest", "Bash"), Some(DECISION_BUDGET));
+        assert_eq!(waits_for("Stop", ""), Some(REPLY_BUDGET));
+        assert_eq!(waits_for("PostToolUse", "AskUserQuestion"), None);
     }
 
     #[test]

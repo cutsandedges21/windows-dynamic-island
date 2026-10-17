@@ -30,6 +30,8 @@ export interface ActivityStatus {
   beam?: { tone: Tone; motion?: GlowMotion; value?: number; fast?: boolean; urgent?: boolean } | null;
   /** Stay visible over a full-screen app (a game showing its frame rate). */
   overFullscreen?: boolean;
+  /** Only ever a chip on the pill, never its main content (Land's icon); with nothing else on, the chip alone. */
+  chipOnly?: boolean;
 }
 
 /** How an activity looks as a small chip beside another activity. */
@@ -39,6 +41,8 @@ export interface ChipView {
   tone?: Tone;
   dot?: Tone;
   pulse?: boolean;
+  /** What a click does (one of the activity's actions); without it a click brings the activity onto the pill. */
+  action?: string;
 }
 
 export interface RenderEnv {
@@ -98,11 +102,17 @@ export interface ActivityContext {
   isPrimary(): boolean;
   /** A Windows notification (if on), pushed to the phone too (if on); `phone: false` keeps it off the phone. */
   notify(title: string, body: string, phone?: boolean): void;
-  /** Only to the phone (Settings › Notifications › Send to my phone); Quiet holds it like a notification. */
-  push?(title: string, body: string, look?: { tag?: string; priority?: number }): void;
+  /**
+   * Only to the phone (Settings › Notifications › Send to my phone); Quiet holds it like a
+   * notification. `buttons` show only with Answer Claude from my phone on; a tap arrives as a
+   * `phone-reply` event carrying the button's reply.
+   */
+  push?(title: string, body: string, look?: { tag?: string; priority?: number; buttons?: Array<{ label: string; reply: string }> }): void;
   log(...parts: unknown[]): void;
   /** Saves option values the activity keeps for itself (hidden chats, a cleared list). */
   setOptions?(patch: Record<string, unknown>): void;
+  /** Turns Quiet (Settings › Do not disturb, and Windows' too) on or off, as its menu item does. */
+  setQuiet?(on: boolean): void;
   /** Opens the island on this activity's card in place of Control Center (its sheet() is asked with reason 'open'). */
   openCard?(): void;
   /** Back to Control Center. */

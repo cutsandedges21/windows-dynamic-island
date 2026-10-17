@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview
 #[cfg(windows)]
 use windows::core::{w, Interface, BOOL};
 #[cfg(windows)]
-use windows::Win32::Foundation::{HWND, LPARAM, POINT};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 #[cfg(windows)]
 use windows::Win32::System::Ole::{IDropTarget, RegisterDragDrop};
 #[cfg(windows)]
@@ -25,11 +25,15 @@ use windows::Win32::System::Threading::GetCurrentProcessId;
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_LBUTTON, VK_RBUTTON};
 #[cfg(windows)]
+use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumChildWindows, GetCursorPos, GetParent, GetPropW, GetWindowLongPtrW, GetWindowThreadProcessId, SetWindowLongPtrW,
-    SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_ASYNCWINDOWPOS, SWP_NOMOVE, SWP_NOSIZE, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW,
+    SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, STYLESTRUCT, SWP_NOACTIVATE, SWP_ASYNCWINDOWPOS, SWP_NOMOVE, SWP_NOSIZE,
+    WM_STYLECHANGING, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
+
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 use crate::monitors::{self, MonitorInfo};
 
@@ -93,12 +97,7 @@ pub fn window(app: &AppHandle) -> Option<WebviewWindow> {
 #[cfg(windows)]
 fn hwnd_of(win: &WebviewWindow) -> Option<HWND> {
     let raw = win.hwnd().ok()?.0 as isize;
-    (raw != 0).then(|| HWND(raw as *mut _))
-}
-
-#[cfg(windows)]
-pub fn hwnd_raw(app: &AppHandle) -> isize {
-    window(app).and_then(|w| hwnd_of(&w)).map(|h| h.0 as isize).unwrap_or(0)
+    (raw != 0).then_some(HWND(raw as *mut _))
 }
 
 // Files dropped on the pill. wry gives the page its drop target once, on the child windows
@@ -173,19 +172,67 @@ fn set_activating(win: &WebviewWindow, activating: bool) {
     let _ = win.set_focusable(activating);
 }
 
+/// The island takes the keyboard (an inline input is open). Mirrors never do.
+#[cfg(windows)]
+static ISLAND_ACTIVATING: AtomicBool = AtomicBool::new(false);
+
+/// The extended style these windows need: a tool window, so never in Alt-Tab or the taskbar
+/// (WS_EX_APPWINDOW would put it back in both), that clicks don't activate unless the island
+/// is taking the keyboard. The rest (click-through, topmost) is left as it is.
+#[cfg(windows)]
+fn wanted_ex(style: u32, activating: bool) -> u32 {
+    let s = (style | WS_EX_TOOLWINDOW.0) & !WS_EX_APPWINDOW.0;
+    if activating {
+        s & !WS_EX_NOACTIVATE.0
+    } else {
+        s | WS_EX_NOACTIVATE.0
+    }
+}
+
+/// tao rebuilds a window's extended style from its own flags every time it changes one (each
+/// click-through toggle, show, hide), and its flags have no tool window and add WS_EX_APPWINDOW:
+/// the island fell back into Alt-Tab, and a click on the pill could take the focus. Every
+/// change now passes through here and comes out with the style the island needs.
+#[cfg(windows)]
+unsafe extern "system" fn keep_style(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM, _id: usize, island: usize) -> LRESULT {
+    if msg == WM_STYLECHANGING && wparam.0 as i32 == GWL_EXSTYLE.0 && lparam.0 != 0 {
+        let change = unsafe { &mut *(lparam.0 as *mut STYLESTRUCT) };
+        change.styleNew = wanted_ex(change.styleNew, island != 0 && ISLAND_ACTIVATING.load(Ordering::Relaxed));
+    }
+    unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+/// Puts `keep_style` on the window (on its own thread, as subclassing requires), then applies the style once.
+#[cfg(windows)]
+fn guard_style(app: &AppHandle, win: &WebviewWindow) {
+    let Some(hwnd) = hwnd_of(win) else { return };
+    let raw = hwnd.0 as isize;
+    let island = usize::from(win.label() == LABEL);
+    let _ = app.run_on_main_thread(move || unsafe {
+        let hwnd = HWND(raw as *mut _);
+        if !SetWindowSubclass(hwnd, Some(keep_style), 1, island).as_bool() {
+            crate::log::line("island: could not guard the window style");
+        }
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let want = wanted_ex(ex as u32, island != 0 && ISLAND_ACTIVATING.load(Ordering::Relaxed)) as isize;
+        if want != ex {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, want);
+        }
+    });
+}
+
 /// WS_EX_NOACTIVATE keeps clicks from stealing focus; WS_EX_TOOLWINDOW keeps the
-/// island out of Alt-Tab and the taskbar.
+/// island out of Alt-Tab and the taskbar (`keep_style` holds both through tao's changes).
 #[cfg(windows)]
 fn set_activating(win: &WebviewWindow, activating: bool) {
     let Some(hwnd) = hwnd_of(win) else { return };
+    let activating = activating && win.label() == LABEL;
+    if win.label() == LABEL {
+        ISLAND_ACTIVATING.store(activating, Ordering::Relaxed);
+    }
     unsafe {
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        let mut want = ex | WS_EX_TOOLWINDOW.0 as isize;
-        if activating {
-            want &= !(WS_EX_NOACTIVATE.0 as isize);
-        } else {
-            want |= WS_EX_NOACTIVATE.0 as isize;
-        }
+        let want = wanted_ex(ex as u32, activating) as isize;
         if want != ex {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, want);
         }
@@ -223,6 +270,8 @@ fn build(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
     #[cfg(target_os = "macos")]
     let win = win.visible_on_all_workspaces(true).accept_first_mouse(true);
     let win = win.build()?;
+    #[cfg(windows)]
+    guard_style(app, &win);
     set_activating(&win, false);
     let _ = win.set_ignore_cursor_events(true);
     Ok(win)
@@ -327,6 +376,84 @@ const NEAR_POLL_MS: u64 = 16;
 const FAR_POLL_MS: u64 = 100;
 /// A peek ends once the pointer is this far from the island, in CSS px.
 const PEEK_LEAVE_PX: f64 = 24.0;
+/// A tap of Ctrl, not a hold: it peeks only when let go within this.
+const PEEK_TAP: Duration = Duration::from_millis(600);
+
+// ------------------------------------------------------------------ Ctrl+V on Land's icon
+
+/// The island takes the keyboard (an inline input is open): Ctrl is for what is typed, and
+/// Ctrl+V pastes there, so nothing else claims either.
+static KEYBOARD: AtomicBool = AtomicBool::new(false);
+/// Ctrl+V belongs to Land while the pointer rests on its icon (`island_paste_arm`).
+static PASTE_ARMED: AtomicBool = AtomicBool::new(false);
+/// When Land's Ctrl+V last fired: that Ctrl press was a paste, not a peek.
+static PASTE_AT: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Paste: Ctrl+V on Windows, Cmd+V on a Mac.
+fn paste_shortcut() -> Shortcut {
+    #[cfg(target_os = "macos")]
+    let modifier = Modifiers::SUPER;
+    #[cfg(not(target_os = "macos"))]
+    let modifier = Modifiers::CONTROL;
+    Shortcut::new(Some(modifier), Code::KeyV)
+}
+
+/// Holds Ctrl+V for Island (or gives it back). A held hotkey reaches Island instead of the app in
+/// front, so nothing is pasted twice, and the island never takes the focus for it.
+fn set_paste(app: &AppHandle, armed: bool) {
+    if PASTE_ARMED.swap(armed, Ordering::Relaxed) == armed {
+        return;
+    }
+    let handle = app.clone();
+    // Hotkeys belong to the main thread; by the time it runs, the latest wish is the one done.
+    let _ = app.run_on_main_thread(move || {
+        let gs = handle.global_shortcut();
+        let sc = paste_shortcut();
+        if PASTE_ARMED.load(Ordering::Relaxed) {
+            if !gs.is_registered(sc) {
+                let _ = gs.register(sc);
+            }
+        } else if gs.is_registered(sc) {
+            let _ = gs.unregister(sc);
+        }
+    });
+}
+
+/// Hovering Land's icon (the island tells): Ctrl+V opens Land with what was copied. Never while
+/// the island takes the keyboard, where Ctrl+V pastes into the box being typed in.
+#[tauri::command]
+pub fn island_paste_arm(app: AppHandle, armed: bool) {
+    set_paste(&app, armed && !KEYBOARD.load(Ordering::Relaxed));
+}
+
+/// Whether a hotkey that fired is Land's Ctrl+V.
+pub fn is_paste(shortcut: &Shortcut) -> bool {
+    shortcut.id() == paste_shortcut().id()
+}
+
+/// Land's Ctrl+V fired: the island opens Land with the clipboard.
+pub fn paste_fired(app: &AppHandle) {
+    *PASTE_AT.lock().unwrap() = Some(Instant::now());
+    let _ = app.emit_to(LABEL, "land-paste", ());
+}
+
+/// Every hotkey was just registered again (Settings changed one): Ctrl+V too, if Land holds it.
+pub fn paste_restore(app: &AppHandle) {
+    if PASTE_ARMED.load(Ordering::Relaxed) {
+        let _ = app.global_shortcut().register(paste_shortcut());
+    }
+}
+
+/// Ctrl went down with a letter or a digit: a shortcut (Ctrl+V, Ctrl+C…), not a tap.
+#[cfg(windows)]
+fn shortcut_key_down() -> bool {
+    (0x30u16..=0x39).chain(0x41..=0x5A).any(|vk| unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8001 != 0)
+}
+
+#[cfg(not(windows))]
+fn shortcut_key_down() -> bool {
+    false
+}
 /// Within NEAR_PX the bot's eyes follow the pointer: its position goes to the island at most this often.
 const POINTER_EVERY: Duration = Duration::from_millis(50);
 
@@ -349,6 +476,9 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
         let mut was_left = false;
         let mut was_right = false;
         let mut was_ctrl = false;
+        // When Ctrl went down, and whether another key joined it (then it is a shortcut).
+        let mut ctrl_since: Option<Instant> = None;
+        let mut ctrl_combo = false;
         // Peek behind: the island fades and lets the mouse through until the pointer leaves it.
         let mut peeking = false;
         // A pointer far from the island cannot reach it within a frame or two, so
@@ -449,17 +579,31 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
                 let _ = app.emit_to(LABEL, "pointer", None::<PointerAt>);
             }
 
-            // Ctrl pressed with the pointer on the island starts a peek; a tap is
-            // enough, so the click behind is a plain click, not a Ctrl+click.
+            // A tap of Ctrl alone (let go within PEEK_TAP, no other key with it) with the pointer on
+            // the island starts a peek, so the click behind is a plain click, not a Ctrl+click.
+            // Ctrl+V, Ctrl+C… are shortcuts, not taps (Moss: pasting into the Land card made the
+            // island vanish), and while the island takes the keyboard Ctrl is for what is typed.
             #[cfg(windows)]
             let ctrl = unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) } as u16 & 0x8000 != 0;
             #[cfg(target_os = "macos")]
             let ctrl = crate::mac::input::control_down();
-            let peek_on = state.peek_enabled.load(Ordering::Relaxed);
-            if peek_on && !peeking && on_island && ctrl && !was_ctrl {
-                peeking = true;
-                let _ = app.emit_to(LABEL, "peek", true);
-            } else if peeking && (!peek_on || gap > PEEK_LEAVE_PX) {
+            let peek_on = state.peek_enabled.load(Ordering::Relaxed) && !KEYBOARD.load(Ordering::Relaxed);
+            if ctrl && !was_ctrl {
+                ctrl_since = Some(Instant::now());
+                ctrl_combo = false;
+            }
+            if ctrl && !ctrl_combo && shortcut_key_down() {
+                ctrl_combo = true;
+            }
+            if !ctrl && was_ctrl {
+                let pasted = PASTE_AT.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_millis(1500));
+                let tap = ctrl_since.take().is_some_and(|t| t.elapsed() <= PEEK_TAP) && !ctrl_combo && !pasted;
+                if peek_on && !peeking && on_island && tap {
+                    peeking = true;
+                    let _ = app.emit_to(LABEL, "peek", true);
+                }
+            }
+            if peeking && (!peek_on || gap > PEEK_LEAVE_PX) {
                 peeking = false;
                 let _ = app.emit_to(LABEL, "peek", false);
             }
@@ -512,7 +656,7 @@ pub fn island_mirrors(app: AppHandle, state: tauri::State<'_, Arc<Overlay>>, mon
                 None => match build(&app, &label) {
                     Ok(w) => w,
                     Err(e) => {
-                        crate::log::line(&format!("mirror {label} failed: {e}"));
+                        crate::log::line(format!("mirror {label} failed: {e}"));
                         continue;
                     }
                 },
@@ -560,6 +704,10 @@ pub fn island_show(app: AppHandle, state: tauri::State<'_, Arc<Overlay>>, visibl
 #[tauri::command]
 pub fn island_set_focusable(app: AppHandle, focusable: bool) -> bool {
     let Some(win) = window(&app) else { return false };
+    KEYBOARD.store(focusable, Ordering::Relaxed);
+    if focusable {
+        set_paste(&app, false);
+    }
     set_activating(&win, focusable);
     if focusable {
         win.set_focus().is_ok()
@@ -574,6 +722,11 @@ pub fn island_set_focusable(app: AppHandle, focusable: bool) -> bool {
 #[tauri::command]
 pub fn island_set_focusable(app: AppHandle, state: tauri::State<'_, Arc<Overlay>>, focusable: bool) -> bool {
     let Some(win) = window(&app) else { return false };
+    KEYBOARD.store(focusable, Ordering::Relaxed);
+    // Typing in the island: Ctrl+V pastes into its box, so Land lets go of it.
+    if focusable {
+        set_paste(&app, false);
+    }
     let own = hwnd_of(&win).map(|h| h.0 as isize).unwrap_or(0);
     if focusable {
         let fg = crate::procs::foreground();
@@ -591,5 +744,25 @@ pub fn island_set_focusable(app: AppHandle, state: tauri::State<'_, Arc<Overlay>
             crate::procs::activate(prev);
         }
         true
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use windows::Win32::UI::WindowsAndMessaging::{WS_EX_LAYERED, WS_EX_TOPMOST, WS_EX_TRANSPARENT};
+
+    #[test]
+    fn the_island_stays_a_tool_window_that_takes_no_focus() {
+        // What tao writes: an app window, topmost, click-through.
+        let tao = WS_EX_APPWINDOW.0 | WS_EX_TOPMOST.0 | WS_EX_TRANSPARENT.0 | WS_EX_LAYERED.0;
+        let s = wanted_ex(tao, false);
+        assert_eq!(s & WS_EX_APPWINDOW.0, 0, "out of Alt-Tab and the taskbar");
+        assert_ne!(s & WS_EX_TOOLWINDOW.0, 0);
+        assert_ne!(s & WS_EX_NOACTIVATE.0, 0, "a click doesn't take the focus");
+        assert_eq!(s & (WS_EX_TOPMOST.0 | WS_EX_TRANSPARENT.0 | WS_EX_LAYERED.0), WS_EX_TOPMOST.0 | WS_EX_TRANSPARENT.0 | WS_EX_LAYERED.0, "the rest is untouched");
+        // While an inline input is open it may take the keyboard.
+        assert_eq!(wanted_ex(tao, true) & WS_EX_NOACTIVATE.0, 0);
+        assert_ne!(wanted_ex(tao, true) & WS_EX_TOOLWINDOW.0, 0);
     }
 }

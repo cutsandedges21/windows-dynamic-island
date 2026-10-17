@@ -65,6 +65,10 @@ fn wide_str(buf: &[u16]) -> String {
 }
 
 unsafe fn read_text() -> Option<String> {
+    unsafe { read_text_max(MAX_TEXT) }
+}
+
+unsafe fn read_text_max(max_chars: usize) -> Option<String> {
     unsafe {
         let h = GetClipboardData(CF_UNICODETEXT.0 as u32).ok()?;
         let g = HGLOBAL(h.0);
@@ -72,21 +76,25 @@ unsafe fn read_text() -> Option<String> {
         if ptr.is_null() {
             return None;
         }
-        let max = (GlobalSize(g) / 2).min(MAX_TEXT * 2);
+        let max = (GlobalSize(g) / 2).min(max_chars * 2);
         let slice = std::slice::from_raw_parts(ptr, max);
         let text = wide_str(slice);
         let _ = GlobalUnlock(g);
-        Some(text.chars().take(MAX_TEXT).collect())
+        Some(text.chars().take(max_chars).collect())
     }
 }
 
 unsafe fn read_files() -> Vec<String> {
+    unsafe { read_files_max(20) }
+}
+
+unsafe fn read_files_max(max: u32) -> Vec<String> {
     unsafe {
         let Ok(h) = GetClipboardData(CF_HDROP.0 as u32) else { return Vec::new() };
         let drop = HDROP(h.0);
         let count = DragQueryFileW(drop, 0xFFFF_FFFF, None);
         let mut out = Vec::new();
-        for i in 0..count.min(20) {
+        for i in 0..count.min(max) {
             let mut buf = [0u16; 520];
             let n = DragQueryFileW(drop, i, Some(&mut buf));
             out.push(String::from_utf16_lossy(&buf[..n as usize]));
@@ -115,6 +123,41 @@ unsafe fn excluded() -> bool {
             }
         }
         false
+    }
+}
+
+/// What the clipboard holds for Land's Ctrl+V: files copied in Explorer, else text.
+#[derive(Serialize, Default)]
+pub struct Pasted {
+    files: Vec<String>,
+    text: Option<String>,
+}
+
+/// Reads the clipboard because the user pasted (hovering Land's icon, Ctrl+V): files first,
+/// then text, one character past Land's limit so the island can say it is too long.
+#[tauri::command]
+pub fn clipboard_paste() -> Pasted {
+    unsafe {
+        let mut opened = false;
+        for _ in 0..10 {
+            if OpenClipboard(None).is_ok() {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if !opened {
+            return Pasted::default();
+        }
+        let out = if IsClipboardFormatAvailable(CF_HDROP.0 as u32).is_ok() {
+            Pasted { files: read_files_max(10_000), text: None }
+        } else if IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_ok() {
+            Pasted { files: Vec::new(), text: read_text_max(20_001) }
+        } else {
+            Pasted::default()
+        };
+        let _ = CloseClipboard();
+        out
     }
 }
 
