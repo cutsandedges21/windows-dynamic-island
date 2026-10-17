@@ -481,6 +481,7 @@ mod tests {
         assert!(!is_uuid("../../etc/passwd-0000-0000-000000000000"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn arguments_survive_the_command_line() {
         assert_eq!(quote_arg("plain"), "plain");

@@ -716,6 +716,7 @@ mod tests {
         assert_eq!(request_body("m", &[turn("user", "Hi")], None)["keep_alive"], KEEP_ALIVE);
     }
 
+    #[cfg(windows)]
     #[test]
     fn windows_11_is_called_windows_11() {
         assert_eq!(os_label("Windows 10 Home", "24H2", "26300", Some(1234)), "Windows 11 Home 24H2 (build 26300.1234)");
