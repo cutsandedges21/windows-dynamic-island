@@ -19,6 +19,16 @@ jobs:
       - run: mkdir -p dist && echo '<!doctype html>' > dist/index.html
       - run: cargo check -p island --lib --locked
 
+  # The Mac self-update for real: a disk image made with hdiutil replaces a test Island.app.
+  update-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: mkdir -p dist && echo '<!doctype html>' > dist/index.html
+      - run: cargo test -p island --lib --locked updater
+
   build:
     needs: check
     runs-on: macos-latest

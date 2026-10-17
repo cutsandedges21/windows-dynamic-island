@@ -16,7 +16,7 @@ A spring-animated pill at the edge of your screen that shows what is happening r
 2. Open Island. The first time, macOS blocks it, because Island isn't notarized by Apple yet: open **System Settings › Privacy & Security**, scroll down to **Security**, click **Open Anyway** next to Island, and confirm. If macOS says instead that Island "is damaged", run `xattr -cr /Applications/Island.app` in Terminal once, then open it again.
 3. When macOS asks whether Island may find devices on your local network, allow it: Land needs it to reach your other computers.
 
-The island sits under the menu bar. On a Mac it has Land, the bot and its chat, timers, weather, your calendar, downloads, and GitHub, Vercel and Notion; Claude Code, music, system stats and the rest are coming in the next versions. A Mac doesn't update Island by itself yet: download the new `Island.dmg` for each version.
+The island sits under the menu bar. On a Mac it has Land, the bot and its chat, timers, weather, your calendar, downloads, and GitHub, Vercel and Notion; Claude Code, music, system stats and the rest are coming in the next versions. Island keeps itself up to date on a Mac too (Settings › Startup › Update automatically), as long as it is in Applications. If macOS says Island was prevented from modifying apps, turn Island on in **System Settings › Privacy & Security › App Management**: that is Island replacing itself with the new version.
 
 ## Use it
 

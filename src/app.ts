@@ -740,8 +740,7 @@ function privacyNote(mac: boolean): string {
     'the Local AI models you choose to download',
   ];
   const list = `${online.slice(0, -1).join(', ')} and ${online[online.length - 1]}`;
-  const update = mac ? '' : ' With Update automatically on, it also asks GitHub for a newer Island every 6 hours.';
-  return `Island only goes online for what you turn on: ${list}.${update} Questions the bot answers with Local never leave ${thisComputer()}.`;
+  return `Island only goes online for what you turn on: ${list}. With Update automatically on, it also asks GitHub for a newer Island every 6 hours. Questions the bot answers with Local never leave ${thisComputer()}.`;
 }
 
 function settingsPage(): HTMLElement {
@@ -816,8 +815,7 @@ function settingsPage(): HTMLElement {
     ]),
     section('Startup', [
       row(mac ? 'Open at login' : 'Start with Windows', null, toggle(g.startWithWindows, (v) => { g.startWithWindows = v; save(true); void native.autostartSet(v); })),
-      // A Mac build cannot update itself yet (updater.rs), so it offers no switch that does nothing.
-      ...(mac ? [] : [row('Update automatically', 'When a newer Island is released, it downloads in the background and Island restarts into it.', toggle(g.autoUpdate, (v) => { g.autoUpdate = v; save(true); }))]),
+      row('Update automatically', mac ? 'When a newer Island is released, it downloads in the background and Island restarts into it. Island must be in Applications.' : 'When a newer Island is released, it downloads in the background and Island restarts into it.', toggle(g.autoUpdate, (v) => { g.autoUpdate = v; save(true); })),
       row('Run setup again', 'The two questions, the Local AI model and your phone. Your Control Center is rebuilt from the answers.', h('button', { class: 'btn', text: 'Run setup', onclick: () => go('welcome') })),
     ]),
     section('Notifications', [

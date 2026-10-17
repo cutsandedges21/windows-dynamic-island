@@ -4,6 +4,9 @@
 //                                             public half for UPDATE_KEY in updater.rs
 //   node scripts/sign-release.mjs 0.3.0       signs release/Island.exe as version 0.3.0 and prints
 //                                             the line to paste into that release's notes
+//   node scripts/sign-release.mjs 0.3.0 release/Island.exe C:/tmp/Island.dmg
+//                                             signs each file given (the Windows exe and the Mac
+//                                             disk image): one line per file, all go in the notes
 //
 // The key lives outside the repository (the repo is public): %USERPROFILE%\.island\update-signing-key.pem,
 // or wherever ISLAND_SIGNING_KEY points. Back it up: without it no Island can be updated again,
@@ -46,13 +49,15 @@ if (arg === 'keygen') {
     process.exit(1);
   }
   const privateKey = createPrivateKey(readFileSync(keyFile));
-  const exe = readFileSync(join(root, 'release', 'Island.exe'));
-  const digest = createHash('sha256').update(exe).digest('hex');
-  const signature = sign(null, message(version, digest), privateKey).toString('base64');
-  console.log(`Signed release/Island.exe as ${version} (sha256 ${digest}) with key ${publicHex(privateKey).slice(0, 16)}…`);
-  console.log('Paste this line into the release notes (it stays invisible on GitHub):');
-  console.log(`<!-- island-signature: ${signature} -->`);
+  const files = process.argv.length > 3 ? process.argv.slice(3) : [join(root, 'release', 'Island.exe')];
+  const lines = files.map((file) => {
+    const digest = createHash('sha256').update(readFileSync(file)).digest('hex');
+    console.log(`Signed ${file} as ${version} (sha256 ${digest}) with key ${publicHex(privateKey).slice(0, 16)}…`);
+    return `<!-- island-signature: ${sign(null, message(version, digest), privateKey).toString('base64')} -->`;
+  });
+  console.log('Paste these lines into the release notes (they stay invisible on GitHub):');
+  for (const line of lines) console.log(line);
 } else {
-  console.error('Usage: node scripts/sign-release.mjs keygen | <version>');
+  console.error('Usage: node scripts/sign-release.mjs keygen | <version> [file ...]');
   process.exit(1);
 }
