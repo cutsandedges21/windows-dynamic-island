@@ -11,7 +11,7 @@ use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM
 use windows::Win32::System::Ole::{CF_DIB, CF_UNICODETEXT};
 use windows::Win32::System::Shutdown::LockWorkStation;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LWIN,
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_LWIN,
 };
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -30,7 +30,7 @@ pub fn scheme_ok(url: &str) -> bool {
     !rest.is_empty() && SCHEMES.contains(&scheme.to_ascii_lowercase().as_str()) && !url.contains(['\r', '\n', '\0'])
 }
 
-fn shell_execute(verb: &str, file: &str, params: Option<&str>) -> bool {
+pub(crate) fn shell_execute(verb: &str, file: &str, params: Option<&str>) -> bool {
     crate::procs::allow_any_foreground();
     let verb_w = wide(verb);
     let file_w = wide(file);
@@ -208,6 +208,17 @@ fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
 pub fn clipboard_history() {
     let v = VIRTUAL_KEY(0x56);
     let inputs = [key(VK_LWIN, false), key(v, false), key(v, true), key(VK_LWIN, true)];
+    unsafe {
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+/// Opens Windows 11's sound output picker in Quick Settings (Win+Ctrl+V), like the music
+/// player's output button on an iPhone.
+#[tauri::command]
+pub fn sound_output() {
+    let v = VIRTUAL_KEY(0x56);
+    let inputs = [key(VK_LWIN, false), key(VK_CONTROL, false), key(v, false), key(v, true), key(VK_CONTROL, true), key(VK_LWIN, true)];
     unsafe {
         SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }

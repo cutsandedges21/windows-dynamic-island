@@ -216,6 +216,14 @@ describe('settings migration', () => {
     expect(migrate({ version: 5, island: { hideInFullscreen: true } }).island.hideInFullscreen).toBe(true);
   });
 
+  it('Land is built in: on even when an older version saved it off, its options kept', () => {
+    const s = migrate({ activities: { config: { land: { enabled: false, priority: 'high', options: { visible: false } } } } });
+    expect(s.activities.config.land.enabled).toBe(true);
+    expect(s.activities.config.land.priority).toBe('high');
+    expect(s.activities.config.land.options.visible).toBe(false);
+    expect(migrate({}).activities.config.land.enabled).toBe(true);
+  });
+
   it('the bot is on unless it was turned off', () => {
     expect(migrate({}).island.bot).toBe(true);
     expect(migrate({ island: { bot: false } }).island.bot).toBe(false);

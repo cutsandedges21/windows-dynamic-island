@@ -133,6 +133,12 @@ export interface Activity {
   home?(env: RenderEnv): Seg[];
   /** A card under the pill for this moment: longer text, a reply box, lists. Null: no card. */
   sheet?(env: SheetEnv): SheetView | null;
+  /**
+   * Pointed at, its own hover card wins over Settings › Hover card › Claude stats (Phone's
+   * list); 'morph': and that card grows out of the pill itself instead of hanging below it
+   * (Music's player), so the pill does not expand underneath.
+   */
+  claimsHover?(): boolean | 'morph';
   /** This activity's cell in the open island's grid. Null hides it. */
   tile?(env: SheetEnv): Tile | null;
   /** The bot's chat, shown in the bar under the bot (Local AI is the only one). */

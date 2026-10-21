@@ -2,6 +2,7 @@
 // Center (the grid that opens when you click the island). Pure data and rules; the screens
 // are in src/welcome.ts.
 
+import { CATALOG_BY_ID } from '../activities/catalog';
 import type { IconName } from './icons';
 import { availableHere, type Platform } from './platform';
 import { cloneSettings, type Settings } from './settings';
@@ -104,10 +105,10 @@ export interface Answers {
 
 /**
  * On whatever the answers: they pop up for system events (the volume, a USB drive, a
- * finished download, low battery, files sent from a computer nearby) but only get a tile
+ * finished download, low battery, files sent from a computer nearby, a workspace opening) but only get a tile
  * when picked.
  */
-export const HELPERS = ['sound', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'phone'];
+export const HELPERS = ['sound', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'phone', 'workspaces'];
 
 /** Grid order: what you act on first, then what you glance at, then occasional helpers. */
 const GRID_ORDER = ['claude', 'music', 'calendar', 'weather', 'timer', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'sound', 'downloads', 'land', 'screenshots', 'clipboard'];
@@ -145,7 +146,8 @@ export function planActivities(a: Answers, facts: Facts): Plan {
  */
 export function applyPlan(s: Settings, plan: Plan, city: string): Settings {
   const out = cloneSettings(s);
-  for (const [id, cfg] of Object.entries(out.activities.config)) if (MANAGED.has(id)) cfg.enabled = plan.enabled.includes(id);
+  // A built-in one (Land) stays on whatever the plan says.
+  for (const [id, cfg] of Object.entries(out.activities.config)) if (MANAGED.has(id)) cfg.enabled = plan.enabled.includes(id) || CATALOG_BY_ID.get(id)?.builtIn === true;
   out.activities.order = [...plan.picked, ...out.activities.order.filter((id) => !plan.picked.includes(id))];
   out.island.grid = { order: [], sizes: {}, hidden: [...plan.hidden], pages: [] };
   const place = city.trim();

@@ -7,6 +7,12 @@ import type { emitLocal as Emit, native as Native } from '../core/native';
 
 const H = 3600e3;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Album art for the player: a sunset, so the bars take its orange. */
+const ART =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b1a14"/><stop offset=".6" stop-color="#e2581c"/><stop offset="1" stop-color="#160c09"/></linearGradient></defs><rect width="96" height="96" fill="url(#g)"/><circle cx="48" cy="62" r="13" fill="#ffb36b"/></svg>',
+  );
 const icsTime = (ms: number) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 
 export async function fillPreview(island: Island, native: typeof Native, emit: typeof Emit): Promise<void> {
@@ -17,7 +23,7 @@ export async function fillPreview(island: Island, native: typeof Native, emit: t
     audioState: async () => ({ volume: 0.42, muted: false, device: 'Speakers (Realtek(R) Audio)', deviceId: 'spk', micMuted: false, micDevice: 'Microphone' }),
     mediaState: async () => ({
       available: true, app: 'Spotify', appId: 'Spotify.exe', title: 'Roman to Integer - LeetCode #13', artist: 'CodingNinja', album: 'LeetCode',
-      status: 'playing', position: 120, duration: 300, updatedAt: Date.now(), canPlay: true, canPause: true, canNext: true, canPrev: true, thumbnail: null,
+      status: 'playing', position: 120, duration: 300, updatedAt: Date.now(), canPlay: true, canPause: true, canNext: true, canPrev: true, thumbnail: ART,
     }),
     sysSample: async () => ({ cpu: 37, memUsed: 10.4e9, memTotal: 16e9, gpu: 22, top: { name: 'chrome.exe', cpu: 12 } }),
     netSample: async () => ({ rxBps: 2.1e6, txBps: 1.8e5, connected: true, internet: true, name: 'HomeWiFi', wifi: true, vpn: false }),
@@ -55,6 +61,7 @@ export async function fillPreview(island: Island, native: typeof Native, emit: t
   s.activities.config.system.options.always = true;
   s.activities.config.network.options.always = true;
   s.activities.config.battery.options.showCharging = true;
+  s.activities.config.phone.persistent = true;
   await native.settingsSet(s, 'preview');
   await sleep(400);
   emit('power', await native.powerState());
@@ -62,6 +69,9 @@ export async function fillPreview(island: Island, native: typeof Native, emit: t
   emit('media', await native.mediaState());
   emit('privacy', { mic: ['Discord'], cam: [] });
   emit('clipboard', { seq: 7, kind: 'text', text: 'npm run release', files: [], excluded: false });
+  emit('phone-note', { id: 1, app: 'Messages', title: 'Mom', body: 'Are you coming home for dinner tonight?' });
+  emit('phone-note', { id: 2, app: 'Instagram', title: 'sam.k', body: 'liked your photo' });
+  emit('phone-note', { id: 3, app: 'Messages', title: 'Lab group', body: 'Physics report is due Friday, who has the data from Tuesday?' });
   await sleep(3000);
   (island as unknown as { open: boolean }).open = true;
   island.schedule();

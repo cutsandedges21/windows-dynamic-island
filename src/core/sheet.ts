@@ -13,6 +13,7 @@
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
+import { buildPlayer, patchPlayer, type PlayerBlock } from './player';
 import { springAnimate } from './renderer';
 import type { Tone } from './segments';
 import { springs } from './spring';
@@ -65,6 +66,8 @@ export interface SheetRow {
   tip?: string;
   /** A small button at the row's end (shown on hover), e.g. hide. */
   button?: SheetButton;
+  /** A thin bar under the title, 0..1, with a figure beside it (a chat's context). */
+  meter?: { value: number; text?: string; tone?: Tone; tip?: string };
 }
 
 export interface Choice {
@@ -98,7 +101,9 @@ export type Block =
    * The Control Center grid. `items` already know where they sit (the island
    * packed them); `tray` holds the ones taken off the grid, shown while editing.
    */
-  | { t: 'tiles'; key: string; items: Tile[]; tray?: Tile[]; cols: number; rows: number; pages: number; cell: number; editing?: boolean };
+  | { t: 'tiles'; key: string; items: Tile[]; tray?: Tile[]; cols: number; rows: number; pages: number; cell: number; editing?: boolean }
+  /** Music's player (player.ts). */
+  | PlayerBlock;
 
 /** One cell of the open island's grid (Control Center style). */
 export interface Tile {
@@ -142,6 +147,11 @@ export interface SheetView {
   wide?: boolean;
   /** The view knows how wide it wants to be (the grid sizes itself from its cells). */
   width?: number;
+  /**
+   * The card grows out of the pill itself and covers it, like an iPhone's Dynamic Island
+   * opening (Music's player), instead of hanging below it; it shrinks back into the pill.
+   */
+  morph?: boolean;
 }
 
 export type SheetAction = (action: string, arg: unknown, source: HTMLElement) => void;
@@ -183,6 +193,11 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
         return { ...b, items: b.items.map((p) => ({ ...p, action: p.action ? fn(p.action) : undefined })) };
       case 'tiles':
         return { ...b, items: b.items.map((t) => ({ ...t, action: t.action ? fn(t.action) : undefined, body: body(t.body) })) };
+      case 'player': {
+        // An empty action stays empty: a player with no buttons (not interactive).
+        const m = <T extends string | undefined>(a: T): T => (a ? (fn(a) as T) : a);
+        return { ...b, actions: { prev: m(b.actions.prev), toggle: m(b.actions.toggle), next: m(b.actions.next), seek: m(b.actions.seek), output: m(b.actions.output) } };
+      }
       default:
         return b;
     }
@@ -226,6 +241,10 @@ const EDGE_HOLD_MS = 2000;
 const DRAG_REACH = 160;
 /** How long a carried tile rests over a spot before the grid makes room for it there. */
 const REFLOW_DWELL_MS = 150;
+/** A card grown out of the pill: its corners at full size, and how it stretches out and back. */
+const MORPH_RADIUS = 34;
+const MORPH_OUT = { response: 0.5, damping: 0.74 };
+const MORPH_BACK = { response: 0.36, damping: 0.9 };
 
 const args = new WeakMap<HTMLElement, unknown>();
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -279,6 +298,14 @@ export class SheetRenderer {
   private engagedInput: HTMLInputElement | null = null;
   /** The spring set writes once while it is being built; nothing to place yet. */
   private ready = false;
+  /** The card grows out of the pill and covers it (SheetView.morph), and the height it grows to. */
+  private morph = false;
+  private morphH = 0;
+  /** Player buttons bind like any card button; an empty action unbinds (no buttons). */
+  private readonly bindPlayer = (e: HTMLElement, action: string | undefined, arg: unknown): void => {
+    if (!action) delete e.dataset.action;
+    this.bind(e, action, arg);
+  };
 
   constructor(
     private readonly stage: HTMLElement,
@@ -308,10 +335,20 @@ export class SheetRenderer {
         return;
       }
       const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
-      if (!target || !this.el.contains(target)) return;
+      if (!target || !this.el.contains(target)) {
+        // Grown out of the pill, the card stands in for it: a tap opens the island.
+        if (this.morph && this.shown) this.onAction('island:tap', null, this.el);
+        return;
+      }
       e.stopPropagation();
-      springAnimate(target, [{ transform: 'scale(0.94)' }, { transform: 'none' }], springs.bouncy);
+      // The action first: the press pulse is decoration and must never stand in its way.
       this.onAction(target.dataset.action!, args.get(target), target);
+      springAnimate(target, [{ transform: 'scale(0.94)' }, { transform: 'none' }], springs.bouncy);
+    });
+    this.el.addEventListener('contextmenu', (e) => {
+      if (!this.morph) return;
+      e.preventDefault();
+      this.onAction('island:menu', null, this.el);
     });
     this.el.addEventListener('pointerenter', () => this.onAction('island:sheet-hover', true, this.el));
     this.el.addEventListener('pointerleave', () => this.onAction('island:sheet-hover', false, this.el));
@@ -336,6 +373,8 @@ export class SheetRenderer {
     if (!d || this.springs.get('o') < 0.05) return null;
     // A carried tile can go past the card (to its side, to turn the page): keep the mouse that far.
     if (this.drag) return { x: d.x - DRAG_REACH, y: d.y - DRAG_REACH, w: d.w + DRAG_REACH * 2, h: d.h + DRAG_REACH * 2 };
+    // Over the pill: no gap to cross.
+    if (this.morph) return d;
     switch (this.anchor) {
       case 'top':
         return { x: d.x, y: d.y - GAP, w: d.w, h: d.h + GAP };
@@ -375,15 +414,30 @@ export class SheetRenderer {
     this.width = Math.round(geo.width);
     this.inner.style.setProperty('--cols', this.width >= 520 ? '4' : '2');
 
+    // Into or out of a card that grows from the pill: the old card goes at once, the new one starts afresh.
+    const morph = view.morph === true;
+    if (this.shown && morph !== this.morph) this.hide(true);
     const appearing = !this.shown;
     if (appearing) {
+      // Still shrinking back into the pill: it grows again from where it is.
+      const regrow = morph && this.morph && this.drawn !== null;
+      this.morph = morph;
+      this.el.classList.toggle('morph', morph);
       this.el.style.display = '';
       this.shown = true;
-      this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width }, { immediate: true });
+      for (const a of this.inner.getAnimations()) a.cancel();
+      // Grown out of the pill it starts as the pill itself, solid; any other card from a sliver.
+      if (morph && !regrow) this.springs.set({ h: this.pill.h, o: 1, s: 1, b: 0, w: this.pill.w }, { immediate: true });
+      else if (!morph) this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width }, { immediate: true });
+      if (morph) {
+        this.springs.set({ w: this.width }, { config: MORPH_OUT, immediate: geo.immediate });
+        // The content comes in once the shape has room for it.
+        if (!regrow) springAnimate(this.inner, [{ opacity: 0, filter: 'blur(4px)' }, { opacity: 1, filter: 'blur(0px)' }], springs.content, { delay: 90, fill: 'backwards' });
+      }
     } else {
       // A new width (the hover card turning into the Control Center as the pill opens)
       // springs with the pill instead of jumping in one frame.
-      this.springs.set({ w: this.width }, { config: springs.shell, immediate: geo.immediate });
+      this.springs.set({ w: this.width }, { config: morph ? MORPH_OUT : springs.shell, immediate: geo.immediate });
     }
     let changed = false;
     if (view.key !== this.viewKey) {
@@ -395,7 +449,7 @@ export class SheetRenderer {
     this.pinInner(this.inner, this.width);
     changed = this.patch(view.blocks) || changed;
     if (changed || appearing) this.fit(geo.immediate === true);
-    if (appearing) this.springs.set({ o: 1, s: 1, b: 0 }, { config: { o: springs.fade, s: springs.bouncy, b: springs.fade }, immediate: geo.immediate });
+    if (appearing && !morph) this.springs.set({ o: 1, s: 1, b: 0 }, { config: { o: springs.fade, s: springs.bouncy, b: springs.fade }, immediate: geo.immediate });
   }
 
   // ---------------------------------------------------------------- placement
@@ -410,12 +464,23 @@ export class SheetRenderer {
       if (this.shown) return;
       this.el.style.display = 'none';
       this.clear();
+      for (const a of this.inner.getAnimations()) a.cancel();
+      this.morph = false;
+      this.el.classList.remove('morph');
+      this.el.style.borderRadius = '';
       this.drawn = null;
       this.onMove();
     };
     if (immediate || reducedMotion()) {
       this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8 }, { immediate: true });
       done();
+      return;
+    }
+    if (this.morph) {
+      // Back into the pill: the content goes first, then the shape shrinks onto the pill and is gone.
+      springAnimate(this.inner, [{ opacity: 1 }, { opacity: 0 }], springs.fade, { fill: 'forwards' });
+      this.springs.set({ h: this.pill.h, w: this.pill.w }, { config: MORPH_BACK });
+      this.springs.onRest(done);
       return;
     }
     this.springs.set({ h: SLIVER, o: 0, s: 0.95, b: 6 }, { config: { h: springs.snappy, o: springs.fade, s: springs.snappy, b: springs.fade } });
@@ -426,8 +491,12 @@ export class SheetRenderer {
   private fit(immediate: boolean): void {
     const max = Math.max(160, Math.min(this.area.height * 0.72, 660));
     this.inner.style.maxHeight = `${max}px`;
-    const h = Math.min(max, this.inner.scrollHeight);
-    this.springs.set({ h }, { config: springs.shell, immediate });
+    // The content box itself (capped at max), not scrollHeight: that also counts whatever only
+    // overflows (a tile mid-slide, the page-turn bars), and on a Mac the card kept its edit-mode
+    // height after Done.
+    const h = Math.min(max, this.inner.offsetHeight);
+    if (this.morph) this.morphH = h;
+    this.springs.set({ h }, { config: this.morph ? MORPH_OUT : springs.shell, immediate });
   }
 
   /**
@@ -451,23 +520,31 @@ export class SheetRenderer {
     const clampY = (y: number) => Math.max(EDGE, Math.min(H - h - EDGE, y));
     let x: number;
     let y: number;
+    // Grown out of the pill: over it, from the edge it rests on; else beside it, across the gap.
+    const over = this.morph;
     switch (this.anchor) {
       case 'top':
         x = clampX(p.x + p.w / 2 - w / 2);
-        y = p.y + p.h + GAP;
+        y = over ? p.y : p.y + p.h + GAP;
         break;
       case 'bottom':
         x = clampX(p.x + p.w / 2 - w / 2);
-        y = p.y - GAP - h;
+        y = over ? p.y + p.h - h : p.y - GAP - h;
         break;
       case 'left':
-        x = p.x + p.w + GAP;
+        x = over ? p.x : p.x + p.w + GAP;
         y = clampY(p.y + p.h / 2 - h / 2);
         break;
       case 'right':
-        x = p.x - GAP - w;
+        x = over ? p.x + p.w - w : p.x - GAP - w;
         y = clampY(p.y + p.h / 2 - h / 2);
         break;
+    }
+    if (over) {
+      // The pill's round ends while it is the pill's size, the card's corners once grown.
+      const pillR = Math.min(p.w, p.h) / 2;
+      const t = clamp01(Math.abs(h - p.h) / Math.max(1, Math.abs(this.morphH - p.h)));
+      this.el.style.borderRadius = `${pillR + (MORPH_RADIUS - pillR) * t}px`;
     }
     const st = this.el.style;
     st.transform = `translate3d(${x}px, ${y}px, 0) scale(${v.s})`;
@@ -572,6 +649,10 @@ export class SheetRenderer {
       }
       case 'people':
         return this.fillPeople(e, b);
+      case 'player':
+        // Every second while it plays: the bars and a drag on the scrubber must survive it.
+        patchPlayer(e, b, this.bindPlayer);
+        return true;
       default:
         return false;
     }
@@ -605,6 +686,7 @@ export class SheetRenderer {
     } else if (r.icon) e.append(iconEl(r.icon, `ri tone-${r.tone ?? 'muted'}`));
     const tx = make('span', 'rt');
     tx.append(make('span', 'r1', r.title));
+    if (r.meter) tx.append(this.rowMeter(r.meter));
     if (r.detail) tx.append(make('span', 'r2', r.detail));
     e.append(tx);
     if (r.badge) e.append(make('span', 'rb', r.badge));
@@ -618,8 +700,23 @@ export class SheetRenderer {
     return e;
   }
 
+  /** A row's thin bar under its title (a chat's context), with its figure beside it. */
+  private rowMeter(m: NonNullable<SheetRow['meter']>): HTMLElement {
+    const e = make('span', `rm tone-${m.tone ?? 'claude'}`);
+    const bar = make('i', 'rmb');
+    const fill = make('i', 'rmf');
+    fill.style.transform = `scaleX(${clamp01(m.value)})`;
+    bar.append(fill);
+    e.append(bar);
+    if (m.text) e.append(make('span', 'rmt', m.text));
+    if (m.tip) e.title = m.tip;
+    return e;
+  }
+
   private build(b: Block): HTMLElement {
     switch (b.t) {
+      case 'player':
+        return buildPlayer(b, this.bindPlayer, this.onAction);
       case 'head': {
         const e = make('div', 'sb sb-head');
         if (b.icon) e.append(iconEl(b.icon, `hi tone-${b.tone ?? 'default'}`));
@@ -1119,7 +1216,10 @@ export class SheetRenderer {
       const on = side === dir;
       bar.classList.toggle('on', on);
       for (const a of fill.getAnimations?.() ?? []) a.cancel();
-      if (!on) continue;
+      if (!on) {
+        bar.style.height = '';
+        continue;
+      }
       bar.style.height = `${pages?.offsetHeight ?? 0}px`;
       // A timer, not decoration: it runs at full length even with reduced motion.
       fill.animate?.([{ transform: 'scaleY(0)' }, { transform: 'scaleY(1)' }], { duration: EDGE_HOLD_MS, easing: 'linear', fill: 'forwards' });

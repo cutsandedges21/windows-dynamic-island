@@ -32,7 +32,7 @@ export type Seg =
       max?: number;
     })
   | (Base & { t: 'progress'; value: number | null; pace?: number | null; tone?: Tone; w: number })
-  | (Base & { t: 'bars'; active: boolean; tone?: Tone })
+  | (Base & { t: 'bars'; active: boolean; tone?: Tone; /** The bars' colour (the album art's); absent: the tone's. */ color?: string })
   | (Base & {
       t: 'button';
       label?: string;
@@ -120,6 +120,9 @@ export const measureText: Measure = (raw, font) => {
 
 const ICON_SIZE = { sm: 15, md: 18, lg: 22 } as const;
 export const CHIP_H = 24;
+/** The music bars: six thin bars, like an iPhone's (island.css .seg-bars). */
+export const BARS_W = 25;
+export const BARS_H = 18;
 export const BUTTON_H = 26;
 
 export function naturalWidth(seg: Seg, measure: Measure, pillH: number): number {
@@ -135,7 +138,7 @@ export function naturalWidth(seg: Seg, measure: Measure, pillH: number): number 
     case 'progress':
       return seg.w;
     case 'bars':
-      return 23;
+      return BARS_W;
     case 'button': {
       const label = seg.label ? measure(seg.label, BUTTON_FONT) : 0;
       if (!seg.label) return BUTTON_H;
@@ -293,7 +296,7 @@ export function verticalBox(seg: Seg, measure: Measure, crossMax: number): { len
     case 'progress':
       return { len: 4, cross: crossMax };
     case 'bars':
-      return { len: 14, cross: 23 };
+      return { len: BARS_H, cross: BARS_W };
     case 'button':
       return seg.icon ? { len: BUTTON_H, cross: BUTTON_H } : { len: BUTTON_H, cross: Math.min(crossMax, naturalWidth(seg, measure, 0)) };
     case 'chip':

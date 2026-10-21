@@ -9,6 +9,11 @@ const P: Record<string, string> = {
   pause: '<path d="M8 5.5v13M16 5.5v13" stroke-width="3.2"/>',
   next: '<path d="M6 6l9 6-9 6z" fill="currentColor"/><path d="M18 6v12" stroke-width="2.4"/>',
   prev: '<path d="M18 6l-9 6 9 6z" fill="currentColor"/><path d="M6 6v12" stroke-width="2.4"/>',
+  // The music player's controls, filled and rounded like an iPhone's.
+  'play-fill': '<path d="M7.5 5.2v13.6L19 12z" fill="currentColor" stroke-width="2.4"/>',
+  'pause-fill': '<rect x="6" y="4.5" width="4.2" height="15" rx="1.5" fill="currentColor" stroke="none"/><rect x="13.8" y="4.5" width="4.2" height="15" rx="1.5" fill="currentColor" stroke="none"/>',
+  rewind: '<path d="M11.4 6.6v10.8L3.6 12zM20.4 6.6v10.8L12.6 12z" fill="currentColor" stroke-width="1.7"/>',
+  forward: '<path d="M12.6 6.6v10.8l7.8-5.4zM3.6 6.6v10.8l7.8-5.4z" fill="currentColor" stroke-width="1.7"/>',
   battery: '<rect x="2.5" y="7.5" width="17" height="9" rx="2.2"/><path d="M21.5 10.5v3"/>',
   bolt: '<path d="M13 2.5L5 13.5h6l-1 8 8-11h-6z" fill="currentColor" stroke-linejoin="round"/>',
   plug: '<path d="M9 2.5v5M15 2.5v5M6.5 7.5h11v3.5a5.5 5.5 0 01-11 0zM12 16.5v5"/>',
@@ -102,6 +107,16 @@ const P: Record<string, string> = {
   land: '<path d="M3.5 20h17"/><path d="M4.5 4.5c6.2 0 10.6 4 11.9 10.6"/><path d="M13.3 13.1l3.1 2.4 2.3-3.2"/>',
   file: '<path d="M6.5 3h7.5l4.5 4.5V20a1 1 0 01-1 1h-11a1 1 0 01-1-1V4a1 1 0 011-1z"/><path d="M13.5 3v5h5"/>',
   laptop: '<rect x="4.5" y="5" width="15" height="10.5" rx="1.5"/><path d="M2.5 19h19"/>',
+  // Workspaces: a window in front of another.
+  spaces: '<rect x="2.5" y="8.5" width="13.5" height="11" rx="2"/><path d="M2.5 12h13.5"/><path d="M7 8.5V6.5a2 2 0 012-2h10.5a2 2 0 012 2V14a2 2 0 01-2 2H16"/>',
+  window: '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M3 9h18"/><path d="M6.5 6.8h.01M9 6.8h.01"/>',
+  book: '<path d="M4.5 18.5V5.5a2 2 0 012-2h12.5v13H6.5a2 2 0 00-2 2zm0 0a2 2 0 002 2H19"/><path d="M8.5 7.5h6.5"/>',
+  star: '<path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.2-4.1 5.8-.8z"/>',
+  search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5l5 5"/>',
+  // Activities: what's happening, as a pulse.
+  pulse: '<path d="M2.5 12h4l2.5-6.5 5 13 2.5-6.5h5"/>',
+  // Workspaces › Time.
+  trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
 };
 
 export type IconName = keyof typeof P | string;

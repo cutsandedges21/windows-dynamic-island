@@ -17,7 +17,7 @@ Activities ──► Priority ──► Layout ──► Animation ──► Ren
 | Window | What it is |
 |---|---|
 | `island` | Transparent, borderless, always-on-top, non-activating tool window that covers the **work area** of the chosen monitor. The pill is drawn inside it with CSS transforms, so moving it between the four anchors is a spring animation inside one window, never an OS window move. Outside the pill the window ignores the mouse: a Rust thread polls the cursor and toggles click-through against the hit rect the island publishes. |
-| `app` | A normal window (Mica) with two pages: **Activities** and **Settings**. Opened from the tray, the island's quick menu, or `Alt+Shift+A`. |
+| `app` | A normal window (Mica) with three pages: **Activities**, **Workspaces** and **Settings**. Opened from the tray, the island's quick menu, or `Alt+Shift+A`. |
 
 Decisions Moss made during the build (they override the spec where they differ):
 
@@ -128,6 +128,15 @@ Land sends files between computers on the same network that run Island, like Air
 - **Tests.** In `anywhere.rs` and `land/tests.rs`. Three ignored ones go through n0 for real: `found_by_key_through_n0`; `files_reach_a_friend_through_n0`, which sends 2 MB the normal way and relay-only; and `ask_the_island_running_here`, which asks the Island running on this computer and gives up after its request shows (`cargo test --lib anywhere::tests::ask_the_island_running_here -- --ignored --nocapture`).
 
 **Tests.** `land.rs` covers the packets, names, the local-network rule and whole transfers over loopback (consent, decline, cancel, a key that does not match, never overwriting); two ignored tests run against real things: two devices finding each other on this computer's network, and offering a file to the Island running here (`cargo test --lib land::tests::offer_the_island -- --ignored --nocapture`). `test/land.test.ts` covers the activity. Browser preview: `/?land` (card after a drop), `/?land=drag`, `/?land=ask`, `/?land=send`.
+
+## Workspaces
+
+Named sets of apps, files, folders, websites and commands that open together, with a note on where the
+work stands (Moss, 2026-10-17). The page is `src/workspaces/` in the Activities window; Rust keeps
+`workspaces.json` (`src-tauri/src/workspaces/`) and applies the windows' changes one at a time (upsert,
+remove, reorder), broadcasting `workspaces` with a revision. The front page has two tabs: the cards, and Time (weekly bars and a
+donut of each workspace's time; numbers in `time.ts`, drawing in `timeview.ts`; the island hands over Notice
+what I work on's spans through the `spans` request). Decisions, the data and the phases: `docs/WORKSPACES.md`.
 
 ## Phone
 

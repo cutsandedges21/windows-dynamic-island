@@ -65,6 +65,11 @@ export interface TranscriptMeta {
   customTitle: string | null;
   permissionMode: string | null;
   userTexts: string[];
+  /**
+   * What turns and the context did, in file order: 'p' a prompt, 'e' a finished reply, 'x' an
+   * interrupt or an API error, 'c' a compaction, 'u' the context after one API response (`tokens`).
+   */
+  marks: Array<[kind: 'p' | 'e' | 'x' | 'c' | 'u', ts: number, tokens: number]>;
 }
 export interface UsageScan {
   consumed: number;
@@ -312,6 +317,57 @@ export interface PushButton {
   reply: string;
 }
 
+/** workspaces.json as Rust holds it (src-tauri/src/workspaces/mod.rs); `doc` is checked by src/workspaces/model.ts. */
+export interface WsLoaded {
+  doc: unknown;
+  rev: number;
+  /** Where an unreadable file was moved. */
+  recovered: string | null;
+  /** Why nothing can be saved. */
+  blocked: string | null;
+}
+/** Whether a path a workspace names is there ('unknown' outside the app). */
+export interface PathCheck {
+  state: 'file' | 'dir' | 'missing' | 'invalid' | 'unknown';
+  /** Where it was found, when not exactly as typed (a program found by name, a path in the project folder). */
+  resolved: string | null;
+}
+
+/** One thing a workspace opens, as Rust's ws_launch takes it (src-tauri/src/workspaces/launch.rs). */
+export type LaunchItem =
+  | { kind: 'app'; path: string; args: string; cwd: string }
+  | { kind: 'file'; path: string; openWith: string }
+  | { kind: 'folder'; path: string }
+  | { kind: 'command'; id: string; command: string; shell: string; host: string; cwd: string; title: string };
+export interface Launched {
+  pid: number | null;
+  /** Said beside the result ("Windows Terminal isn't installed, so it ran in its own window"). */
+  note: string | null;
+}
+/** An app in Start's list: `target` is its program, or shell:AppsFolder\<id> for a Store app. */
+export interface InstalledApp {
+  name: string;
+  target: string;
+}
+/** An app window on screen (src-tauri/src/workspaces/layout.rs). */
+export interface LiveWindow {
+  hwnd: number;
+  pid: number;
+  exe: string;
+  title: string;
+  className: string;
+  /** Its rectangle when not maximized or minimized, physical pixels. */
+  rect: MonitorRect;
+  state: 'normal' | 'maximized' | 'minimized';
+  monitor: string;
+  dpi: number;
+}
+export interface WinPlaced {
+  hwnd: number;
+  ok: boolean;
+  why: string | null;
+}
+
 /** Files dragged over the island and dropped on it; positions in CSS px. */
 export type FileDrop =
   | { type: 'enter'; paths: string[]; x: number; y: number }
@@ -541,7 +597,7 @@ export const native = {
 
   mediaState: () => call<MediaState | null>('media_state', {}, null),
   mediaControl: (action: 'toggle' | 'play' | 'pause' | 'next' | 'prev' | 'seek', value?: number) => call<boolean>('media_control', { action, value: value ?? null }, false),
-  /** Music bars: tap the speakers for bass-to-treble levels ('spectrum' events, five 0..1 numbers). */
+  /** Music bars: tap the speakers for bass-to-treble levels ('spectrum' events, six 0..1 numbers). */
   spectrumWatch: (on: boolean) => call('spectrum_watch', { on }, undefined),
   audioState: () => call<AudioState | null>('audio_state', {}, null),
   audioSet: (volume: number | null, muted: boolean | null) => call<boolean>('audio_set', { volume, muted }, false),
@@ -552,6 +608,8 @@ export const native = {
   clipboardSetText: (text: string) => call<boolean>('clipboard_set_text', { text }, false),
   clipboardCopyImage: (path: string) => call<boolean>('clipboard_copy_image', { path }, false),
   clipboardHistory: () => call('clipboard_history', {}, undefined),
+  /** Windows' sound output picker (Quick Settings), for the music player's output button. */
+  soundOutput: () => call('sound_output', {}, undefined),
   /** What Ctrl+V on Land's icon pastes: files copied in Explorer, or text. */
   clipboardPaste: () => call<{ files: string[]; text: string | null }>('clipboard_paste', {}, { files: [], text: null }),
   /** Ctrl+V goes to Land while the pointer rests on its icon (Rust holds it as a hotkey meanwhile). */
@@ -608,6 +666,40 @@ export const native = {
   landCancel: (id: string) => call<boolean>('land_cancel', { id }, false),
   landStage: (paths: string[]) =>
     call<LandStaged[]>('land_stage', { paths }, paths.map((p) => ({ path: p, name: p.split(/[\\/]/).pop() || p, size: 0, dir: false, files: 1, error: null }))),
+
+  /** Workspaces (src/workspaces/store.ts goes through these; outside the app it keeps them in the browser). */
+  wsLoad: () => call<WsLoaded | null>('workspaces_load', {}, null),
+  /** The first document, written only when nothing is saved yet; what is there either way. */
+  wsInit: (doc: unknown) => tryCall<WsLoaded>('workspaces_init', { doc }),
+  /** The whole document, only if nothing changed since revision `rev`; the new revision. */
+  wsReplace: (doc: unknown, rev: number, origin: string) => tryCall<number>('workspaces_replace', { doc, rev, origin }),
+  wsUpsert: (id: string, fields: Record<string, unknown>, origin: string) => tryCall<number>('workspaces_upsert', { id, fields, origin }),
+  wsRemove: (id: string, origin: string) => tryCall<number>('workspaces_remove', { id, origin }),
+  wsReorder: (ids: string[], origin: string) => tryCall<number>('workspaces_reorder', { ids, origin }),
+  /** Is each path there, and a file or a folder? Relative paths are taken from `base`. */
+  wsCheck: (paths: string[], base: string) =>
+    call<PathCheck[]>('ws_check', { paths, base }, paths.map(() => ({ state: 'unknown' as const, resolved: null }))),
+  /** A folder a workspace names opens in Explorer; a file is shown selected in its folder. Nothing runs. */
+  wsShow: (path: string, base: string) => call<boolean>('ws_show', { path, base }, false),
+  /** Opens one workspace item; `base` is its project folder. */
+  wsLaunch: (item: LaunchItem, base: string) => tryCall<Launched>('ws_launch', { item, base }),
+  /** The app an item starts, if it's running now (with its main window). */
+  wsRunning: (path: string, base: string) => call<{ pid: number; hwnd: number | null } | null>('ws_running', { path, base }, null),
+  /** Start's list of apps. */
+  wsApps: () => call<InstalledApp[]>('ws_apps', {}, []),
+  /** App windows on screen now, front first. */
+  wsWindows: () => tryCall<LiveWindow[]>('ws_windows', {}),
+  /** Moves windows to their rectangles and states; one result each. */
+  wsPlace: (places: Array<{ hwnd: number; rect: MonitorRect; state: string }>) => tryCall<WinPlaced[]>('ws_place', { places }),
+  /** What's in front (Workspaces › Notice what I work on), and how long since the last input. */
+  noticeNow: () => call<{ window: LiveWindow | null; idleMs: number }>('notice_now', {}, { window: null, idleMs: 0 }),
+  noticeLoad: () => call<unknown>('notice_load', {}, null),
+  noticeSave: (doc: unknown) => call<null>('notice_save', { doc }, null),
+  /** Deletes recent-work.json. */
+  noticeForget: () => call<boolean>('notice_forget', {}, false),
+  /** The system's Open dialog over this window; the chosen paths, empty when cancelled. */
+  wsPick: (kind: 'app' | 'file' | 'folder' | 'program', multiple: boolean, start: string | null) =>
+    call<string[]>('ws_pick', { kind, multiple, start }, []),
 };
 
 export type Native = typeof native;

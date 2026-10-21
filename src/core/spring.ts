@@ -138,3 +138,13 @@ export function springEasing(cfg: SpringConfig): { easing: string; duration: num
   easingCache.set(id, out);
   return out;
 }
+
+/**
+ * The same spring as a `cubic-bezier()`, for engines without CSS `linear()` (Safari before
+ * 17.2, which older Macs keep): an ease-out, overshooting a little when the spring bounces.
+ */
+export function springBezier(cfg: SpringConfig): string {
+  if (cfg.damping >= 0.85) return 'cubic-bezier(0.22, 1, 0.36, 1)';
+  if (cfg.damping >= 0.7) return 'cubic-bezier(0.3, 1.2, 0.5, 1)';
+  return 'cubic-bezier(0.34, 1.56, 0.64, 1)';
+}

@@ -22,6 +22,8 @@ export type OptionSpec = (
   | { key: string; type: 'number'; label: string; help?: string; default: number; min: number; max: number; step?: number; unit?: string }
   | { key: string; type: 'text'; label: string; help?: string; default: string; placeholder?: string; secret?: boolean }
   | { key: string; type: 'choice'; label: string; help?: string; default: string; choices: Array<{ value: string; label: string }> }
+  /** Any mix of the choices, at least one (System Stats: CPU, RAM and GPU on the pill). */
+  | { key: string; type: 'multi'; label: string; help?: string; default: string[]; choices: Array<{ value: string; label: string }> }
   /**
    * An API key or token. It lives in the Windows Credential Manager under `secret` (such as
    * 'github.token'), never in settings: the Activities page saves it through secretSet, and
@@ -45,6 +47,8 @@ export interface ActivityMeta {
   options: OptionSpec[];
   /** On a Mac: 'soon' = comes in a later part, 'never' = Windows only. Absent = runs on a Mac. */
   mac?: 'soon' | 'never';
+  /** Part of Island itself: always on, with no switch to turn it off (Land). */
+  builtIn?: boolean;
 }
 
 const B = (autoShow: boolean, persistent: boolean, interactive: boolean, interrupt: boolean): Behavior => ({ autoShow, persistent, interactive, interrupt });
@@ -100,6 +104,13 @@ export const CATALOG: ActivityMeta[] = [
     priority: 'low',
     behavior: B(true, true, true, false),
     options: [
+      {
+        key: 'hoverPlayer',
+        type: 'toggle',
+        label: 'Player on hover',
+        help: "Point at the music on the pill and it grows into a player, like an iPhone's Dynamic Island: the track, a scrubber, and play, skip and sound output. Even when the hover card is set to Claude stats.",
+        default: true,
+      },
       { key: 'showArt', type: 'toggle', label: 'Album art', default: true },
       { key: 'pausedMinutes', type: 'number', label: 'Keep a paused track for', default: 5, min: 0, max: 120, unit: 'min' },
     ],
@@ -140,10 +151,11 @@ export const CATALOG: ActivityMeta[] = [
     id: 'land',
     name: 'Land',
     description:
-      "Send files, links and notes to your other computers, friends and phones, like AirDrop. Land is the little icon on the pill: click it, drop files on the island, or hover it and press Ctrl+V to send what you copied. The other side accepts first, and everything is encrypted on the way.",
+      "Send files, links and notes to your other computers, friends and phones, like AirDrop. Land is built into Island and always on: it's the little icon on the pill. Click it, drop files on the island, or hover it and press Ctrl+V to send what you copied. The other side accepts first, and everything is encrypted on the way.",
     icon: 'land',
     category: 'network',
     enabled: true,
+    builtIn: true,
     priority: 'medium',
     // Persistent: a transfer stays on the pill while it goes (it is only active then).
     behavior: B(true, true, true, true),
@@ -248,13 +260,14 @@ export const CATALOG: ActivityMeta[] = [
     id: 'phone',
     mac: 'never',
     name: 'Phone',
-    description: "Your phone's notifications on the island, through Windows' Phone Link: pair your iPhone or Android phone in the Phone Link app once.",
+    description:
+      "Your phone's notifications on the island, through Windows' Phone Link: pair your iPhone or Android phone in the Phone Link app once. They wait in a list in Control Center, where you can read and dismiss them; turn on Persistent to keep the phone icon on the pill and see the list when you point at it.",
     icon: 'phone',
     category: 'communication',
     enabled: true,
     priority: 'high',
-    behavior: B(true, false, false, false),
-    options: [],
+    behavior: B(true, false, true, false),
+    options: [{ key: 'keepHours', type: 'number', label: 'Keep notifications for', help: 'Older ones leave the list on their own. They are never saved to disk.', default: 24, min: 1, max: 168, unit: 'h' }],
   },
   {
     id: 'devices',
@@ -291,6 +304,18 @@ export const CATALOG: ActivityMeta[] = [
     priority: 'low',
     behavior: B(true, false, false, false),
     options: [
+      {
+        key: 'show',
+        type: 'multi',
+        label: 'On the pill',
+        help: 'What the resting pill shows, side by side. Pointing at the pill or opening the island shows all three.',
+        default: ['cpu'],
+        choices: [
+          { value: 'cpu', label: 'CPU' },
+          { value: 'ram', label: 'RAM' },
+          { value: 'gpu', label: 'GPU' },
+        ],
+      },
       { key: 'always', type: 'toggle', label: 'Always show', help: 'Keep the numbers on the island instead of only on spikes.', default: false },
       { key: 'cpuSpike', type: 'number', label: 'CPU spike at', default: 90, min: 50, max: 100, unit: '%' },
       { key: 'memSpike', type: 'number', label: 'Memory warning at', default: 92, min: 50, max: 100, unit: '%' },
@@ -360,6 +385,31 @@ export const CATALOG: ActivityMeta[] = [
     priority: 'low',
     behavior: B(true, false, false, false),
     options: [{ key: 'always', type: 'toggle', label: 'Always show speed', default: false }],
+  },
+  {
+    id: 'workspaces',
+    mac: 'soon',
+    name: 'Workspaces',
+    description: 'Shows a workspace opening on the pill and asks there before a command runs; puts your favorites in Control Center. Can also notice what you work on, show a workspace’s next step when you switch to it, and ask where you stopped when you leave.',
+    icon: 'grid',
+    category: 'productivity',
+    enabled: true,
+    priority: 'medium',
+    // Interrupt: a restore that asks "Run npm run dev?" takes the island until answered.
+    behavior: B(true, false, true, true),
+    options: [
+      {
+        key: 'notice',
+        type: 'toggle',
+        label: 'Notice what I work on',
+        help: 'Reads which app window is in front every few seconds to tell which workspace or project you’re in. Switching to a workspace shows its next step and notes, leaving one asks where you stopped, and a project you keep coming back to gets a workspace offer. Stays on this PC.',
+        default: false,
+      },
+      { key: 'leaveNote', type: 'toggle', label: 'Ask where I stopped', help: 'When you leave a workspace you worked on for 10 minutes or more, the island asks for a note; it becomes the next step.', default: true },
+      { key: 'suggest', type: 'toggle', label: 'Offer workspaces', help: 'A project you spend 20 minutes or more on in a day, with no workspace yet, gets a "make it a workspace" offer (once a day at most).', default: true },
+      { key: 'titles', type: 'toggle', label: 'Keep window titles', help: 'Off: only what Island works out is kept (the program, the project and file names), never whole titles, which can hold email subjects or page names.', default: false },
+      { key: 'days', type: 'number', label: 'Remember for', default: 14, min: 1, max: 60, unit: 'days' },
+    ],
   },
   {
     id: 'servers',

@@ -14,13 +14,16 @@ import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailable
 import { springAnimate } from './core/renderer';
 import { ACCENTS, backAt, cloneSettings, HIDE_CHOICES, hideUntil, migrate, newPhoneTopic, type ActivityConfig, type Settings } from './core/settings';
 import { springs } from './core/spring';
+import { multiSegmented, row, section, segmented, stacked, toggle } from './controls';
 import { h } from './dom';
 import { modelPicker } from './models-ui';
 import { welcomePage, type WelcomeHost } from './welcome';
+import { noticePanel } from './workspaces/notice/panel';
+import { workspacesPage, type WorkspacesPage } from './workspaces/page';
 
 /** 'welcome' is the first-run setup: the whole window, no sidebar. */
-type Page = 'activities' | 'settings' | 'welcome';
-const PAGES: Page[] = ['activities', 'settings', 'welcome'];
+type Page = 'activities' | 'workspaces' | 'settings' | 'welcome';
+const PAGES: Page[] = ['activities', 'workspaces', 'settings', 'welcome'];
 
 let settings: Settings = migrate(null);
 // Rust passes the page to open in an init script (a # in the window URL is not reliable).
@@ -70,13 +73,18 @@ function nav(): HTMLElement {
     h('button', { class: `nav-item${page === p ? ' active' : ''}`, html: `${icon(ic)}<span>${label}</span>`, onclick: () => go(p) });
   return h('nav', { class: 'nav' }, [
     h('div', { class: 'brand' }, [h('span', { class: 'brand-pill' }, [h('i')]), h('span', { text: 'Island' })]),
-    item('activities', 'Activities', 'grid'),
+    item('activities', 'Activities', 'pulse'),
+    item('workspaces', 'Workspaces', 'grid'),
     item('settings', 'Settings', 'settings'),
   ]);
 }
 
 function go(p: Page): void {
-  if (p === page) return;
+  if (p === page) {
+    // Workspaces again, from inside one of its own views: back to the cards.
+    if (p === 'workspaces') workspaces?.home();
+    return;
+  }
   page = p;
   location.hash = p;
   render();
@@ -105,47 +113,34 @@ function render(): void {
     return;
   }
   const scroll = root.querySelector('.content')?.scrollTop ?? 0;
-  root.replaceChildren(h('div', { class: 'body' }, [nav(), h('main', { class: 'content' }, [page === 'activities' ? activitiesPage() : settingsPage()])]));
+  const body = page === 'activities' ? activitiesPage() : page === 'workspaces' ? workspacesView().el : settingsPage();
+  root.replaceChildren(h('div', { class: 'body' }, [nav(), h('main', { class: 'content' }, [body])]));
   const content = root.querySelector('.content');
   if (content) content.scrollTop = scroll;
+  if (page === 'workspaces') workspacesView().shown();
 }
 
-// ------------------------------------------------------------------ controls
+// ------------------------------------------------------------------ workspaces page
 
-function toggle(on: boolean, onchange: (v: boolean) => void, label = ''): HTMLElement {
-  const el = h('button', { class: `switch${on ? ' on' : ''}`, role: 'switch', 'aria-checked': String(on), 'aria-label': label }, [h('i')]);
-  el.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const next = !el.classList.contains('on');
-    el.classList.toggle('on', next);
-    el.setAttribute('aria-checked', String(next));
-    const knob = el.firstElementChild!;
-    springAnimate(knob, [{ transform: `translateX(${next ? -16 : 16}px) scaleX(1.25)` }, { transform: 'none' }], springs.bouncy);
-    onchange(next);
-  });
-  return el;
-}
-
-function segmented<T extends string>(value: T, options: Array<[T, string]>, onchange: (v: T) => void): HTMLElement {
-  const wrap = h('div', { class: 'segmented' });
-  for (const [v, label] of options) {
-    wrap.append(h('button', { class: v === value ? 'on' : '', text: label, onclick: () => onchange(v) }));
-  }
-  return wrap;
-}
-
-function row(title: string, help: string | null, control: Node): HTMLElement {
-  return h('div', { class: 'row' }, [h('div', { class: 'row-text' }, [h('div', { class: 'row-title', text: title }), help ? h('div', { class: 'row-help', text: help }) : null]), control]);
-}
-
-/** A row whose control sits under its text: for a switch with many choices. */
-function stacked(r: HTMLElement): HTMLElement {
-  r.classList.add('stack');
-  return r;
-}
-
-function section(title: string, kids: Node[]): HTMLElement {
-  return h('section', { class: 'card section' }, [h('h2', { text: title }), ...kids]);
+/**
+ * Made on first visit and kept for the window's life, so an edit in progress survives going
+ * to another page and the window redrawing for a settings change. Its colours follow the
+ * accent through the CSS variable.
+ */
+let workspaces: WorkspacesPage | null = null;
+/** For its Time tab: Notice what I work on's switch and how long it keeps (the Workspaces activity's options). */
+const noticing = {
+  on: () => cfg('workspaces')?.enabled === true && cfg('workspaces').options.notice === true,
+  days: () => Math.min(60, Math.max(1, Number(cfg('workspaces')?.options.days) || 14)),
+  turnOn: () => {
+    const c = cfg('workspaces');
+    c.enabled = true;
+    c.options.notice = true;
+    save(true);
+  },
+};
+function workspacesView(): WorkspacesPage {
+  return (workspaces ??= workspacesPage(() => 'var(--accent)', ask, noticing));
 }
 
 // ------------------------------------------------------------------ activities page
@@ -209,11 +204,13 @@ function activityCard(meta: ActivityMeta): HTMLElement {
     h('div', { class: 'act-text' }, [h('div', { class: 'act-name', text: meta.name }), h('div', { class: 'act-desc', text: meta.description })]),
     reason
       ? h('span', { class: 'act-soon', text: reason })
-      : toggle(c.enabled, (v) => {
-          c.enabled = v;
-          save(true);
-          flipRender();
-        }, `Enable ${meta.name}`),
+      : meta.builtIn
+        ? h('span', { class: 'act-soon', text: 'Built in', title: `${meta.name} is part of Island and always on` })
+        : toggle(c.enabled, (v) => {
+            c.enabled = v;
+            save(true);
+            flipRender();
+          }, `Enable ${meta.name}`),
     h('button', { class: 'chev', html: icon('chevron-down'), title: open ? 'Collapse' : 'Options', onclick: (e: Event) => { e.stopPropagation(); toggleCard(meta.id); } }),
   ]);
   head.addEventListener('pointerdown', (e) => startDrag(e as PointerEvent, card));
@@ -234,6 +231,7 @@ function cardBody(meta: ActivityMeta): HTMLElement {
   if (meta.id === 'claude') body.append(claudePanel());
   if (meta.id === 'local') body.append(localPanel());
   if (meta.id === 'land') body.append(landPanel());
+  if (meta.id === 'workspaces') body.append(noticePanel({ ask, openWorkspaces: () => { go('workspaces'); void sendTo('app', 'ws-seed', null); } }));
   return body;
 }
 
@@ -250,7 +248,10 @@ function optionRow(id: string, o: OptionSpec): HTMLElement {
     input.addEventListener('change', () => set(Math.min(o.max, Math.max(o.min, Number(input.value) || o.default))));
     control = h('label', { class: 'num' }, [input, o.unit ? h('span', { text: o.unit }) : null]);
   } else if (o.type === 'choice') control = segmented(String(opts[o.key] ?? o.default), o.choices.map((c) => [c.value, c.label] as [string, string]), (v) => { set(v); render(); });
-  else {
+  else if (o.type === 'multi') {
+    const saved = Array.isArray(opts[o.key]) ? (opts[o.key] as unknown[]).filter((v): v is string => typeof v === 'string') : o.default;
+    control = multiSegmented(saved.length ? saved : o.default, o.choices.map((c) => [c.value, c.label] as [string, string]), set);
+  } else {
     const input = h('input', { type: o.secret ? 'password' : 'text', placeholder: o.placeholder ?? '', value: String(opts[o.key] ?? o.default), spellcheck: 'false' });
     input.addEventListener('change', () => set(input.value.trim()));
     control = input;
@@ -408,7 +409,8 @@ function onDragEnd(): void {
       order.push(key);
       if (key === d.id) {
         const c = cfg(key);
-        if (band === 'available') c.enabled = false;
+        // A built-in one (Land) cannot be turned off: dropped on Available, it goes back to its band.
+        if (band === 'available') c.enabled = CATALOG_BY_ID.get(key)?.builtIn === true;
         else {
           c.enabled = true;
           c.priority = band as Band;
@@ -798,7 +800,7 @@ function settingsPage(): HTMLElement {
       row('Distance from the edge', 'Gap between the island and its screen edge.', edge),
       row('When nothing is happening', null, segmented(i.idle, [['pill', 'Small pill'], ['hidden', 'Tuck away']], (v) => { i.idle = v; save(true); render(); })),
       row('Reduce motion', 'Springs jump straight to their end.', segmented(i.reduceMotion, [['system', 'System'], ['on', 'On'], ['off', 'Off']], (v) => { i.reduceMotion = v; save(true); render(); })),
-      row('Hover card', 'What shows under the island when you point at it.', segmented(i.hoverCard, [['pointer', 'What you point at'], ['claude', 'Claude stats']], (v) => { i.hoverCard = v; save(true); render(); })),
+      row('Hover card', "What shows under the island when you point at it. Music's player and Phone's list still show when you point at them.", segmented(i.hoverCard, [['pointer', 'What you point at'], ['claude', 'Claude stats']], (v) => { i.hoverCard = v; save(true); render(); })),
       row('Border glow', 'Light that circles the pill while something works; orange is Claude. Off saves the most battery.', segmented(i.glow, [['off', 'Off'], ['slow', 'Slow'], ['medium', 'Medium'], ['fast', 'Fast']], (v) => { i.glow = v; save(true); render(); })),
     ]),
     section('Display', [
@@ -918,7 +920,8 @@ async function boot(): Promise<void> {
   }
   render();
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && isTauri) void getCurrentWindow().close();
+    // A page that handles Escape itself (Workspaces: back, cancel) says so with preventDefault.
+    if (e.key === 'Escape' && isTauri && !e.defaultPrevented) void getCurrentWindow().close();
   });
   void cloneSettings;
 }

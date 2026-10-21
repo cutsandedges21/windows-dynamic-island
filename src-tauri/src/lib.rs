@@ -47,10 +47,12 @@ mod shell;
 #[cfg_attr(target_os = "macos", path = "mac/spectrum.rs")]
 mod spectrum;
 mod store;
+mod notice;
 #[cfg_attr(target_os = "macos", path = "mac/system.rs")]
 mod system;
 mod updater;
 mod web;
+mod workspaces;
 
 use std::sync::Arc;
 
@@ -61,7 +63,30 @@ fn log_line(text: String) {
     log::line(text);
 }
 
+/// A variable an editor or a Claude Code session sets for its own processes. Island started from
+/// a shell in one of them would hand these to every app it opens: ELECTRON_RUN_AS_NODE makes
+/// Electron apps (VS Code, Cursor, Slack…) run as plain Node and quit without a window, and the
+/// session's ids make `claude` think it runs inside another session. CLAUDE_CONFIG_DIR is the
+/// user's own setting and stays.
+fn host_variable(name: &str) -> bool {
+    let n = name.to_ascii_uppercase();
+    n != "CLAUDE_CONFIG_DIR" && (n.starts_with("ELECTRON_") || n.starts_with("VSCODE_") || n.starts_with("CURSOR_") || n == "CLAUDECODE" || n.starts_with("CLAUDE_CODE_") || n == "CLAUDE_PID" || n == "CLAUDE_EFFORT" || n == "CLAUDE_AGENT_SDK_VERSION")
+}
+
+/// Island's environment as if started from the desktop, whoever started it.
+fn scrub_host_env() {
+    let names: Vec<String> = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok()).filter(|k| host_variable(k)).collect();
+    for name in &names {
+        std::env::remove_var(name);
+    }
+    if !names.is_empty() {
+        log::line(format!("start: dropped {} editor/session variables (Island was started from inside an editor or Claude Code)", names.len()));
+    }
+}
+
 pub fn run() {
+    // First, before any thread starts (and before Island opens anything).
+    scrub_host_env();
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--install-hooks" || a == "--remove-hooks") {
         std::process::exit(hooks::cli(args.iter().any(|a| a == "--install-hooks")));
@@ -87,6 +112,7 @@ pub fn run() {
         .manage(app::Hotkeys::default())
         .manage(land::LandState::default())
         .manage(land::share::ShareState::default())
+        .manage(workspaces::WsStore::default())
         .setup(move |app| {
             // A Mac menu bar app: no Dock icon, no app menu.
             #[cfg(target_os = "macos")]
@@ -183,6 +209,7 @@ pub fn run() {
             shell::clipboard_set_text,
             shell::clipboard_copy_image,
             shell::clipboard_history,
+            shell::sound_output,
             shell::http_get,
             app::tray_update,
             app::hotkeys_set,
@@ -228,7 +255,38 @@ pub fn run() {
             land::land_friend_add_nearby,
             land::land_friend_answer,
             land::land_friend_remove,
+            workspaces::workspaces_load,
+            workspaces::workspaces_init,
+            workspaces::workspaces_replace,
+            workspaces::workspaces_upsert,
+            workspaces::workspaces_remove,
+            workspaces::workspaces_reorder,
+            workspaces::paths::ws_check,
+            workspaces::paths::ws_show,
+            workspaces::pick::ws_pick,
+            workspaces::launch::ws_launch,
+            workspaces::launch::ws_running,
+            workspaces::launch::ws_apps,
+            workspaces::layout::ws_windows,
+            workspaces::layout::ws_place,
+            notice::notice_now,
+            notice::notice_load,
+            notice::notice_save,
+            notice::notice_forget,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Island");
+}
+
+#[cfg(test)]
+mod env_tests {
+    #[test]
+    fn editor_and_session_variables_are_dropped_and_user_settings_kept() {
+        for name in ["ELECTRON_RUN_AS_NODE", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT", "VSCODE_PID", "VSCODE_IPC_HOOK", "CURSOR_WORKSPACE_LABEL", "CLAUDE_PID"] {
+            assert!(super::host_variable(name), "{name}");
+        }
+        for name in ["CLAUDE_CONFIG_DIR", "PATH", "USERPROFILE", "LOCALAPPDATA", "OneDrive", "ANTHROPIC_API_KEY"] {
+            assert!(!super::host_variable(name), "{name}");
+        }
+    }
 }

@@ -118,6 +118,7 @@ body {
   font: 500 13px/1 var(--font);
   color: var(--fg);
   -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
   user-select: none;
   cursor: default;
 }
@@ -378,6 +379,7 @@ html.reduce .bubble-costume * { animation: none !important; }
   background: transparent;
   color: var(--fg);
   font: 500 12.5px var(--font);
+  -webkit-user-select: text;
   user-select: text;
 }
 .chat-input::placeholder { color: var(--dim); }
@@ -416,6 +418,7 @@ html.reduce .bubble-costume * { animation: none !important; }
     inset 0 0 0 1px rgba(var(--ink), 0.075),
     inset 0 1px 0 rgba(var(--ink), 0.07);
   filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.4));
+  -webkit-user-select: text;
   user-select: text;
 }
 .chat.up .chat-card { top: auto; bottom: calc(100% + 6px); }
@@ -548,21 +551,48 @@ html.reduce .bubble-costume * { animation: none !important; }
 .seg-progress.indeterminate .fill { transform: none; width: 34%; animation: slide 1.25s cubic-bezier(0.65, 0, 0.35, 1) infinite; }
 .seg-progress.tone-default { color: var(--fg); }
 
-/* equalizer bars */
-.seg-bars { width: 23px; height: 14px; display: flex; align-items: flex-end; gap: 2px; color: var(--accent); }
-.seg-bars i { position: relative; flex: 1; height: 100%; border-radius: 1.5px; background: currentColor; transform-origin: 50% 100%; transform: scaleY(0.25); }
+/* equalizer bars: six thin bars like an iPhone's, growing up and down from the middle and a
+   dot when quiet, in the album art's colour (music.ts sets --bar), darker towards the top.
+   Heights, not scaleY, so the round ends stay round. */
+:root { --bar-shade: #000; }
+html[data-pill='white'],
+html[data-pill='matte-white'] { --bar-shade: #fff; }
+@property --lvl { syntax: '<number>'; inherits: false; initial-value: 0; }
+.seg-bars {
+  --bars-w: 25px;
+  --bars-h: 18px;
+  --bar-w: 2.5px;
+  width: var(--bars-w);
+  height: var(--bars-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--accent);
+  contain: strict;
+}
+.seg-bars i {
+  --lvl: 0;
+  flex: none;
+  width: var(--bar-w);
+  height: calc(var(--bar-w) + (100% - var(--bar-w)) * var(--lvl));
+  border-radius: 999px;
+  /* one gradient across the whole height, whatever each bar's own height */
+  background: linear-gradient(to bottom, color-mix(in oklab, var(--bar, currentColor) 52%, var(--bar-shade)), var(--bar, currentColor)) center / 100% var(--bars-h) no-repeat;
+}
 .seg-bars.active i { animation: eq 0.9s ease-in-out infinite alternate; }
 .seg-bars.active i:nth-child(2) { animation-duration: 0.7s; animation-delay: -0.2s; }
 .seg-bars.active i:nth-child(3) { animation-duration: 1.05s; animation-delay: -0.45s; }
 .seg-bars.active i:nth-child(4) { animation-duration: 0.8s; animation-delay: -0.1s; }
 .seg-bars.active i:nth-child(5) { animation-duration: 0.95s; animation-delay: -0.6s; }
+.seg-bars.active i:nth-child(6) { animation-duration: 0.75s; animation-delay: -0.35s; }
 /* Live: bass to treble from the speakers (src-tauri/src/spectrum.rs); the bounce above is the fallback. */
-.seg-bars.active.live i { animation: none; transform: scaleY(calc(0.18 + var(--eq, 0) * 0.82)); transition: transform 70ms linear; }
+.seg-bars.active.live i { animation: none; --lvl: var(--eq, 0); transition: height 90ms linear; }
 .seg-bars i:nth-child(1) { --eq: var(--eq0); }
 .seg-bars i:nth-child(2) { --eq: var(--eq1); }
 .seg-bars i:nth-child(3) { --eq: var(--eq2); }
 .seg-bars i:nth-child(4) { --eq: var(--eq3); }
 .seg-bars i:nth-child(5) { --eq: var(--eq4); }
+.seg-bars i:nth-child(6) { --eq: var(--eq5); }
 
 /* buttons */
 .seg-btn {
@@ -715,8 +745,8 @@ html.reduce .bubble-costume * { animation: none !important; }
   50% { transform: translateY(1.5px); }
 }
 @keyframes eq {
-  0% { transform: scaleY(0.22); }
-  100% { transform: scaleY(1); }
+  0% { --lvl: 0.05; }
+  100% { --lvl: 0.8; }
 }
 @keyframes slide {
   0% { transform: translateX(-110%); }
@@ -730,7 +760,7 @@ html.reduce .bubble-costume * { animation: none !important; }
   .anim-bob .ico,
   .seg-bars.active i,
   .seg-progress.indeterminate .fill { animation: none; }
-  .seg-bars.active.live i { transform: scaleY(0.25); }
+  .seg-bars.active.live i { --lvl: 0.3; transition: none; }
 }
 
 /* ------------------------------------------------------------------ vertical pills
@@ -886,7 +916,7 @@ html.reduce .bubble-costume * { animation: none !important; }
 /* text: selectable, wraps, keeps the line breaks of the message */
 .sb-text { font: 400 13px/1.45 var(--font); }
 .sb-text.sz-sm { font-size: 12px; }
-.sb-text .tx { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text; }
+.sb-text .tx { white-space: pre-wrap; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; cursor: text; }
 .sb-text.boxed .tx {
   max-height: calc(var(--lines, 8) * 1.45em);
   overflow-y: auto;
@@ -908,6 +938,7 @@ html.reduce .bubble-costume * { animation: none !important; }
   overflow-wrap: anywhere;
   max-height: 7.5em;
   overflow-y: auto;
+  -webkit-user-select: text;
   user-select: text;
 }
 
@@ -968,6 +999,7 @@ html.reduce .bubble-costume * { animation: none !important; }
   color: var(--fg);
   font: 500 13px var(--font);
   caret-color: var(--accent);
+  -webkit-user-select: text;
   user-select: text;
 }
 .sb-input input::placeholder { color: var(--dim); }

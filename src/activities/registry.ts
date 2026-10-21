@@ -26,6 +26,7 @@ import { SoundActivity } from './sound';
 import { SystemActivity } from './system';
 import { TimerActivity } from './timer';
 import { WeatherActivity } from './weather';
+import { WorkspacesActivity } from './workspaces';
 
 export function createRegistry(): Map<string, () => Activity> {
   return new Map<string, () => Activity>([
@@ -47,6 +48,7 @@ export function createRegistry(): Map<string, () => Activity> {
     ['calendar', () => new CalendarActivity()],
     ['clipboard', () => new ClipboardActivity()],
     ['network', () => new NetworkActivity()],
+    ['workspaces', () => new WorkspacesActivity()],
     ['servers', () => new ServersActivity()],
     ['quick', () => new QuickActivity()],
     ['local', () => new LocalActivity()],

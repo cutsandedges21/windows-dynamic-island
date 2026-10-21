@@ -1,10 +1,12 @@
 // Island window entry.
 
 import './styles/island.css';
+import './styles/player.css';
 import { createRegistry } from './activities/registry';
 import { Island } from './core/island';
 import { runMirror } from './core/mirror';
 import { emitLocal, native, windowLabel } from './core/native';
+import { workspaceEngine } from './workspaces/engine';
 
 const stage = document.getElementById('stage')!;
 if (native.demo) document.body.classList.add('demo');
@@ -13,6 +15,8 @@ if (native.demo) document.body.classList.add('demo');
 const mirror = windowLabel.startsWith('mirror-');
 const island = mirror ? null : new Island(stage, createRegistry());
 if (mirror) void runMirror(stage).catch((err) => void native.log(`mirror failed: ${String(err)}`));
+// Workspaces restore from here: the island lives as long as Island runs.
+if (island) workspaceEngine();
 island?.boot().catch((err) => {
   console.error('island failed to boot', err);
   void native.log(`boot failed: ${String(err)}`);

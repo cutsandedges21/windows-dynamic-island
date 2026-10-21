@@ -108,6 +108,10 @@ pub struct TranscriptMeta {
     permission_mode: Option<String>,
     /// Leading text of user turns (not sidechain/meta, not tool results), in order.
     user_texts: Vec<String>,
+    /// What turns and the context did, in file order: ["p", ts, 0] a prompt, ["e", ts, 0] a
+    /// finished reply, ["x", ts, 0] an interrupt or an API error, ["c", ts, 0] a compaction,
+    /// ["u", ts, tokens] the context after one API response (its input, cache and output).
+    marks: Vec<(&'static str, f64, f64)>,
 }
 
 #[derive(Serialize, Default)]
@@ -176,14 +180,55 @@ fn leading_text(content: &Value) -> Option<String> {
     }
 }
 
+/// The turn mark one transcript entry makes, if any (see TranscriptMeta::marks).
+fn turn_marks(entry: &Value, ts: f64, meta: bool, last_message: &mut String, marks: &mut Vec<(&'static str, f64, f64)>) {
+    match entry.get("type").and_then(Value::as_str) {
+        Some("assistant") => {
+            if entry.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true) {
+                marks.push(("x", ts, 0.0));
+                return;
+            }
+            let Some(message) = entry.get("message") else { return };
+            if let Some(usage) = message.get("usage").filter(|u| u.is_object()) {
+                let id = message.get("id").and_then(Value::as_str).unwrap_or("");
+                let tokens = num(usage.get("input_tokens")) + num(usage.get("cache_creation_input_tokens")) + num(usage.get("cache_read_input_tokens")) + num(usage.get("output_tokens"));
+                if tokens > 0.0 && (id.is_empty() || id != last_message.as_str()) {
+                    marks.push(("u", ts, tokens));
+                }
+                *last_message = id.to_string();
+            }
+            if message.get("stop_reason").and_then(Value::as_str) == Some("end_turn") {
+                marks.push(("e", ts, 0.0));
+            }
+        }
+        Some("user") if !meta => {
+            let Some(text) = entry.get("message").and_then(|m| m.get("content")).and_then(leading_text) else { return };
+            let text = text.trim_start();
+            if text.starts_with("[Request interrupted by user") {
+                marks.push(("x", ts, 0.0));
+            } else if !text.starts_with("<local-command-") {
+                marks.push(("p", ts, 0.0));
+            }
+        }
+        Some("system") if entry.get("subtype").and_then(Value::as_str) == Some("compact_boundary") => marks.push(("c", ts, 0.0)),
+        _ => {}
+    }
+}
+
 pub fn transcript_meta(path: &Path, offset: u64, need_user: bool) -> std::io::Result<TranscriptMeta> {
     let size = std::fs::metadata(path)?.len();
     let mut out = TranscriptMeta { size: size as f64, ..Default::default() };
     let offset = if offset > size { 0 } else { offset };
+    // One API response is written as several lines sharing one usage block: one "u" mark each.
+    let mut last_message = String::new();
     let consumed = scan_lines(path, offset, size, |line| {
         let interesting = contains(line, b"ai-title") || contains(line, b"custom-title") || contains(line, b"permissionMode");
         let user = need_user && out.user_texts.len() < MAX_USER_TEXTS && contains(line, b"\"user\"");
-        if !interesting && !user {
+        let assistant = contains(line, b"\"type\":\"assistant\"");
+        // Tool results (the bulk of a transcript) are never prompts, so they are not even parsed for it.
+        let prompt = contains(line, b"\"type\":\"user\"") && !contains(line, b"\"tool_use_id\"");
+        let compact = contains(line, b"compact_boundary");
+        if !interesting && !user && !assistant && !prompt && !compact {
             return;
         }
         let Ok(entry) = serde_json::from_slice::<Value>(line) else { return };
@@ -192,6 +237,9 @@ pub fn transcript_meta(path: &Path, offset: u64, need_user: bool) -> std::io::Re
         if !sidechain {
             if let Some(m) = entry.get("permissionMode").and_then(Value::as_str).filter(|s| !s.is_empty()) {
                 out.permission_mode = Some(m.to_string());
+            }
+            if let Some(ts) = entry.get("timestamp").and_then(Value::as_str).and_then(parse_ts) {
+                turn_marks(&entry, ts, meta, &mut last_message, &mut out.marks);
             }
         }
         match entry.get("type").and_then(Value::as_str) {
@@ -607,6 +655,39 @@ mod tests {
         assert_eq!(usage.entries[0].0, "m1:r1");
         assert_eq!(usage.entries[0].2, 10.0);
         assert_eq!(usage.entries[0].5, 100.0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn turn_marks_say_when_turns_start_and_end_and_how_full_the_context_is() {
+        let dir = std::env::temp_dir().join(format!("island-fsx-marks-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("t.jsonl");
+        let lines = [
+            r#"{"type":"user","message":{"content":"fix the bug"},"timestamp":"2026-09-30T00:00:00.000Z"}"#,
+            // One response written as two lines: one "u" mark.
+            r#"{"type":"assistant","message":{"id":"m1","stop_reason":"tool_use","usage":{"input_tokens":2,"cache_creation_input_tokens":1000,"cache_read_input_tokens":9000,"output_tokens":50}},"timestamp":"2026-09-30T00:00:05.000Z"}"#,
+            r#"{"type":"assistant","message":{"id":"m1","stop_reason":"tool_use","usage":{"input_tokens":2,"cache_creation_input_tokens":1000,"cache_read_input_tokens":9000,"output_tokens":50}},"timestamp":"2026-09-30T00:00:05.000Z"}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]},"timestamp":"2026-09-30T00:00:06.000Z"}"#,
+            r#"{"type":"user","isMeta":true,"message":{"content":"a reminder"},"timestamp":"2026-09-30T00:00:07.000Z"}"#,
+            r#"{"type":"assistant","message":{"id":"m2","stop_reason":"end_turn","usage":{"input_tokens":3,"cache_read_input_tokens":11000,"output_tokens":400}},"timestamp":"2026-09-30T00:01:00.000Z"}"#,
+            r#"{"type":"assistant","isSidechain":true,"message":{"id":"s1","stop_reason":"end_turn","usage":{"input_tokens":9}},"timestamp":"2026-09-30T00:01:01.000Z"}"#,
+            r#"{"type":"user","message":{"content":"<local-command-stdout>Set model</local-command-stdout>"},"timestamp":"2026-09-30T00:02:00.000Z"}"#,
+            r#"{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]},"timestamp":"2026-09-30T00:03:00.000Z"}"#,
+            r#"{"type":"assistant","isApiErrorMessage":true,"message":{"id":"m3"},"timestamp":"2026-09-30T00:04:00.000Z"}"#,
+            r#"{"type":"system","subtype":"compact_boundary","timestamp":"2026-09-30T00:05:00.000Z"}"#,
+        ];
+        let mut body = lines.join("\n");
+        body.push('\n');
+        std::fs::write(&file, &body).unwrap();
+
+        let meta = transcript_meta(&file, 0, false).unwrap();
+        let t0 = parse_ts("2026-09-30T00:00:00.000Z").unwrap();
+        let marks: Vec<(&str, f64, f64)> = meta.marks.iter().map(|(k, ts, n)| (*k, (ts - t0) / 1000.0, *n)).collect();
+        assert_eq!(
+            marks,
+            vec![("p", 0.0, 0.0), ("u", 5.0, 10_052.0), ("u", 60.0, 11_403.0), ("e", 60.0, 0.0), ("x", 180.0, 0.0), ("x", 240.0, 0.0), ("c", 300.0, 0.0)]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

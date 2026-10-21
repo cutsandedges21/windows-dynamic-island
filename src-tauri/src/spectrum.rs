@@ -1,7 +1,8 @@
 // Music bars: taps what the speakers are playing (WASAPI loopback on the default
-// output) and splits it into five bands, bass to treble, ~30 times a second. Runs
-// only while the music activity asks for it; otherwise no audio client is open.
-// The loopback is the whole system mix, so a notification sound moves the bars too.
+// output) and splits it into six bands, bass to treble, ~30 times a second (six
+// bars, like an iPhone's). Runs only while the music activity asks for it; otherwise
+// no audio client is open. The loopback is the whole system mix, so a notification
+// sound moves the bars too.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -26,16 +27,17 @@ const PEAK_FALL_DB_PER_SEC: f32 = 4.0;
 const GATE_DB: f32 = -90.0;
 
 /// One bar per band, low to high.
-pub const BARS: usize = 5;
-/// Bass and kick, low mids (warmth), mids (voice), high mids (presence), treble (cymbals, air):
+pub const BARS: usize = 6;
+/// Sub and kick, bass, low mids (warmth), mids (voice), presence, treble (cymbals, air):
 /// the filter and its corner or centre in Hz.
-const BANDS: [(Kind, f32); BARS] = [(Kind::Low, 120.0), (Kind::Band, 350.0), (Kind::Band, 1000.0), (Kind::Band, 3000.0), (Kind::High, 7000.0)];
-/// Width of the three middle bands: wide enough that neighbours meet.
-const BAND_Q: f32 = 0.8;
+const BANDS: [(Kind, f32); BARS] = [(Kind::Low, 100.0), (Kind::Band, 250.0), (Kind::Band, 600.0), (Kind::Band, 1500.0), (Kind::Band, 3700.0), (Kind::High, 8500.0)];
+/// Width of the four middle bands: wide enough that neighbours meet, narrow enough that a
+/// tone stays in its own bar.
+const BAND_Q: f32 = 1.0;
 /// Lifts each band to read level with the bass. Pink noise (equal energy per octave, the usual
-/// stand-in for a song's long-term spectrum) reads flat with ~6 dB on the upper four (the
-/// `pink_noise_per_band` printout); songs fall away faster than pink at the top, hence a bit more there.
-const TILT_DB: [f32; BARS] = [0.0, 6.5, 7.0, 8.0, 10.0];
+/// stand-in for a song's long-term spectrum) reads flat with [0, 6.9, 7.0, 7.0, 7.2, 6.3] dB (the
+/// `pink_noise_per_band` printout); songs fall away faster than pink at the top, hence more there.
+const TILT_DB: [f32; BARS] = [0.0, 7.0, 7.5, 8.0, 9.0, 10.5];
 
 /// RBJ biquad, direct form I.
 struct Biquad {
@@ -302,7 +304,7 @@ mod tests {
 
     #[test]
     fn each_tone_tops_its_own_bar() {
-        for (bar, hz) in [(0, 60.0), (1, 350.0), (2, 1000.0), (3, 3000.0), (4, 10_000.0)] {
+        for (bar, hz) in [(0, 50.0), (1, 250.0), (2, 600.0), (3, 1500.0), (4, 3700.0), (5, 12_000.0)] {
             let v = tone(hz);
             assert!(v[bar] > 0.9, "{hz} Hz should fill bar {bar}: {v:?}");
             for (i, x) in v.iter().enumerate() {

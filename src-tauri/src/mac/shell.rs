@@ -76,6 +76,10 @@ pub fn clipboard_copy_image() -> bool {
 #[tauri::command]
 pub fn clipboard_history() {}
 
+/// The music player's output button: Windows only (Music is not on a Mac yet).
+#[tauri::command]
+pub fn sound_output() {}
+
 #[derive(Serialize)]
 pub struct HttpResponse {
     status: u16,

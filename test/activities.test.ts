@@ -33,7 +33,9 @@ import { QuickActivity } from '../src/activities/quick';
 import { ScreenshotsActivity } from '../src/activities/screenshots';
 import { ServersActivity } from '../src/activities/servers';
 import { SoundActivity } from '../src/activities/sound';
-import { SystemActivity } from '../src/activities/system';
+import { pickedStats, SystemActivity } from '../src/activities/system';
+import { headphonesLike, MusicActivity } from '../src/activities/music';
+import { PhoneActivity } from '../src/activities/phone';
 import { WeatherActivity } from '../src/activities/weather';
 
 const T0 = Date.parse('2026-09-30T12:00:00Z');
@@ -678,6 +680,33 @@ describe('system', () => {
     expect(act.render(env('maximum')).filter((s) => s.t === 'meter').map((s) => s.key)).toEqual(['cpu', 'mem', 'gpu']);
     smoke(act, 'system always');
   });
+
+  it('"On the pill": the resting pill, the tile and the chip show the picked stats', async () => {
+    h.native.sysSample = vi.fn(async () => sample(42, { memUsed: 6e9 }));
+    const { act } = await boot(new SystemActivity(), { show: ['gpu', 'ram'], always: true, cpuSpike: 90, memSpike: 92 });
+    await tick(1000);
+    const texts = (level: Level) => act.render(env(level)).flatMap((s) => (s.t === 'text' ? [s.text] : []));
+    // CPU, RAM, GPU order whatever order they were picked in; CPU stays off the resting pill.
+    expect(texts('compact')).toEqual(['RAM 38%', 'GPU 12%']);
+    expect(act.render(env('compact'))[0]).toMatchObject({ t: 'icon', icon: 'memory' });
+    // Pointed at: the picked ones first, then the rest.
+    expect(texts('expanded')).toEqual(['RAM 5.6 GB', 'GPU 12%', 'CPU 42%']);
+    expect(act.tile()?.body).toMatchObject({ k: 'stat', label: 'RAM', value: '38%', sub: 'GPU 12%' });
+    expect(act.chip()).toMatchObject({ icon: 'memory', label: '38%' });
+    expect(act.status().summary).toBe('RAM 38% · GPU 12%');
+    smoke(act, 'system picked');
+  });
+
+  it('"On the pill": no GPU counter drops GPU, and nothing valid picked means CPU', async () => {
+    h.native.sysSample = vi.fn(async () => sample(42, { gpu: null }));
+    const { act } = await boot(new SystemActivity(), { show: ['gpu'], always: true, cpuSpike: 90, memSpike: 92 });
+    await tick(1000);
+    expect(act.render(env('compact')).flatMap((s) => (s.t === 'text' ? [s.text] : []))).toEqual(['CPU 42%']);
+    expect(act.tile()?.body).toMatchObject({ label: 'CPU', sub: 'RAM 50%' });
+    expect(pickedStats(['nope', 3])).toEqual(['cpu']);
+    expect(pickedStats('cpu')).toEqual(['cpu']);
+    expect(pickedStats(['gpu', 'cpu'])).toEqual(['cpu', 'gpu']);
+  });
 });
 
 describe('weather', () => {
@@ -1051,5 +1080,102 @@ describe('what the bot hears', () => {
     expect(heard(act)!.moment!.id).toBe('bad-news');
     emit('external-activity', { island: 'activity', id: 'island-update', title: 'Island updated', text: 'Now on 0.2.6', tone: 'good' });
     expect(heard(act)!.moment!.id).toBe('updated');
+  });
+});
+
+describe('phone', () => {
+  const note = (id: number, over: Record<string, unknown> = {}) => ({ id, app: 'Messages', title: 'Mom', body: 'Dinner at 7?', ...over });
+  const sheetEnv = (reason: 'hover' | 'open' | 'surfaced') => ({ reason, now: Date.now(), width: 340, vertical: false, interactive: true, surfaced: null });
+  const titles = (v: ReturnType<PhoneActivity['sheet']>) => {
+    const rows = v?.blocks.find((b) => b.t === 'rows');
+    return rows && rows.t === 'rows' ? rows.items.map((r) => r.title) : [];
+  };
+
+  beforeEach(() => {
+    h.native.phoneLinkWatch = vi.fn(async () => 'allowed');
+  });
+
+  it('keeps a list, newest first: on the pill as it arrives, then the phone icon with its list on hover', async () => {
+    const { act, calls } = await boot(new PhoneActivity(), { keepHours: 24 });
+    emit('phone-note', note(1));
+    emit('phone-note', note(2, { title: 'Sam', body: 'on my way' }));
+    emit('phone-note', note(3, { app: 'ntfy' })); // Island's own push, back from the phone
+    expect(act.status()).toMatchObject({ active: true, weight: 'foreground' });
+    expect(calls.surface.at(-1)).toMatchObject({ key: 'phone:2' });
+    await tick(7000);
+    expect(act.status()).toMatchObject({ active: true, weight: 'background', chipOnly: true, summary: '2 phone notifications' });
+    expect(act.chip()).toMatchObject({ icon: 'phone', label: '2', action: 'list' });
+    expect(act.claimsHover()).toBe(true);
+    expect(titles(act.sheet(sheetEnv('hover')))).toEqual(['Sam', 'Mom']);
+    expect(titles(act.sheet(sheetEnv('open')))).toEqual(['Sam', 'Mom']);
+    expect(act.tile(sheetEnv('open'))).toMatchObject({ key: 'phone', action: 'list', body: { k: 'list', label: 'Phone · 2' } });
+    smoke(act, 'phone waiting');
+  });
+
+  it('✕ dismisses one, Clear all the rest; the same notification again moves to the top once', async () => {
+    const { act } = await boot(new PhoneActivity(), { keepHours: 24 });
+    emit('phone-note', note(1));
+    emit('phone-note', note(2, { title: 'Sam' }));
+    emit('phone-note', note(1, { body: 'Dinner at 8 now' }));
+    expect(titles(act.sheet(sheetEnv('hover')))).toEqual(['Mom', 'Sam']);
+    act.action('dismiss', 1);
+    expect(titles(act.sheet(sheetEnv('hover')))).toEqual(['Sam']);
+    act.action('clear', null);
+    expect(act.status().active).toBe(false);
+    expect(act.claimsHover()).toBe(false);
+    expect(act.chip()).toBeNull();
+    expect(act.tile(sheetEnv('open'))?.body).toMatchObject({ k: 'list', rows: [], empty: 'No notifications' });
+  });
+
+  it('old ones leave the list after "Keep notifications for"', async () => {
+    const { act } = await boot(new PhoneActivity(), { keepHours: 1 });
+    emit('phone-note', note(1));
+    await tick(30 * 60_000);
+    expect(act.status().active).toBe(true);
+    await tick(31 * 60_000);
+    expect(act.status().active).toBe(false);
+  });
+});
+
+describe('music', () => {
+  const media = (over: Record<string, unknown> = {}) => ({
+    available: true, app: 'Spotify', appId: 'Spotify.exe', title: 'Lost With You', artist: 'Luca Noir', album: '', status: 'playing',
+    position: 36, duration: 131, updatedAt: Date.now(), canPlay: true, canPause: true, canNext: true, canPrev: true, thumbnail: null, ...over,
+  });
+  const hover = (interactive = true) => ({ reason: 'hover' as const, now: Date.now(), width: 340, vertical: false, interactive, surfaced: null });
+
+  beforeEach(() => {
+    h.native.mediaState = vi.fn(async () => media());
+    h.native.spectrumWatch = vi.fn(async () => undefined);
+    h.native.mediaControl = vi.fn(async () => true);
+    h.native.soundOutput = vi.fn(async () => undefined);
+  });
+
+  it('pointing at it grows the pill into the player: the track, the time, the controls', async () => {
+    const { act } = await boot(new MusicActivity(), { hoverPlayer: true, showArt: true, pausedMinutes: 5 });
+    expect(act.claimsHover()).toBe('morph');
+    const v = act.sheet(hover())!;
+    expect(v.morph).toBe(true);
+    expect(v.blocks[0]).toMatchObject({ t: 'player', title: 'Lost With You', artist: 'Luca Noir', playing: true, duration: 131, actions: { prev: 'prev', toggle: 'toggle', next: 'next', seek: 'seek' } });
+    await act.action('seek', 90);
+    expect(h.native.mediaControl).toHaveBeenCalledWith('seek', 90);
+    await act.action('output');
+    expect(h.native.soundOutput).toHaveBeenCalled();
+    smoke(act, 'music');
+  });
+
+  it('"Player on hover" off: no player; not interactive: a player with no buttons', async () => {
+    const off = await boot(new MusicActivity(), { hoverPlayer: false });
+    expect(off.act.claimsHover()).toBe(false);
+    expect(off.act.sheet(hover())).toBeNull();
+    const quiet = await boot(new MusicActivity(), {});
+    expect(quiet.act.sheet(hover(false))!.blocks[0]).toMatchObject({ t: 'player', actions: { toggle: '', prev: '', next: '' } });
+  });
+
+  it('tells headphones from speakers by name', () => {
+    expect(headphonesLike('Headphones (WH-1000XM4 Stereo)')).toBe(true);
+    expect(headphonesLike("Moss's AirPods Pro")).toBe(true);
+    expect(headphonesLike('Speakers (Realtek(R) Audio)')).toBe(false);
+    expect(headphonesLike(null)).toBe(false);
   });
 });

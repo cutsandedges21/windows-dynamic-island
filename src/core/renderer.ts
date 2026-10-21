@@ -9,7 +9,7 @@
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
 import { contentOrigin, fixedPointX, innerPadding, type Anchor, type Orientation, type Rect } from './layout';
-import { springEasing, springs, type SpringConfig } from './spring';
+import { springBezier, springEasing, springs, type SpringConfig } from './spring';
 import type { Placed, Seg } from './segments';
 
 export type ActionHandler = (action: string, arg: unknown, source: HTMLElement) => void;
@@ -36,12 +36,34 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, html?: s
   return e;
 }
 
-/** Fire-and-forget compositor animation with a spring curve. */
+/**
+ * CSS `linear()` easings: Chrome 113+, Safari 17.2+. Older Safari (old Macs) throws on them,
+ * which stopped whatever came after the animation: menu buttons did nothing, the pill half-redrew.
+ */
+let linearEasing = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('animation-timing-function', 'linear(0, 1)');
+
+/** Fire-and-forget compositor animation with a spring curve. Never throws: an animation the engine refuses is skipped (null). */
 export function springAnimate(target: Element, keyframes: Keyframe[], cfg: SpringConfig = springs.content, extra: KeyframeAnimationOptions = {}): Animation | null {
   if (!target.animate) return null;
-  if (reducedMotion()) return target.animate(keyframes, { duration: 1, fill: extra.fill });
+  const run = (opts: KeyframeAnimationOptions): Animation | null => {
+    try {
+      return target.animate(keyframes, opts);
+    } catch (err) {
+      console.error('animation skipped', err);
+      return null;
+    }
+  };
+  if (reducedMotion()) return run({ duration: 1, fill: extra.fill });
   const { easing, duration } = springEasing(cfg);
-  return target.animate(keyframes, { duration, easing, ...extra });
+  if (linearEasing) {
+    try {
+      return target.animate(keyframes, { duration, easing, ...extra });
+    } catch {
+      // No linear() here after all: this and every later animation take the bezier.
+      linearEasing = false;
+    }
+  }
+  return run({ duration, easing: springBezier(cfg), ...extra });
 }
 
 export class PillRenderer {
@@ -275,7 +297,7 @@ export class PillRenderer {
         e = el('span', 'seg seg-progress', '<i class="track"></i><i class="fill"></i><i class="pace"></i>');
         break;
       case 'bars':
-        e = el('span', 'seg seg-bars', '<i></i><i></i><i></i><i></i><i></i>');
+        e = el('span', 'seg seg-bars', '<i></i><i></i><i></i><i></i><i></i><i></i>');
         break;
       case 'button':
         e = el('button', 'seg seg-btn');
@@ -377,6 +399,9 @@ export class PillRenderer {
       case 'bars':
         // 'live' belongs to the music activity, which paints the bars from the speakers.
         e.className = `seg seg-bars tone-${tone}${seg.active ? ' active' : ''}${e.classList.contains('live') ? ' live' : ''}`;
+        // The album art's colour (music.ts); without it the bars take the tone's.
+        if (seg.color) e.style.setProperty('--bar', seg.color);
+        else e.style.removeProperty('--bar');
         break;
       case 'button': {
         e.className = `seg seg-btn style-${seg.style ?? 'secondary'}${seg.label ? '' : ' icon-only'}`;
@@ -466,8 +491,9 @@ export class PillRenderer {
     next.textContent = text;
     current.classList.add('out');
     e.append(next);
-    springAnimate(current, [{ transform: 'translateY(0)', opacity: 1, filter: 'blur(0px)' }, { transform: 'translateY(-70%)', opacity: 0, filter: 'blur(3px)' }], springs.snappy, { fill: 'forwards' })?.finished
-      .then(() => current.remove(), () => current.remove());
+    const out = springAnimate(current, [{ transform: 'translateY(0)', opacity: 1, filter: 'blur(0px)' }, { transform: 'translateY(-70%)', opacity: 0, filter: 'blur(3px)' }], springs.snappy, { fill: 'forwards' });
+    if (out) out.finished.then(() => current.remove(), () => current.remove());
+    else current.remove();
     springAnimate(next, [{ transform: 'translateY(70%)', opacity: 0, filter: 'blur(3px)' }, { transform: 'translateY(0)', opacity: 1, filter: 'blur(0px)' }], springs.content);
     if (reducedMotion()) current.remove();
   }
@@ -476,8 +502,10 @@ export class PillRenderer {
     const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
     if (target && this.pill.contains(target)) {
       e.stopPropagation();
-      springAnimate(target, [{ transform: getComputedTransform(target, 0.9) }, { transform: getComputedTransform(target, 1) }], springs.bouncy);
+      // The action first: the press pulse is decoration and must never stand in its way.
+      const pulse = [{ transform: getComputedTransform(target, 0.9) }, { transform: getComputedTransform(target, 1) }];
       this.onAction(target.dataset.action!, args.get(target), target);
+      springAnimate(target, pulse, springs.bouncy);
       return;
     }
     if ((e.target as HTMLElement).closest('input')) return;

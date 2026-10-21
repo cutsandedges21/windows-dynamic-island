@@ -30,7 +30,7 @@ describe('planActivities', () => {
     const plan = planActivities(answers({ uses: ['gaming'], glance: ['system', 'network', 'sound'], ai: true }), desktop);
     expect(plan.picked).toEqual(['game', 'system', 'network', 'sound']);
     // The bot's brain is on with the AI step, but has no tile: the bot is the way in.
-    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'phone', 'local']);
+    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'phone', 'workspaces', 'local']);
     expect(plan.enabled).toEqual([...plan.picked, ...plan.hidden]);
   });
 
@@ -85,6 +85,12 @@ describe('applyPlan', () => {
     expect(s.island.grid).toEqual({ order: [], sizes: {}, hidden: plan.hidden, pages: [] });
     expect(s.general.onboarded).toBe(true);
     expect(s.activities.config.weather.options.city).toBe('');
+  });
+
+  it('keeps Land on even with a plan that leaves it out (it is built in)', () => {
+    const plan = planActivities(answers({ glance: ['music'] }), desktop);
+    const s = applyPlan(base(), { ...plan, enabled: plan.enabled.filter((id) => id !== 'land') }, '');
+    expect(s.activities.config.land.enabled).toBe(true);
   });
 
   it('does not change the settings it was given', () => {

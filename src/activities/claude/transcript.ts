@@ -1,9 +1,10 @@
 // Transcript reading, ported from Usage Clip's transcript.js. The newest turn's
-// state comes from the file's tail (re-parsed only when it grows); title and
-// permission mode come from an incremental scan that Rust runs from the last
-// offset (fsx.rs: claude_transcript_meta), so only small results cross IPC.
+// state comes from the file's tail (re-parsed only when it grows); title,
+// permission mode and the turn marks (how long turns take, how full the context
+// is) come from an incremental scan that Rust runs from the last offset
+// (fsx.rs: claude_transcript_meta), so only small results cross IPC.
 
-import { native, type FileStat } from '../../core/native';
+import { native, type FileStat, type TranscriptMeta } from '../../core/native';
 import type { EntryKind } from './status';
 
 const TAIL_ESCALATION = [262144, 262144 * 8, 262144 * 64];
@@ -206,6 +207,42 @@ export function promptDisplay(entry: Json): [string | null, boolean] {
   return promptText(text);
 }
 
+/** Finished turns kept per chat, for "done in": the recent ones say more than old ones. */
+const TURNS_KEPT = 16;
+/** Context readings kept per chat, for how fast it fills. */
+const CTX_KEPT = 120;
+
+/** A chat's turns and context so far, folded from the scan's marks (fsx.rs turn_marks). */
+export interface TurnHistory {
+  /** The newest prompt with no finished reply after it yet. */
+  promptAt: number | null;
+  /** How long each finished turn took, prompt to reply, oldest first. */
+  turns: number[];
+  /** The context after each API response since the last compaction: [ts, tokens], oldest first. */
+  ctx: Array<[number, number]>;
+}
+
+export const newHistory = (): TurnHistory => ({ promptAt: null, turns: [], ctx: [] });
+
+/**
+ * Folds marks into the history. A turn runs from the newest prompt to the reply that ends it,
+ * so a local command that never reached Claude does not stretch the next one; an interrupt or
+ * an API error ends it uncounted. A compaction starts the context over.
+ */
+export function foldMarks(h: TurnHistory, marks: TranscriptMeta['marks']): void {
+  for (const [kind, ts, tokens] of marks) {
+    if (kind === 'p') h.promptAt = ts;
+    else if (kind === 'e') {
+      if (h.promptAt !== null && ts >= h.promptAt) h.turns.push(ts - h.promptAt);
+      h.promptAt = null;
+    } else if (kind === 'x') h.promptAt = null;
+    else if (kind === 'c') h.ctx = [];
+    else if (kind === 'u') h.ctx.push([ts, tokens]);
+  }
+  if (h.turns.length > TURNS_KEPT) h.turns.splice(0, h.turns.length - TURNS_KEPT);
+  if (h.ctx.length > CTX_KEPT) h.ctx.splice(0, h.ctx.length - CTX_KEPT);
+}
+
 interface Scan {
   consumed: number;
   aiTitle: string | null;
@@ -213,9 +250,10 @@ interface Scan {
   firstPrompt: string | null;
   firstCommand: string | null;
   permissionMode: string | null;
+  history: TurnHistory;
 }
 
-const newScan = (): Scan => ({ consumed: 0, aiTitle: null, customTitle: null, firstPrompt: null, firstCommand: null, permissionMode: null });
+const newScan = (): Scan => ({ consumed: 0, aiTitle: null, customTitle: null, firstPrompt: null, firstCommand: null, permissionMode: null, history: newHistory() });
 
 export function scanTitle(scan: Pick<Scan, 'customTitle' | 'aiTitle' | 'firstPrompt' | 'firstCommand'>): string | null {
   return scan.customTitle || scan.aiTitle || scan.firstPrompt || scan.firstCommand || null;
@@ -241,12 +279,16 @@ export interface TranscriptInfo {
   mtimeMs: number;
   turnStartMs: number | null;
   lastAssistantText: string | null;
+  /** How long this chat's recent finished turns took, oldest first. */
+  turns: number[];
+  /** The context after each API response since the last compaction: [ts, tokens], oldest first. */
+  ctx: Array<[number, number]>;
 }
 
 const NONE: TranscriptInfo = {
   hasTranscript: false, lastEntryKind: null, lastStopReason: null, pendingTool: false, lastToolName: null, lastToolInput: null,
   lastTimestampMs: null, apiErrorKind: null, apiErrorStatus: null, model: null, version: null, gitBranch: null, cwd: null,
-  entrypoint: null, title: null, permissionMode: null, mtimeMs: 0, turnStartMs: null, lastAssistantText: null,
+  entrypoint: null, title: null, permissionMode: null, mtimeMs: 0, turnStartMs: null, lastAssistantText: null, turns: [], ctx: [],
 };
 
 export class TranscriptReader {
@@ -267,6 +309,7 @@ export class TranscriptReader {
         if (meta.aiTitle) scan.aiTitle = meta.aiTitle;
         if (meta.customTitle) scan.customTitle = meta.customTitle;
         if (meta.permissionMode) scan.permissionMode = meta.permissionMode;
+        if (meta.marks) foldMarks(scan.history, meta.marks);
         if (scan.firstPrompt === null) {
           for (const raw of meta.userTexts) {
             const [text, housekeeping] = promptText(raw);
@@ -313,6 +356,8 @@ export class TranscriptReader {
       mtimeMs: stat.mtimeMs,
       turnStartMs: t?.turnStartMs ?? null,
       lastAssistantText: t?.lastAssistantText ?? null,
+      turns: c.scan.history.turns.slice(),
+      ctx: c.scan.history.ctx.slice(),
     };
   }
 

@@ -222,6 +222,8 @@ export function migrate(saved: unknown): Settings {
     // Whatever ends up under a secret option's name (a paste in the wrong place) is dropped, not kept.
     for (const o of m.options) if (o.type === 'secret') delete merged.options[o.key];
     if (!['high', 'medium', 'low'].includes(merged.priority)) merged.priority = def.priority;
+    // Built into Island (Land): on, whatever an older version saved.
+    if (m.builtIn) merged.enabled = true;
     out.activities.config[m.id] = merged;
   }
   // 0.3.0: Ask Claude's choice of backend moved into the bot's chat (Local AI's entry); its key keeps its name.

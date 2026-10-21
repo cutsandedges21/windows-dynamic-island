@@ -118,12 +118,17 @@ export const native = {
   },
   transcriptMeta: async (p: string, offset: number, needUser: boolean) => {
     try {
-      const out = { consumed: 0, size: 0, aiTitle: null as string | null, customTitle: null as string | null, permissionMode: null as string | null, userTexts: [] as string[] };
+      type Mark = ['p' | 'e' | 'x' | 'c' | 'u', number, number];
+      const out = { consumed: 0, size: 0, aiTitle: null as string | null, customTitle: null as string | null, permissionMode: null as string | null, userTexts: [] as string[], marks: [] as Mark[] };
+      let lastMessage = '';
       const r = scanLines(p, offset, (raw) => {
         const s = raw.toString('utf8');
         const interesting = s.includes('ai-title') || s.includes('custom-title') || s.includes('permissionMode');
         const user = needUser && out.userTexts.length < 24 && s.includes('"user"');
-        if (!interesting && !user) return;
+        const assistant = s.includes('"type":"assistant"');
+        const prompt = s.includes('"type":"user"') && !s.includes('"tool_use_id"');
+        const compact = s.includes('compact_boundary');
+        if (!interesting && !user && !assistant && !prompt && !compact) return;
         let e: Record<string, unknown>;
         try {
           e = JSON.parse(s);
@@ -133,6 +138,30 @@ export const native = {
         const side = e.isSidechain === true;
         const meta = e.isMeta === true;
         if (!side && typeof e.permissionMode === 'string' && e.permissionMode) out.permissionMode = e.permissionMode;
+        // fsx.rs turn_marks
+        const ts = typeof e.timestamp === 'string' ? Date.parse(e.timestamp) : NaN;
+        if (!side && Number.isFinite(ts)) {
+          const m = (e.message ?? null) as { id?: string; stop_reason?: string; usage?: Record<string, number>; content?: unknown } | null;
+          if (e.type === 'assistant') {
+            if (e.isApiErrorMessage === true) out.marks.push(['x', ts, 0]);
+            else if (m) {
+              if (m.usage && typeof m.usage === 'object') {
+                const n = (k: string) => (Number.isFinite(m.usage![k]) && m.usage![k] > 0 ? m.usage![k] : 0);
+                const tokens = n('input_tokens') + n('cache_creation_input_tokens') + n('cache_read_input_tokens') + n('output_tokens');
+                const id = typeof m.id === 'string' ? m.id : '';
+                if (tokens > 0 && (!id || id !== lastMessage)) out.marks.push(['u', ts, tokens]);
+                lastMessage = id;
+              }
+              if (m.stop_reason === 'end_turn') out.marks.push(['e', ts, 0]);
+            }
+          } else if (e.type === 'user' && !meta) {
+            const t = leadingText(m?.content)?.trimStart();
+            if (t != null) {
+              if (t.startsWith('[Request interrupted by user')) out.marks.push(['x', ts, 0]);
+              else if (!t.startsWith('<local-command-')) out.marks.push(['p', ts, 0]);
+            }
+          } else if (e.type === 'system' && e.subtype === 'compact_boundary') out.marks.push(['c', ts, 0]);
+        }
         if (e.type === 'ai-title' && typeof e.aiTitle === 'string' && e.aiTitle) out.aiTitle = e.aiTitle;
         else if (e.type === 'custom-title' && typeof e.customTitle === 'string' && e.customTitle) out.customTitle = e.customTitle;
         else if (e.type === 'user' && user && !side && !meta) {

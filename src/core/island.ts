@@ -24,6 +24,7 @@ import { accentColor, backAt, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type SheetView, type Tile } from './sheet';
 import { springs } from './spring';
+import { workspaceEngine } from '../workspaces/engine';
 import { clip, timeOfDay } from './format';
 
 type View = 'main' | 'overflow' | 'menu' | 'hide';
@@ -36,6 +37,8 @@ const WIDE_SIZES: TileSize[] = ['2x1', '2x2'];
 /** Row height per island size (the width comes from the pill). */
 const CELL_PX = { small: 80, medium: 92, large: 106 } as const;
 const SIZE_SCALE = { small: 0.88, medium: 1, large: 1.14 } as const;
+/** Music's player at the medium size, about an iPhone's expanded island against the pill. */
+const MORPH_W = 372;
 const GRID_GAP = 8;
 const GRID_PAD = 14;
 /** Every page of the grid is this many cells: always four across. */
@@ -546,7 +549,9 @@ export class Island {
     let level: Level = primary || loneChips.length ? 'compact' : 'idle';
     const surf = primary ? this.surfaces.filter((x) => x.id === primary).sort((a, b) => b.at - a.at)[0] : undefined;
     if (surf) level = atLeast(level, surf.level);
-    if (this.hover && s.hoverExpand && primary && !this.open) level = atLeast(level, 'expanded');
+    // Music's player grows out of the pill and covers it: the pill underneath stays as it is.
+    const morphing = this.hover && !this.open && this.view === 'main' && this.claims(this.hoverOwner()) === 'morph';
+    if (this.hover && s.hoverExpand && primary && !this.open && !morphing) level = atLeast(level, 'expanded');
     if (this.open || this.view !== 'main') level = 'maximum';
     // An activity's own card belongs to the open island; closing the island goes back to Control Center.
     if (!this.open) this.cardFor = null;
@@ -654,7 +659,10 @@ export class Island {
     const botShown = s.bot && !this.moving && !(fsHide && this.fullscreenOn !== null);
     const botD = bubbleSize(s.size, s.widths.compact);
     const restPill = pillRect(this.area, anchor, w, h, s.edge);
-    const botRect = bubbleRect(restPill, anchor, botD);
+    // The card is picked now so the bot can step aside when the player grows out of the pill.
+    const picked = hidden ? null : this.pickSheet(choice, statuses, now, orient, w);
+    const morph = picked?.view.morph ? this.morphRect(restPill, this.sheetWidth(picked.view, orient, w)) : null;
+    const botRect = bubbleRect(morph ? union(restPill, morph) : restPill, anchor, botD);
     this.bubble.place(botShown ? botRect : null, { immediate });
     // The bot's chat: Local AI answers, in the bar under the bot; the island itself stays as it is.
     const chatView = botShown ? (this.running.get('local')?.chat?.() ?? null) : null;
@@ -677,9 +685,10 @@ export class Island {
       this.pendingBump = false;
       this.renderer.bump();
     }
-    this.composeSheet(hidden ? null : choice, statuses, now, orient, w, immediate);
+    this.composeSheet(picked, orient, w, immediate);
     const beam: ActivityStatus['beam'] = this.fileDrag ? { tone: 'accent', motion: 'pulse' } : (pStatus?.beam ?? this.busyElsewhere(choice.visible, statuses));
-    this.syncGlow(hidden ? null : beam, !hidden && choice.urgent && this.sheet.visible);
+    // The pill's light would run around the pill over the player covering it.
+    this.syncGlow(hidden || morph ? null : beam, !hidden && choice.urgent && this.sheet.visible, morph !== null);
     this.sendMirror({
       sig, swap, bump: bump && !hiddenEverywhere, placed, w, h, orient, anchor, edge: s.edge,
       hidden: hiddenEverywhere, fsHide, fullscreen: this.fullscreenAny,
@@ -780,7 +789,7 @@ export class Island {
       }
     }
     segs.push(
-      { t: 'button', key: 'home/activities', icon: 'grid', label: 'Activities', action: 'island:app', arg: 'activities', side: 'end', prio: 2, style: 'ghost' },
+      { t: 'button', key: 'home/activities', icon: 'pulse', label: 'Activities', action: 'island:app', arg: 'activities', side: 'end', prio: 2, style: 'ghost' },
       { t: 'button', key: 'home/settings', icon: 'settings', action: 'island:app', arg: 'settings', side: 'end', prio: 2, style: 'ghost', tip: 'Settings' },
     );
     return segs;
@@ -851,7 +860,8 @@ export class Island {
         prio: 2,
       },
       { t: 'button', key: 'menu/hide', icon: 'eye-off', label: 'Hide', action: 'island:hide-menu', style: 'ghost', tip: 'Hide the island for a while', prio: 2 },
-      { t: 'button', key: 'menu/activities', icon: 'grid', label: 'Activities', action: 'island:app', arg: 'activities', side: 'end', style: 'secondary', prio: 1 },
+      { t: 'button', key: 'menu/workspaces', icon: 'grid', label: 'Workspaces', action: 'island:app', arg: 'workspaces', side: 'end', style: 'secondary', prio: 1 },
+      { t: 'button', key: 'menu/activities', icon: 'pulse', label: 'Activities', action: 'island:app', arg: 'activities', side: 'end', style: 'secondary', prio: 1 },
       { t: 'button', key: 'menu/settings', icon: 'settings', action: 'island:app', arg: 'settings', side: 'end', style: 'ghost', tip: 'Settings', prio: 1 },
     ];
   }
@@ -886,8 +896,7 @@ export class Island {
    * chat waiting for a reply), else the grid of everything when the island is
    * open, else a surfaced event's details, else whatever the pointer rests on.
    */
-  private composeSheet(choice: Picked | null, statuses: Map<string, ActivityStatus>, now: number, orient: Orientation, pillW: number, immediate: boolean): void {
-    const picked = choice ? this.pickSheet(choice, statuses, now, orient, pillW) : null;
+  private composeSheet(picked: { owner: string; view: SheetView } | null, orient: Orientation, pillW: number, immediate: boolean): void {
     // A different card: whatever was typed into the old one is gone, and so is the keyboard.
     if (this.sheetEngaged && (!picked || picked.view.key !== this.sheet.key)) this.sheetEngaged = false;
     this.sheetOwner = picked?.owner ?? null;
@@ -932,12 +941,39 @@ export class Island {
       if (card) return card;
     }
     if (this.hover) {
-      // The user can make Claude's stats the card every hover shows.
-      const owner = this.settings.island.hoverCard === 'claude' && this.running.has('claude') ? 'claude' : this.ownerOf(this.hoverKey);
+      const owner = this.hoverOwner();
       const card = owner ? ask(owner, 'hover') : null;
       if (card) return card;
     }
     return null;
+  }
+
+  /**
+   * Whose card a hover shows: the activity under the pointer when it claims its hover (Music's
+   * player, Phone's list), else Claude's stats when Settings › Hover card says so, else whatever
+   * is pointed at.
+   */
+  private hoverOwner(): string | null {
+    const pointed = this.ownerOf(this.hoverKey);
+    if (pointed && this.claims(pointed)) return pointed;
+    if (this.settings.island.hoverCard === 'claude' && this.running.has('claude')) return 'claude';
+    return pointed;
+  }
+
+  private claims(id: string | null): boolean | 'morph' {
+    if (!id) return false;
+    try {
+      return this.running.get(id)?.claimsHover?.() ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Where a card that grows out of the pill sits: over the pill, centred on it, `w` wide. */
+  private morphRect(pill: Rect, w: number): Rect {
+    const W = this.area.width;
+    const x = Math.max(8, Math.min(W - w - 8, pill.x + pill.w / 2 - w / 2));
+    return { x, y: pill.y, w, h: pill.h };
   }
 
   /**
@@ -1123,6 +1159,8 @@ export class Island {
   private sheetWidth(view: SheetView | null, orient: Orientation, pillW: number): number {
     const W = this.area.width;
     if (view?.width) return Math.min(view.width, W - 24);
+    // Music's player: as wide as an iPhone's against the island's size, and never narrower than the pill it covers.
+    if (view?.morph) return Math.min(W - 24, Math.max(pillW, Math.round(MORPH_W * (SIZE_SCALE[this.settings.island.size] ?? 1))));
     if (orient === 'vertical') return Math.min(W - 120, view?.wide ? 440 : 380);
     const want = view?.wide ? Math.max(460, Math.min(pillW, 760)) : Math.max(340, Math.min(pillW, 560));
     return Math.min(want, W - 32);
@@ -1133,7 +1171,7 @@ export class Island {
    * busy, pulse when something waits on the user, progress while filling up); an
    * urgent card gets a slow orbit in the same tone.
    */
-  private syncGlow(want: ActivityStatus['beam'], cardUrgent: boolean): void {
+  private syncGlow(want: ActivityStatus['beam'], cardUrgent: boolean, now = false): void {
     const speed = this.settings.island.glow;
     if (speed === 'off') {
       this.pillGlow.set(null);
@@ -1142,7 +1180,7 @@ export class Island {
     }
     this.pillGlow.setSpeed(speed);
     this.cardGlow.setSpeed(speed);
-    this.pillGlow.set(beamSpec(want));
+    this.pillGlow.set(beamSpec(want), now);
     this.cardGlow.set(cardUrgent ? { tone: want?.tone ?? 'accent', motion: 'orbit' } : null);
   }
 
@@ -1596,6 +1634,7 @@ export class Island {
       { id: 'island:dnd', label: 'Do not disturb', checked: this.settings.general.dnd },
       { separator: true },
       { id: 'island:app:activities', label: 'Activities…' },
+      { id: 'island:app:workspaces', label: 'Workspaces…' },
       { id: 'island:app:settings', label: 'Settings…' },
       { separator: true },
       { id: 'island:quit', label: 'Quit Island' },
@@ -1634,6 +1673,8 @@ export class Island {
     let result: unknown = null;
     try {
       if (req.target === 'island') result = await this.islandCommand(req.cmd, req.arg);
+      // Restoring runs here whether or not the Workspaces activity is on.
+      else if (req.target === 'workspaces') result = await workspaceEngine().command(req.cmd, req.arg);
       else {
         const act = this.running.get(req.target);
         result = act?.command ? await act.command(req.cmd, req.arg) : null;

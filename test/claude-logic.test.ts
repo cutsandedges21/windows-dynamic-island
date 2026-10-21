@@ -258,6 +258,28 @@ describe('transcript (transcript.test.js)', () => {
     expect(st.lastToolName).toBe('Edit');
   });
 
+  it('reader: finished turns and the context, folded across incremental scans', async () => {
+    const root = tempRoot();
+    const file = transcriptFile(root, 'C:\\work\\app', uuid());
+    const usage = (n: number) => ({ input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: n - 1, output_tokens: 0 });
+    writeLines(file, [
+      user('Fix the bug', T),
+      assistant(T + 5_000, { stop: 'tool_use', id: 'm1', usage: usage(50_000), tools: [['t1', 'Edit']] }),
+      toolResult('t1', T + 6_000),
+      assistant(T + 40_000, { id: 'm2', usage: usage(60_000) }),
+      user('And the test', T + 100_000),
+    ]);
+    const reader = new TranscriptReader();
+    let st = await reader.read(file, statOf(file));
+    expect(st.turns).toEqual([40_000]);
+    expect(st.ctx).toEqual([[T + 5_000, 50_000], [T + 40_000, 60_000]]);
+    // The second turn ends in the next scan.
+    writeLines(file, [assistant(T + 190_000, { id: 'm3', usage: usage(70_000) })], true);
+    st = await reader.read(file, statOf(file));
+    expect(st.turns).toEqual([40_000, 90_000]);
+    expect(st.ctx.at(-1)).toEqual([T + 190_000, 70_000]);
+  });
+
   it('reader: missing file has no transcript', async () => {
     expect((await new TranscriptReader().read(null, null)).hasTranscript).toBe(false);
   });

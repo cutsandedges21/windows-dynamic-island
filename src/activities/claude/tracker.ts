@@ -4,6 +4,7 @@
 // Usage Clip's registry.js, tracker.js and history.js.
 
 import { native, type FileStat } from '../../core/native';
+import { contextFill, type ContextFill } from './estimate';
 import { ProcessProbe, type ProbeResult } from './procinfo';
 import { deriveStatus, describeTool, formatModel, isUuid, cwdToSlug, joinPath, projectName, statusLabel, statusTone, type RawStatus, type Status } from './status';
 import { TranscriptReader, type TranscriptInfo } from './transcript';
@@ -147,6 +148,10 @@ export interface SessionView {
   lastAssistantText: string | null;
   transcript: string | null;
   version: string | null;
+  /** How full the chat's context is (estimate.ts); null until a reply since the last compaction. */
+  context?: ContextFill | null;
+  /** How long its recent finished turns took, oldest first, for "done in". */
+  turns?: number[];
 }
 
 export interface ClosedView {
@@ -278,6 +283,8 @@ export class SessionTracker {
         lastAssistantText: t.lastAssistantText,
         transcript: file,
         version: rec.version || t.version,
+        context: contextFill(t.model, t.ctx),
+        turns: t.turns,
       };
       if (prev && prev.alive && !prev.needsYou && view.needsYou) events.push({ type: 'needs-you', session: view });
       if (prev && prev.status === 'working' && view.status === 'awaiting_input') events.push({ type: 'finished', session: view });

@@ -1,5 +1,5 @@
 // System stats: CPU, memory and GPU. Quiet until something spikes, unless
-// "Always show" is on.
+// "Always show" is on. "On the pill" picks which of the three the pill shows.
 
 import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv } from '../core/activity';
@@ -9,7 +9,17 @@ import type { Seg } from '../core/segments';
 import type { Tile } from '../core/sheet';
 import { BaseActivity } from './base';
 
-type Options = { always: boolean; cpuSpike: number; memSpike: number };
+export type Stat = 'cpu' | 'ram' | 'gpu';
+type Options = { show: Stat[]; always: boolean; cpuSpike: number; memSpike: number };
+
+const STATS: Stat[] = ['cpu', 'ram', 'gpu'];
+const STAT_ICON: Record<Stat, string> = { cpu: 'cpu', ram: 'memory', gpu: 'gpu' };
+
+/** The stats picked for the pill, in CPU, RAM, GPU order; CPU when nothing valid was saved. */
+export function pickedStats(saved: unknown): Stat[] {
+  const list = Array.isArray(saved) ? STATS.filter((s) => saved.includes(s)) : [];
+  return list.length ? list : ['cpu'];
+}
 
 const SLOW_MS = 5000;
 const FAST_MS = 2000;
@@ -37,7 +47,21 @@ export class SystemActivity extends BaseActivity {
 
   private opts(): Options {
     const o = this.ctx.options<Partial<Options>>();
-    return { always: o.always === true, cpuSpike: Number(o.cpuSpike) || 90, memSpike: Number(o.memSpike) || 92 };
+    return { show: pickedStats(o.show), always: o.always === true, cpuSpike: Number(o.cpuSpike) || 90, memSpike: Number(o.memSpike) || 92 };
+  }
+
+  /** The picked stats this PC can read right now (no GPU counter: GPU drops out); never empty. */
+  private shown(s: SysSample): Stat[] {
+    const list = this.opts().show.filter((k) => k !== 'gpu' || s.gpu !== null);
+    return list.length ? list : ['cpu'];
+  }
+
+  private pct(s: SysSample, k: Stat): number {
+    return k === 'cpu' ? Math.round(s.cpu) : k === 'ram' ? this.memPct(s) : Math.round(s.gpu ?? 0);
+  }
+
+  private statText(s: SysSample, k: Stat): string {
+    return `${k.toUpperCase()} ${this.pct(s, k)}%`;
   }
 
   private async tick(): Promise<void> {
@@ -91,29 +115,42 @@ export class SystemActivity extends BaseActivity {
     return {
       active: true,
       weight: kind ? 'foreground' : 'background',
-      summary: kind === 'mem' ? `RAM ${this.memPct(s)}%` : `CPU ${Math.round(s.cpu)}%`,
+      summary: kind === 'mem' ? `RAM ${this.memPct(s)}%` : kind === 'cpu' ? `CPU ${Math.round(s.cpu)}%` : this.shown(s).map((k) => this.statText(s, k)).join(' · '),
     };
   }
 
   chip(): ChipView | null {
     const s = this.s;
     if (!s) return null;
-    return { icon: 'cpu', label: `${Math.round(s.cpu)}%`, tone: this.spike(Date.now()) ? 'bad' : 'muted' };
+    const k = this.shown(s)[0];
+    return { icon: STAT_ICON[k], label: `${this.pct(s, k)}%`, tone: this.spike(Date.now()) ? 'bad' : 'muted' };
   }
 
   private memPct(s: SysSample): number {
     return s.memTotal > 0 ? Math.round((s.memUsed / s.memTotal) * 100) : 0;
   }
 
-  /** CPU as the number, memory underneath; red while the CPU is past the spike threshold. */
+  /**
+   * The first picked stat as the number, the other picked ones underneath (RAM under a lone CPU,
+   * CPU under a lone RAM or GPU); red while the CPU is past the spike threshold.
+   */
   tile(): Tile | null {
     const s = this.s;
     if (!s) return null;
-    const cpu = Math.round(s.cpu);
+    const [main, ...rest] = this.shown(s);
+    const under = rest.length ? rest : [main === 'cpu' ? 'ram' : 'cpu'];
+    const value = this.pct(s, main);
     return {
       key: 'cpu',
-      tone: cpu >= this.opts().cpuSpike ? 'bad' : undefined,
-      body: { k: 'stat', icon: 'cpu', label: 'CPU', value: `${cpu}%`, sub: `RAM ${this.memPct(s)}%`, progress: Math.min(1, Math.max(0, cpu / 100)) },
+      tone: Math.round(s.cpu) >= this.opts().cpuSpike ? 'bad' : undefined,
+      body: {
+        k: 'stat',
+        icon: STAT_ICON[main],
+        label: main.toUpperCase(),
+        value: `${value}%`,
+        sub: under.map((k) => this.statText(s, k as Stat)).join(' · '),
+        progress: Math.min(1, Math.max(0, value / 100)),
+      },
     };
   }
 
@@ -139,9 +176,10 @@ export class SystemActivity extends BaseActivity {
       return segs;
     }
 
-    const icon: Seg = { t: 'icon', key: 'icon', icon: 'cpu', tone: 'accent', prio: 0 };
-    if (compact) return [icon, { t: 'text', key: 'cpu', text: env.vertical ? `${cpu}%` : `CPU ${cpu}%`, weight: 'semibold', prio: 0 }];
+    const picked = this.shown(s);
+    const icon: Seg = { t: 'icon', key: 'icon', icon: STAT_ICON[picked[0]], tone: 'accent', prio: 0 };
 
+    // The open island shows all three, whatever is picked for the pill.
     if (env.level === 'maximum') {
       const segs: Seg[] = [
         icon,
@@ -152,9 +190,18 @@ export class SystemActivity extends BaseActivity {
       return segs;
     }
 
-    const segs: Seg[] = [icon, { t: 'text', key: 'cpu', text: env.vertical ? `${cpu}%` : `CPU ${cpu}%`, weight: 'semibold', prio: 0 }];
-    if (!env.vertical) segs.push({ t: 'text', key: 'mem', text: `RAM ${bytes(s.memUsed)}`, tone: 'muted', prio: 3 });
-    if (s.gpu !== null && !env.vertical) segs.push({ t: 'text', key: 'gpu', text: `GPU ${Math.round(s.gpu)}%`, tone: 'muted', prio: 4 });
-    return segs;
+    // Resting: the picked stats side by side, the first one leading. Pointed at (expanded): the
+    // picked ones first, then the rest, with memory in GB.
+    const list = compact ? picked : [...picked, ...STATS.filter((k) => !picked.includes(k) && (k !== 'gpu' || s.gpu !== null))];
+    const stats = list.map((k, i): Seg => ({
+      t: 'text',
+      key: k,
+      text: env.vertical ? `${this.pct(s, k)}%` : !compact && k === 'ram' ? `RAM ${bytes(s.memUsed)}` : this.statText(s, k),
+      weight: i === 0 ? 'semibold' : undefined,
+      tone: i === 0 ? undefined : 'muted',
+      prio: i === 0 ? 0 : 2 + i,
+      tip: this.statText(s, k),
+    }));
+    return [icon, ...stats];
   }
 }

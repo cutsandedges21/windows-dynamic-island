@@ -14,6 +14,7 @@ import { hiddenNow } from '../../core/settings';
 import type { Block, SheetButton, SheetRow, SheetView, Tile } from '../../core/sheet';
 import { BaseActivity, chime } from '../base';
 import { chatUrl, DesktopChats, type DesktopChat } from './desktop';
+import { about, turnLeft } from './estimate';
 import { afterModifiersReleased, deepLink, focusSession, selectWindow } from './focus';
 import { HookState, questionsOf, type HookEvent, type PermissionCard, type ReplyHold } from './hooks';
 import { EDITOR_HOSTS } from './procinfo';
@@ -1376,7 +1377,8 @@ export class ClaudeActivity extends BaseActivity {
           dot: TONE[s.tone] ?? 'muted',
           pulse: s.needsYou,
           title: s.displayTitle,
-          detail: [s.status === 'working' ? 'Working' : s.label, s.project, this.timing(s, now)].filter(Boolean).join(' · '),
+          detail: this.rowDetail(s, now),
+          meter: this.contextMeter(s),
           badge: s.slot ? String(s.slot) : undefined,
           action: 'switch',
           arg: s.id,
@@ -1414,6 +1416,32 @@ export class ClaudeActivity extends BaseActivity {
       blocks.push({ t: 'buttons', key: 'hidden', align: 'start', items: [{ key: 'unhide', label: `Show hidden (${hiddenCount})`, icon: 'eye', action: 'unhide-all', style: 'ghost' }] });
     }
     return { key: 'hover', blocks };
+  }
+
+  /**
+   * A chat's line under its title in the hover card: "Working · 2m 10s · done in ~3 min · project"
+   * (a guess from its recent turns, estimate.ts), or "Your turn · project · 4m ago".
+   */
+  private rowDetail(s: SessionView, now: number): string {
+    if (s.status !== 'working') return [s.label, s.project, this.timing(s, now)].filter(Boolean).join(' · ');
+    const start = this.hooks.turnStart.get(s.id) ?? s.turnStartMs ?? s.lastActivityMs;
+    const left = turnLeft(s.turns ?? [], now - start);
+    const guess = left === null ? null : left === Infinity ? 'longer than usual' : about(left);
+    return ['Working', this.timing(s, now), guess && guess !== 'longer than usual' ? `done in ${guess}` : guess, s.project].filter(Boolean).join(' · ');
+  }
+
+  /** How full the chat's context is: the thin bar under its title, with about when it fills up. */
+  private contextMeter(s: SessionView): SheetRow['meter'] {
+    const c = s.context;
+    if (!c) return undefined;
+    const pct = Math.round(c.share * 100);
+    const full = c.fullIn != null ? about(c.fullIn) : null;
+    return {
+      value: c.share,
+      text: full ? `${pct}% · full in ${full}` : `${pct}%`,
+      tone: c.share >= 0.9 ? 'bad' : c.share >= 0.75 ? 'warn' : 'claude',
+      tip: `Context: ${fmtTokens(c.used)} of ${fmtTokens(c.window)} tokens${full ? `. Full in ${full} at the pace this chat fills while Claude works.` : ''}`,
+    };
   }
 
   /** Claude's cell in the open island: limits in the label, the chats as rows. */
@@ -1664,7 +1692,8 @@ export class ClaudeActivity extends BaseActivity {
       id: '', sessionId: '', pid: 0, cwd: 'C:\\Users\\you\\Projects\\island', name: '', kind: 'interactive', entrypoint: 'cli', alive: true,
       status: 'working', label: 'Working', tone: 'working', needsYou: false, title: null, displayTitle: '', project: 'island', host: 'Terminal',
       editorHost: null, hostKind: 'terminal', model: 'Opus 5.5', permissionMode: 'default', gitBranch: 'main', lastActivityMs: now, lastAliveAt: now,
-      slot: 1, tool: null, operation: null, turnStartMs: now - 754000, lastAssistantText: null, transcript: null, version: null, ...over,
+      slot: 1, tool: null, operation: null, turnStartMs: now - 754000, lastAssistantText: null, transcript: null, version: null,
+      context: { used: 197_000, window: 1_000_000, share: 0.197, fullIn: 2 * 3600_000 }, turns: [200_000, 900_000, 1_200_000], ...over,
     });
     this.later(2500, () => {
       this.sessions = [
