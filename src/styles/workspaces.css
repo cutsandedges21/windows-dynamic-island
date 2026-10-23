@@ -70,6 +70,8 @@ kbd { font: 11px/1 var(--font); color: var(--dim); border: 1px solid var(--line)
 .ws-dot.failed { background: var(--bad); }
 .ws-dot.cancelled { background: var(--muted); }
 .ws-dot.running { background: var(--wc, var(--accent)); animation: ws-pulse 1.2s ease-in-out infinite; }
+/* A window of it is open now: the green light flashes. */
+.ws-dot.in-use { background: var(--good); animation: ws-pulse 1.2s ease-in-out infinite; }
 .ws-card .ws-restore { background: color-mix(in srgb, var(--wc) 16%, transparent); border-color: color-mix(in srgb, var(--wc) 34%, transparent); }
 .ws-card .ws-restore:hover:not(:disabled) { background: color-mix(in srgb, var(--wc) 27%, transparent); }
 
@@ -252,7 +254,7 @@ body.ws-dragging, body.ws-dragging * { cursor: grabbing !important; -webkit-user
 .ws-toast:not(:has(.btn)) { padding-right: 14px; }
 
 @keyframes ws-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .ws-dot.running { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .ws-dot.running, .ws-dot.in-use { animation: none; } }
 
 /* ------------------------------------------------------------------ phase 2: picking, restoring, layouts */
 

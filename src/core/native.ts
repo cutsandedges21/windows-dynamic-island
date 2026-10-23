@@ -7,6 +7,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { emit, emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import type { IslandMsg } from '../remote/protocol';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 export const demo = !isTauri;
@@ -238,6 +239,12 @@ export interface LandInfo {
   /** Friends on other networks (empty while that is off). */
   friends: LandFriend[];
 }
+/** 'blocked': Windows Firewall keeps computers on this network ('public', 'private', 'domain') out. */
+export interface LandFirewall {
+  state: 'ok' | 'blocked' | 'block-all' | 'unknown';
+  network: string;
+}
+
 /** Land anywhere (src-tauri/src/anywhere.rs): an Island this one sends to and takes files from, on any network. */
 export interface LandFriend {
   /** Its key (hex). */
@@ -310,6 +317,41 @@ export interface ShareInfo {
   expires: number;
   count: number;
   bytes: number;
+}
+/** A phone paired in Settings › Your phone (Island on your phone, src-tauri/src/remote). */
+export interface RemotePhone {
+  /** Its iroh EndpointId. */
+  id: string;
+  name: string;
+  pairedAt: number;
+  lastSeen: number | null;
+  connected: boolean;
+  /** It turned notifications on (Web Push). */
+  push: boolean;
+}
+/** A pairing code being shown: the address in the QR code, the code's modules, and when it stops working. */
+export interface RemotePairing {
+  url: string;
+  /** The QR code: `size` modules a side, row by row, '1' for dark. */
+  qr: string;
+  size: number;
+  expires: number;
+}
+/** A file a phone sent, saved to Downloads ('remote-file'). */
+export interface RemoteFile {
+  phone: string;
+  id: string;
+  name: string;
+  path: string;
+  size: number;
+  mime: string;
+}
+/** How a file the PC sent to a phone went ('remote-file-sent'). */
+export interface RemoteFileSent {
+  phone: string;
+  name: string;
+  ok: boolean;
+  error?: string | null;
 }
 /** A button on a phone push: a tap posts `reply` to the reply topic (src-tauri/src/phone.rs). */
 export interface PushButton {
@@ -602,6 +644,10 @@ export const native = {
   audioState: () => call<AudioState | null>('audio_state', {}, null),
   audioSet: (volume: number | null, muted: boolean | null) => call<boolean>('audio_set', { volume, muted }, false),
   micSetMute: (muted: boolean) => call<boolean>('mic_set_mute', { muted }, false),
+  /** Of the apps Windows lists as using the mic or camera, the ones whose camera Island can switch (src-tauri/src/calls.rs). */
+  callControls: (labels: string[]) => call<Array<{ label: string; app: string }>>('call_controls', { labels }, []),
+  /** Presses the call app's own camera shortcut (Teams Ctrl+Shift+O, Zoom Alt+V, Meet Ctrl+E). */
+  callCamera: (label: string) => tryCall<null>('call_camera', { label }),
   powerState: () => call<PowerState | null>('power_state', {}, null),
   sysSample: (withTop: boolean) => call<SysSample | null>('sys_sample', { withTop }, null),
   netSample: () => call<NetSample | null>('net_sample', {}, null),
@@ -657,6 +703,12 @@ export const native = {
   landStop: () => call('land_stop', {}, undefined),
   /** Asks every device nearby to say who it is; the list as it stands. */
   landScan: () => call<LandPeer[]>('land_scan', {}, []),
+  /** Islands at the same place found over the internet, when its Wi-Fi keeps devices apart (they can only be added as friends). */
+  landPlace: () => call<LandPeer[]>('land_place', {}, []),
+  /** Whether the firewall lets computers on this network reach Island (src-tauri/src/firewall.rs). */
+  landFirewall: () => call<LandFirewall>('land_firewall', {}, { state: 'ok', network: '' }),
+  /** Lets Island through on every network (one UAC prompt); the new verdict. */
+  landFirewallFix: () => tryCall<LandFirewall>('land_firewall_fix', {}),
   /** Starts sending; the transfer's id, or why it cannot. */
   landSend: (peer: string, paths: string[]) => tryCall<string>('land_send', { peer, paths }),
   landSendText: (peer: string, text: string) => tryCall<string>('land_send_text', { peer, text }),
@@ -666,6 +718,24 @@ export const native = {
   landCancel: (id: string) => call<boolean>('land_cancel', { id }, false),
   landStage: (paths: string[]) =>
     call<LandStaged[]>('land_stage', { paths }, paths.map((p) => ({ path: p, name: p.split(/[\\/]/).pop() || p, size: 0, dir: false, files: 1, error: null }))),
+
+  /** Island on your phone (src-tauri/src/remote): a one-time pairing code for the phone site at `site`, with its QR code. */
+  remotePairStart: (site: string) => tryCall<RemotePairing>('remote_pair_start', { site }),
+  remotePairStop: () => call<undefined>('remote_pair_stop', {}, undefined),
+  remotePhones: () => call<RemotePhone[]>('remote_phones', {}, []),
+  remoteRename: (id: string, name: string) => call<boolean>('remote_rename', { id, name }, false),
+  /** Forgets a phone; its connection closes at once. */
+  remoteForget: (id: string) => call<boolean>('remote_forget', { id }, false),
+  /** One line to a phone, or to every connected one (null). */
+  remoteSend: (phone: string | null, msg: IslandMsg) => call<boolean>('remote_send', { phone, msg }, false),
+  /** Sends a file to a phone on its own stream; how it went arrives as 'remote-file-sent'. */
+  remoteSendFile: (phone: string, path: string) => tryCall<string>('remote_send_file', { phone, path }),
+  /** The public key phones subscribe to pushes with (Web Push); '' while there is none. */
+  remoteVapid: () => call<string>('remote_vapid', {}, ''),
+  /** The computer's name, for phones (Land's name when Land runs). */
+  remoteName: () => call<string>('remote_name', {}, ''),
+  /** A notification to every phone that turned them on; a tap opens the app on `open`'s card. How many it went to. */
+  remotePush: (title: string, body: string, tag: string, open: string, urgent: boolean) => call<number>('remote_push', { title, body, tag, open, urgent }, 0),
 
   /** Workspaces (src/workspaces/store.ts goes through these; outside the app it keeps them in the browser). */
   wsLoad: () => call<WsLoaded | null>('workspaces_load', {}, null),

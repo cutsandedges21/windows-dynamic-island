@@ -75,6 +75,8 @@ export interface Ui {
   jobClosed: string | null;
   tab: WsTab;
   time: TimeState;
+  /** Workspaces with a window open now (detect.ts workspacesInUse), checked while the page shows. */
+  inUse: Set<string>;
 }
 
 export interface Ctx {

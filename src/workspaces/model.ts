@@ -545,6 +545,12 @@ export function countText(kind: ResourceKind, count: number): string {
   return `${count} ${count === 1 ? m.one : m.many}`;
 }
 
+/** A workspace with a window open now: "In use", with its next step when it has one. */
+export function inUseText(ws: Pick<Workspace, 'notes'>): string {
+  const next = ws.notes.next.trim();
+  return next ? `In use · Next: ${next}` : 'In use';
+}
+
 /** "3 apps · 2 sites · 1 command", or "Nothing to open yet". */
 export function contentsText(ws: Pick<Workspace, 'resources'>): string {
   const c = contents(ws);

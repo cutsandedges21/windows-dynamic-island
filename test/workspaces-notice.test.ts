@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { detect, matchWorkspace } from '../src/workspaces/notice/detect';
+import { detect, matchWorkspace, sameIds, workspacesInUse } from '../src/workspaces/notice/detect';
 import { addSample, contexts, duration, emptyTrail, GAP_MS, prune, readTrail, settled, type Sample, type TrailDoc } from '../src/workspaces/notice/model';
-import { newResource, newWorkspace, type Workspace } from '../src/workspaces/model';
+import { inUseText, newResource, newWorkspace, type Workspace } from '../src/workspaces/model';
 
 const CODE = 'C:\\Users\\m\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe';
 
@@ -38,6 +38,31 @@ describe('reading the window in front', () => {
     expect(m('C:\\Edge\\msedge.exe', 'Search - Microsoft Edge')).toBeNull();
     // Archived workspaces are left out.
     expect(matchWorkspace(detect(CODE, 'a.ts - windows-dynamic-island - Visual Studio Code'), '', [{ ...island, archived: true }])).toBeNull();
+  });
+
+  it('calls a workspace in use while a window of it is open, any window', () => {
+    const island: Workspace = { ...newWorkspace({ name: 'Island' }), cwd: 'C:\\code\\windows-dynamic-island' };
+    const school: Workspace = { ...newWorkspace({ name: 'School' }), resources: [newResource('file', { path: 'D:\\School\\Lab 3 report.docx' })] };
+    const music: Workspace = { ...newWorkspace({ name: 'Music' }), resources: [newResource('app', { path: 'C:\\x\\Spotify.exe' })] };
+    const list = [island, school, music];
+    const win = (exe: string, title: string, className = '') => ({ exe, title, className });
+    const open = [
+      win('C:\\Edge\\msedge.exe', 'Inbox - Gmail - Microsoft Edge'),
+      // Minimized or behind other windows counts too: it's still open.
+      win(CODE, 'app.ts - windows-dynamic-island - Visual Studio Code'),
+      win('C:\\x\\WindowsTerminal.exe', 'PS C:\\code\\windows-dynamic-island>'),
+      win('C:\\Office\\WINWORD.EXE', 'Lab 3 report.docx - Word'),
+      // An app alone doesn't make its workspace in use (a browser belongs to every one).
+      win('C:\\x\\Spotify.exe', 'Spotify Premium'),
+    ];
+    expect([...workspacesInUse(open, list)].sort()).toEqual([island.id, school.id].sort());
+    // Closing Word leaves only Island in use.
+    expect([...workspacesInUse(open.filter((w) => !w.exe.endsWith('WINWORD.EXE')), list)]).toEqual([island.id]);
+    expect(workspacesInUse([], list).size).toBe(0);
+    expect(inUseText(island)).toBe('In use');
+    expect(inUseText({ notes: { ...island.notes, next: '  finish the lab ' } })).toBe('In use · Next: finish the lab');
+    expect(sameIds(new Set(['a', 'b']), new Set(['b', 'a']))).toBe(true);
+    expect(sameIds(new Set(['a']), new Set(['a', 'b']))).toBe(false);
   });
 });
 

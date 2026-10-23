@@ -179,7 +179,7 @@ pub fn place(temp: &Path, dir: &Path, name: &str) -> io::Result<PathBuf> {
 }
 
 /// A temp file for `name` in `dir` that nothing else is using.
-pub(super) async fn create_temp(dir: &Path, name: &str) -> io::Result<(PathBuf, tokio::fs::File)> {
+pub(crate) async fn create_temp(dir: &Path, name: &str) -> io::Result<(PathBuf, tokio::fs::File)> {
     for n in 0..1000 {
         let p = if n == 0 { dir.join(format!("{name}.landing")) } else { dir.join(format!("{name}.{n}.landing")) };
         match tokio::fs::OpenOptions::new().write(true).create_new(true).open(&p).await {
@@ -256,7 +256,7 @@ impl Drop for Litter {
 }
 
 /// Bytes free for this user on the disk holding `dir` (its nearest existing parent).
-pub(super) fn free_space(dir: &Path) -> Option<u64> {
+pub(crate) fn free_space(dir: &Path) -> Option<u64> {
     let mut at = dir;
     while !at.exists() {
         at = at.parent()?;
@@ -284,7 +284,7 @@ pub(super) fn free_space(dir: &Path) -> Option<u64> {
 /// Marks a received file as coming from another computer, the way browsers mark downloads
 /// and AirDrop marks what it receives: Windows then checks programs with SmartScreen and
 /// Office opens documents in Protected View; a Mac checks it with Gatekeeper.
-pub(super) fn mark_from_network(path: &Path) {
+pub(crate) fn mark_from_network(path: &Path) {
     #[cfg(windows)]
     {
         let mut stream = path.as_os_str().to_os_string();

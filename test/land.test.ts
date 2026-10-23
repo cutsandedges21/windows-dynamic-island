@@ -47,6 +47,10 @@ function resetNative() {
     landFriendsOnline: vi.fn(async () => []),
     landStop: vi.fn(async () => undefined),
     landScan: vi.fn(async () => []),
+    landPlace: vi.fn(async () => []),
+    landFriendAddNearby: vi.fn(async () => ({ ok: true, value: { id: 'f1'.repeat(32), name: 'LAB-DESKTOP-07', added: T0 } })),
+    landFirewall: vi.fn(async () => ({ state: 'ok', network: '' })),
+    landFirewallFix: vi.fn(async () => ({ ok: true, value: { state: 'ok', network: '' } })),
     landSend: vi.fn(async (peer: string) => ({ ok: true, value: `out-${peer}` })),
     landSendText: vi.fn(async (peer: string) => ({ ok: true, value: `text-${peer}` })),
     landShareStart: vi.fn(async () => ({ ok: true, value: { url: 'http://192.168.1.20:51234/0123456789abcdef0123456789abcdef/', qr: '1'.repeat(441), size: 21, expires: T0 + 15 * 60_000, count: 1, bytes: 1000 } })),
@@ -240,6 +244,80 @@ describe('land', () => {
     expect(calls.notify).toEqual([]);
   });
 
+  it('says when Windows Firewall keeps this network out, and fixes it in one click', async () => {
+    h.native.landFirewall = vi.fn(async () => ({ state: 'blocked', network: 'public' }));
+    const { act } = await boot();
+    // Nothing is asked until the card opens.
+    expect(h.native.landFirewall).not.toHaveBeenCalled();
+    await act.action('card');
+    await tick(1100);
+    expect(h.native.landFirewall).toHaveBeenCalledTimes(1);
+    let card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'text', 'fw')!.text).toContain('public networks');
+    const fix = block(card, 'buttons', 'fw-fix')!.items[0];
+    expect(fix).toMatchObject({ action: 'firewall-fix', disabled: false });
+    expect(hasIcon(fix.icon!)).toBe(true);
+    const scans = h.native.landScan.mock.calls.length;
+    await act.action('firewall-fix');
+    expect(h.native.landFirewallFix).toHaveBeenCalledTimes(1);
+    card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'text', 'fw')).toBeUndefined();
+    // Fixed: look again for who is around at once.
+    expect(h.native.landScan.mock.calls.length).toBeGreaterThan(scans);
+  });
+
+  it('Islands here that the Wi-Fi keeps apart show with Add; once added they are friends', async () => {
+    const HERE = { ...LAB, anywhere: 'f1'.repeat(32) };
+    h.native.landPlace = vi.fn(async () => [HERE]);
+    const { act } = await boot();
+    await act.action('card');
+    await tick(4100);
+    let people = block(act.sheet(sheetEnv('open')), 'people')!.items;
+    const p = people.find((x) => x.key === `place/${LAB.id}`)!;
+    expect(p).toMatchObject({ name: LAB.name, sub: 'Here · tap to add', action: 'befriend', arg: LAB.id });
+    expect(hasIcon(p.badge!)).toBe(true);
+    await act.action('befriend', LAB.id);
+    expect(h.native.landFriendAddNearby).toHaveBeenCalledWith(LAB.id);
+    const card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'text', 'note')).toMatchObject({ tone: 'good' });
+    // Now a friend: listed once, as a friend you can pick, not as "tap to add".
+    people = block(card, 'people')!.items;
+    expect(people.some((x) => x.key === `place/${LAB.id}`)).toBe(false);
+    expect(people.some((x) => x.arg === HERE.anywhere && x.action === 'pick')).toBe(true);
+  });
+
+  it('an Island here that is also on the network shows once', async () => {
+    h.native.landPlace = vi.fn(async () => [LAB]);
+    h.native.landScan = vi.fn(async () => [LAB]);
+    const { act } = await boot();
+    await act.action('card');
+    await tick(4100);
+    const people = block(act.sheet(sheetEnv('open')), 'people')!.items;
+    expect(people.filter((x) => x.name === LAB.name)).toHaveLength(1);
+  });
+
+  it('a cancelled firewall prompt says so and keeps the button', async () => {
+    h.native.landFirewall = vi.fn(async () => ({ state: 'blocked', network: 'public' }));
+    h.native.landFirewallFix = vi.fn(async () => ({ ok: false, error: "Windows didn't allow it (the prompt was cancelled)." }));
+    const { act } = await boot();
+    await act.action('card');
+    await tick(1100);
+    await act.action('firewall-fix');
+    const card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'text', 'note')!.text).toContain('cancelled');
+    expect(block(card, 'buttons', 'fw-fix')).toBeDefined();
+  });
+
+  it("block-all is the user's own setting: it says where to change it, no button", async () => {
+    h.native.landFirewall = vi.fn(async () => ({ state: 'block-all', network: 'public' }));
+    const { act } = await boot();
+    await act.action('card');
+    await tick(1100);
+    const card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'text', 'fw')!.text).toContain('Windows Security');
+    expect(block(card, 'buttons', 'fw-fix')).toBeUndefined();
+  });
+
   it('its first start on a computer says what it is, as the system asks about the network', async () => {
     h.native.landStart = vi.fn(async () => ({ ok: true, value: { id: 'me0000000000000a', name: 'DESKTOP-MOSS', visible: true, peers: [], fresh: true } }));
     const { act, calls } = await boot();
@@ -248,6 +326,7 @@ describe('land', () => {
     const card = act.sheet(sheetEnv('surfaced', { surfaced: 'intro' }))!;
     expect(block(card, 'head')!.title).toBe('Land is on');
     expect(block(card, 'text', 'ask')!.text).toContain('firewall');
+    expect(block(card, 'text', 'ask')!.text).toContain('Public');
     smoke(act, 'intro');
     await tick(INTRO_MS + 1000);
     expect(act.status()).toMatchObject({ chipOnly: true });

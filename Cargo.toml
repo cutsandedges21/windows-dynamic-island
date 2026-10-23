@@ -1,5 +1,7 @@
 [workspace]
 members = ["src-tauri", "hook"]
+# phone/wasm is its own workspace (a wasm32 build plus its test island): scripts/phone.mjs.
+exclude = ["phone"]
 resolver = "2"
 
 [workspace.package]

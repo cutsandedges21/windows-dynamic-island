@@ -1,0 +1,9 @@
+{
+  "name": "island-phone-e2e",
+  "private": true,
+  "type": "module",
+  "description": "The phone link's end-to-end tests: node scripts/phone.mjs e2e",
+  "devDependencies": {
+    "playwright": "1.64.1"
+  }
+}

@@ -201,6 +201,7 @@ export class WorkspacesActivity extends NoticeActivity {
           action: env.interactive && !busy ? 'restore' : undefined,
           arg: w.id,
           tip: busy ? 'A restore is running' : `Restore ${displayName(w)}`,
+          ...this.inUseRow(w),
         })),
       },
     };

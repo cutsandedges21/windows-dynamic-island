@@ -50,6 +50,8 @@ function resetNative() {
     audioState: vi.fn(async () => null),
     audioSet: vi.fn(async () => true),
     micSetMute: vi.fn(async () => true),
+    callControls: vi.fn(async (labels: string[]) => labels.filter((l) => l !== 'Discord').map((l) => ({ label: l, app: l }))),
+    callCamera: vi.fn(async () => ({ ok: true, value: null })),
     statMany: vi.fn(async (paths: string[]) => paths.map(() => null)),
     listFiles: vi.fn(async () => []),
     readBytes: vi.fn(async () => null),
@@ -541,6 +543,41 @@ describe('calls', () => {
 
     emit('privacy', { mic: [], cam: [] });
     expect(act.status().active).toBe(false);
+  });
+});
+
+describe('calls: the camera', () => {
+  it('switches the camera in the call app, and the button follows what Windows reports', async () => {
+    h.native.audioState = vi.fn(async () => ({ volume: 0.5, muted: false, device: null, deviceId: null, micMuted: false, micDevice: 'Mic' }));
+    const { act } = await boot(new CallsActivity());
+    emit('privacy', { mic: ['Zoom'], cam: [] });
+    await tick(0);
+    expect(h.native.callControls).toHaveBeenCalledWith(['Zoom']);
+    let cam = act.render(env('maximum')).find((s) => s.key === 'camera');
+    expect(cam).toMatchObject({ icon: 'video', label: 'Camera on', action: 'camera' });
+    await act.action!('camera', null);
+    expect(h.native.callCamera).toHaveBeenCalledWith('Zoom');
+    // Windows now lists Zoom on the camera: the button turns it off.
+    emit('privacy', { mic: ['Zoom'], cam: ['Zoom'] });
+    await tick(0);
+    cam = act.render(env('maximum')).find((s) => s.key === 'camera');
+    expect(cam).toMatchObject({ icon: 'video-off', label: 'Camera off' });
+    expect(act.render(env('compact')).some((s) => s.key === 'camera')).toBe(false);
+    smoke(act, 'calls camera');
+  });
+
+  it('an app without a camera shortcut gets no button; a failure says why for a moment', async () => {
+    const { act } = await boot(new CallsActivity());
+    emit('privacy', { mic: ['Discord'], cam: [] });
+    await tick(0);
+    expect(act.render(env('maximum')).some((s) => s.key === 'camera')).toBe(false);
+    emit('privacy', { mic: ['Discord', 'MSTeams'], cam: [] });
+    await tick(0);
+    h.native.callCamera = vi.fn(async () => ({ ok: false, error: 'No Teams call window.' }));
+    await act.action!('camera', null);
+    expect(act.render(env('expanded')).find((s) => s.key === 'apps')).toMatchObject({ text: 'No Teams call window.', tone: 'bad' });
+    await tick(6000);
+    expect(act.render(env('expanded')).find((s) => s.key === 'apps')).toMatchObject({ text: 'Discord, MSTeams' });
   });
 });
 

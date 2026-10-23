@@ -1,5 +1,6 @@
 // Mic & Camera: which apps are using the microphone or camera right now, with
-// a system-wide microphone mute.
+// a system-wide microphone mute, and the camera switched in the call app itself
+// (Teams, Zoom, Google Meet) by pressing its own shortcut.
 
 import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
@@ -13,6 +14,9 @@ export class CallsActivity extends BaseActivity {
   private mic: string[] = [];
   private cam: string[] = [];
   private muted: boolean | null = null;
+  /** Apps in the call whose camera Island can switch. */
+  private controls: Array<{ label: string; app: string }> = [];
+  private camError: { text: string; at: number } | null = null;
 
   constructor() {
     super('calls');
@@ -41,11 +45,43 @@ export class CallsActivity extends BaseActivity {
     this.mic = Array.isArray(p.mic) ? p.mic : [];
     this.cam = Array.isArray(p.cam) ? p.cam : [];
     // A new app starting to listen or watch is the moment worth a nod.
+    const names = this.names();
+    if (names.length !== before.size || names.some((n) => !before.has(n))) void this.loadControls(names);
     if ([...this.mic, ...this.cam].some((n) => !before.has(n))) {
       this.ctx.surface({ key: 'start', ms: 3000, level: 'expanded' });
       this.saw('call-start', 'calls:start');
     }
     this.ctx.update();
+  }
+
+  private async loadControls(names: string[]): Promise<void> {
+    const list = names.length ? await native.callControls(names) : [];
+    if (!this.alive) return;
+    this.controls = list;
+    this.ctx.update();
+  }
+
+  /** The call app whose camera the button switches: one with the camera on first. */
+  private camTarget(): { label: string; app: string; on: boolean } | null {
+    const live = this.controls.filter((c) => this.mic.includes(c.label) || this.cam.includes(c.label));
+    const c = live.find((x) => this.cam.includes(x.label)) ?? live[0];
+    return c ? { ...c, on: this.cam.includes(c.label) } : null;
+  }
+
+  private cameraButton(env: RenderEnv): Seg | null {
+    const t = this.camTarget();
+    if (!t) return null;
+    return {
+      t: 'button',
+      key: 'camera',
+      icon: t.on ? 'video-off' : 'video',
+      label: env.level === 'maximum' && !env.vertical ? (t.on ? 'Camera off' : 'Camera on') : undefined,
+      action: 'camera',
+      style: 'secondary',
+      side: 'end',
+      prio: 2,
+      tip: `${t.on ? 'Turn the camera off' : 'Turn the camera on'} in ${t.app}`,
+    };
   }
 
   private names(): string[] {
@@ -102,17 +138,22 @@ export class CallsActivity extends BaseActivity {
     if (camUse) segs.push({ t: 'icon', key: 'cam', icon: 'video', tone: 'bad', prio: 0 });
     const roomy = env.level === 'expanded' || env.level === 'maximum';
     const canMute = this.muted !== null; // some machines have no microphone to mute
+    const camera = env.interactive && roomy ? this.cameraButton(env) : null;
     if (env.vertical) {
       if (roomy && canMute) segs.push(this.muteButton(env));
+      if (camera) segs.push(camera);
       return segs;
     }
     if (!roomy) {
       segs.push({ t: 'text', key: 'apps', text: names.length === 1 ? clip(names[0], 14) : `${names.length} apps`, weight: 'semibold', prio: 0 });
       return segs;
     }
-    segs.push({ t: 'text', key: 'apps', text: clip(names.join(', '), 30), weight: 'semibold', prio: 2, min: 60 });
+    const err = this.camError && env.now - this.camError.at < 5000 ? this.camError.text : null;
+    if (err) segs.push({ t: 'text', key: 'apps', text: err, tone: 'bad', prio: 2, min: 60 });
+    else segs.push({ t: 'text', key: 'apps', text: clip(names.join(', '), 30), weight: 'semibold', prio: 2, min: 60 });
     if (muted) segs.push({ t: 'text', key: 'muted', text: 'Muted', tone: 'warn', prio: 3 });
     if (canMute) segs.push(this.muteButton(env));
+    if (camera) segs.push(camera);
     return segs;
   }
 
@@ -132,6 +173,15 @@ export class CallsActivity extends BaseActivity {
   }
 
   async action(name: string): Promise<void> {
+    if (name === 'camera') {
+      const t = this.camTarget();
+      if (!t) return;
+      const r = await native.callCamera(t.label);
+      this.camError = r.ok ? null : { text: r.error, at: Date.now() };
+      if (!r.ok) this.ctx.log('camera:', r.error);
+      this.ctx.update();
+      return;
+    }
     if (name !== 'mute') return;
     const next = this.muted !== true;
     if (await native.micSetMute(next)) {

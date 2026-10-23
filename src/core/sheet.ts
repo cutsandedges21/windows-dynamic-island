@@ -163,6 +163,37 @@ export type SheetAction = (action: string, arg: unknown, source: HTMLElement) =>
  */
 export const ISLAND_CLASSES: readonly string[] = ['pill', 'sheet', 'bubble', 'chat', 'glow'];
 
+/** A scroll turns Control Center's page once it has moved this far (a wheel notch moves 100). */
+const WHEEL_TURN_PX = 40;
+/** After a turn the wheel must rest this long before the next one. */
+const WHEEL_REST_MS = 220;
+
+/** A scroll gesture on Control Center: how far it moved, when it last did, and whether it turned a page. */
+export interface WheelGesture {
+  acc: number;
+  last: number;
+  turned: boolean;
+}
+
+/**
+ * One page per scroll gesture. A touchpad swipe or a quick spin of the wheel sends dozens of
+ * wheel events, and turning a page on each went straight from the first page to the last
+ * (Moss, 2026-10-22: "I can never see the second page"). Movement adds up until it passes
+ * WHEEL_TURN_PX, which turns one page; then nothing turns until the wheel rests WHEEL_REST_MS.
+ */
+export function wheelTurn(g: WheelGesture, delta: number, now: number): -1 | 0 | 1 {
+  if (now - g.last > WHEEL_REST_MS) {
+    g.acc = 0;
+    g.turned = false;
+  }
+  g.last = now;
+  if (g.turned) return 0;
+  g.acc += delta;
+  if (Math.abs(g.acc) < WHEEL_TURN_PX) return 0;
+  g.turned = true;
+  return g.acc > 0 ? 1 : -1;
+}
+
 /** A text block's classes; a boxed one (a chat's message, an answer) scrolls after `lines`. */
 export function textClass(b: Extract<Block, { t: 'text' }>): string {
   return `sb sb-text sz-${b.size ?? 'md'} tone-${b.tone ?? 'default'}${b.bubble ? ' boxed' : ''}`;
@@ -204,8 +235,8 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
   });
 }
 
-/** A QR code as one SVG path, black on a white square with a quiet zone around it. */
-function qrSvg(size: number, cells: string): SVGSVGElement {
+/** A QR code as one SVG path, black on a white square with a quiet zone around it (also Settings › Your phone). */
+export function qrSvg(size: number, cells: string): SVGSVGElement {
   const ns = 'http://www.w3.org/2000/svg';
   const quiet = 3;
   const side = size + quiet * 2;
@@ -1014,7 +1045,7 @@ export class SheetRenderer {
       if (!el || (this.tileSigs.get(el) !== sig && this.drag?.key !== t.key)) {
         if (el && this.tileSigs.get(el) === sig) {
           /* unchanged */
-        } else if (el && this.patchTile(el, t)) {
+        } else if (el && this.patchTile(el, t, editing)) {
           this.tileSigs.set(el, sig);
         } else {
           const next = this.tile(t, editing);
@@ -1282,14 +1313,17 @@ export class SheetRenderer {
       },
       { passive: true },
     );
+    const gesture: WheelGesture = { acc: 0, last: -Infinity, turned: false };
     host.addEventListener(
       'wheel',
       (e) => {
         const pages = host.querySelector<HTMLElement>('.pages');
         if (!pages || pages.scrollWidth <= pages.clientWidth + 2) return;
         e.preventDefault();
-        const at = this.currentPage(host);
-        this.goToPage(host, Math.max(0, Math.min(pages.children.length - 1, at + Math.sign(e.deltaY || e.deltaX))));
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1;
+        const step = wheelTurn(gesture, unit * (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY), e.timeStamp);
+        if (!step) return;
+        this.goToPage(host, Math.max(0, Math.min(pages.children.length - 1, this.currentPage(host) + step)));
       },
       { passive: false },
     );
@@ -1525,13 +1559,19 @@ export class SheetRenderer {
     host.addEventListener('pointercancel', up);
   }
 
+  /** What a tile was built for: its edit controls (− or +) are only made when it is built. */
+  private tileMode(t: Tile, editing: boolean): string {
+    return editing ? (t.hidden ? 'tray' : 'edit') : 'live';
+  }
+
   /**
    * Changes that should move rather than redraw (the battery bar sliding to the
-   * new charge). False means "rebuild this tile".
+   * new charge). False means "rebuild this tile", as it must be when arranging starts or ends
+   * (the battery tile used to keep its charge patched in and never got its − to take it off).
    */
-  private patchTile(el: HTMLElement, t: Tile): boolean {
+  private patchTile(el: HTMLElement, t: Tile, editing: boolean): boolean {
     const b = t.body;
-    if (b.k !== 'battery' || !el.classList.contains('k-battery')) return false;
+    if (b.k !== 'battery' || !el.classList.contains('k-battery') || el.dataset.mode !== this.tileMode(t, editing)) return false;
     const was = this.tileSigs.get(el);
     const prev = was ? (JSON.parse(was.split('|')[0]) as Tile) : null;
     if (!prev || prev.body.k !== 'battery' || prev.body.charging !== b.charging) return false;
@@ -1549,6 +1589,7 @@ export class SheetRenderer {
     // The size classes follow the cells it actually got, not the size it asked for.
     const e = make(live ? 'button' : 'div', `tile k-${b.k} span-${t.w ?? t.span ?? 1} rows-${t.h ?? t.rows ?? 1}${live ? ' act' : ''}${t.hidden ? ' hidden-tile' : ''}`);
     if (e instanceof HTMLButtonElement) e.type = 'button';
+    e.dataset.mode = this.tileMode(t, editing);
     // Tone tints the tile's icon and accents only (a tone class would tint all its text).
     e.dataset.tone = t.tone ?? 'default';
     if (t.tip && !editing) e.title = t.tip;

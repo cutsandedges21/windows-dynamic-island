@@ -20,6 +20,7 @@ import { MusicActivity } from './music';
 import { NetworkActivity } from './network';
 import { PhoneActivity } from './phone';
 import { QuickActivity } from './quick';
+import { RemindersActivity } from './reminders';
 import { ScreenshotsActivity } from './screenshots';
 import { ServersActivity } from './servers';
 import { SoundActivity } from './sound';
@@ -34,6 +35,7 @@ export function createRegistry(): Map<string, () => Activity> {
     ['music', () => new MusicActivity()],
     ['game', () => new GameActivity()],
     ['timer', () => new TimerActivity()],
+    ['reminders', () => new RemindersActivity()],
     ['downloads', () => new DownloadsActivity()],
     ['land', () => new LandActivity()],
     ['battery', () => new BatteryActivity()],

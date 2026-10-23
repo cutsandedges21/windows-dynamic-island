@@ -72,7 +72,7 @@ export function detail(ctx: Ctx, id: string): HTMLElement {
 
   const meta = h('div', { class: 'ws-meta' }, [
     h('span', { text: contentsText(ws) }),
-    h('span', { text: lastRunText(ws).text }),
+    h('span', { text: lastRunText(ws, ctx.ui.inUse.has(ws.id)).text }),
     h('span', { text: `Made ${new Date(ws.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}` }),
   ]);
   const hero = h('div', { class: 'ws-hero', style: `--wc:${wsColor(ws, accent)}` }, [

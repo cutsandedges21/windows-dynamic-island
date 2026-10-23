@@ -11,7 +11,7 @@ const answers = (over: Partial<Answers>): Answers => ({ uses: [], glance: [], ci
 
 describe('suggestGlance', () => {
   it('ticks what the uses call for, in the order the screen lists them', () => {
-    expect(suggestGlance(['school'], desktop)).toEqual(['calendar', 'timer', 'clipboard']);
+    expect(suggestGlance(['school'], desktop)).toEqual(['calendar', 'timer', 'reminders', 'clipboard']);
     expect(suggestGlance(['gaming', 'media'], desktop)).toEqual(['music', 'system', 'network', 'sound']);
   });
 

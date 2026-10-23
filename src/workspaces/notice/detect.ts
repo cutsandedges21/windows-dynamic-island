@@ -126,3 +126,20 @@ export function matchWorkspace(sig: Signal, title: string, list: Workspace[]): W
   }
   return bestScore >= 3 ? best : null;
 }
+
+/**
+ * The workspaces in use: those with a window open now, each window going to the workspace it
+ * clearly belongs to (read the way the window in front is). Nothing is kept.
+ */
+export function workspacesInUse(windows: ReadonlyArray<{ exe: string; title: string; className?: string }>, list: Workspace[]): Set<string> {
+  const ids = new Set<string>();
+  for (const w of windows) {
+    const ws = matchWorkspace(detect(w.exe, w.title, w.className), w.title, list);
+    if (ws) ids.add(ws.id);
+  }
+  return ids;
+}
+
+export function sameIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  return a.size === b.size && [...a].every((id) => b.has(id));
+}

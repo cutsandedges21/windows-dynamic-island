@@ -12,8 +12,8 @@ import { native, sendTo } from '../core/native';
 import type { Seg } from '../core/segments';
 import type { Block, SheetRow, SheetView, Tile } from '../core/sheet';
 import { workspaceEngine } from '../workspaces/engine';
-import { appName, baseName, displayName, type Workspace } from '../workspaces/model';
-import { detect, matchWorkspace } from '../workspaces/notice/detect';
+import { appName, baseName, displayName, inUseText, type Workspace } from '../workspaces/model';
+import { detect, matchWorkspace, sameIds, workspacesInUse } from '../workspaces/notice/detect';
 import { addSample, contextName, contexts, dayStart, duration, emptyTrail, prune, readTrail, settled, type Context, type TrailDoc } from '../workspaces/notice/model';
 import { leaveSeed } from '../workspaces/seed';
 import { workspaceSpans } from '../workspaces/time';
@@ -32,6 +32,8 @@ const RETURN_QUIET_MS = 30 * 60_000;
 /** A project without a workspace, this long today, gets the offer. */
 const SUGGEST_MS = 20 * 60_000;
 const SHOW_MS = 7000;
+/** How often Control Center's "In use" rows look at the open windows. */
+const IN_USE_MS = 4000;
 
 interface NoticeOptions {
   notice: boolean;
@@ -53,6 +55,9 @@ export abstract class NoticeActivity extends BaseActivity {
   private leaving: { ws: string; ms: number; at: number } | null = null;
   private offer: Context | null = null;
   private saved: { text: string; at: number } | null = null;
+  /** Workspaces with a window open (workspacesInUse), read again while the island is open. */
+  private inUse = new Set<string>();
+  private inUseAt = 0;
 
   protected noticeOptions(): NoticeOptions {
     const o = this.ctx.options<Partial<NoticeOptions>>();
@@ -70,6 +75,31 @@ export abstract class NoticeActivity extends BaseActivity {
     this.every(SAMPLE_MS, () => void this.sample());
     this.every(SAVE_MS, () => this.save());
     this.onDispose(() => this.save());
+    // Control Center's "In use" rows keep up while it's open (and cost nothing while it's closed).
+    this.every(IN_USE_MS, () => {
+      if (this.ctx.isOpen()) void this.checkInUse();
+    });
+  }
+
+  private async checkInUse(): Promise<void> {
+    this.inUseAt = Date.now();
+    const r = await native.wsWindows();
+    if (!r.ok) return;
+    const now = workspacesInUse(r.value, workspaceEngine().store.list);
+    if (sameIds(now, this.inUse)) return;
+    this.inUse = now;
+    this.ctx.update();
+  }
+
+  /** Whether a window of `ws` is open; a stale answer is checked again (the tile redraws if it changed). */
+  protected inUseNow(ws: Workspace): boolean {
+    if (Date.now() - this.inUseAt > IN_USE_MS) void this.checkInUse();
+    return this.inUse.has(ws.id);
+  }
+
+  /** A Control Center row's light and line for a workspace in use: the green light flashing, "In use". */
+  protected inUseRow(ws: Workspace): Pick<SheetRow, 'dot' | 'pulse' | 'detail'> | null {
+    return this.inUseNow(ws) ? { dot: 'good', pulse: true, detail: inUseText(ws) } : null;
   }
 
   private save(): void {
@@ -269,6 +299,7 @@ export abstract class NoticeActivity extends BaseActivity {
         action: env.interactive ? (ws ? 'restore' : 'make') : undefined,
         arg: ws ? ws.id : c.key,
         tip: ws ? `Restore ${displayName(ws)}` : 'Make it a workspace',
+        ...(ws ? this.inUseRow(ws) : null),
       };
     });
     return { key: 'workspaces', span: 2, rows: rows.length > 2 ? 2 : 1, body: { k: 'list', icon: 'grid', label: 'Pick up', rows } };

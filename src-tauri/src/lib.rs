@@ -8,12 +8,14 @@ mod app;
 mod agenda;
 #[cfg_attr(target_os = "macos", path = "mac/audio.rs")]
 mod audio;
+mod calls;
 mod land;
 mod anywhere;
 mod chat;
 mod claude;
 #[cfg_attr(target_os = "macos", path = "mac/dnd.rs")]
 mod dnd;
+mod firewall;
 mod fsx;
 #[cfg_attr(target_os = "macos", path = "mac/game.rs")]
 mod game;
@@ -41,6 +43,7 @@ mod phonelink;
 mod pipe;
 #[cfg_attr(target_os = "macos", path = "mac/procs.rs")]
 mod procs;
+mod remote;
 mod secrets;
 #[cfg_attr(target_os = "macos", path = "mac/shell.rs")]
 mod shell;
@@ -112,6 +115,7 @@ pub fn run() {
         .manage(app::Hotkeys::default())
         .manage(land::LandState::default())
         .manage(land::share::ShareState::default())
+        .manage(remote::RemoteState::default())
         .manage(workspaces::WsStore::default())
         .setup(move |app| {
             // A Mac menu bar app: no Dock icon, no app menu.
@@ -123,6 +127,8 @@ pub fn run() {
             let handle = app.handle().clone();
             log::line(format!("start v{}", app.package_info().version));
             *app.state::<store::SettingsStore>().value.lock().unwrap() = store::load(&handle);
+            // Island on your phone: its endpoint starts in the background when a phone is paired.
+            remote::setup(&handle);
             overlay::create(&handle)?;
             overlay::spawn_poll(handle.clone(), app.state::<Arc<overlay::Overlay>>().inner().clone());
             app::create_tray(&handle)?;
@@ -216,6 +222,16 @@ pub fn run() {
             app::notify,
             phone::phone_push,
             phone::phone_listen,
+            remote::remote_pair_start,
+            remote::remote_pair_stop,
+            remote::remote_phones,
+            remote::remote_rename,
+            remote::remote_forget,
+            remote::remote_send,
+            remote::remote_send_file,
+            remote::remote_vapid,
+            remote::remote_push,
+            remote::remote_name,
             phonelink::phone_link_access,
             phonelink::phone_link_watch,
             app::app_open,
@@ -241,6 +257,11 @@ pub fn run() {
             land::land_start,
             land::land_stop,
             land::land_scan,
+            land::land_place,
+            firewall::land_firewall,
+            calls::call_controls,
+            calls::call_camera,
+            firewall::land_firewall_fix,
             land::land_send,
             land::land_send_text,
             land::share::land_share_start,

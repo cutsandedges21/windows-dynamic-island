@@ -11,6 +11,10 @@ use tauri::Emitter;
 
 use super::*;
 
+/// Land's file rules for the phone remote (src/remote), which saves and names files the same
+/// way; `land::files` itself is private to Land.
+pub(crate) use super::files::{clean_component, computer_name, create_temp, downloads_dir, free_space, mark_from_network, place};
+
 /// How long a share works.
 pub const SHARE_FOR: Duration = Duration::from_secs(15 * 60);
 /// A request's line and headers; more is not a phone asking for a file.
@@ -69,7 +73,7 @@ fn share_ip(nets: &[Net]) -> Option<Ipv4Addr> {
 }
 
 /// The QR code of `text`: its side, and its modules row by row ('1' dark).
-pub(super) fn qr(text: &str) -> Result<(usize, String), String> {
+pub(crate) fn qr(text: &str) -> Result<(usize, String), String> {
     let code = qrcode::QrCode::new(text.as_bytes()).map_err(|e| e.to_string())?;
     let cells = code.to_colors().into_iter().map(|c| if c == qrcode::Color::Dark { '1' } else { '0' }).collect();
     Ok((code.width(), cells))
@@ -86,7 +90,7 @@ pub(super) fn html(text: &str) -> String {
 
 /// What the phone's browser is told a file is. Anything that could run in the page (HTML,
 /// SVG, scripts) only ever downloads.
-fn mime(name: &str) -> &'static str {
+pub(crate) fn mime(name: &str) -> &'static str {
     let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
         "jpg" | "jpeg" => "image/jpeg",

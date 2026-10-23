@@ -992,3 +992,111 @@ async fn nobody_listening_is_a_clear_failure() {
     assert!(a.send("nobody", vec![]).await.is_err());
     a.shutdown().await;
 }
+
+// ------------------------------------------------------------------ Islands at the same place
+
+#[test]
+fn a_place_topic_hides_the_address_and_is_the_same_for_everyone_there() {
+    let a = place_topic(Ipv4Addr::new(203, 0, 113, 7));
+    assert_eq!(a, place_topic(Ipv4Addr::new(203, 0, 113, 7)));
+    assert_ne!(a, place_topic(Ipv4Addr::new(203, 0, 113, 8)));
+    assert!(a.starts_with("island-place-") && a.len() == 37 && !a.contains("203"));
+    assert!(a.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
+}
+
+#[test]
+fn the_internet_address_comes_from_the_trace_page() {
+    assert_eq!(trace_ip("fl=1\nh=1.1.1.1\nip=203.0.113.7\nts=1\n"), Some(Ipv4Addr::new(203, 0, 113, 7)));
+    assert_eq!(trace_ip("ip=2001:db8::1\n"), None);
+    assert_eq!(trace_ip("nothing"), None);
+}
+
+#[test]
+fn only_ntfy_messages_count() {
+    assert_eq!(ntfy_message(br#"{"id":"a","event":"message","topic":"t","message":"{\"land\":1}"}"#).as_deref(), Some("{\"land\":1}"));
+    assert_eq!(ntfy_message(br#"{"id":"k","event":"keepalive"}"#), None);
+    assert_eq!(ntfy_message(b"junk"), None);
+}
+
+#[tokio::test]
+async fn islands_at_the_place_are_listed_only_with_a_signed_friend_key_and_can_be_asked() {
+    let dir = temp_dir("place");
+    let (emit, _events) = recorder();
+    let a = far_land("Here", &iroh::SecretKey::generate(), &dir.join("a"), emit.clone()).await;
+    let b = far_land("Lab PC", &iroh::SecretKey::generate(), &dir.join("b"), emit.clone()).await;
+    let plain = start(Identity::generate().unwrap(), Options { name: "No friends".into(), visible: true, downloads: dir.join("c"), discovery: 0, anywhere: None }, emit).await.unwrap();
+    // A's own packet, one without a friend key, a forged one: none listed.
+    a.heard_place(&a.hello("ask").encode(), "t").await;
+    a.heard_place(&plain.hello("ask").encode(), "t").await;
+    let mut forged: Value = serde_json::from_slice(&b.hello("here").encode()).unwrap();
+    forged["name"] = json!("x".repeat(3));
+    forged["ak"] = json!(a.hello("here").ak.unwrap());
+    a.heard_place(&serde_json::to_vec(&forged).unwrap(), "t").await;
+    assert!(a.place_peers().is_empty());
+    // B: listed with its friend key, and Add finds it.
+    a.heard_place(&b.hello("here").encode(), "t").await;
+    let list = a.place_peers();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "Lab PC");
+    assert_eq!(list[0].anywhere, b.hello("here").ak);
+    // Found on the network too: listed there only.
+    let h = b.hello("here");
+    a.add_peer(PeerInfo { id: h.id.clone(), name: h.name.clone(), os: h.os.clone(), anywhere: h.ak.clone() }, SocketAddr::from((Ipv4Addr::LOCALHOST, b.port)), b.me.public.clone());
+    assert!(a.place_peers().is_empty());
+    // A bye takes it off.
+    a.peers.lock().unwrap().clear();
+    a.heard_place(&b.hello("bye").encode(), "t").await;
+    assert!(a.place_peers().is_empty());
+}
+
+/// Two Islands find each other through the real ntfy.sh on a throwaway topic.
+#[tokio::test]
+#[ignore]
+async fn islands_find_each_other_through_ntfy() {
+    let dir = temp_dir("place-real");
+    let (emit, _events) = recorder();
+    // Islands that take files: only those answer an ask.
+    let open = |name: &'static str, sub: &str, emit: Emit| {
+        let d = dir.join(sub);
+        async move {
+            let anywhere = Some(crate::anywhere::Setup { key: iroh::SecretKey::generate(), relays: crate::anywhere::Relays::Off, book: d.join("land-friends.json") });
+            start(Identity::generate().unwrap(), Options { name: name.into(), visible: true, downloads: d.join("Downloads"), discovery: 0, anywhere }, emit).await.unwrap()
+        }
+    };
+    let a = open("A", "a", emit.clone()).await;
+    let b = open("B", "b", emit).await;
+    let topic = format!("island-place-test-{:x}", now_ms());
+    for r in [&a, &b] {
+        *r.place_topic.lock().unwrap() = Some(topic.clone());
+    }
+    // B listens; A asks; B answers; A hears the answer.
+    let listen = |run: Arc<Running>, topic: String| async move {
+        let mut resp = reqwest::get(format!("https://ntfy.sh/{topic}/json")).await.unwrap();
+        let mut buf = Vec::new();
+        while let Ok(Some(c)) = resp.chunk().await {
+            buf.extend_from_slice(&c);
+            while let Some(at) = buf.iter().position(|b| *b == b'\n') {
+                let line: Vec<u8> = buf.drain(..=at).collect();
+                if let Some(m) = ntfy_message(&line) {
+                    run.heard_place(m.as_bytes(), &topic).await;
+                }
+            }
+        }
+    };
+    tokio::spawn(listen(b.clone(), topic.clone()));
+    tokio::spawn(listen(a.clone(), topic.clone()));
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    a.place_ask();
+    let found = timeout(Duration::from_secs(15), async {
+        loop {
+            if !a.place_peers().is_empty() && !b.place_peers().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await;
+    assert!(found.is_ok(), "a: {:?} b: {:?}", a.place_peers(), b.place_peers());
+    assert_eq!(a.place_peers()[0].name, "B");
+    assert_eq!(b.place_peers()[0].name, "A");
+}

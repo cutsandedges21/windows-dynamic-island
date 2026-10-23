@@ -17,6 +17,7 @@ import { cloneSettings, newPhoneTopic, type Settings } from './core/settings';
 import { springs } from './core/spring';
 import { h } from './dom';
 import { downloadingName, modelPicker, type PickerHost } from './models-ui';
+import { focusPhoneSection } from './remote/settings';
 
 export interface WelcomeHost {
   settings(): Settings;
@@ -293,6 +294,8 @@ function phone(host: WelcomeHost): Node[] {
         : 'Island can share notifications with your phone, both ways. Both are optional, and you can also set them up later in Settings › Notifications.',
     }),
     h('div', { class: 'w-cards' }, [toPhone, fromPhone]),
+    // Island on your phone: setup ends here and Settings opens on Your phone, to pair it.
+    h('div', { class: 'w-note' }, [h('span', { text: 'New: see and control Island from your iPhone, anywhere.' }), h('button', { class: 'btn', text: 'Use Island from your phone', onclick: () => (focusPhoneSection(), finish(host), void native.openApp('settings')) })]),
   ];
 }
 

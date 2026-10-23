@@ -26,6 +26,10 @@ import { mapActions, SheetRenderer, type SheetView, type Tile } from './sheet';
 import { springs } from './spring';
 import { workspaceEngine } from '../workspaces/engine';
 import { clip, timeOfDay } from './format';
+import { PhoneActs, PhoneHub, type PhoneDelivery, type PhoneIslandHooks } from '../remote/hub';
+import { phoneNative } from '../remote/native';
+import { PHONE_ISLAND_ACTIONS, type BotState, type Nav } from '../remote/protocol';
+import { urgentIds } from '../remote/views';
 
 type View = 'main' | 'overflow' | 'menu' | 'hide';
 
@@ -128,6 +132,13 @@ export class Island {
   private fileDrag: { owner: string; hint: string } | null = null;
   /** The window is hidden because the user hid the island for a while (`island.hiddenUntil`). */
   private windowHidden = false;
+  /** Island on your phone: what phones see of this island and what their taps do (src/remote/hub.ts). */
+  private hub: PhoneHub | null = null;
+  /** The pill as last composed, and the bot as last shown, for phones (also with no Duplicate copies). */
+  private lastFrame: MirrorFrame | null = null;
+  private botNow: BotState | null = null;
+  /** Activities running what a phone pressed: a card one opens meanwhile opens on that phone. */
+  private readonly phoneActs = new PhoneActs();
 
   constructor(
     stage: HTMLElement,
@@ -159,6 +170,7 @@ export class Island {
 
   async boot(): Promise<void> {
     this.settings = migrate(await native.settingsGet());
+    void native.remoteName().then((n) => (this.systemName = n));
     this.applyLook();
     await this.place(true);
     this.syncActivities();
@@ -197,6 +209,10 @@ export class Island {
     window.addEventListener('resize', () => {
       if (native.demo) void this.place(false);
     });
+
+    // Island on your phone: paired phones see this island live and tap it.
+    this.hub = new PhoneHub(this.phoneHooks(), phoneNative);
+    this.hub.start().catch((err) => native.log(`phones failed to start: ${String(err)}`));
 
     setInterval(() => this.tick(), 1000);
     setInterval(() => this.followCursor(), 1500);
@@ -441,24 +457,29 @@ export class Island {
       isOpen: () => this.open,
       isPrimary: () => this.primaryId === id,
       openCard: () => {
+        // Opened by what a phone pressed: the card opens on that phone, not on this screen.
+        const phone = this.phoneActs.phoneFor(id);
+        if (phone && this.hub) return this.hub.openCard(phone, id);
         this.open = true;
         this.view = 'main';
         this.cardFor = id;
         this.schedule();
       },
       closeCard: () => {
+        const phone = this.phoneActs.phoneFor(id);
+        if (phone && this.hub) return this.hub.closeCard(phone, id);
         if (this.cardFor === id) this.cardFor = null;
         this.schedule();
       },
-      cardOpen: () => this.open && this.cardFor === id,
+      cardOpen: () => (this.open && this.cardFor === id) || (this.hub?.showsCard(id) ?? false),
       notify: (title, body, phone = true) => {
         const g = this.settings.general;
         if (g.dnd) return;
         if (g.notifications) void native.notify(title, body);
-        if (phone) this.toPhone(title, body);
+        if (phone) this.toPhone(id, title, body);
       },
       push: (title, body, look) => {
-        if (!this.settings.general.dnd) this.toPhone(title, body, look);
+        if (!this.settings.general.dnd) this.toPhone(id, title, body, look);
       },
       log: (...parts) => void native.log(`${id}: ${parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ')}`),
       setQuiet: (on) => this.setQuiet(on),
@@ -472,8 +493,12 @@ export class Island {
     };
   }
 
-  /** Settings › Notifications › Send to my phone (src-tauri/src/phone.rs). */
-  private toPhone(title: string, body: string, look: { tag?: string; priority?: number; buttons?: Array<{ label: string; reply: string }> } = {}): void {
+  /**
+   * To the phone: paired phones that turned notifications on (Settings › Your phone; a tap opens
+   * activity `id`'s card there), and Settings › Notifications › Send to my phone (ntfy, src-tauri/src/phone.rs).
+   */
+  private toPhone(id: string, title: string, body: string, look: { tag?: string; priority?: number; buttons?: Array<{ label: string; reply: string }> } = {}): void {
+    this.hub?.push(title, body, look.tag ?? '', id, (look.priority ?? 3) >= 4);
     const g = this.settings.general;
     if (!g.phonePush || !g.phoneTopic) return;
     // Buttons only with Answer Claude from my phone on; then Island listens for the taps while the request waits.
@@ -689,18 +714,21 @@ export class Island {
     const beam: ActivityStatus['beam'] = this.fileDrag ? { tone: 'accent', motion: 'pulse' } : (pStatus?.beam ?? this.busyElsewhere(choice.visible, statuses));
     // The pill's light would run around the pill over the player covering it.
     this.syncGlow(hidden || morph ? null : beam, !hidden && choice.urgent && this.sheet.visible, morph !== null);
-    this.sendMirror({
+    // Every frame is kept for phones, whether or not Duplicate copies run.
+    this.lastFrame = {
       sig, swap, bump: bump && !hiddenEverywhere, placed, w, h, orient, anchor, edge: s.edge,
       hidden: hiddenEverywhere, fsHide, fullscreen: this.fullscreenAny,
       glow: beamSpec(beam), speed: s.glow,
       bot: botShown ? { d: botD } : null,
       accent: accentColor(s), color: s.color, reduce: s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches),
-    });
+    };
+    this.sendMirror(this.lastFrame);
     this.pillInput = placed.some((p) => p.seg.t === 'input');
     this.syncInput();
     this.publishHit(this.renderer.rect, true, hidden ? this.wakeStrip(w) : null);
     this.updateTray(statuses);
     if (Date.now() < this.appSubscribedUntil) this.pushAppState(statuses, level, primary);
+    this.hub?.tick();
   }
 
   /** Activity keys and actions get the activity's id, so nothing collides. */
@@ -908,22 +936,7 @@ export class Island {
     if (this.view === 'hide' && !this.previewLevel) return this.hideSheet(now);
     if (this.view !== 'main' || this.previewLevel) return null;
     const vertical = orient === 'vertical';
-    const ask = (id: string, reason: SheetEnv['reason']): { owner: string; view: SheetView } | null => {
-      const act = this.running.get(id);
-      if (!act?.sheet) return null;
-      const interactive = this.settings.activities.config[id]?.interactive ?? true;
-      const env: SheetEnv = { reason, now, width: this.sheetWidth(null, orient, pillW) - 28, vertical, interactive, surfaced: id === choice.primary ? choice.surfaced : null };
-      try {
-        const view = act.sheet(env);
-        if (!view) return null;
-        let blocks = mapActions(view.blocks, (a) => this.nsAction(id, a));
-        if (!interactive) blocks = blocks.filter((b) => b.t !== 'input' && b.t !== 'buttons' && b.t !== 'choices').map((b) => (b.t === 'head' ? { ...b, buttons: undefined } : b));
-        return { owner: id, view: { ...view, key: `${id}/${view.key}`, blocks } };
-      } catch (err) {
-        console.error(`sheet ${id}`, err);
-        return null;
-      }
-    };
+    const ask = (id: string, reason: SheetEnv['reason']) => this.askSheet(id, reason, now, this.sheetWidth(null, orient, pillW) - 28, vertical, id === choice.primary ? choice.surfaced : null);
     const primary = choice.primary;
     const pStatus = primary ? statuses.get(primary) : undefined;
     if (primary && choice.urgent && pStatus?.urgent && !this.dismissedUrgent.has(`${primary}:${pStatus.urgent.key}`)) {
@@ -946,6 +959,24 @@ export class Island {
       if (card) return card;
     }
     return null;
+  }
+
+  /** An activity's card for `reason`, its actions named for it; for this screen and for phones alike. */
+  private askSheet(id: string, reason: SheetEnv['reason'], now: number, width: number, vertical: boolean, surfaced: string | null): { owner: string; view: SheetView } | null {
+    const act = this.running.get(id);
+    if (!act?.sheet) return null;
+    const interactive = this.settings.activities.config[id]?.interactive ?? true;
+    const env: SheetEnv = { reason, now, width, vertical, interactive, surfaced };
+    try {
+      const view = act.sheet(env);
+      if (!view) return null;
+      let blocks = mapActions(view.blocks, (a) => this.nsAction(id, a));
+      if (!interactive) blocks = blocks.filter((b) => b.t !== 'input' && b.t !== 'buttons' && b.t !== 'choices').map((b) => (b.t === 'head' ? { ...b, buttons: undefined } : b));
+      return { owner: id, view: { ...view, key: `${id}/${view.key}`, blocks } };
+    } catch (err) {
+      console.error(`sheet ${id}`, err);
+      return null;
+    }
   }
 
   /**
@@ -990,9 +1021,14 @@ export class Island {
 
   /** Control Center: one tile per switched-on activity, in the user's order. */
   private gridSheet(now: number, orient: Orientation, pillW: number): { owner: string; view: SheetView } | null {
-    void orient;
     const geo = this.gridGeometry(pillW);
-    const width = geo.width;
+    const tiles = this.gridTiles(now, geo.width, orient === 'vertical');
+    if (!tiles.length) return null;
+    return { owner: 'island', view: { key: 'island/grid', wide: true, width: geo.width, blocks: this.arrange(tiles, geo) } };
+  }
+
+  /** Every Control Center tile for a grid `width` wide: the island's day, then one per activity, actions named for it. */
+  private gridTiles(now: number, width: number, vertical: boolean): Tile[] {
     // The island's own cell: how much of today is gone, at a glance.
     const d = new Date(now);
     const dayPct = ((d.getHours() * 60 + d.getMinutes()) / 1440) * 100;
@@ -1007,7 +1043,7 @@ export class Island {
       const act = this.running.get(id);
       if (!act?.tile) continue;
       const interactive = this.settings.activities.config[id]?.interactive ?? true;
-      const env: SheetEnv = { reason: 'open', now, width: width - 28, vertical: orient === 'vertical', interactive, surfaced: null };
+      const env: SheetEnv = { reason: 'open', now, width: width - 28, vertical, interactive, surfaced: null };
       try {
         const tile = act.tile(env);
         if (!tile) continue;
@@ -1019,18 +1055,19 @@ export class Island {
         console.error(`tile ${id}`, err);
       }
     }
-    if (!tiles.length) return null;
-    return { owner: 'island', view: { key: 'island/grid', wide: true, width, blocks: this.arrange(tiles, geo) } };
+    return tiles;
   }
 
   /**
    * The user's grid: their pages and their sizes (src/core/grid.ts). Tiles they took
    * off the grid wait in the tray while editing. While a tile is dragged or resized,
-   * the grid shows the layout it would get if let go now.
+   * the grid shows the layout it would get if let go now. `live` false (a phone's copy)
+   * never arranges and leaves this screen's drag alone.
    */
-  private arrange(natural: Tile[], geo: { cols: number; rows: number; cell: number }): SheetView['blocks'] {
+  private arrange(natural: Tile[], geo: { cols: number; rows: number; cell: number }, live = true): SheetView['blocks'] {
     const layout = this.settings.island.grid;
-    const drag = this.gridDrag;
+    const drag = live ? this.gridDrag : null;
+    const editing = live && this.gridEditing;
     const sized = natural.map((t) => {
       const narrow = NARROW_OK.has(t.body.k);
       const saved = layout.sizes[t.key];
@@ -1049,21 +1086,23 @@ export class Island {
     const dimsOf: GridDims = (k) => dims.get(k) ?? null;
     const saved = drag?.preview ?? (layout.pages.length ? layout.pages : layout.order.length ? [layout.order] : []);
     const { pages, slots } = settle(withNew(saved, shown.map((t) => t.key), dimsOf), dimsOf, geo.cols, geo.rows);
-    this.gridPages = pages;
-    this.gridSlots = slots;
+    if (live) {
+      this.gridPages = pages;
+      this.gridSlots = slots;
+    }
     const where = new Map(slots.map((slot) => [slot.key, slot]));
     const items: Tile[] = shown.flatMap((t) => {
       const slot = where.get(t.key);
       return slot ? [{ ...t, page: slot.page, col: slot.col, row: slot.row, w: slot.w, h: slot.h }] : [];
     });
-    const tray: Tile[] = this.gridEditing ? sized.filter((t) => isHidden(t.key)).map((t) => ({ ...t, w: 1, h: 1, hidden: true, sizes: undefined })) : [];
+    const tray: Tile[] = editing ? sized.filter((t) => isHidden(t.key)).map((t) => ({ ...t, w: 1, h: 1, hidden: true, sizes: undefined })) : [];
     // The card is only as tall as the rows the tiles reach; editing opens every row to drag into.
-    const rows = this.gridEditing ? geo.rows : rowsUsed(slots);
+    const rows = editing ? geo.rows : rowsUsed(slots);
 
     const blocks: SheetView['blocks'] = [
-      { t: 'tiles', key: 'grid', items, tray, cols: geo.cols, rows, cell: geo.cell, pages: pageCount(slots), editing: this.gridEditing },
+      { t: 'tiles', key: 'grid', items, tray, cols: geo.cols, rows, cell: geo.cell, pages: pageCount(slots), editing },
     ];
-    if (this.gridEditing) {
+    if (editing) {
       blocks.push({
         t: 'buttons',
         key: 'grid-edit',
@@ -1332,15 +1371,7 @@ export class Island {
 
   private handleAction(action: string, arg: unknown, _source: HTMLElement): void {
     if (action.startsWith('act:')) {
-      const rest = action.slice(4);
-      const i = rest.indexOf(':');
-      const id = rest.slice(0, i);
-      const name = rest.slice(i + 1);
-      const act = this.running.get(id);
-      if (act?.action) {
-        Promise.resolve(act.action(name, arg)).catch((err) => native.log(`action ${id}:${name} failed: ${String(err)}`));
-      }
-      this.schedule();
+      void this.runAct(action, arg);
       return;
     }
     switch (action) {
@@ -1442,6 +1473,92 @@ export class Island {
     this.schedule();
   }
 
+  /** `act:<activity>:<name>` goes to that activity; the promise settles when it is done with it. */
+  private runAct(action: string, arg: unknown): Promise<void> {
+    const rest = action.slice(4);
+    const i = rest.indexOf(':');
+    const id = rest.slice(0, i);
+    const name = rest.slice(i + 1);
+    const act = this.running.get(id);
+    const done = act?.action ? Promise.resolve(act.action(name, arg)).catch((err) => native.log(`action ${id}:${name} failed: ${String(err)}`)) : Promise.resolve();
+    this.schedule();
+    return done.then(() => undefined);
+  }
+
+  // ---------------------------------------------------------------- Island on your phone
+
+  /** What the hub (src/remote/hub.ts) asks of the island. */
+  private phoneHooks(): PhoneIslandHooks {
+    return {
+      pill: () => (this.lastFrame ? { frame: this.lastFrame, bot: this.lastFrame.bot ? this.botNow : null } : null),
+      view: (nav, width) => this.phoneView(nav, width),
+      act: (phone, action, arg) => this.phoneAction(phone, action, arg),
+      facts: () => ({
+        name: this.computerName(),
+        platform,
+        version: __APP_VERSION__,
+        // With Windows Hello asked before Allow, a phone can't pass it: no Allow from phones.
+        allow: this.settings?.activities.config.claude?.options.requireHello !== true,
+      }),
+      fromPhone: (item) => this.fromPhone(item),
+    };
+  }
+
+  /**
+   * What a phone shows under its pill: an urgent card first (the one this screen shows for it),
+   * else what it asked for: Control Center packed for its width, or an activity's own card (its
+   * hover card when it has no other, Control Center when it has neither), or nothing.
+   */
+  private phoneView(nav: Nav, width: number): { nav: Nav; view: SheetView | null; urgent: string | null } {
+    if (!this.settings) return { nav, view: null, urgent: null };
+    const now = Date.now();
+    // A phone draws every card under its pill: none grows out of it there.
+    const card = (id: string, reason: SheetEnv['reason']) => {
+      const got = this.askSheet(id, reason, now, width - 28, false, null);
+      return got ? { ...got.view, morph: undefined } : null;
+    };
+    for (const id of urgentIds(this.settings.activities.order, this.statuses(), this.dismissedUrgent)) {
+      const view = card(id, 'urgent');
+      if (view) return { nav, view, urgent: id };
+    }
+    if (nav.open === 'none') return { nav, view: null, urgent: null };
+    if (nav.open === 'card') {
+      const view = card(nav.id, 'open') ?? card(nav.id, 'hover');
+      if (view) return { nav, view, urgent: null };
+    }
+    return { nav: { open: 'grid' }, view: this.phoneGrid(now, width), urgent: null };
+  }
+
+  /** Control Center on a phone: four columns across its card, the user's pages and sizes, never arranging. */
+  private phoneGrid(now: number, width: number): SheetView {
+    // Rows as tall as a small island's, or square cells when the columns come out wider.
+    const col = (width - GRID_PAD * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
+    const geo = { cols: GRID_COLS, rows: GRID_ROWS, cell: Math.round(Math.min(CELL_PX.large, Math.max(CELL_PX.small, col))) };
+    return { key: 'island/grid', wide: true, width, blocks: this.arrange(this.gridTiles(now, width, false), geo, false) };
+  }
+
+  /** A phone's tap the hub allowed, run as a click here; a card its activity opens meanwhile opens on that phone. */
+  private async phoneAction(phone: string, action: string, arg: unknown): Promise<void> {
+    if (action.startsWith('act:')) return this.phoneActs.run(action.slice(4).split(':')[0], phone, () => this.runAct(action, arg));
+    if (PHONE_ISLAND_ACTIONS.includes(action)) this.handleAction(action, arg, this.renderer.pill);
+  }
+
+  /** What this computer is called: the name Land gives it (what computers nearby see), else the system's name. */
+  private computerName(): string {
+    const land = this.running.get('land') as (Activity & { computerName?(): string | null }) | undefined;
+    return land?.computerName?.() || this.systemName || (platform === 'macos' ? 'Mac' : 'PC');
+  }
+
+  /** The computer's own name (remote_name), asked once at boot for when Land is off. */
+  private systemName = '';
+
+  /** Text or a file from a phone: Land shows it like what another computer sent; without Land, a notification. */
+  private fromPhone(item: PhoneDelivery): void {
+    const land = this.running.get('land') as (Activity & { fromPhone?(item: PhoneDelivery): void }) | undefined;
+    if (land?.fromPhone) land.fromPhone(item);
+    else if (this.settings.general.notifications) void native.notify(`From ${item.from}`, item.kind === 'text' ? clip(item.text, 200) : `${item.name} is in Downloads.`);
+  }
+
   // ---------------------------------------------------------------- files dropped on the island
 
   /**
@@ -1515,7 +1632,9 @@ export class Island {
     // With the bar open and nothing on its way, it listens to you.
     if (this.chatOpen && chatView && chatView.phase !== 'thinking' && chatView.phase !== 'streaming') signals.push({ mood: 'listening' });
     const frame = this.brain.update({ signals, dnd: this.settings.general.dnd, now, hour: new Date(now).getHours() });
-    this.bubble.show(lookFor(frame), frame.play, frame.moment?.strength ?? 0.5);
+    // Kept as BubbleView.show takes it: phones draw the same bot.
+    this.botNow = { look: lookFor(frame), play: frame.play, strength: frame.moment?.strength ?? 0.5 };
+    this.bubble.show(this.botNow.look, this.botNow.play, this.botNow.strength);
   }
 
   /** Quiet: the island stays small and holds its notifications, and Windows' Do Not Disturb follows. */
@@ -1555,8 +1674,12 @@ export class Island {
     if (this.windowHidden) this.syncHidden();
     // Clocks, elapsed times and countdowns: recompose once a second while anything shows.
     if (this.primaryId || this.open || this.surfaces.length) this.compose(false);
-    // The bot's moments end, and late at night it yawns, without anything else changing.
-    else if (this.settings.island.bot) this.syncPet(Date.now(), this.chatOpen ? (this.running.get('local')?.chat?.() ?? null) : null);
+    else {
+      // The bot's moments end, and late at night it yawns, without anything else changing.
+      if (this.settings.island.bot) this.syncPet(Date.now(), this.chatOpen ? (this.running.get('local')?.chat?.() ?? null) : null);
+      // Phones see that too, and time pass on their cards.
+      this.hub?.tick();
+    }
   }
 
   // ---------------------------------------------------------------- hotkeys + tray

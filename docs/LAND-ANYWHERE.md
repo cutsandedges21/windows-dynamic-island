@@ -38,6 +38,8 @@ Why iroh: it gets **past most home routers directly** (hole punching plus UPnP/N
 2. **Nearby computers can become friends in one tap.** A computer Land already found on your network can be added without a code, because the two have already met.
 3. **Search by email, like Blip.** This needs our own account server, a user database and email sending. It's not part of this plan.
 
+4. **Islands at the same place, when the Wi-Fi keeps devices apart** (2026-10-21, Moss's yes). School and café Wi-Fi often isolates clients, so the network announcements never arrive (seen at Vanier: sends went through the relay because Land never saw the other PC). Islands behind one router share its internet address: each one with Land anywhere on reads it from `https://1.1.1.1/cdn-cgi/trace` and listens on the ntfy.sh topic `island-place-<first 12 bytes of sha256("island-land-place/1|<ip>") in hex>`. Opening Land's card posts one signed "ask" (the same packet as on the network, sent with `Cache: no`); every Island there that takes files answers "here", each at most once a minute (ntfy.sh limits messages per internet address, and everyone there shares one). Found this way, a computer only shows with **Add** ("Here · tap to add"); files still go to friends only. Anyone who knows the internet address can read the names posted there, as anyone on the Wi-Fi hears them on the network. Code: `src-tauri/src/land/place.rs`.
+
 Only friends (and computers on the same network, as today) can send offers. A connection from an unknown key is closed before anything reaches the screen.
 
 ## Slices
@@ -116,7 +118,7 @@ Total: about 5 to 7 days of sessions for slices 1–5 (usable between friends fr
 ## Watch out for
 
 - **School or work Wi-Fi** often blocks the UDP that direct paths need. iroh then goes through the relay over HTTPS, so it still works, just slower.
-- **Windows Firewall.** Land already asks for private networks. iroh's outgoing UDP usually needs no prompt; check on the first real test.
+- **Windows Firewall.** Windows' prompt ticks Private only, which also writes a Block rule for Public, and school Wi-Fi is Public. Land's card now says when the firewall keeps it out on the current network and fixes it with one UAC prompt (`src-tauri/src/firewall.rs`: drops Island's inbound rules, allows it on every profile). The first-run text says to tick both. iroh's outgoing UDP usually needs no prompt; check on the first real test.
 - **Exe size.** iroh grew Island.exe from 9.4 MB to 14.1 MB (the relay server is a test-only dependency and isn't in it).
 - **Other sessions edit `land.rs`.** Check `git status` and ListAgents before slice 3's refactor.
 - **Never use Blip's servers or code.** This design uses open-source iroh and our own protocol; nothing of Blip's goes into this repo.

@@ -1,0 +1,41 @@
+# The phone site's iroh endpoint (browser build: wasm32-unknown-unknown + wasm-bindgen) and the
+# native fake island its end-to-end tests dial. Its own workspace (the root one excludes phone/).
+# Build with `node scripts/phone.mjs wasm` (it brings the clang ring needs; see that script).
+# Cargo.lock started as a copy of the root one, so iroh and its crates are the island's 1.3.0.
+
+[workspace]
+members = ["fake-island"]
+resolver = "3"
+
+[package]
+name = "island-phone"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Browser only: natively the library is empty (src/lib.rs is cfg'd to the wasm target).
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+# In a browser iroh is relay-only (WebSocket to the relay); QUIC + TLS (ring) stay end to end.
+iroh = { version = "=1.3.0", default-features = false, features = ["tls-ring"] }
+# ring 0.17 takes randomness from getrandom 0.2, whose browser backend this feature turns on.
+ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"] }
+n0-future = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde_json = "1"
+url = "2"
+tokio = { version = "1", default-features = false, features = ["sync"] }
+console_error_panic_hook = "0.1"
+
+# Size-tuned build for the site: cargo build --target wasm32-unknown-unknown --profile wasm-release
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"

@@ -7,3 +7,8 @@ src-tauri/gen/
 *.log
 .vite/
 .superpowers/
+
+# Island on your phone: the wasm build output and the link tests' leftovers.
+phone/web/src/link/pkg/
+phone/e2e/dist/
+phone/e2e/state/

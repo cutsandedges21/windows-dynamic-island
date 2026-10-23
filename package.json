@@ -18,12 +18,17 @@
     "tauri": "node scripts/tauri.mjs",
     "app": "node scripts/tauri.mjs dev",
     "release": "node scripts/tauri.mjs release",
-    "icons": "node scripts/make-icons.mjs"
+    "icons": "node scripts/make-icons.mjs",
+    "phone:dev": "node scripts/phone.mjs dev",
+    "phone:build": "node scripts/phone.mjs build",
+    "phone:deploy": "node scripts/phone.mjs deploy",
+    "phone:typecheck": "tsc --noEmit -p phone/tsconfig.json"
   },
   "dependencies": {
     "@choochmeque/tauri-plugin-biometry-api": "^0.3.0-rc.3",
     "@tauri-apps/api": "^2.12.1",
-    "@tauri-apps/plugin-autostart": "^2.7.0"
+    "@tauri-apps/plugin-autostart": "^2.7.0",
+    "jsqr": "^1.4.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.1",

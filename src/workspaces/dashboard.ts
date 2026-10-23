@@ -201,10 +201,13 @@ function recentRows(ctx: Ctx, list: Workspace[]): HTMLElement {
     list.map((ws) => {
       const text = h('span', { class: 'ws-recent-text' }, [h('b', { text: displayName(ws) })]);
       const line = h('span');
-      if (ws.notes.next.trim()) line.append(h('em', { text: 'Next: ' }), ws.notes.next.trim());
-      else line.textContent = `Opened ${agoText(Date.now() - ws.lastOpenedAt!)}`;
+      const inUse = ctx.ui.inUse.has(ws.id);
+      const next = ws.notes.next.trim();
+      if (inUse) line.append(next ? 'In use · ' : 'In use');
+      if (next) line.append(h('em', { text: 'Next: ' }), next);
+      else if (!inUse) line.textContent = `Opened ${agoText(Date.now() - ws.lastOpenedAt!)}`;
       text.append(line);
-      const dot = lastRunText(ws).dot;
+      const dot = lastRunText(ws, inUse).dot;
       return h('button', { class: 'ws-recent-row', type: 'button', style: `--wc:${wsColor(ws, ctx.accent())}`, 'data-focus': `recent:${ws.id}`, onclick: () => ctx.go({ kind: 'detail', id: ws.id }) }, [tile(ws, ctx.accent(), 'sm'), text, dot ? h('span', { class: `ws-dot ${dot}`, 'aria-hidden': 'true' }) : null]);
     }),
   );
@@ -231,7 +234,9 @@ function placeWithin(full: string[], section: string[]): string[] {
   return out;
 }
 
-export function lastRunText(ws: Workspace): { dot: string; text: string } {
+/** The card's light and line: "In use" (flashing) while a window of it is open, else how the last restore went. */
+export function lastRunText(ws: Workspace, inUse = false): { dot: string; text: string } {
+  if (inUse) return { dot: 'in-use', text: 'In use' };
   const run = ws.history[0];
   if (!ws.lastOpenedAt && !run) return { dot: '', text: 'Never opened' };
   const when = agoText(Date.now() - (ws.lastOpenedAt ?? run!.at));
@@ -277,7 +282,7 @@ function card(ctx: Ctx, ws: Workspace, section: Workspace[] | null): HTMLElement
   const next = ws.notes.next.trim();
   const job = ctx.ui.job;
   const busy = job?.state === 'running';
-  const last = busy && job.ws === ws.id ? { dot: 'running', text: `Restoring · ${jobSummary(job)}` } : lastRunText(ws);
+  const last = busy && job.ws === ws.id ? { dot: 'running', text: `Restoring · ${jobSummary(job)}` } : lastRunText(ws, ctx.ui.inUse.has(ws.id));
   const restore = labelled('play', 'Restore', 'sm ws-restore', () => ctx.restore?.(ws));
   restore.dataset.focus = `restore:${ws.id}`;
   if (!ctx.restore || busy) {

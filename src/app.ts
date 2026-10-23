@@ -17,6 +17,7 @@ import { springs } from './core/spring';
 import { multiSegmented, row, section, segmented, stacked, toggle } from './controls';
 import { h } from './dom';
 import { modelPicker } from './models-ui';
+import { phoneSection } from './remote/settings';
 import { welcomePage, type WelcomeHost } from './welcome';
 import { noticePanel } from './workspaces/notice/panel';
 import { workspacesPage, type WorkspacesPage } from './workspaces/page';
@@ -541,9 +542,13 @@ function landPanel(): HTMLElement {
     list.replaceChildren(...(friends.length ? friends.map(friendRow) : [h('p', { class: 'muted', text: 'No friends yet. Send your code to someone, or paste theirs above.' })]));
     // Islands on this network that can be added without a code (they announced their key, signed).
     const known = new Set(friends.map((f) => f.id));
-    const addable = (await native.landScan()).filter((p) => p.anywhere && !known.has(p.anywhere));
+    const near = await native.landScan();
+    const nearIds = new Set(near.map((p) => p.id));
+    // Islands here that the Wi-Fi keeps apart, found over the internet (Land's place topic).
+    const here = (await native.landPlace()).filter((p) => !nearIds.has(p.id)).map((p) => ({ ...p, here: true }));
+    const addable = [...near, ...here].filter((p) => p.anywhere && !known.has(p.anywhere));
     nearby.replaceChildren(...addable.map((p) =>
-      row(p.name, 'On this network: add without a code', h('button', { class: 'btn ghost', text: 'Add as friend', onclick: async () => {
+      row(p.name, 'here' in p ? 'Here, but this Wi-Fi keeps computers apart: add without a code' : 'On this network: add without a code', h('button', { class: 'btn ghost', text: 'Add as friend', onclick: async () => {
         status.textContent = `Asking ${p.name}… They answer on their island.`;
         const r = await native.landFriendAddNearby(p.id);
         status.textContent = r.ok ? `${r.value.name} is your friend now.` : r.error;
@@ -738,6 +743,7 @@ function privacyNote(mac: boolean): string {
     'the integrations you connect',
     'Send to my phone (the notification text goes through ntfy.sh)',
     "Land's friends on other networks (n0's relays and key lookup see which Islands connect, never the files)",
+    "a phone you pair in Your phone (n0's relays carry its connection, encrypted end to end; its notifications go through Apple's push service, encrypted for the phone)",
     ...(mac ? [] : ["the Games ping (the game's server, or 1.1.1.1)"]),
     'the Local AI models you choose to download',
   ];
@@ -839,6 +845,7 @@ function settingsPage(): HTMLElement {
           ]
         : []),
     ]),
+    phoneSection(),
     section('Keyboard shortcuts', [
       row('Open or close the island', null, hotkey('toggleHotkey', 'island.toggle')),
       row('Open Activities', null, hotkey('activitiesHotkey', 'island.activities')),

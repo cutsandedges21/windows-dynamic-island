@@ -169,6 +169,7 @@ impl Running {
     /// Asks every device nearby to say who it is (the Land card opening).
     pub async fn scan(&self) {
         self.expire();
+        self.place_ask();
         self.shout("ask").await;
     }
 
@@ -227,6 +228,7 @@ impl Running {
             let mut peers = self.peers.lock().unwrap();
             let before = peers.len();
             peers.retain(|_, p| p.seen.elapsed() < PEER_TTL);
+            self.place.lock().unwrap().retain(|_, p| p.seen.elapsed() < PLACE_TTL);
             before != peers.len()
         };
         if gone {

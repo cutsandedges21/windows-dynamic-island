@@ -49,6 +49,7 @@ export const GLANCE: Glance[] = [
   { id: 'calendar', label: 'Your next event', icon: 'calendar' },
   { id: 'weather', label: 'Weather', icon: 'cloud-sun' },
   { id: 'timer', label: 'Timers and focus', icon: 'timer' },
+  { id: 'reminders', label: 'Reminders', icon: 'bell' },
   { id: 'battery', label: 'Battery', icon: 'battery', laptop: true },
   { id: 'system', label: 'CPU and memory', icon: 'cpu' },
   { id: 'network', label: 'Internet speed', icon: 'wifi' },
@@ -61,8 +62,8 @@ export const GLANCE: Glance[] = [
 
 /** What each use ticks in the second question before the user changes anything. */
 const USE_GLANCE: Record<Use, string[]> = {
-  school: ['calendar', 'timer', 'clipboard'],
-  work: ['calendar', 'timer', 'clipboard', 'downloads'],
+  school: ['calendar', 'timer', 'reminders', 'clipboard'],
+  work: ['calendar', 'timer', 'reminders', 'clipboard', 'downloads'],
   coding: ['system', 'clipboard'],
   gaming: ['system', 'network', 'sound'],
   media: ['music', 'sound'],
@@ -111,7 +112,7 @@ export interface Answers {
 export const HELPERS = ['sound', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'phone', 'workspaces'];
 
 /** Grid order: what you act on first, then what you glance at, then occasional helpers. */
-const GRID_ORDER = ['claude', 'music', 'calendar', 'weather', 'timer', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'sound', 'downloads', 'land', 'screenshots', 'clipboard'];
+const GRID_ORDER = ['claude', 'music', 'calendar', 'weather', 'timer', 'reminders', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'sound', 'downloads', 'land', 'screenshots', 'clipboard'];
 
 /** The bot's brain: switched on by the AI step, never a tile (the bot is the way in). */
 const BRAIN = 'local';

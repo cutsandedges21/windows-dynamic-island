@@ -204,7 +204,18 @@ export const CATALOG: ActivityMeta[] = [
         default: true,
       },
     ],
+  },  {
+    id: 'reminders',
+    name: 'Reminders',
+    description: 'Type what and when ("submit the lab at 3pm", "stretch in 20m", "tomorrow 9am"). When it is time, the island shows it with Snooze and Done, and Windows notifies you.',
+    icon: 'bell',
+    category: 'productivity',
+    enabled: true,
+    priority: 'medium',
+    behavior: B(true, false, true, true),
+    options: [],
   },
+
   {
     id: 'battery',
     mac: 'soon',

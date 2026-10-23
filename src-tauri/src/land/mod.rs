@@ -37,6 +37,7 @@ use tokio::time::timeout;
 
 mod discovery;
 mod files;
+mod place;
 mod receive;
 mod send;
 pub(crate) mod share;
@@ -48,6 +49,7 @@ mod wire;
 pub(crate) use discovery::{clean_name, clean_os};
 use discovery::*;
 use files::*;
+use place::*;
 use transfer::*;
 use wire::*;
 
@@ -191,6 +193,12 @@ pub struct Running {
     queue_file: Option<PathBuf>,
     /// What wakes the sends waiting for each friend (by key).
     kicks: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
+    /// Computers found at this place over the internet (place.rs), its topic, and when this
+    /// Island last asked there and last answered.
+    place: Mutex<HashMap<String, PlacePeer>>,
+    place_topic: Mutex<Option<String>>,
+    place_asked: Mutex<Option<Instant>>,
+    place_answered: Mutex<Option<Instant>>,
     /// Tests: the next send loses its connection after this many bytes (0: never).
     #[cfg(test)]
     cut: AtomicU64,
@@ -256,6 +264,10 @@ pub async fn start(me: Identity, opts: Options, emit: Emit) -> Result<Arc<Runnin
         waiting: Mutex::new(waiting),
         queue_file,
         kicks: Mutex::new(HashMap::new()),
+        place: Mutex::new(HashMap::new()),
+        place_topic: Mutex::new(None),
+        place_asked: Mutex::new(None),
+        place_answered: Mutex::new(None),
         #[cfg(test)]
         cut: AtomicU64::new(0),
     });
@@ -265,6 +277,10 @@ pub async fn start(me: Identity, opts: Options, emit: Emit) -> Result<Arc<Runnin
     if let Some(u) = run.udp.clone() {
         tokio::spawn(run.clone().listen_loop(u));
         tokio::spawn(run.clone().announce_loop());
+    }
+    // Islands at the same place whose Wi-Fi keeps devices apart: only with Land anywhere on.
+    if run.far.is_some() && run.discovery > 0 {
+        tokio::spawn(run.clone().place_loop());
     }
     // Friends' files from other networks; ends with the endpoint (or with Land).
     if let Some(mut conns) = run.far.as_ref().and_then(|f| f.land_connections()) {
@@ -325,6 +341,7 @@ impl Running {
     pub async fn befriend(&self, peer_id: &str) -> Result<crate::anywhere::Friend, String> {
         let far = self.far.clone().ok_or_else(|| "Turn on Friends on other networks first (Activities \u{203a} Land).".to_string())?;
         let key = self.peers.lock().unwrap().get(peer_id).and_then(|p| p.info.anywhere.clone());
+        let key = key.or_else(|| self.place.lock().unwrap().get(peer_id).and_then(|p| p.info.anywhere.clone()));
         let key = key.ok_or_else(|| "That computer can't be added this way: it needs Island with Friends on other networks on.".to_string())?;
         let id: iroh::EndpointId = key.parse().map_err(|_| "That computer announced a damaged key.".to_string())?;
         far.ask(id).await
@@ -594,6 +611,12 @@ pub async fn land_scan(state: tauri::State<'_, LandState>) -> Result<Vec<PeerInf
     let run = running(&state).await?;
     run.scan().await;
     Ok(run.peers())
+}
+
+/// Computers at the same place found over the internet (Wi-Fi that keeps devices apart).
+#[tauri::command]
+pub async fn land_place(state: tauri::State<'_, LandState>) -> Result<Vec<PeerInfo>, String> {
+    Ok(running(&state).await?.place_peers())
 }
 
 #[tauri::command]

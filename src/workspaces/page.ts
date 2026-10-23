@@ -13,6 +13,7 @@ import { dashboard } from './dashboard';
 import { detail, flushNotes } from './detail';
 import { cancelEdit, editor, loadDraft, saveEdit, startEdit } from './editor';
 import type { WsSort } from './model';
+import { sameIds, workspacesInUse } from './notice/detect';
 import { readTrail } from './notice/model';
 import type { Answer, Job } from './restore';
 import { takeSeed } from './seed';
@@ -73,6 +74,7 @@ export function workspacesPage(accent: () => string, ask: Ask, noticing: Noticin
     jobClosed: null,
     tab: saved.tab,
     time: { back: 0, day: null, spans: null, for: 0, at: 0, loading: false, fresh: true },
+    inUse: new Set(),
   };
   const store = createStore('app', (message) => toast(message));
   const scroller = () => el.closest<HTMLElement>('.content');
@@ -245,10 +247,27 @@ export function workspacesPage(accent: () => string, ask: Ask, noticing: Noticin
   setInterval(() => {
     if (timeShowing() && document.visibilityState === 'visible') loadTime(ctx);
   }, 15_000);
+  // "In use" on the cards and a workspace's page: which ones have a window open, read again
+  // every few seconds while they're on screen; a redraw only when that changes.
+  const inUseShowing = () => el.isConnected && document.visibilityState === 'visible' && ctx.view.kind !== 'edit' && !timeShowing();
+  const checkInUse = async () => {
+    if (!store.ready) return;
+    const r = await native.wsWindows();
+    if (!r.ok) return;
+    const now = workspacesInUse(r.value, store.list);
+    if (sameIds(now, ui.inUse)) return;
+    ui.inUse = now;
+    paint();
+  };
+  void loading.then(checkInUse);
+  setInterval(() => {
+    if (inUseShowing()) void checkInUse();
+  }, 4000);
   return {
     el,
     home: () => go({ kind: 'list' }),
     shown: () => {
+      if (inUseShowing()) void checkInUse();
       if (!timeShowing()) return;
       loadTime(ctx, true);
       paint();

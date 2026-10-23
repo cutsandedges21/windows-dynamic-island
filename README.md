@@ -56,6 +56,8 @@ Other programs can push their own activities: see `docs/ACTIVITY-API.md`.
 
 ## Your phone
 
+**Island on your phone** ([islandphone.vercel.app](https://islandphone.vercel.app)): your island, live, on your phone, from anywhere (home, school Wi-Fi, cellular). It shows the pill, the bot and Control Center as they are on the PC; tap tiles, answer Claude (Allow, Deny, questions, replies), send photos, files, text and links to the PC, copy the PC's clipboard, lock the PC, and get Claude's moments as notifications. To set it up, open the site in Safari on the iPhone, **Share › Add to Home Screen**, open Island from the Home Screen, tap **Scan**, and point it at the code from **Settings › Your phone › Pair a phone** on the PC. The connection is end to end encrypted (iroh, through n0's relays); nothing goes through a server of ours. A phone can pair with several PCs (switch in **More**), a PC with several phones.
+
 - **Island → phone.** Settings › Notifications › **Send to my phone** sends the island's notifications, plus Claude Code's finished turns, errors, questions and permission requests, to the free **ntfy** app (iPhone and Android). Install ntfy, tap **+**, paste the topic Island shows, Subscribe, then **Send a test**. The text goes through ntfy.sh, and anyone with the topic can read it, so keep it private.
 - **Answer from the phone.** With **Answer Claude from my phone** on, Claude Code's permission pushes carry **Allow** and **Deny** buttons that answer on the PC.
 - **Files to any phone.** Drop files on the island (or paste a link or a note in Land's card), then **Send to a phone**: scan the QR code with the phone's camera and save them from its browser. Same Wi-Fi only, for 15 minutes.
