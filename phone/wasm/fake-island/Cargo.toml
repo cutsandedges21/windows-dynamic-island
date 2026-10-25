@@ -2,7 +2,7 @@
 name = "fake-island"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license = "LicenseRef-Proprietary"
 publish = false
 
 # A stand-in for the island's phone side, for phone/e2e. Same iroh line as src-tauri/Cargo.toml.

@@ -6,7 +6,7 @@
   "description": "A fluid activity island for Windows: Claude Code, music, downloads, timers and system events in one spring-animated pill",
   "type": "module",
   "author": "Moss",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "scripts": {
     "dev": "vite",
     "vite": "vite",

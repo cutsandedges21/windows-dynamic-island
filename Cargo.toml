@@ -7,7 +7,7 @@ resolver = "2"
 [workspace.package]
 version = "0.4.0"
 edition = "2021"
-license = "MIT"
+license = "LicenseRef-Proprietary"
 authors = ["Moss"]
 
 # The hook relay starts on every Claude Code event, so release builds favour
