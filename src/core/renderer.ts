@@ -29,6 +29,13 @@ interface SegNode {
 const ENTER = { o: 0, s: 0.82, b: 7 };
 const args = new WeakMap<HTMLElement, unknown>();
 
+/**
+ * A card grown out of the pill (Music's player) stands in for it. `grown`: the pill's glass and
+ * shadow are gone under the card's, its content fades out on top of the card. `shrinking`: the
+ * card goes back, the content fades in again. `off`: the pill is itself again.
+ */
+export type PillCover = 'off' | 'grown' | 'shrinking';
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, html?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
   e.className = cls;
@@ -166,6 +173,12 @@ export class PillRenderer {
 
   setShell(r: Rect, opts: { config?: SpringConfig; immediate?: boolean } = {}): void {
     this.shell.set({ x: r.x, y: r.y, w: r.w, h: r.h }, { config: opts.config ?? springs.shell, immediate: opts.immediate });
+  }
+
+  /** A card grown out of the pill stands in for it (see PillCover); the styles do the fading. */
+  setCover(cover: PillCover): void {
+    this.pill.classList.toggle('covered', cover !== 'off');
+    this.pill.classList.toggle('cover-out', cover === 'grown');
   }
 
   /** A sideways wobble: the island shaking its head (alerts, failed actions). */

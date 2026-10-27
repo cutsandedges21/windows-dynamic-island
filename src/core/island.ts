@@ -153,6 +153,11 @@ export class Island {
         if (card) this.cardGlow?.place(card);
         this.publishHit(this.renderer.rect, false);
       },
+      (cover) => {
+        this.renderer.setCover(cover);
+        // The player is back in the pill: the pill's light may come back too.
+        if (cover === 'off') this.schedule();
+      },
     );
     // The light is drawn above the pill and the card, not inside them, so it can spill over their edges.
     this.pillGlow = new BorderGlow(stage);
@@ -712,8 +717,8 @@ export class Island {
     }
     this.composeSheet(picked, orient, w, immediate);
     const beam: ActivityStatus['beam'] = this.fileDrag ? { tone: 'accent', motion: 'pulse' } : (pStatus?.beam ?? this.busyElsewhere(choice.visible, statuses));
-    // The pill's light would run around the pill over the player covering it.
-    this.syncGlow(hidden || morph ? null : beam, !hidden && choice.urgent && this.sheet.visible, morph !== null);
+    // The pill's light would run around the pill over the player covering it, also while the player shrinks back.
+    this.syncGlow(hidden || morph || this.sheet.covering ? null : beam, !hidden && choice.urgent && this.sheet.visible, morph !== null);
     // Every frame is kept for phones, whether or not Duplicate copies run.
     this.lastFrame = {
       sig, swap, bump: bump && !hiddenEverywhere, placed, w, h, orient, anchor, edge: s.edge,

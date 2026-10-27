@@ -14,7 +14,7 @@ import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
 import { buildPlayer, patchPlayer, type PlayerBlock } from './player';
-import { springAnimate } from './renderer';
+import { springAnimate, type PillCover } from './renderer';
 import type { Tone } from './segments';
 import { springs } from './spring';
 
@@ -276,9 +276,16 @@ const REFLOW_DWELL_MS = 150;
 const MORPH_RADIUS = 34;
 const MORPH_OUT = { response: 0.5, damping: 0.74 };
 const MORPH_BACK = { response: 0.36, damping: 0.9 };
+/** Its content on the way back: faster than the shape, so the shrinking edge never cuts through it. */
+const MORPH_CONTENT_OUT = { response: 0.15, damping: 1 };
 
 const args = new WeakMap<HTMLElement, unknown>();
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+/** Rounds a CSS length to whole device pixels (125% and 150% scaling make those fractions of a CSS px). */
+const snapPx = (v: number) => {
+  const k = window.devicePixelRatio || 1;
+  return Math.round(v * k) / k;
+};
 
 function make<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -332,6 +339,8 @@ export class SheetRenderer {
   /** The card grows out of the pill and covers it (SheetView.morph), and the height it grows to. */
   private morph = false;
   private morphH = 0;
+  /** What the grown card means for the pill under it, from the moment it grows until it is back. */
+  private cover: PillCover = 'off';
   /** Player buttons bind like any card button; an empty action unbinds (no buttons). */
   private readonly bindPlayer = (e: HTMLElement, action: string | undefined, arg: unknown): void => {
     if (!action) delete e.dataset.action;
@@ -342,6 +351,7 @@ export class SheetRenderer {
     private readonly stage: HTMLElement,
     private readonly onAction: SheetAction,
     private readonly onMove: () => void,
+    private readonly onCover: (cover: PillCover) => void = () => {},
   ) {
     this.el = make('div', 'sheet');
     this.el.append(make('div', 'sheet-bg'));
@@ -393,6 +403,11 @@ export class SheetRenderer {
     return this.shown ? this.viewKey : null;
   }
 
+  /** A card grown out of the pill is standing in for it, growing, open or on its way back. */
+  get covering(): boolean {
+    return this.cover !== 'off';
+  }
+
   /** Where the card is drawn right now (null while hidden). */
   get rect(): Rect | null {
     return this.drawn;
@@ -426,6 +441,11 @@ export class SheetRenderer {
   /** Called on every pill frame: the card stays attached to the moving pill. */
   follow(pill: Rect): void {
     this.pill = pill;
+    // On its way back the player lands on the pill as it is now, not as it was when it left:
+    // the pill may be changing too (a right-click turns it into the menu).
+    if (this.cover === 'shrinking' && (this.springs.target('w') !== pill.w || this.springs.target('h') !== pill.h)) {
+      this.springs.set({ h: pill.h, w: pill.w }, { config: MORPH_BACK });
+    }
     if (this.shown || !this.springs.settled) this.place();
   }
 
@@ -450,8 +470,11 @@ export class SheetRenderer {
     if (this.shown && morph !== this.morph) this.hide(true);
     const appearing = !this.shown;
     if (appearing) {
-      // Still shrinking back into the pill: it grows again from where it is.
+      // Still shrinking back into the pill: it grows again from where it is, its content
+      // coming back from however far it had faded.
       const regrow = morph && this.morph && this.drawn !== null;
+      const faded = regrow ? getComputedStyle(this.inner) : null;
+      const from = faded ? { opacity: faded.opacity, filter: faded.filter === 'none' ? 'blur(0px)' : faded.filter } : null;
       this.morph = morph;
       this.el.classList.toggle('morph', morph);
       this.el.style.display = '';
@@ -460,10 +483,17 @@ export class SheetRenderer {
       // Grown out of the pill it starts as the pill itself, solid; any other card from a sliver.
       if (morph && !regrow) this.springs.set({ h: this.pill.h, o: 1, s: 1, b: 0, w: this.pill.w }, { immediate: true });
       else if (!morph) this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width }, { immediate: true });
+      // Drawn at the pill's size on its way back (place()), it grows again from there.
+      const d = this.drawn;
+      if (regrow && d && (d.w > this.springs.get('w') + 0.5 || d.h > this.springs.get('h') + 0.5)) this.springs.set({ w: d.w, h: d.h }, { immediate: true });
       if (morph) {
+        // From here the card is the pill: the pill's own glass goes, its content fades out.
+        this.setCover('grown');
         this.springs.set({ w: this.width }, { config: MORPH_OUT, immediate: geo.immediate });
-        // The content comes in once the shape has room for it.
-        if (!regrow) springAnimate(this.inner, [{ opacity: 0, filter: 'blur(4px)' }, { opacity: 1, filter: 'blur(0px)' }], springs.content, { delay: 90, fill: 'backwards' });
+        // The content comes in as the shape makes room for it, while the pill's fades out: one
+        // dissolves into the other, with no empty card in between.
+        if (from) springAnimate(this.inner, [from, { opacity: 1, filter: 'blur(0px)' }], springs.content);
+        else springAnimate(this.inner, [{ opacity: 0, filter: 'blur(4px)' }, { opacity: 1, filter: 'blur(0px)' }], springs.content);
       }
     } else {
       // A new width (the hover card turning into the Control Center as the pill opens)
@@ -485,6 +515,12 @@ export class SheetRenderer {
 
   // ---------------------------------------------------------------- placement
 
+  private setCover(cover: PillCover): void {
+    if (cover === this.cover) return;
+    this.cover = cover;
+    this.onCover(cover);
+  }
+
   private hide(immediate: boolean): void {
     if (!this.shown) return;
     this.drag?.abort();
@@ -500,6 +536,8 @@ export class SheetRenderer {
       this.el.classList.remove('morph');
       this.el.style.borderRadius = '';
       this.drawn = null;
+      // Back on the pill's exact shape: the pill takes over again.
+      this.setCover('off');
       this.onMove();
     };
     if (immediate || reducedMotion()) {
@@ -508,8 +546,10 @@ export class SheetRenderer {
       return;
     }
     if (this.morph) {
-      // Back into the pill: the content goes first, then the shape shrinks onto the pill and is gone.
-      springAnimate(this.inner, [{ opacity: 1 }, { opacity: 0 }], springs.fade, { fill: 'forwards' });
+      // Back into the pill: the content blurs out ahead of the shrinking edge, which would
+      // otherwise cut through it, while the pill's own content fades back in.
+      springAnimate(this.inner, [{ opacity: 1, filter: 'blur(0px)' }, { opacity: 0, filter: 'blur(4px)' }], MORPH_CONTENT_OUT, { fill: 'forwards' });
+      this.setCover('shrinking');
       this.springs.set({ h: this.pill.h, w: this.pill.w }, { config: MORPH_BACK });
       this.springs.onRest(done);
       return;
@@ -543,9 +583,13 @@ export class SheetRenderer {
 
   private place(v = this.springs.values()): void {
     if (!this.ready) return;
-    const h = Math.max(0, v.h);
-    const w = Math.max(0, Math.round(v.w));
+    // Snapped too: a bottom-anchored card's content hangs from its bottom edge.
     const p = this.pill;
+    // On its way back it is never smaller than the pill: a pill growing faster than the card
+    // shrinks (into the menu) would otherwise show its content off the card, with no glass under it.
+    const back = this.cover === 'shrinking';
+    const h = snapPx(Math.max(0, back ? Math.max(v.h, p.h) : v.h));
+    const w = Math.max(0, Math.round(back ? Math.max(v.w, p.w) : v.w));
     const { width: W, height: H } = this.area;
     const clampX = (x: number) => Math.max(EDGE, Math.min(W - w - EDGE, x));
     const clampY = (y: number) => Math.max(EDGE, Math.min(H - h - EDGE, y));
@@ -577,6 +621,10 @@ export class SheetRenderer {
       const t = clamp01(Math.abs(h - p.h) / Math.max(1, Math.abs(this.morphH - p.h)));
       this.el.style.borderRadius = `${pillR + (MORPH_RADIUS - pillR) * t}px`;
     }
+    // On whole screen pixels: the card is its own layer, and once it stops resizing, moving it by a
+    // fraction of a pixel (following the pill as it settles) stretches what was drawn and blurs it.
+    x = snapPx(x);
+    y = snapPx(y);
     const st = this.el.style;
     st.transform = `translate3d(${x}px, ${y}px, 0) scale(${v.s})`;
     st.width = `${w}px`;
