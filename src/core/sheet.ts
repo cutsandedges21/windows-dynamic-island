@@ -85,8 +85,13 @@ export type Block =
   | { t: 'text'; key: string; text: string; tone?: Tone; size?: 'sm' | 'md'; bubble?: boolean; lines?: number }
   | { t: 'code'; key: string; text: string }
   | { t: 'buttons'; key: string; items: SheetButton[]; align?: 'start' | 'end' | 'fill' }
-  /** Never focused on its own: clicking it engages it (`engage` fires), Enter sends `action` with the text. */
-  | { t: 'input'; key: string; placeholder: string; action: string; engage?: string; hint?: string }
+  /**
+   * Never focused on its own: clicking it engages it (`engage` fires), Enter sends `action` with the text.
+   * With `lines` it is a box of that many lines (a note): Enter starts a new line, Ctrl+Enter sends; it
+   * starts out holding `value`, and `change` gets the text as it is typed (and when the box lets go), so
+   * what was typed is kept even if the card closes.
+   */
+  | { t: 'input'; key: string; placeholder: string; action: string; engage?: string; hint?: string; lines?: number; value?: string; change?: string }
   | { t: 'meter'; key: string; label: string; value: number; pace?: number | null; text: string; sub?: string; tone?: Tone; tip?: string }
   | { t: 'rows'; key: string; items: SheetRow[] }
   | { t: 'choices'; key: string; items: Choice[] }
@@ -215,7 +220,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
       case 'buttons':
         return { ...b, items: b.items.map(btn) };
       case 'input':
-        return { ...b, action: fn(b.action), engage: b.engage ? fn(b.engage) : undefined };
+        return { ...b, action: fn(b.action), engage: b.engage ? fn(b.engage) : undefined, change: b.change ? fn(b.change) : undefined };
       case 'rows':
         return { ...b, items: b.items.map(row) };
       case 'choices':
@@ -259,6 +264,8 @@ export function qrSvg(size: number, cells: string): SVGSVGElement {
 }
 
 const GAP = 8;
+/** A typing pause this long sends an input's `change` (a note saves itself). */
+const CHANGE_MS = 400;
 /** The card grows out of a sliver about the size of a resting pill. */
 const SLIVER = 26;
 const EDGE = 8;
@@ -274,6 +281,8 @@ const DRAG_REACH = 160;
 const REFLOW_DWELL_MS = 150;
 /** A card grown out of the pill: its corners at full size, and how it stretches out and back. */
 const MORPH_RADIUS = 34;
+/** An ordinary card's corners (island.css .sheet), for the hand-off from a grown card. */
+const CARD_RADIUS = 24;
 const MORPH_OUT = { response: 0.5, damping: 0.74 };
 const MORPH_BACK = { response: 0.36, damping: 0.9 };
 /** Its content on the way back: faster than the shape, so the shrinking edge never cuts through it. */
@@ -281,6 +290,7 @@ const MORPH_CONTENT_OUT = { response: 0.15, damping: 1 };
 
 const args = new WeakMap<HTMLElement, unknown>();
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 /** Rounds a CSS length to whole device pixels (125% and 150% scaling make those fractions of a CSS px). */
 const snapPx = (v: number) => {
   const k = window.devicePixelRatio || 1;
@@ -310,7 +320,8 @@ interface BlockNode {
 export class SheetRenderer {
   readonly el: HTMLElement;
   private inner: HTMLElement;
-  private readonly springs: SpringSet<'h' | 'o' | 's' | 'b' | 'w'>;
+  /** m: how far the card stands over the pill (1, grown out of it) rather than under it (0). */
+  private readonly springs: SpringSet<'h' | 'o' | 's' | 'b' | 'w' | 'm'>;
   private readonly nodes = new Map<string, BlockNode>();
   private readonly tileSigs = new WeakMap<HTMLElement, string>();
   private viewKey: string | null = null;
@@ -333,7 +344,7 @@ export class SheetRenderer {
   private pill: Rect = { x: 0, y: 0, w: 0, h: 0 };
   private width = 380;
   private drawn: Rect | null = null;
-  private engagedInput: HTMLInputElement | null = null;
+  private engagedInput: HTMLInputElement | HTMLTextAreaElement | null = null;
   /** The spring set writes once while it is being built; nothing to place yet. */
   private ready = false;
   /** The card grows out of the pill and covers it (SheetView.morph), and the height it grows to. */
@@ -361,10 +372,10 @@ export class SheetRenderer {
     stage.append(this.el);
 
     this.springs = new SpringSet(
-      { h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width },
+      { h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width, m: 0 },
       (v) => this.place(v),
       springs.shell,
-      { h: 0.3, o: 0.002, s: 0.0005, b: 0.02, w: 0.3 },
+      { h: 0.3, o: 0.002, s: 0.0005, b: 0.02, w: 0.3, m: 0.002 },
     );
     this.ready = true;
 
@@ -434,7 +445,7 @@ export class SheetRenderer {
   }
 
   /** The input the user clicked into, if it is still on the card. */
-  focusedInput(): HTMLInputElement | null {
+  focusedInput(): HTMLInputElement | HTMLTextAreaElement | null {
     return this.engagedInput && this.engagedInput.isConnected ? this.engagedInput : null;
   }
 
@@ -465,9 +476,13 @@ export class SheetRenderer {
     this.width = Math.round(geo.width);
     this.inner.style.setProperty('--cols', this.width >= 520 ? '4' : '2');
 
-    // Into or out of a card that grows from the pill: the old card goes at once, the new one starts afresh.
+    // Out of a card grown from the pill (the island opening from Music's player): the same card
+    // carries on. Into one: the old card goes at once, the grown one starts afresh from the pill.
     const morph = view.morph === true;
-    if (this.shown && morph !== this.morph) this.hide(true);
+    if (this.shown && morph !== this.morph) {
+      if (this.morph && !geo.immediate && !reducedMotion()) this.unmorph();
+      else this.hide(true);
+    }
     const appearing = !this.shown;
     if (appearing) {
       // Still shrinking back into the pill: it grows again from where it is, its content
@@ -481,8 +496,8 @@ export class SheetRenderer {
       this.shown = true;
       for (const a of this.inner.getAnimations()) a.cancel();
       // Grown out of the pill it starts as the pill itself, solid; any other card from a sliver.
-      if (morph && !regrow) this.springs.set({ h: this.pill.h, o: 1, s: 1, b: 0, w: this.pill.w }, { immediate: true });
-      else if (!morph) this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width }, { immediate: true });
+      if (morph && !regrow) this.springs.set({ h: this.pill.h, o: 1, s: 1, b: 0, w: this.pill.w, m: 1 }, { immediate: true });
+      else if (!morph) this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width, m: 0 }, { immediate: true });
       // Drawn at the pill's size on its way back (place()), it grows again from there.
       const d = this.drawn;
       if (regrow && d && (d.w > this.springs.get('w') + 0.5 || d.h > this.springs.get('h') + 0.5)) this.springs.set({ w: d.w, h: d.h }, { immediate: true });
@@ -498,7 +513,7 @@ export class SheetRenderer {
     } else {
       // A new width (the hover card turning into the Control Center as the pill opens)
       // springs with the pill instead of jumping in one frame.
-      this.springs.set({ w: this.width }, { config: morph ? MORPH_OUT : springs.shell, immediate: geo.immediate });
+      this.springs.set({ w: this.width }, { config: morph ? MORPH_OUT : springs.open, immediate: geo.immediate });
     }
     let changed = false;
     if (view.key !== this.viewKey) {
@@ -510,10 +525,25 @@ export class SheetRenderer {
     this.pinInner(this.inner, this.width);
     changed = this.patch(view.blocks) || changed;
     if (changed || appearing) this.fit(geo.immediate === true);
-    if (appearing && !morph) this.springs.set({ o: 1, s: 1, b: 0 }, { config: { o: springs.fade, s: springs.bouncy, b: springs.fade }, immediate: geo.immediate });
+    // In without a bounce: an overshooting scale reads as a shake as the island opens.
+    if (appearing && !morph) this.springs.set({ o: 1, s: 1, b: 0 }, { config: { o: springs.fade, s: springs.snappy, b: springs.fade }, immediate: geo.immediate });
   }
 
   // ---------------------------------------------------------------- placement
+
+  /**
+   * The island opened while a grown card stood in for the pill (Music's player): the same card
+   * carries on as the open island's card, sliding off the pill to hang under it while its content
+   * crosses over and the pill grows back above it. It used to vanish at once, leaving the resting
+   * pill showing for a moment before the island opened (Moss: it looked like a glitch).
+   */
+  private unmorph(): void {
+    this.morph = false;
+    this.el.classList.remove('morph');
+    // The pill is drawn again; the card, still over it, uncovers it as it slides off.
+    this.setCover('off');
+    this.springs.set({ m: 0 }, { config: springs.open });
+  }
 
   private setCover(cover: PillCover): void {
     if (cover === this.cover) return;
@@ -541,7 +571,7 @@ export class SheetRenderer {
       this.onMove();
     };
     if (immediate || reducedMotion()) {
-      this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8 }, { immediate: true });
+      this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8, m: 0 }, { immediate: true });
       done();
       return;
     }
@@ -567,7 +597,7 @@ export class SheetRenderer {
     // height after Done.
     const h = Math.min(max, this.inner.offsetHeight);
     if (this.morph) this.morphH = h;
-    this.springs.set({ h }, { config: this.morph ? MORPH_OUT : springs.shell, immediate });
+    this.springs.set({ h }, { config: this.morph ? MORPH_OUT : springs.open, immediate });
   }
 
   /**
@@ -596,31 +626,33 @@ export class SheetRenderer {
     let x: number;
     let y: number;
     // Grown out of the pill: over it, from the edge it rests on; else beside it, across the gap.
-    const over = this.morph;
+    // In between while a grown card slides off the pill to become the open island's card.
+    const m = clamp01(v.m);
     switch (this.anchor) {
       case 'top':
         x = clampX(p.x + p.w / 2 - w / 2);
-        y = over ? p.y : p.y + p.h + GAP;
+        y = mix(p.y + p.h + GAP, p.y, m);
         break;
       case 'bottom':
         x = clampX(p.x + p.w / 2 - w / 2);
-        y = over ? p.y + p.h - h : p.y - GAP - h;
+        y = mix(p.y - GAP - h, p.y + p.h - h, m);
         break;
       case 'left':
-        x = over ? p.x : p.x + p.w + GAP;
+        x = mix(p.x + p.w + GAP, p.x, m);
         y = clampY(p.y + p.h / 2 - h / 2);
         break;
       case 'right':
-        x = over ? p.x + p.w - w : p.x - GAP - w;
+        x = mix(p.x - GAP - w, p.x + p.w - w, m);
         y = clampY(p.y + p.h / 2 - h / 2);
         break;
     }
-    if (over) {
-      // The pill's round ends while it is the pill's size, the card's corners once grown.
+    if (m > 0) {
+      // The pill's round ends while it is the pill's size, the grown card's corners once grown, and
+      // an ordinary card's as it slides off the pill.
       const pillR = Math.min(p.w, p.h) / 2;
       const t = clamp01(Math.abs(h - p.h) / Math.max(1, Math.abs(this.morphH - p.h)));
-      this.el.style.borderRadius = `${pillR + (MORPH_RADIUS - pillR) * t}px`;
-    }
+      this.el.style.borderRadius = `${mix(CARD_RADIUS, pillR + (MORPH_RADIUS - pillR) * t, m)}px`;
+    } else if (this.el.style.borderRadius) this.el.style.borderRadius = '';
     // On whole screen pixels: the card is its own layer, and once it stops resizing, moving it by a
     // fraction of a pixel (following the pill as it settles) stretches what was drawn and blurs it.
     x = snapPx(x);
@@ -704,8 +736,12 @@ export class SheetRenderer {
     const e = node.el;
     switch (b.t) {
       case 'input': {
-        const input = e.querySelector('input')!;
+        const input = e.querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea')!;
+        // One line or several are different elements: changing between them rebuilds it.
+        if (input instanceof HTMLTextAreaElement !== Boolean(b.lines)) return false;
         input.placeholder = b.placeholder;
+        // What is being typed wins: a new value only reaches a box that doesn't have the keyboard.
+        if (b.value !== undefined && document.activeElement !== input && input.value !== b.value) input.value = b.value;
         const hint = e.querySelector<HTMLElement>('.ih');
         if (b.hint && hint) hint.textContent = b.hint;
         else if (b.hint) e.append(make('div', 'ih', b.hint));
@@ -900,17 +936,27 @@ export class SheetRenderer {
   }
 
   private buildInput(b: Extract<Block, { t: 'input' }>): HTMLElement {
-    const e = make('div', 'sb sb-input');
+    const multi = Boolean(b.lines);
+    const e = make('div', `sb sb-input${multi ? ' multi' : ''}`);
     const box = make('div', 'ib');
-    const input = make('input', '');
-    input.type = 'text';
+    let input: HTMLInputElement | HTMLTextAreaElement;
+    if (multi) {
+      const area = make('textarea', '');
+      area.rows = Math.max(2, Math.min(12, b.lines ?? 4));
+      input = area;
+    } else {
+      const line = make('input', '');
+      line.type = 'text';
+      line.autocomplete = 'off';
+      input = line;
+    }
     input.spellcheck = true;
-    input.autocomplete = 'off';
     input.placeholder = b.placeholder;
+    if (b.value !== undefined) input.value = b.value;
     const send = make('button', 'send');
     send.type = 'button';
     send.innerHTML = icon('enter');
-    send.title = 'Send (Enter)';
+    send.title = multi ? 'Done (Ctrl+Enter)' : 'Send (Enter)';
     box.append(input, send);
     e.append(box);
     if (b.hint) e.append(make('div', 'ih', b.hint));
@@ -918,12 +964,29 @@ export class SheetRenderer {
       const n = this.nodes.get(b.key);
       return n && n.spec.t === 'input' ? n.spec : b;
     };
+    // A box of lines keeps its text after sending (it is a note being edited); one line starts over.
     const submit = () => {
       const text = input.value.trim();
-      if (!text) return;
-      input.value = '';
-      this.onAction(spec().action, text, e);
+      if (!text && !multi) return;
+      if (!multi) input.value = '';
+      flush();
+      this.onAction(spec().action, multi ? input.value : text, e);
     };
+    // What is typed reaches the activity as it is typed, so nothing is lost when the card closes.
+    let sent = input.value;
+    let wait: ReturnType<typeof setTimeout> | undefined;
+    const flush = () => {
+      clearTimeout(wait);
+      const change = spec().change;
+      if (!change || input.value === sent) return;
+      sent = input.value;
+      this.onAction(change, sent, e);
+    };
+    input.addEventListener('input', () => {
+      clearTimeout(wait);
+      wait = setTimeout(flush, CHANGE_MS);
+    });
+    input.addEventListener('blur', flush);
     // Clicking is the only way in: the island takes the keyboard just for this.
     input.addEventListener('pointerdown', () => {
       this.engagedInput = input;
@@ -934,11 +997,13 @@ export class SheetRenderer {
       if (s.engage) this.onAction(s.engage, null, e);
     });
     input.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') {
-        ev.preventDefault();
+      const k = ev as KeyboardEvent;
+      if (k.key === 'Enter' && (!multi || k.ctrlKey || k.metaKey)) {
+        k.preventDefault();
         submit();
-      } else if (ev.key === 'Escape') {
-        ev.preventDefault();
+      } else if (k.key === 'Escape') {
+        k.preventDefault();
+        flush();
         this.onAction('island:sheet-escape', null, e);
       }
     });

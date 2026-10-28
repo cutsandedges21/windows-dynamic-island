@@ -14,6 +14,7 @@ import type { PlayerBlock } from '../core/player';
 import type { Seg } from '../core/segments';
 import type { SheetButton, SheetView, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
+import { lineAt, LyricsLoader } from './lyrics';
 
 /** An output device that sounds like it sits on your head. */
 export function headphonesLike(device: string | null | undefined): boolean {
@@ -22,6 +23,11 @@ export function headphonesLike(device: string | null | undefined): boolean {
 
 export class MusicActivity extends BaseActivity {
   private m: MediaState | null = null;
+  private lyrics = new LyricsLoader(() => this.ctx.update());
+  private shown = 0;
+  private sung: string | null = null;
+  /** Runs only while the player shows a song with lyrics (an idle island wakes for nothing). */
+  private ticker: ReturnType<typeof setInterval> | null = null;
   private lastTrack = '';
   private pausedAt: number | null = null;
   private tapping = false;
@@ -86,6 +92,7 @@ export class MusicActivity extends BaseActivity {
 
   protected override dispose(): void {
     this.tap(false);
+    this.stopTicker();
   }
 
   /** The bars' colour from new art: read once per picture, off the main path. */
@@ -212,6 +219,33 @@ export class MusicActivity extends BaseActivity {
     return { key: 'music', span: 2, rows: 2, body: { k: 'media', art: showArt ? m.thumbnail : null, title: m.title, artist: m.artist || m.app || '', playing, progress, buttons } };
   }
 
+  private lyricsOn(): boolean {
+    return this.ctx.options<{ lyrics: boolean }>().lyrics !== false;
+  }
+
+  /** The line being sung for the player: '' between lines, null when the song has no synced lyrics. */
+  private lyric(pos: number | null, now: number): string | null {
+    this.shown = now;
+    const lines = this.lyrics.lines(this.m, this.lyricsOn());
+    this.sung = lines && pos != null ? (lineAt(lines, pos) ?? '') : null;
+    if (this.sung != null && !this.ticker && this.alive) this.ticker = setInterval(() => this.tick(), 250);
+    return this.sung;
+  }
+
+  private stopTicker(): void {
+    if (this.ticker) clearInterval(this.ticker);
+    this.ticker = null;
+  }
+
+  /** Lines change between the 1 s patches: while the player shows, look four times a second. */
+  private tick(): void {
+    if (!this.alive || this.sung == null || Date.now() - this.shown > 1500) return this.stopTicker();
+    const lines = this.lyrics.lines(this.m, this.lyricsOn());
+    const pos = this.position(Date.now());
+    const line = lines && pos != null ? (lineAt(lines, pos) ?? '') : null;
+    if (line !== this.sung) this.ctx.update();
+  }
+
   /**
    * The player the pill grows into while the pointer is on the music: like an iPhone's
    * Dynamic Island, and like Claude's card it stays while the pointer is on it.
@@ -232,6 +266,7 @@ export class MusicActivity extends BaseActivity {
       position: pos,
       duration: m.duration && m.duration > 0 ? m.duration : null,
       color: this.barTint() ?? null,
+      lyric: this.lyric(pos, env.now),
       // Not interactive (Activities › Music): the player only shows, with no buttons.
       actions: on ? { prev: 'prev', toggle: 'toggle', next: 'next', seek: 'seek', output: platform === 'windows' ? 'output' : undefined } : { prev: '', toggle: '', next: '' },
       output: { icon: headphonesLike(this.device) ? 'headphones' : 'speaker', tip: this.device ? `Sound output: ${this.device}` : 'Sound output' },

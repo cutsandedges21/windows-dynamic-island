@@ -258,6 +258,11 @@ function gapBetween(a: Seg, b: Seg): number {
   return a.t === 'sep' || b.t === 'sep' ? GAP + 2 : GAP;
 }
 
+/** How long segments are laid end to end at their natural widths, with the gaps between them. */
+export function naturalRun(segs: Seg[], pillH: number, measure: Measure = measureText): number {
+  return segs.reduce((a, seg, i) => a + naturalWidth(seg, measure, pillH) + (i > 0 ? gapBetween(segs[i - 1], seg) : 0), 0);
+}
+
 /** Separators never lead, trail or double up after a drop. */
 function tidySeparators<T>(items: T[], seg: (i: T) => Seg): T[] {
   const out: T[] = [];
@@ -361,4 +366,9 @@ export function fitVertical(segs: Seg[], innerLen: number, crossMax: number, mea
     }
   }
   return out;
+}
+
+/** naturalRun down a vertical pill: the segments' heights along it, with the gaps between them. */
+export function verticalRun(segs: Seg[], crossMax: number, measure: Measure = measureText): number {
+  return segs.reduce((a, seg, i) => a + verticalBox(seg, measure, crossMax).len + (i > 0 ? VGAP : 0), 0);
 }

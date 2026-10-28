@@ -24,6 +24,7 @@ import type { Level } from '../src/core/layout';
 import { fitSegments, fitVertical, type Seg } from '../src/core/segments';
 import { defaultSettings } from '../src/core/settings';
 import { countdown, deviceFacts, LocalActivity, NO_SERVER, pickModel, visibleAnswer } from '../src/activities/local';
+import { REMINDERS_OFF } from '../src/activities/reminders';
 
 const T0 = Date.parse('2026-10-06T12:00:00Z');
 
@@ -95,7 +96,7 @@ const emit = (event: string, payload: unknown) => {
 };
 const tick = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
 
-async function boot(options: Record<string, unknown> = {}) {
+async function boot(options: Record<string, unknown> = {}, extra: Partial<ActivityContext> = {}) {
   const act = new LocalActivity();
   const settings = defaultSettings();
   const calls = { surface: [] as Array<{ key?: string }>, close: 0, open: 0 };
@@ -113,6 +114,7 @@ async function boot(options: Record<string, unknown> = {}) {
     isPrimary: () => true,
     notify: () => {},
     log: () => {},
+    ...extra,
   };
   await act.start(ctx);
   await tick(0);
@@ -517,5 +519,28 @@ describe("the bot's chat", () => {
     await tick(0);
     expect(act.chat().needsModel).toEqual({ model: 'Qwen3 4B', download: expect.stringMatching(/GB/) });
     expect(act.chat().canClaude).toBe(false);
+  });
+});
+
+describe('reminders and notes through the bot', () => {
+  it('Reminders sets them: the model is never asked and the answer is signed Reminders', async () => {
+    const told: unknown[][] = [];
+    const answer = "Okay, I'll remind you tomorrow at 9:00 AM: Call mom.";
+    const tell = async (target: string, cmd: string, arg: unknown) => {
+      told.push([target, cmd, arg]);
+      return answer;
+    };
+    const { act } = await boot({}, { tell });
+    await act.action('send', 'remind me tomorrow 9am to call mom');
+    expect(told).toEqual([['reminders', 'bot', 'remind me tomorrow 9am to call mom']]);
+    expect(h.bridge.localAsk).not.toHaveBeenCalled();
+    expect(act.chat()).toMatchObject({ phase: 'answer', answer, by: 'Reminders' });
+  });
+
+  it('says how to turn Reminders on when it is off', async () => {
+    const { act } = await boot();
+    await act.action('send', 'note: locker 1234');
+    expect(act.chat()).toMatchObject({ phase: 'answer', answer: REMINDERS_OFF, by: 'Reminders' });
+    expect(h.bridge.localAsk).not.toHaveBeenCalled();
   });
 });

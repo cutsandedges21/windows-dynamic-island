@@ -19,6 +19,7 @@ import { native, on, onFileDrop, sendTo, type FileDrop, type MenuItem } from './
 import { choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
 import type { MirrorFrame } from './mirror';
 import { PillRenderer } from './renderer';
+import { menuMain, menuSegments } from './menu';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { accentColor, backAt, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
@@ -51,6 +52,8 @@ const GRID_ROWS = 4;
 /** Narrowest grid that still gives each of the four columns 90 px. */
 const GRID_MIN_W = GRID_COLS * 90 + GRID_GAP * (GRID_COLS - 1) + GRID_PAD * 2;
 const atLeast = (a: Level, b: Level): Level => (levelIdx(a) >= levelIdx(b) ? a : b);
+/** How long opening or closing keeps the pill's shape from overshooting: longer than the motion. */
+const CALM_MS = 1200;
 
 export class Island {
   settings!: Settings;
@@ -69,6 +72,9 @@ export class Island {
   private lastViewKey = '';
   private lastSig = '';
   private lastAnchor: Anchor | null = null;
+  /** The level last composed, and until when the pill's shape moves without overshoot (opening, closing). */
+  private lastLevel: Level | null = null;
+  private calmUntil = 0;
   private lastOrientation: Orientation | null = null;
   private scheduled = false;
   private fullscreenOn: string | null = null;
@@ -495,6 +501,10 @@ export class Island {
         this.saveSettings();
         this.schedule();
       },
+      tell: async (target, cmd, arg) => {
+        const act = target === id ? undefined : this.running.get(target);
+        return act?.command ? await act.command(cmd, arg) : undefined;
+      },
     };
   }
 
@@ -606,9 +616,9 @@ export class Island {
     const anchor = s.anchor;
     // Left/right pills stand vertical; an inline input needs a horizontal pill to type in.
     const build = (orient: Orientation) => {
-      const size = pillSize(this.area, s.widths, level, s.edge, s.size, orient);
+      let size = pillSize(this.area, s.widths, level, s.edge, s.size, orient);
       const pad = innerPadding(size.cross);
-      const inner = Math.max(40, size.main - pad * 2);
+      let inner = Math.max(40, size.main - pad * 2);
       const crossMax = orient === 'vertical' ? Math.max(16, size.cross - 14) : size.h;
       const vertical = orient === 'vertical';
       let segs: Seg[];
@@ -620,8 +630,13 @@ export class Island {
         segs = this.hideSegments(vertical);
         viewKey = 'hide';
       } else if (this.view === 'menu') {
-        segs = this.menuSegments();
+        const state = { anchor, dnd: this.settings.general.dnd, mac: platform === 'macos', reminders: this.running.has('reminders') };
+        segs = menuSegments(s.menu, state);
         viewKey = 'menu';
+        // The menu pill is only as long as the items the user keeps in it.
+        const main = menuMain(s.menu, state, { max: size.main, cross: size.cross, pad, vertical, crossMax });
+        size = vertical ? { ...size, h: main, main } : { ...size, w: main, main };
+        inner = main - pad * 2;
       } else if (this.view === 'overflow') {
         segs = this.overflowSegments(choice.visible, statuses, vertical);
         viewKey = 'overflow';
@@ -681,7 +696,12 @@ export class Island {
     const reshaped = this.lastOrientation !== null && this.lastOrientation !== orient;
     this.renderer.setOrientation(orient);
     this.renderer.setAnchor(anchor);
-    this.renderer.setShell(target, { config: travelling ? springs.travel : springs.shell, immediate });
+    // Opening and closing (the menu too) change the pill most: no overshoot for the whole motion,
+    // or a few pixels of it visibly settle back. A spring takes the config of every retarget,
+    // so it is kept for as long as that motion runs.
+    if (this.lastLevel !== null && (level === 'maximum') !== (this.lastLevel === 'maximum')) this.calmUntil = now + CALM_MS;
+    this.lastLevel = level;
+    this.renderer.setShell(target, { config: travelling ? springs.travel : now < this.calmUntil ? springs.open : springs.shell, immediate });
     this.lastAnchor = anchor;
     this.lastOrientation = orient;
     // The bot stays beside where the pill rests, even while the idle pill is tucked away; it goes
@@ -861,42 +881,6 @@ export class Island {
     const segs: Seg[] = [{ t: 'icon', key: 'drop/icon', icon: 'land', tone: 'accent', anim: 'bob', prio: 0 }];
     if (!vertical) segs.push({ t: 'text', key: 'drop/text', text: hint, weight: 'semibold', prio: 1 });
     return segs;
-  }
-
-  private menuSegments(): Seg[] {
-    const a = this.settings.island.anchor;
-    const pos = (anchor: Anchor, iconName: string, tip: string): Seg => ({
-      t: 'button',
-      key: `menu/${anchor}`,
-      icon: iconName,
-      action: 'island:anchor',
-      arg: anchor,
-      style: a === anchor ? 'primary' : 'ghost',
-      tip,
-      prio: 1,
-    });
-    return [
-      { t: 'text', key: 'menu/label', text: 'Position', tone: 'muted', size: 'sm', prio: 3 },
-      pos('top', 'pos-top', 'Top centre'),
-      pos('right', 'pos-right', 'Right centre'),
-      pos('bottom', 'pos-bottom', 'Bottom centre'),
-      pos('left', 'pos-left', 'Left centre'),
-      { t: 'sep', key: 'menu/sep' },
-      {
-        t: 'button',
-        key: 'menu/dnd',
-        icon: 'moon',
-        label: this.settings.general.dnd ? 'Quiet on' : 'Quiet',
-        style: this.settings.general.dnd ? 'primary' : 'ghost',
-        action: 'island:dnd',
-        tip: platform === 'macos' ? 'Quiet: the island stays small and its notifications wait' : 'Do not disturb, for Windows and the island: notifications wait and the island stays small',
-        prio: 2,
-      },
-      { t: 'button', key: 'menu/hide', icon: 'eye-off', label: 'Hide', action: 'island:hide-menu', style: 'ghost', tip: 'Hide the island for a while', prio: 2 },
-      { t: 'button', key: 'menu/workspaces', icon: 'grid', label: 'Workspaces', action: 'island:app', arg: 'workspaces', side: 'end', style: 'secondary', prio: 1 },
-      { t: 'button', key: 'menu/activities', icon: 'pulse', label: 'Activities', action: 'island:app', arg: 'activities', side: 'end', style: 'secondary', prio: 1 },
-      { t: 'button', key: 'menu/settings', icon: 'settings', action: 'island:app', arg: 'settings', side: 'end', style: 'ghost', tip: 'Settings', prio: 1 },
-    ];
   }
 
   private overflowSegments(ids: string[], statuses: Map<string, ActivityStatus>, vertical: boolean): Seg[] {
@@ -1394,6 +1378,11 @@ export class Island {
       case 'island:menu':
         this.view = this.view === 'menu' ? 'main' : 'menu';
         break;
+      case 'island:reminders':
+        // The menu's Reminders: the island opens on its card, at the top of the list.
+        this.view = 'main';
+        void this.runAct('act:reminders:card', null);
+        return;
       case 'island:hover':
       case 'island:sheet-hover':
         if (action === 'island:hover') {

@@ -52,6 +52,10 @@ Turn on the hooks for the rest: **Activities › Claude Code › Install hooks�
 
 Click the **bot** beside the pill to ask it anything: **Local** answers with a model on this PC (offline), **Claude** with Claude Code or an API key (**Activities › Bot chat**). **Bot chat › Models** lists this PC's specs and every model Island can download, with the one that suits the PC marked Recommended: download, switch, cancel or delete them there.
 
+A few small ones: **Caps Lock** flashes Caps Lock and Num Lock as you press them, **Brightness** shows the screen's brightness as you change it (a laptop's own screen), **Devices** shows the battery of Bluetooth earbuds and headphones, the music player shows the **lyrics** line being sung (from LRCLIB; Activities › Music › Lyrics), and **Hockey** (off until you turn it on) puts your NHL team's live score on the pill.
+
+If Island crashes, it writes what happened to `island.log` and starts again by itself (Settings › About › Open log folder).
+
 Other programs can push their own activities: see `docs/ACTIVITY-API.md`.
 
 ## Your phone

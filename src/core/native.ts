@@ -153,6 +153,11 @@ export interface MediaState {
   canPrev: boolean;
   thumbnail: string | null;
 }
+export interface BtBattery {
+  name: string;
+  percent: number;
+  connected: boolean;
+}
 export interface AudioState {
   volume: number;
   muted: boolean;
@@ -174,6 +179,11 @@ export interface PowerState {
   secondsLeft: number | null;
   /** While it charges: how long until it is full (Windows only; absent elsewhere). */
   secondsToFull?: number | null;
+}
+/** Caps Lock and Num Lock: on or off (a Mac has no Num Lock: always false there). */
+export interface LockKeys {
+  caps: boolean;
+  num: boolean;
 }
 export interface SysSample {
   cpu: number;
@@ -649,6 +659,12 @@ export const native = {
   /** Presses the call app's own camera shortcut (Teams Ctrl+Shift+O, Zoom Alt+V, Meet Ctrl+E). */
   callCamera: (label: string) => tryCall<null>('call_camera', { label }),
   powerState: () => call<PowerState | null>('power_state', {}, null),
+  /** Caps Lock and Num Lock now; 'lock-keys' events say when one changes. */
+  lockKeys: () => call<LockKeys | null>('lock_keys', {}, null),
+  /** The screen's brightness 0-100 as Windows last reported it (null: never, like an external monitor); 'brightness' events say when it changes. */
+  brightnessGet: () => call<number | null>('brightness_get', {}, null),
+  /** Battery of paired Bluetooth earbuds, headphones and the like (src-tauri/src/btbattery.rs). */
+  btBatteries: () => call<BtBattery[]>('bt_batteries', {}, []),
   sysSample: (withTop: boolean) => call<SysSample | null>('sys_sample', { withTop }, null),
   netSample: () => call<NetSample | null>('net_sample', {}, null),
   clipboardSetText: (text: string) => call<boolean>('clipboard_set_text', { text }, false),
@@ -672,6 +688,12 @@ export const native = {
   trayUpdate: (tooltip: string, alert: boolean, menu: MenuItem[]) => call('tray_update', { tooltip, alert, menu }, undefined),
   hotkeysSet: (keys: Array<{ id: string; accel: string }>) => call<string[]>('hotkeys_set', { keys }, []),
   notify: (title: string, body: string) => call('notify', { title, body }, undefined),
+  /**
+   * Hands Windows exactly these upcoming reminders as scheduled notifications, which Windows shows
+   * at their time even when Island isn't running (src-tauri/src/reminders.rs). Returns the ids
+   * Windows holds now; none where it can't (a Mac, the browser preview).
+   */
+  remindersSchedule: (items: Array<{ id: string; title: string; body: string; at: number }>) => call<string[]>('reminders_schedule', { items }, []),
   /** Whether Windows lets Island read notifications, which is how Phone Link's arrive. */
   phoneLinkAccess: () => call<'allowed' | 'denied' | 'unspecified' | 'unavailable'>('phone_link_access', {}, 'unavailable'),
   /** Starts or stops reading Phone Link's notifications; says whether Windows lets Island read them. */
@@ -719,6 +741,8 @@ export const native = {
   landStage: (paths: string[]) =>
     call<LandStaged[]>('land_stage', { paths }, paths.map((p) => ({ path: p, name: p.split(/[\\/]/).pop() || p, size: 0, dir: false, files: 1, error: null }))),
 
+  /** The QR code of any text: `size` modules a side, `qr` row by row ('1' dark); null in the browser preview. */
+  qrCode: (text: string) => call<{ size: number; qr: string } | null>('qr_code', { text }, null),
   /** Island on your phone (src-tauri/src/remote): a one-time pairing code for the phone site at `site`, with its QR code. */
   remotePairStart: (site: string) => tryCall<RemotePairing>('remote_pair_start', { site }),
   remotePairStop: () => call<undefined>('remote_pair_stop', {}, undefined),

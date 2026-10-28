@@ -79,6 +79,19 @@ pub(crate) fn qr(text: &str) -> Result<(usize, String), String> {
     Ok((code.width(), cells))
 }
 
+/// A QR code for the pages: `size` modules a side, `qr` row by row ('1' dark).
+#[derive(serde::Serialize)]
+pub struct QrCells {
+    size: usize,
+    qr: String,
+}
+
+/// The QR code of any text (the setup shows the phone site's address this way).
+#[tauri::command]
+pub fn qr_code(text: String) -> Option<QrCells> {
+    qr(&text).ok().map(|(size, qr)| QrCells { size, qr })
+}
+
 /// `name` for a URL path: letters, digits and -._~ as they are, the rest %XX.
 pub(super) fn pct(name: &str) -> String {
     name.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()

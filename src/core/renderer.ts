@@ -124,9 +124,12 @@ export class PillRenderer {
       if ((e.target as HTMLElement).closest('input')) return;
       this.shell.set({ s: 0.972 }, { config: springs.snappy });
     });
-    const release = () => this.shell.set({ s: 1 }, { config: springs.bouncy });
+    // Back without a bounce: a click usually opens the island, and a wobble on top of that reads as a shake.
+    const release = () => this.shell.set({ s: 1 }, { config: springs.snappy });
     this.pill.addEventListener('pointerup', release);
     this.pill.addEventListener('pointercancel', release);
+    // Let go elsewhere (the music player grew over the pill mid-press): no pointerup comes here.
+    this.pill.addEventListener('pointerleave', release);
   }
 
   /** Called on every shell frame with the drawn rect (for hit testing). */

@@ -2,6 +2,7 @@
 // island (runtime), the Activities page and the settings defaults.
 
 import type { IconName } from '../core/icons';
+import { TEAMS } from './nhl';
 
 export type Band = 'high' | 'medium' | 'low';
 export type Category = 'developer' | 'media' | 'system' | 'productivity' | 'communication' | 'network';
@@ -21,7 +22,8 @@ export type OptionSpec = (
   | { key: string; type: 'toggle'; label: string; help?: string; default: boolean }
   | { key: string; type: 'number'; label: string; help?: string; default: number; min: number; max: number; step?: number; unit?: string }
   | { key: string; type: 'text'; label: string; help?: string; default: string; placeholder?: string; secret?: boolean }
-  | { key: string; type: 'choice'; label: string; help?: string; default: string; choices: Array<{ value: string; label: string }> }
+  /** With a `group` on each choice, the Activities page shows every value as a short code, one line per group (Hockey's teams). */
+  | { key: string; type: 'choice'; label: string; help?: string; default: string; choices: Array<{ value: string; label: string; group?: string }> }
   /** Any mix of the choices, at least one (System Stats: CPU, RAM and GPU on the pill). */
   | { key: string; type: 'multi'; label: string; help?: string; default: string[]; choices: Array<{ value: string; label: string }> }
   /**
@@ -112,6 +114,7 @@ export const CATALOG: ActivityMeta[] = [
         default: true,
       },
       { key: 'showArt', type: 'toggle', label: 'Album art', default: true },
+      { key: 'lyrics', type: 'toggle', label: 'Lyrics', help: "The line being sung, under the track in the player. Lyrics come from LRCLIB, a free lyrics library: Island sends it the song's name, artist and length.", default: true },
       { key: 'pausedMinutes', type: 'number', label: 'Keep a paused track for', default: 5, min: 0, max: 120, unit: 'min' },
     ],
   },
@@ -207,7 +210,7 @@ export const CATALOG: ActivityMeta[] = [
   },  {
     id: 'reminders',
     name: 'Reminders',
-    description: 'Type what and when ("submit the lab at 3pm", "stretch in 20m", "tomorrow 9am"). When it is time, the island shows it with Snooze and Done, and Windows notifies you.',
+    description: 'Reminders and notes. Type what and when ("submit the lab at 3pm", "call mom tomorrow 9am"), or tell the bot "remind me…". At that time the island shows it with Snooze and Done, and Windows notifies you, even if Island is closed. Anything without a time is kept as a note.',
     icon: 'bell',
     category: 'productivity',
     enabled: true,
@@ -241,6 +244,32 @@ export const CATALOG: ActivityMeta[] = [
     enabled: true,
     priority: 'low',
     behavior: B(true, false, true, false),
+    options: [],
+  },
+  {
+    id: 'keys',
+    name: 'Caps Lock',
+    description: 'The pill flashes when you turn Caps Lock or Num Lock on or off, so you know before you type.',
+    icon: 'capslock',
+    category: 'system',
+    enabled: true,
+    priority: 'low',
+    behavior: B(true, false, false, false),
+    options: [
+      { key: 'caps', type: 'toggle', label: 'Caps Lock', default: true },
+      { key: 'num', type: 'toggle', label: 'Num Lock', default: true, mac: 'never' },
+    ],
+  },
+  {
+    id: 'brightness',
+    mac: 'soon',
+    name: 'Brightness',
+    description: "The pill shows the screen's brightness when you change it (a laptop's own screen; external monitors don't report it).",
+    icon: 'sun',
+    category: 'system',
+    enabled: true,
+    priority: 'low',
+    behavior: B(true, false, false, false),
     options: [],
   },
   {
@@ -284,7 +313,7 @@ export const CATALOG: ActivityMeta[] = [
     id: 'devices',
     mac: 'soon',
     name: 'Devices',
-    description: 'USB drives and other storage plugged in or removed.',
+    description: 'USB drives, and the battery of Bluetooth earbuds and headphones.',
     icon: 'usb',
     category: 'system',
     enabled: true,
@@ -372,6 +401,17 @@ export const CATALOG: ActivityMeta[] = [
       { key: 'ics', type: 'text', label: 'Calendar link (ICS)', default: '', placeholder: 'https://calendar.google.com/…/basic.ics', secret: true, help: 'Used with "A calendar link" (always on a Mac). Google Calendar: Settings › your calendar › Secret address in iCal format. Outlook: Publish calendar › ICS.' },
       { key: 'leadMinutes', type: 'number', label: 'Show events this early', default: 15, min: 1, max: 120, unit: 'min' },
     ],
+  },
+  {
+    id: 'sports',
+    name: 'Hockey',
+    description: "Your NHL team's game, live: the score and the clock on the pill, a flash on every goal, and the next game in Control Center. From the NHL's free scores.",
+    icon: 'puck',
+    category: 'productivity',
+    enabled: false,
+    priority: 'medium',
+    behavior: B(true, true, false, false),
+    options: [{ key: 'team', type: 'choice', label: 'Team', default: 'MTL', choices: TEAMS }],
   },
   {
     id: 'clipboard',

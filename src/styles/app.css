@@ -57,6 +57,8 @@ button { cursor: pointer; }
 .section { padding: 6px 18px 10px; margin-bottom: 14px; }
 .section h2, .size-card h2 { font-size: 14px; font-weight: 600; margin: 12px 0 6px; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 11px 0; border-top: 1px solid var(--line); }
+/* a row switched off with the hidden attribute (display: flex would show it anyway) */
+.row[hidden] { display: none; }
 .section h2 + .row { border-top: 0; }
 .row-title { font-weight: 500; }
 .row-help { color: var(--muted); font-size: 12.5px; }
@@ -286,6 +288,76 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 .w-warn { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 10px; font-size: 13px; background: rgba(227, 179, 79, 0.1); border: 1px solid rgba(227, 179, 79, 0.35); }
 .w-warn .btn { flex: none; }
 .w-note .ico { color: var(--accent); }
+/* setup › Make it yours: the choices beside a little screen showing the island where it sits */
+.w-look-grid { display: grid; grid-template-columns: minmax(230px, 290px) 1fr; gap: 24px; align-items: start; }
+@media (max-width: 760px) { .w-look-grid { grid-template-columns: 1fr; } }
+.w-look-rows { display: grid; }
+.w-look-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.w-look-row:first-child { padding-top: 0; }
+.w-look-row:last-child { border-bottom: 0; }
+.w-look-text { display: flex; flex-direction: column; min-width: 0; }
+.w-look-text .muted { font-size: 12.5px; }
+.w-colors { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.w-color { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 8px 6px; min-width: 64px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); font-size: 11.5px; color: var(--muted); }
+.w-color:hover { background: var(--card-hi); color: var(--fg); }
+.w-color.on { border-color: color-mix(in srgb, var(--accent) 65%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--fg); }
+.w-swatch-pill { width: 40px; height: 14px; border-radius: 7px; }
+/* the pill colours, for the swatches and the preview */
+.c-black { background: #050506; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16); }
+.c-white { background: #f4f4f6; }
+.c-matte-black { background: linear-gradient(180deg, #1e2024, #050608); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), inset 0 0 0 1px rgba(255, 255, 255, 0.1); }
+.c-matte-white { background: linear-gradient(180deg, #fdfdfe, #c6cad1); box-shadow: inset 0 1px 0 #fff; }
+.c-glass { background: rgba(255, 255, 255, 0.16); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.65); backdrop-filter: blur(6px); }
+.w-screen { position: relative; aspect-ratio: 16 / 10; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: radial-gradient(120% 90% at 18% 8%, #3d5fd8 0%, transparent 55%), radial-gradient(100% 80% at 92% 100%, #b8358f 0%, transparent 55%), linear-gradient(135deg, #1b1e3a, #2a1630); }
+.w-mini-windows i { position: absolute; border-radius: 6px; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.09); }
+.w-mini-windows i:first-child { left: 13%; top: 28%; width: 44%; height: 44%; }
+.w-mini-windows i:last-child { left: 45%; top: 40%; width: 40%; height: 38%; }
+.w-mini { position: absolute; z-index: 1; display: flex; align-items: center; gap: 5px; }
+.w-screen.at-top .w-mini { top: 7px; left: 50%; translate: -50% 0; }
+.w-screen.at-bottom .w-mini { bottom: 7px; left: 50%; translate: -50% 0; }
+.w-screen.at-left .w-mini { left: 7px; top: 50%; translate: 0 -50%; flex-direction: column; }
+.w-screen.at-right .w-mini { right: 7px; top: 50%; translate: 0 -50%; flex-direction: column; }
+.w-screen.size-small .w-mini { scale: 0.86; }
+.w-screen.size-large .w-mini { scale: 1.16; }
+.w-screen.at-top .w-mini, .w-screen.at-bottom .w-mini { transform-origin: center; }
+.w-mini-pill { display: flex; align-items: center; gap: 5px; width: 76px; height: 18px; padding: 0 8px; border-radius: 9px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35); }
+.w-screen.vertical .w-mini-pill { flex-direction: column; width: 18px; height: 66px; padding: 8px 0; }
+.w-mini-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--acc); flex: none; }
+.w-mini-bars { display: flex; align-items: center; gap: 2px; margin-left: auto; height: 10px; }
+.w-screen.vertical .w-mini-bars { flex-direction: column; margin: auto 0 0; height: auto; }
+.w-mini-bars b { width: 2px; height: 6px; border-radius: 1px; background: var(--acc); animation: w-mini-bar 1.1s ease-in-out infinite; }
+.w-mini-bars b:nth-child(2) { animation-delay: 0.18s; }
+.w-mini-bars b:nth-child(3) { animation-delay: 0.36s; }
+.w-screen.vertical .w-mini-bars b { width: 6px; height: 2px; animation: none; }
+@keyframes w-mini-bar { 0%, 100% { height: 4px; } 50% { height: 10px; } }
+.w-mini-bot { width: 20px; height: 20px; border-radius: 50%; background: var(--acc); display: flex; align-items: center; justify-content: center; gap: 3px; box-shadow: 0 6px 14px rgba(0, 0, 0, 0.3); flex: none; }
+.w-mini-bot i { width: 3px; height: 5px; border-radius: 2px; background: rgba(0, 0, 0, 0.6); }
+@media (prefers-reduced-motion: reduce) { .w-mini-bars b { animation: none; } }
+
+/* setup › the bot: what to type */
+.w-bot { margin-bottom: 18px; }
+.w-says { display: flex; flex-wrap: wrap; gap: 8px; }
+.w-says code { font: 500 12.5px/1 ui-monospace, 'Cascadia Mono', Consolas, monospace; padding: 8px 10px; border-radius: 8px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--line); -webkit-user-select: text; user-select: text; }
+
+/* setup › your phone: Island as an app on it, with Settings' own pairing section inside */
+.w-app { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.w-app-row { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.w-app-row .w-steps { flex: 1; min-width: 240px; }
+.w-qr { width: 132px; height: 132px; flex: none; border-radius: 12px; overflow: hidden; background: #fff; display: grid; place-items: center; }
+.w-qr svg { display: block; }
+.w-qr-text { color: #3a3a3c; font-size: 12px; padding: 8px; text-align: center; overflow-wrap: anywhere; }
+.w-app .card.section { background: transparent; border: 0; box-shadow: none; padding: 0; margin: 0; }
+.w-app .card.section > h2 { display: none; }
+
+/* setup › Land: the Activities panel for friends, without its own heading */
+.w-friends .local-panel { margin-top: 0; padding-top: 0; border-top: 0; }
+.w-friends .local-panel > h3 { display: none; }
+
+/* setup › how to use it */
+.w-moves { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+.w-moves li { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+.w-moves b { display: block; margin-bottom: 2px; }
+.w-moves .muted { font-size: 12.5px; }
 
 /* ------------------------------------------------------------------ Local AI models (src/models-ui.ts) */
 
@@ -338,3 +410,12 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 /* Land's code (Activities › Land): one line to select and copy. */
 .land-code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; -webkit-user-select: all; user-select: all; word-break: break-all; padding: 4px 6px; border-radius: 6px; background: var(--line); }
 @media (max-width: 900px) { .specs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* A choice in groups (Hockey's teams, src/codegrid.ts): every code at once, one line per group. */
+.codegrid { display: grid; grid-template-columns: max-content 1fr; align-items: center; gap: 6px 14px; width: 100%; }
+.codegrid-name { grid-column: 1 / -1; font-weight: 600; margin-bottom: 2px; }
+.codegrid-group { color: var(--muted); font-size: 12.5px; }
+.codegrid-codes { display: flex; flex-wrap: wrap; gap: 4px; }
+.codegrid-codes button { width: 48px; height: 28px; padding: 0; border-radius: 6px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.04); color: var(--muted); font-weight: 600; font-size: 12px; letter-spacing: 0.4px; transition: background-color 0.15s, color 0.15s; }
+.codegrid-codes button:hover { background: rgba(255, 255, 255, 0.1); color: var(--fg); }
+.codegrid-codes button.on { background: var(--accent); border-color: var(--accent); color: #1a0c06; }

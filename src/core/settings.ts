@@ -3,6 +3,7 @@
 
 import { CATALOG, type Band, type Behavior } from '../activities/catalog';
 import { normalizeWidths, type Anchor, type IslandSize, type Widths } from './layout';
+import { FULL_MENU, type MenuShown } from './menu';
 
 export type DisplayMode = 'primary' | 'cursor' | 'active' | 'specific' | 'duplicate';
 
@@ -66,6 +67,8 @@ export interface Settings {
     grid: GridLayout;
     /** The island is off the screen until this time (epoch ms); 0: shown. HIDE_UNTIL_SHOWN: until the user brings it back. */
     hiddenUntil: number;
+    /** What the right-click menu shows (src/core/menu.ts); Settings is always in it. */
+    menu: MenuShown;
   };
   activities: {
     order: string[];
@@ -161,6 +164,7 @@ export function defaultSettings(): Settings {
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       hiddenUntil: 0,
+      menu: { ...FULL_MENU },
     },
     activities: { order: CATALOG.map((m) => m.id), config },
     general: {

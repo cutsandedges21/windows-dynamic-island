@@ -118,6 +118,13 @@ const P: Record<string, string> = {
   pulse: '<path d="M2.5 12h4l2.5-6.5 5 13 2.5-6.5h5"/>',
   // Workspaces › Time.
   trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+  // Caps Lock (⇪) and Num Lock flashes.
+  capslock: '<path d="M12 3.5l7.5 8H15V16H9v-4.5H4.5z"/><path d="M9 20h6"/>',
+  numlock: '<rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/><path d="M10 9.5l2.5-2v9M10 16.5h5"/>',
+  // Brightness down: a sun with short rays.
+  'sun-low': '<circle cx="12" cy="12" r="3.5"/><path d="M12 5.5v.5M12 18v.5M5.5 12h.5M18 12h.5M7.4 7.4l.35.35M16.25 16.25l.35.35M7.4 16.6l.35-.35M16.25 7.75l.35-.35"/>',
+  // Sports: a hockey puck.
+  puck: '<ellipse cx="12" cy="9.5" rx="8" ry="3.5"/><path d="M4 9.5v4.5c0 1.9 3.6 3.5 8 3.5s8-1.6 8-3.5V9.5"/>',
 };
 
 export type IconName = keyof typeof P | string;

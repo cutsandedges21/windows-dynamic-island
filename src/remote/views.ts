@@ -44,6 +44,7 @@ export function pressables(value: unknown, out: Pressables = new Map()): Pressab
     const o = v as Record<string, unknown>;
     if (o.t === 'input') {
       add(o.action, ANY);
+      add(o.change, ANY);
       add(o.engage, argKey(null));
       add(o.cancel, argKey(null));
     } else if (o.t === 'player' && typeof o.actions === 'object' && o.actions !== null) {
@@ -77,7 +78,7 @@ export function stripActions(view: SheetView, blocked: ReadonlySet<string>): She
         return items.length ? [{ ...b, items }] : [];
       }
       case 'input':
-        return ok(b.action) ? [ok(b.engage) ? b : { ...b, engage: undefined }] : [];
+        return ok(b.action) ? [{ ...b, engage: ok(b.engage) ? b.engage : undefined, change: ok(b.change) ? b.change : undefined }] : [];
       case 'rows':
         return [{ ...b, items: b.items.map(row) }];
       case 'choices':

@@ -9,13 +9,17 @@ import { SpringSet } from './core/animator';
 import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from './core/format';
 import { icon } from './core/icons';
 import { levelWidth, normalizeWidths, type Anchor, type Level } from './core/layout';
-import { isTauri, native, on, sendTo, type LandFriend, type MonitorInfo } from './core/native';
+import { MENU_ITEMS } from './core/menu';
+import { isTauri, native, on, sendTo, type MonitorInfo } from './core/native';
 import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
 import { ACCENTS, backAt, cloneSettings, HIDE_CHOICES, hideUntil, migrate, newPhoneTopic, type ActivityConfig, type Settings } from './core/settings';
 import { springs } from './core/spring';
+import { catchErrors } from './core/errors';
+import { codeGrid } from './codegrid';
 import { multiSegmented, row, section, segmented, stacked, toggle } from './controls';
 import { h } from './dom';
+import { landPanel } from './land-panel';
 import { modelPicker } from './models-ui';
 import { phoneSection } from './remote/settings';
 import { welcomePage, type WelcomeHost } from './welcome';
@@ -248,7 +252,8 @@ function optionRow(id: string, o: OptionSpec): HTMLElement {
     const input = h('input', { type: 'number', min: o.min, max: o.max, step: o.step ?? 1, value: String(opts[o.key] ?? o.default) });
     input.addEventListener('change', () => set(Math.min(o.max, Math.max(o.min, Number(input.value) || o.default))));
     control = h('label', { class: 'num' }, [input, o.unit ? h('span', { text: o.unit }) : null]);
-  } else if (o.type === 'choice') control = segmented(String(opts[o.key] ?? o.default), o.choices.map((c) => [c.value, c.label] as [string, string]), (v) => { set(v); render(); });
+  } else if (o.type === 'choice' && o.choices.some((c) => c.group)) return stacked(row(o.label, o.help ?? null, codeGrid(String(opts[o.key] ?? o.default), o.choices, set)));
+  else if (o.type === 'choice') control = segmented(String(opts[o.key] ?? o.default), o.choices.map((c) => [c.value, c.label] as [string, string]), (v) => { set(v); render(); });
   else if (o.type === 'multi') {
     const saved = Array.isArray(opts[o.key]) ? (opts[o.key] as unknown[]).filter((v): v is string => typeof v === 'string') : o.default;
     control = multiSegmented(saved.length ? saved : o.default, o.choices.map((c) => [c.value, c.label] as [string, string]), set);
@@ -526,74 +531,6 @@ function localPanel(): HTMLElement {
   return h('div', { class: 'local-panel' }, [h('h3', { text: 'Models' }), modelPicker(host, 'list')]);
 }
 
-// ------------------------------------------------------------------ Land panel (friends on other networks)
-
-/** Land anywhere: this Island's code to give friends, adding a friend by their code, and the friends. */
-function landPanel(): HTMLElement {
-  const status = h('p', { class: 'muted', text: '' });
-  const code = h('div', { class: 'hide-choices' }, [h('span', { class: 'muted', text: 'Loading…' })]);
-  const list = h('div', { class: 'land-friends' });
-  const input = h('input', { type: 'text', placeholder: 'Paste a friend’s Land code', spellcheck: 'false' });
-  const add = h('button', { class: 'btn', text: 'Add' });
-
-  const nearby = h('div', { class: 'land-friends' });
-  const fill = async (): Promise<void> => {
-    const friends = await native.landFriends();
-    list.replaceChildren(...(friends.length ? friends.map(friendRow) : [h('p', { class: 'muted', text: 'No friends yet. Send your code to someone, or paste theirs above.' })]));
-    // Islands on this network that can be added without a code (they announced their key, signed).
-    const known = new Set(friends.map((f) => f.id));
-    const near = await native.landScan();
-    const nearIds = new Set(near.map((p) => p.id));
-    // Islands here that the Wi-Fi keeps apart, found over the internet (Land's place topic).
-    const here = (await native.landPlace()).filter((p) => !nearIds.has(p.id)).map((p) => ({ ...p, here: true }));
-    const addable = [...near, ...here].filter((p) => p.anywhere && !known.has(p.anywhere));
-    nearby.replaceChildren(...addable.map((p) =>
-      row(p.name, 'here' in p ? 'Here, but this Wi-Fi keeps computers apart: add without a code' : 'On this network: add without a code', h('button', { class: 'btn ghost', text: 'Add as friend', onclick: async () => {
-        status.textContent = `Asking ${p.name}… They answer on their island.`;
-        const r = await native.landFriendAddNearby(p.id);
-        status.textContent = r.ok ? `${r.value.name} is your friend now.` : r.error;
-        void fill();
-      } })),
-    ));
-  };
-  // Answers to the scan arrive over a few seconds.
-  setTimeout(() => void (nearby.isConnected && fill()), 2500);
-  const friendRow = (f: LandFriend): HTMLElement =>
-    row(f.name, `Added ${new Date(f.added).toLocaleDateString()}`, h('div', { class: 'hide-choices' }, [
-      h('button', { class: 'btn ghost', text: 'Remove', title: 'They are not told. Add them again with their code.', onclick: async () => { await native.landFriendRemove(f.id, false); void fill(); } }),
-      h('button', { class: 'btn ghost', text: 'Block', title: 'Removes them and turns away their requests from now on.', onclick: async () => { await native.landFriendRemove(f.id, true); void fill(); } }),
-    ]));
-  add.addEventListener('click', async () => {
-    const text = input.value.trim();
-    if (!text) return;
-    add.disabled = true;
-    status.textContent = 'Asking… They answer on their island.';
-    const r = await native.landFriendAdd(text);
-    add.disabled = false;
-    if (r.ok) {
-      status.textContent = `${r.value.name} is your friend now.`;
-      input.value = '';
-      void fill();
-    } else status.textContent = r.error;
-  });
-  void (async () => {
-    const me = await native.landMe();
-    if (!me.ok) return code.replaceChildren(h('span', { class: 'warn', text: me.error }));
-    const copy = h('button', { class: 'btn ghost', text: 'Copy', onclick: () => { void native.clipboardSetText(me.value.code); status.textContent = 'Copied. Send it to a friend.'; } });
-    code.replaceChildren(h('code', { class: 'land-code', text: me.value.code }), copy);
-  })();
-  void fill();
-
-  return h('div', { class: 'local-panel' }, [
-    h('h3', { text: 'Friends on other networks' }),
-    stacked(row('Your Land code', 'Send it to friends you trust. They paste it into their Island to ask to be friends, and you answer on your island.', code)),
-    stacked(row('Add a friend', 'Paste the code a friend sent you. Their island asks them; this waits up to 2 minutes for the answer. Both need Island open, with Friends on other networks on.', h('div', { class: 'hide-choices' }, [input, add]))),
-    status,
-    list,
-    nearby,
-  ]);
-}
-
 // ------------------------------------------------------------------ Claude panel (Usage Clip's screen)
 
 interface ClaudeSnapshot {
@@ -819,6 +756,7 @@ function settingsPage(): HTMLElement {
       row('Hide in full-screen apps', 'Games, videos and presentations. Urgent things still show.', toggle(i.hideInFullscreen, (v) => { i.hideInFullscreen = v; save(true); })),
       row('Show other activities beside the main one', 'Small chips, with +N when there is no room.', toggle(i.showSecondary, (v) => { i.showSecondary = v; save(true); })),
       row('Do not disturb', 'Nothing expands on its own; urgent moments still interrupt.', toggle(g.dnd, (v) => { g.dnd = v; save(true); })),
+      menuRow(i),
       hideRow(i, mac),
     ]),
     section('Startup', [
@@ -867,6 +805,21 @@ function settingsPage(): HTMLElement {
   ]);
 }
 
+/** Which items the island's right-click menu shows; Settings is always there, the way back here. */
+function menuRow(i: Settings['island']): HTMLElement {
+  const choice = multiSegmented(
+    MENU_ITEMS.filter((m) => i.menu[m.id]).map((m) => m.id),
+    MENU_ITEMS.map((m) => [m.id, m.label]),
+    (on) => {
+      for (const m of MENU_ITEMS) i.menu[m.id] = on.includes(m.id);
+      save(true);
+      render();
+    },
+    0,
+  );
+  return stacked(row('Right-click menu', 'What the island shows when you right-click it. Turn off what you never use and the menu gets shorter by that much. Settings always stays.', choice));
+}
+
 /** Hide the island for a while, or, while it is hidden, say until when and bring it back. */
 function hideRow(i: Settings['island'], mac: boolean): HTMLElement {
   const now = Date.now();
@@ -875,11 +828,12 @@ function hideRow(i: Settings['island'], mac: boolean): HTMLElement {
     const show = h('button', { class: 'btn', text: 'Show it now', onclick: () => { i.hiddenUntil = 0; save(true); render(); } });
     return row('The island is hidden', at ? `It comes back ${at}.` : 'It stays hidden until you bring it back.', show);
   }
-  const where = mac ? 'the menu bar icon' : 'the tray icon';
+  const tray = mac ? 'the menu bar icon' : 'the tray icon';
+  const where = i.menu.hide ? `the island's right-click menu and ${tray}` : tray;
   const choices = h('div', { class: 'hide-choices' }, HIDE_CHOICES.map((c) =>
     h('button', { class: 'btn ghost', text: c.label, onclick: () => { i.hiddenUntil = hideUntil(c.id, Date.now()); save(true); render(); } }),
   ));
-  return stacked(row('Hide the island', `The pill and the bot leave the screen for a while; Claude's prompts go back to the terminal meanwhile. Also in the island's right-click menu and ${where}.`, choices));
+  return stacked(row('Hide the island', `The pill and the bot leave the screen for a while; Claude's prompts go back to the terminal meanwhile. Also in ${where}.`, choices));
 }
 
 /** The topic to subscribe to on the phone, with Copy and a test push. */
@@ -933,4 +887,5 @@ async function boot(): Promise<void> {
   void cloneSettings;
 }
 
+catchErrors('app', (line) => void native.log(line));
 void boot();

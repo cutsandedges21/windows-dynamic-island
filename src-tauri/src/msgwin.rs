@@ -1,6 +1,7 @@
 // One hidden top-level window that receives the broadcasts Windows only sends to
 // windows: clipboard changes, drives arriving or leaving, power-status changes,
-// and display / work-area changes (taskbar moved, resolution, scaling).
+// display / work-area changes (taskbar moved, resolution, scaling), and the screen's
+// brightness (a power-setting notification, brightness.rs).
 // Message-only windows miss broadcasts, so this one is a real (never shown) popup.
 
 use std::sync::OnceLock;
@@ -17,10 +18,12 @@ use windows::Win32::System::DataExchange::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Ole::{CF_BITMAP, CF_DIB, CF_HDROP, CF_UNICODETEXT};
+use windows::Win32::System::Power::{RegisterPowerSettingNotification, POWERBROADCAST_SETTING};
 use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetWindowThreadProcessId, RegisterClassW, TranslateMessage,
-    DEV_BROADCAST_HDR, DEV_BROADCAST_VOLUME, MSG, WINDOW_EX_STYLE, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+    DEV_BROADCAST_HDR, DEV_BROADCAST_VOLUME, DEVICE_NOTIFY_WINDOW_HANDLE, MSG, PBT_POWERSETTINGCHANGE, WINDOW_EX_STYLE, WNDCLASSW,
+    WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 use crate::overlay::LABEL as ISLAND;
@@ -38,6 +41,8 @@ const DBT_DEVICEREMOVECOMPLETE: usize = 0x8004;
 const DBT_DEVTYP_VOLUME: u32 = 2;
 const DRIVE_REMOVABLE: u32 = 2;
 const MAX_TEXT: usize = 2000;
+/// GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS: the brightness of the screen Windows controls, 0–100.
+const BRIGHTNESS: windows::core::GUID = windows::core::GUID::from_u128(0x8ffee2c6_2d01_46be_adb9_398addc5b4ff);
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -238,6 +243,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     match msg {
         WM_CLIPBOARDUPDATE => on_clipboard(hwnd),
         WM_DEVICECHANGE => on_device(wparam.0, lparam.0),
+        WM_POWERBROADCAST if wparam.0 == PBT_POWERSETTINGCHANGE as usize => {
+            if let (Some(app), Some(percent)) = (APP.get(), unsafe { brightness_of(lparam.0) }) {
+                crate::brightness::report(app, percent);
+            }
+        }
         WM_POWERBROADCAST => {
             if let Some(app) = APP.get() {
                 crate::system::emit_power(app);
@@ -276,6 +286,10 @@ pub fn start(app: AppHandle) {
         if AddClipboardFormatListener(hwnd).is_err() {
             crate::log::line("clipboard listener unavailable");
         }
+        // Windows answers at once with the brightness now, then on every change.
+        if RegisterPowerSettingNotification(HANDLE(hwnd.0), &BRIGHTNESS, DEVICE_NOTIFY_WINDOW_HANDLE).is_err() {
+            crate::log::line("brightness: no notifications");
+        }
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
@@ -284,7 +298,44 @@ pub fn start(app: AppHandle) {
     });
 }
 
+/// The brightness a power-setting notification carries, when it is the brightness one.
+unsafe fn brightness_of(lparam: isize) -> Option<u32> {
+    if lparam == 0 {
+        return None;
+    }
+    let setting = unsafe { &*(lparam as *const POWERBROADCAST_SETTING) };
+    if setting.PowerSetting != BRIGHTNESS || setting.DataLength < 4 {
+        return None;
+    }
+    let data = std::ptr::addr_of!(setting.Data) as *const u8;
+    Some(unsafe { std::ptr::read_unaligned(data as *const u32) })
+}
+
 #[allow(dead_code)]
 fn _handle(h: HANDLE) -> HANDLE {
     h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A POWERBROADCAST_SETTING with a DWORD of data, laid out the way Windows sends it.
+    #[repr(C)]
+    struct Setting {
+        guid: windows::core::GUID,
+        len: u32,
+        data: u32,
+    }
+
+    #[test]
+    fn reads_the_brightness_and_nothing_else() {
+        let ours = Setting { guid: BRIGHTNESS, len: 4, data: 65 };
+        assert_eq!(unsafe { brightness_of(&ours as *const Setting as isize) }, Some(65));
+        let other = Setting { guid: windows::core::GUID::from_u128(0x5d3e9a59_e9d5_4b00_a6bd_ff34ff516548), len: 4, data: 1 };
+        assert_eq!(unsafe { brightness_of(&other as *const Setting as isize) }, None);
+        let short = Setting { guid: BRIGHTNESS, len: 0, data: 65 };
+        assert_eq!(unsafe { brightness_of(&short as *const Setting as isize) }, None);
+        assert_eq!(unsafe { brightness_of(0) }, None);
+    }
 }

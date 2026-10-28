@@ -17,6 +17,7 @@ import type { ChatView } from '../core/chat';
 import type { PetSignal } from '../core/pet';
 import { NO_BACKEND, pickBackend, trimHistory } from './ask';
 import { BaseActivity } from './base';
+import { botAsk, REMINDERS_OFF } from './reminders';
 
 // Model choice lives in core/models.ts, shared with the model picker; these stay importable from here.
 export { chooseBackend, NO_SERVER, pickModel, SET_UP_FIRST, SUGGESTED_MODEL } from '../core/models';
@@ -206,6 +207,8 @@ export class LocalActivity extends BaseActivity {
   private canClaude = false;
   /** When the last answer arrived (the bot winks). */
   private answeredAt = 0;
+  /** Who gave the last answer when it was Island itself (Reminders), not a model. */
+  private answeredBy: string | null = null;
 
   constructor() {
     super('local');
@@ -355,6 +358,9 @@ export class LocalActivity extends BaseActivity {
   private async send(text: string): Promise<void> {
     const question = text.trim();
     if (!question || this.phase === 'thinking' || this.phase === 'streaming') return;
+    this.answeredBy = null;
+    // Reminders and notes are Island's own to set: answered here, never guessed at by a model.
+    if (botAsk(question)) return this.answerHere(question);
     this.history = trimHistory([...this.history, { role: 'user', content: question }]);
     const turn = ++this.turn;
     this.phase = 'thinking';
@@ -383,6 +389,22 @@ export class LocalActivity extends BaseActivity {
     } else {
       this.fail(reply.error || 'The model sent no answer.');
     }
+    this.ctx.update();
+  }
+
+  /** "remind me tomorrow 9am to call mom", "note: locker 1234": Reminders does it and says what it did. */
+  private async answerHere(question: string): Promise<void> {
+    const turn = ++this.turn;
+    this.history = trimHistory([...this.history, { role: 'user', content: question }]);
+    let reply: unknown;
+    try {
+      reply = await this.ctx.tell?.('reminders', 'bot', question);
+    } catch (err) {
+      reply = `That did not work: ${String(err)}`;
+    }
+    if (!this.alive || turn !== this.turn) return;
+    this.answeredBy = 'Reminders';
+    this.keep(typeof reply === 'string' && reply ? reply : REMINDERS_OFF);
     this.ctx.update();
   }
 
@@ -470,6 +492,7 @@ export class LocalActivity extends BaseActivity {
         this.history = [];
         this.answer = '';
         this.error = '';
+        this.answeredBy = null;
         // A new chat starts on the local model again.
         this.brain = 'local';
         this.phase = 'idle';
@@ -513,6 +536,7 @@ export class LocalActivity extends BaseActivity {
       answer: this.answer,
       error: this.error,
       model: this.brain === 'claude' ? 'Claude' : this.model,
+      by: this.phase === 'answer' ? this.answeredBy : null,
       brain: this.brain,
       canClaude: this.canClaude,
       needsModel,

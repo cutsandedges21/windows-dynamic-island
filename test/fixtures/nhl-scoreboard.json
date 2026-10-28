@@ -1,0 +1,216 @@
+{
+ "focusedDate": "2026-10-27",
+ "gamesByDate": [
+  {
+   "date": "2026-10-20",
+   "games": [
+    {
+     "id": 2026020141,
+     "gameDate": "2026-10-20",
+     "startTimeUTC": "2026-10-20T23:00:00Z",
+     "gameState": "OFF",
+     "awayTeam": {
+      "abbrev": "SJS",
+      "score": 4
+     },
+     "homeTeam": {
+      "abbrev": "MTL",
+      "score": 3
+     },
+     "period": 4,
+     "periodDescriptor": {
+      "number": 4,
+      "periodType": "OT",
+      "maxRegulationPeriods": 3
+     }
+    }
+   ]
+  },
+  {
+   "date": "2026-10-23",
+   "games": [
+    {
+     "id": 2026020166,
+     "gameDate": "2026-10-23",
+     "startTimeUTC": "2026-10-24T00:00:00Z",
+     "gameState": "OFF",
+     "awayTeam": {
+      "abbrev": "MTL",
+      "score": 4
+     },
+     "homeTeam": {
+      "abbrev": "CHI",
+      "score": 1
+     },
+     "period": 3,
+     "periodDescriptor": {
+      "number": 3,
+      "periodType": "REG",
+      "maxRegulationPeriods": 3
+     }
+    }
+   ]
+  },
+  {
+   "date": "2026-10-25",
+   "games": [
+    {
+     "id": 2026020182,
+     "gameDate": "2026-10-25",
+     "startTimeUTC": "2026-10-25T23:00:00Z",
+     "gameState": "OFF",
+     "awayTeam": {
+      "abbrev": "MTL",
+      "score": 2
+     },
+     "homeTeam": {
+      "abbrev": "WPG",
+      "score": 1
+     },
+     "period": 3,
+     "periodDescriptor": {
+      "number": 3,
+      "periodType": "REG",
+      "maxRegulationPeriods": 3
+     }
+    }
+   ]
+  },
+  {
+   "date": "2026-10-27",
+   "games": [
+    {
+     "id": 2026020191,
+     "gameDate": "2026-10-27",
+     "startTimeUTC": "2026-10-28T00:00:00Z",
+     "gameState": "FUT",
+     "awayTeam": {
+      "abbrev": "MTL"
+     },
+     "homeTeam": {
+      "abbrev": "STL"
+     }
+    }
+   ]
+  },
+  {
+   "date": "2026-10-29",
+   "games": [
+    {
+     "id": 2026020209,
+     "gameDate": "2026-10-29",
+     "startTimeUTC": "2026-10-30T00:00:00Z",
+     "gameState": "FUT",
+     "awayTeam": {
+      "abbrev": "MTL"
+     },
+     "homeTeam": {
+      "abbrev": "DAL"
+     }
+    }
+   ]
+  },
+  {
+   "date": "2026-10-31",
+   "games": [
+    {
+     "id": 2026020223,
+     "gameDate": "2026-10-31",
+     "startTimeUTC": "2026-10-31T23:00:00Z",
+     "gameState": "FUT",
+     "awayTeam": {
+      "abbrev": "PIT"
+     },
+     "homeTeam": {
+      "abbrev": "MTL"
+     }
+    }
+   ]
+  },
+  {
+   "date": "2026-11-03",
+   "games": [
+    {
+     "id": 2026020237,
+     "gameDate": "2026-11-03",
+     "startTimeUTC": "2026-11-04T00:00:00Z",
+     "gameState": "FUT",
+     "awayTeam": {
+      "abbrev": "WPG"
+     },
+     "homeTeam": {
+      "abbrev": "MTL"
+     }
+    }
+   ]
+  },
+  {
+   "date": "2026-11-05",
+   "games": [
+    {
+     "id": 2026020251,
+     "gameDate": "2026-11-05",
+     "startTimeUTC": "2026-11-06T00:00:00Z",
+     "gameState": "FUT",
+     "awayTeam": {
+      "abbrev": "UTA"
+     },
+     "homeTeam": {
+      "abbrev": "MTL"
+     }
+    }
+   ]
+  },
+  {
+   "date": "2026-11-07",
+   "games": [
+    {
+     "id": 2026020268,
+     "gameDate": "2026-11-07",
+     "startTimeUTC": "2026-11-08T00:00:00Z",
+     "gameState": "FUT",
+     "awayTeam": {
+      "abbrev": "MTL"
+     },
+     "homeTeam": {
+      "abbrev": "TOR"
+     }
+    }
+   ]
+  },
+  {
+   "date": "2026-11-10",
+   "games": [
+    {
+     "id": 2026020287,
+     "gameDate": "2026-11-10",
+     "startTimeUTC": "2026-11-11T00:00:00Z",
+     "gameState": "FUT",
+     "awayTeam": {
+      "abbrev": "MIN"
+     },
+     "homeTeam": {
+      "abbrev": "MTL"
+     }
+    }
+   ]
+  },
+  {
+   "date": "2026-11-12",
+   "games": [
+    {
+     "id": 2026020299,
+     "gameDate": "2026-11-12",
+     "startTimeUTC": "2026-11-13T00:00:00Z",
+     "gameState": "FUT",
+     "awayTeam": {
+      "abbrev": "MTL"
+     },
+     "homeTeam": {
+      "abbrev": "BOS"
+     }
+    }
+   ]
+  }
+ ]
+}

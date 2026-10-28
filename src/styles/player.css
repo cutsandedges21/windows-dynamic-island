@@ -24,6 +24,16 @@
 .pl-t1 { font: 650 15.5px/1.22 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-t2 { font: 500 15px/1.22 var(--font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-t2[hidden] { display: none; }
+.pl-lyric { display: grid; min-height: 1.25em; font: 550 13px/1.25 var(--font); color: rgba(var(--ink), 0.72); }
+.pl-lyric[hidden] { display: none; }
+/* The line box is shorter than the font's letters: the padding gives g, j, p, q and y (and accents)
+   room inside the clip that the ellipsis needs, and the margins take it back so nothing moves. */
+.pl-lyric > span { grid-area: 1 / 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-block: 2px 4px; margin-block: -2px -4px; animation: pl-lyric-in 0.35s ease both; }
+.pl-lyric > span.out { animation: pl-lyric-out 0.35s ease both; }
+@keyframes pl-lyric-in { from { opacity: 0; transform: translateY(3px); } }
+@keyframes pl-lyric-out { to { opacity: 0; transform: translateY(-3px); } }
+html.reduce .pl-lyric > span { animation-duration: 0.01s; }
+@media (prefers-reduced-motion: reduce) { .pl-lyric > span, .pl-lyric > span.out { animation-duration: 0.01s; } }
 .pl-bars { align-self: flex-start; margin-top: 6px; --bars-w: 30px; --bars-h: 24px; --bar-w: 3px; }
 
 .pl-scrub { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; }

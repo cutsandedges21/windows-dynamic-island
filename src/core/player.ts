@@ -21,6 +21,8 @@ export interface PlayerBlock {
   actions: { prev: string; toggle: string; next: string; seek?: string; output?: string };
   /** The output button's look: headphones or a speaker, and the device's name. */
   output?: { icon: string; tip: string };
+  /** The line being sung: '' between lines, null (no space) when the song has no synced lyrics. */
+  lyric?: string | null;
 }
 
 type Bind = (e: HTMLElement, action: string | undefined, arg: unknown) => void;
@@ -56,7 +58,7 @@ export function buildPlayer(b: PlayerBlock, bind: Bind, act: Act): HTMLElement {
   const top = make('div', 'pl-top');
   const art = make('span', 'pl-art');
   const tx = make('span', 'pl-tx');
-  tx.append(make('span', 'pl-t1'), make('span', 'pl-t2'));
+  tx.append(make('span', 'pl-t1'), make('span', 'pl-t2'), make('span', 'pl-lyric'));
   // The same bars as the pill's: the music activity paints every `.seg-bars` from the speakers.
   const bars = make('span', 'seg-bars pl-bars');
   for (let i = 0; i < 6; i++) bars.append(make('i', ''));
@@ -92,6 +94,7 @@ export function patchPlayer(e: HTMLElement, b: PlayerBlock, bind: Bind): void {
   e.querySelector('.pl-t1')!.textContent = b.title;
   e.querySelector('.pl-t2')!.textContent = b.artist;
   e.querySelector('.pl-t2')!.toggleAttribute('hidden', !b.artist);
+  showLyric(e.querySelector<HTMLElement>('.pl-lyric')!, b.lyric);
   e.classList.toggle('playing', b.playing);
   e.style.setProperty('--bar', b.color ?? 'var(--accent)');
   e.querySelector('.pl-bars')!.classList.toggle('active', b.playing);
@@ -127,6 +130,23 @@ export function patchPlayer(e: HTMLElement, b: PlayerBlock, bind: Bind): void {
   scrub.dataset.duration = String(b.duration ?? 0);
   if (!known || scrub.classList.contains('dragging')) return;
   showTime(e, b.position!, b.duration!, b.playing);
+}
+
+/** The sung line, cross-faded when it changes; no space at all without lyrics. */
+function showLyric(box: HTMLElement, line: string | null | undefined): void {
+  box.hidden = line == null;
+  const text = line ?? '';
+  if (box.dataset.text === text) return;
+  box.dataset.text = text;
+  if (box.hidden) {
+    box.replaceChildren();
+    return;
+  }
+  for (const old of Array.from(box.children)) {
+    old.classList.add('out');
+    setTimeout(() => old.remove(), 400);
+  }
+  box.append(make('span', '', text));
 }
 
 /** The time either side and the fill; a small step forward glides, anything else jumps. */

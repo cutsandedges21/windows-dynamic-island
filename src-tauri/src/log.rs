@@ -44,6 +44,23 @@ pub fn line(text: impl AsRef<str>) {
     }
 }
 
+/// A line written without waiting for the log's lock: a crash may have happened inside
+/// `line()`, holding it (`crash.rs`).
+pub(crate) fn line_now(text: &str) {
+    if cfg!(test) {
+        eprintln!("[island test] {text}");
+        return;
+    }
+    let _guard = LOCK.try_lock();
+    let file = path();
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&file) {
+        let _ = writeln!(f, "{} {text}", chrono_like_now());
+    }
+}
+
 /// ISO-ish UTC timestamp without pulling in a date crate.
 fn chrono_like_now() -> String {
     let ms = std::time::SystemTime::now()

@@ -5,8 +5,11 @@ import './styles/player.css';
 import { createRegistry } from './activities/registry';
 import { Island } from './core/island';
 import { runMirror } from './core/mirror';
+import { catchErrors } from './core/errors';
 import { emitLocal, native, windowLabel } from './core/native';
 import { workspaceEngine } from './workspaces/engine';
+
+catchErrors(windowLabel, (line) => void native.log(line));
 
 const stage = document.getElementById('stage')!;
 if (native.demo) document.body.classList.add('demo');

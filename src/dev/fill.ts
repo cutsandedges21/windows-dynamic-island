@@ -21,6 +21,7 @@ export async function fillPreview(island: Island, native: typeof Native, emit: t
   Object.assign(n, {
     powerState: async () => ({ hasBattery: true, percent: 72, ac: true, charging: true, saver: false, secondsLeft: 1500 }),
     audioState: async () => ({ volume: 0.42, muted: false, device: 'Speakers (Realtek(R) Audio)', deviceId: 'spk', micMuted: false, micDevice: 'Microphone' }),
+    brightnessGet: async () => 62,
     mediaState: async () => ({
       available: true, app: 'Spotify', appId: 'Spotify.exe', title: 'Roman to Integer - LeetCode #13', artist: 'CodingNinja', album: 'LeetCode',
       status: 'playing', position: 120, duration: 300, updatedAt: Date.now(), canPlay: true, canPause: true, canNext: true, canPrev: true, thumbnail: ART,

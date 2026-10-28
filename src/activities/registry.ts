@@ -3,6 +3,8 @@
 
 import type { Activity } from '../core/activity';
 import { BatteryActivity } from './battery';
+import { BrightnessActivity } from './brightness';
+import { SportsActivity } from './sports';
 import { LandActivity } from './land';
 import { CalendarActivity } from './calendar';
 import { CallsActivity } from './calls';
@@ -13,6 +15,7 @@ import { DownloadsActivity } from './downloads';
 import { ExternalActivity } from './external';
 import { GameActivity } from './game';
 import { GithubActivity } from './integrations/github';
+import { KeysActivity } from './keys';
 import { NotionActivity } from './integrations/notion';
 import { VercelActivity } from './integrations/vercel';
 import { LocalActivity } from './local';
@@ -40,6 +43,8 @@ export function createRegistry(): Map<string, () => Activity> {
     ['land', () => new LandActivity()],
     ['battery', () => new BatteryActivity()],
     ['sound', () => new SoundActivity()],
+    ['keys', () => new KeysActivity()],
+    ['brightness', () => new BrightnessActivity()],
     ['screenshots', () => new ScreenshotsActivity()],
     ['calls', () => new CallsActivity()],
     ['phone', () => new PhoneActivity()],
@@ -48,6 +53,7 @@ export function createRegistry(): Map<string, () => Activity> {
     ['system', () => new SystemActivity()],
     ['weather', () => new WeatherActivity()],
     ['calendar', () => new CalendarActivity()],
+    ['sports', () => new SportsActivity()],
     ['clipboard', () => new ClipboardActivity()],
     ['network', () => new NetworkActivity()],
     ['workspaces', () => new WorkspacesActivity()],

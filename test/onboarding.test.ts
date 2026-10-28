@@ -1,8 +1,9 @@
 // The first-run setup's rules: what the answers tick, which activities they switch on, and
-// how that lands in settings (the Control Center grid, the weather city, setup done).
+// how that lands in settings (the Control Center grid, the weather city, setup done); its screens
+// on each system, and the look picked on Make it yours.
 
 import { describe, expect, it } from 'vitest';
-import { applyPlan, glanceChoices, planActivities, suggestGlance, type Answers, type Facts } from '../src/core/onboarding';
+import { applyPlan, glanceChoices, planActivities, suggestGlance, welcomeSteps, withLook, type Answers, type Facts } from '../src/core/onboarding';
 import { defaultSettings, migrate } from '../src/core/settings';
 
 const laptop: Facts = { laptop: true, claudeCode: false };
@@ -30,7 +31,7 @@ describe('planActivities', () => {
     const plan = planActivities(answers({ uses: ['gaming'], glance: ['system', 'network', 'sound'], ai: true }), desktop);
     expect(plan.picked).toEqual(['game', 'system', 'network', 'sound']);
     // The bot's brain is on with the AI step, but has no tile: the bot is the way in.
-    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'phone', 'workspaces', 'local']);
+    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'phone', 'workspaces', 'keys', 'brightness', 'local']);
     expect(plan.enabled).toEqual([...plan.picked, ...plan.hidden]);
   });
 
@@ -110,5 +111,32 @@ describe('first run', () => {
     expect(migrate(old).general.onboarded).toBe(true);
     const fresh = defaultSettings();
     expect(migrate(JSON.parse(JSON.stringify(fresh))).general.onboarded).toBe(false);
+  });
+});
+
+describe('the screens', () => {
+  it('make it yours first, the phone, Land, Workspaces and how to use it before the end', () => {
+    expect(welcomeSteps('windows')).toEqual(['hello', 'look', 'uses', 'glance', 'ai', 'phone', 'land', 'workspaces', 'tour', 'done']);
+  });
+
+  it('skip Workspaces where it does not run yet', () => {
+    expect(welcomeSteps('macos')).toEqual(['hello', 'look', 'uses', 'glance', 'ai', 'phone', 'land', 'tour', 'done']);
+  });
+});
+
+describe('make it yours', () => {
+  it('saves only what was picked, the rest of the settings as they were', () => {
+    const s = defaultSettings();
+    const out = withLook(s, { anchor: 'bottom', color: 'glass', accent: 'mint', size: 'large', bot: false });
+    expect(out.island).toMatchObject({ anchor: 'bottom', color: 'glass', accent: 'mint', size: 'large', bot: false });
+    expect({ ...out.island, anchor: s.island.anchor, color: s.island.color, accent: s.island.accent, size: s.island.size, bot: s.island.bot }).toEqual(s.island);
+    expect(out.activities).toEqual(s.activities);
+    // The settings it was given stay as they were.
+    expect(s.island.anchor).toBe('top');
+  });
+
+  it('a missing value changes nothing', () => {
+    const s = defaultSettings();
+    expect(withLook(s, { color: undefined, anchor: 'left' }).island).toMatchObject({ color: s.island.color, anchor: 'left' });
   });
 });

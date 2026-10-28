@@ -10,7 +10,7 @@ import { BaseActivity } from './base';
 
 type View = { kind: 'volume' | 'device'; at: number; ms: number };
 
-const HEADSET = /head|bud|pod|airpod|bluetooth|hands-free/i;
+export const HEADSET = /head|bud|pod|airpod|bluetooth|hands-free/i;
 const VOLUME_MS = 1600;
 const DEVICE_MS = 3500;
 const STEP = 0.05;

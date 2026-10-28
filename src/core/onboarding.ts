@@ -1,11 +1,37 @@
-// The first-run setup: two questions, and the activities their answers put in the Control
-// Center (the grid that opens when you click the island). Pure data and rules; the screens
-// are in src/welcome.ts.
+// The first-run setup: its screens, the look picked on "Make it yours", two questions, and the
+// activities their answers put in the Control Center (the grid that opens when you click the
+// island). Pure data and rules; the screens are in src/welcome.ts.
 
 import { CATALOG_BY_ID } from '../activities/catalog';
 import type { IconName } from './icons';
+import type { Anchor, IslandSize } from './layout';
 import { availableHere, type Platform } from './platform';
-import { cloneSettings, type Settings } from './settings';
+import { cloneSettings, type PillColor, type Settings } from './settings';
+
+/** The setup's screens, in order. */
+export type Step = 'hello' | 'look' | 'uses' | 'glance' | 'ai' | 'phone' | 'land' | 'workspaces' | 'tour' | 'done';
+
+/** The screens on this system: Workspaces only where it runs (not a Mac yet). */
+export function welcomeSteps(on: Platform): Step[] {
+  const all: Step[] = ['hello', 'look', 'uses', 'glance', 'ai', 'phone', 'land', 'workspaces', 'tour', 'done'];
+  return all.filter((s) => s !== 'workspaces' || availableHere('workspaces', on));
+}
+
+/** What "Make it yours" sets. */
+export interface Look {
+  anchor: Anchor;
+  color: PillColor;
+  accent: string;
+  size: IslandSize;
+  bot: boolean;
+}
+
+/** `s` with `patch` of the look applied (it saves at once, so the island changes as you pick). */
+export function withLook(s: Settings, patch: Partial<Look>): Settings {
+  const out = cloneSettings(s);
+  for (const [key, value] of Object.entries(patch)) if (value !== undefined) (out.island as unknown as Record<string, unknown>)[key] = value;
+  return out;
+}
 
 export type Use = 'school' | 'work' | 'coding' | 'gaming' | 'media' | 'calls' | 'creative';
 
@@ -49,7 +75,7 @@ export const GLANCE: Glance[] = [
   { id: 'calendar', label: 'Your next event', icon: 'calendar' },
   { id: 'weather', label: 'Weather', icon: 'cloud-sun' },
   { id: 'timer', label: 'Timers and focus', icon: 'timer' },
-  { id: 'reminders', label: 'Reminders', icon: 'bell' },
+  { id: 'reminders', label: 'Reminders and notes', icon: 'bell' },
   { id: 'battery', label: 'Battery', icon: 'battery', laptop: true },
   { id: 'system', label: 'CPU and memory', icon: 'cpu' },
   { id: 'network', label: 'Internet speed', icon: 'wifi' },
@@ -106,10 +132,10 @@ export interface Answers {
 
 /**
  * On whatever the answers: they pop up for system events (the volume, a USB drive, a
- * finished download, low battery, files sent from a computer nearby, a workspace opening) but only get a tile
- * when picked.
+ * finished download, low battery, files sent from a computer nearby, a workspace opening,
+ * Caps Lock, the brightness) but only get a tile when picked.
  */
-export const HELPERS = ['sound', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'phone', 'workspaces'];
+export const HELPERS = ['sound', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'phone', 'workspaces', 'keys', 'brightness'];
 
 /** Grid order: what you act on first, then what you glance at, then occasional helpers. */
 const GRID_ORDER = ['claude', 'music', 'calendar', 'weather', 'timer', 'reminders', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'sound', 'downloads', 'land', 'screenshots', 'clipboard'];

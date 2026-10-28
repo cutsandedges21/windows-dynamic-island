@@ -20,6 +20,8 @@ export interface ChatView {
   error: string;
   /** Who answers: the local model's name, or "Claude". */
   model: string;
+  /** Who gave this answer when it was Island itself, not a model ("Reminders"). */
+  by?: string | null;
   brain: 'local' | 'claude';
   /** Claude can answer (Claude Code, or an API key): the switch can offer it. */
   canClaude: boolean;
@@ -184,7 +186,7 @@ export class ChatBar {
     else if (v.needsModel && v.brain === 'local' && !busy && v.phase !== 'answer' && v.phase !== 'error') kind = 'needs';
     else if (busy || v.phase === 'answer' || v.phase === 'error') kind = v.phase;
     else kind = 'none';
-    const sig = `${kind}|${v.brain}|${v.copied}|${v.canClaude}|${v.needsModel?.model ?? ''}|${v.turns > 0}`;
+    const sig = `${kind}|${v.brain}|${v.copied}|${v.canClaude}|${v.needsModel?.model ?? ''}|${v.turns > 0}|${v.by ?? ''}`;
     if (sig !== this.lastCardSig) {
       this.lastCardSig = sig;
       this.card.replaceChildren(...this.cardParts(kind, v));
@@ -236,7 +238,7 @@ export class ChatBar {
       r.append(...items);
       return r;
     };
-    const via = v.brain === 'claude' ? 'via Claude' : v.model;
+    const via = v.by ?? (v.brain === 'claude' ? 'via Claude' : v.model);
     switch (kind) {
       case 'needs': {
         const m = v.needsModel!;

@@ -8,11 +8,14 @@ mod app;
 mod agenda;
 #[cfg_attr(target_os = "macos", path = "mac/audio.rs")]
 mod audio;
+mod brightness;
+mod btbattery;
 mod calls;
 mod land;
 mod anywhere;
 mod chat;
 mod claude;
+mod crash;
 #[cfg_attr(target_os = "macos", path = "mac/dnd.rs")]
 mod dnd;
 mod firewall;
@@ -21,6 +24,7 @@ mod fsx;
 mod game;
 mod hooks;
 mod integrations;
+mod keys;
 mod llama;
 mod local;
 mod log;
@@ -43,6 +47,7 @@ mod phonelink;
 mod pipe;
 #[cfg_attr(target_os = "macos", path = "mac/procs.rs")]
 mod procs;
+mod reminders;
 mod remote;
 mod secrets;
 #[cfg_attr(target_os = "macos", path = "mac/shell.rs")]
@@ -87,8 +92,19 @@ fn scrub_host_env() {
     }
 }
 
+/// The pill says Island stopped after an error and is back (`crash.rs`).
+fn crash_notice(app: tauri::AppHandle) {
+    use tauri::Emitter;
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(6));
+        let note = serde_json::json!({ "island": "activity", "id": "island-crash", "title": "Island restarted", "text": "It stopped after an error", "icon": "refresh", "tone": "warn", "ms": 8000 });
+        let _ = app.emit_to(overlay::LABEL, "external-activity", note);
+    });
+}
+
 pub fn run() {
     // First, before any thread starts (and before Island opens anything).
+    crash::install(&std::env::args().collect::<Vec<_>>());
     scrub_host_env();
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--install-hooks" || a == "--remove-hooks") {
@@ -96,6 +112,7 @@ pub fn run() {
     }
     // Before the single-instance check: the exe that started this one must be gone first.
     let updated_from = updater::after_update(&args);
+    let after_crash = crash::after_crash(&args);
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             app::open_app(app, Some("activities".into()));
@@ -126,6 +143,11 @@ pub fn run() {
             }
             let handle = app.handle().clone();
             log::line(format!("start v{}", app.package_info().version));
+            let crashed = crash::take_last();
+            if crashed.is_some() || after_crash {
+                log::line(format!("start: after a crash ({})", crashed.as_deref().unwrap_or("Windows restarted Island")));
+                crash_notice(handle.clone());
+            }
             *app.state::<store::SettingsStore>().value.lock().unwrap() = store::load(&handle);
             // Island on your phone: its endpoint starts in the background when a phone is paired.
             remote::setup(&handle);
@@ -140,6 +162,7 @@ pub fn run() {
             audio::start(handle.clone());
             spectrum::start(handle.clone());
             system::start(handle.clone());
+            keys::start(handle.clone());
             game::start();
             updater::tidy();
             std::thread::spawn(secrets::forget_retired);
@@ -220,6 +243,7 @@ pub fn run() {
             app::tray_update,
             app::hotkeys_set,
             app::notify,
+            reminders::reminders_schedule,
             phone::phone_push,
             phone::phone_listen,
             remote::remote_pair_start,
@@ -265,6 +289,7 @@ pub fn run() {
             land::land_send,
             land::land_send_text,
             land::share::land_share_start,
+            land::share::qr_code,
             land::share::land_share_stop,
             land::land_answer,
             land::land_cancel,
@@ -294,6 +319,9 @@ pub fn run() {
             notice::notice_load,
             notice::notice_save,
             notice::notice_forget,
+            keys::lock_keys,
+            brightness::brightness_get,
+            btbattery::bt_batteries,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Island");

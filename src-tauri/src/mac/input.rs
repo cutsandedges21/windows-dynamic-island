@@ -8,6 +8,7 @@ const RIGHT_BUTTON: u32 = 1; // kCGMouseButtonRight
 const LEFT_DOWN: u32 = 1; // kCGEventLeftMouseDown
 const RIGHT_DOWN: u32 = 3; // kCGEventRightMouseDown
 const CONTROL_MASK: u64 = 1 << 18; // kCGEventFlagMaskControl
+const CAPS_LOCK_MASK: u64 = 1 << 16; // kCGEventFlagMaskAlphaShift
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
@@ -18,6 +19,11 @@ extern "C" {
 
 pub fn control_down() -> bool {
     unsafe { CGEventSourceFlagsState(COMBINED_SESSION) & CONTROL_MASK != 0 }
+}
+
+/// Caps Lock is on (keys.rs).
+pub fn caps_lock_on() -> bool {
+    unsafe { CGEventSourceFlagsState(COMBINED_SESSION) & CAPS_LOCK_MASK != 0 }
 }
 
 /// Mouse-down counts at the last poll.

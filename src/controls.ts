@@ -27,14 +27,14 @@ export function segmented<T extends string>(value: T, options: Array<[T, string]
   return wrap;
 }
 
-/** Like segmented, but any mix can be on; the last one on stays on. */
-export function multiSegmented(values: string[], options: Array<[string, string]>, onchange: (v: string[]) => void): HTMLElement {
+/** Like segmented, but any mix can be on; the last `least` on stay on. */
+export function multiSegmented(values: string[], options: Array<[string, string]>, onchange: (v: string[]) => void, least = 1): HTMLElement {
   const wrap = h('div', { class: 'segmented multi' });
   const on = new Set(values);
   for (const [v, label] of options) {
     const b = h('button', { class: on.has(v) ? 'on' : '', text: label, 'aria-pressed': String(on.has(v)) });
     b.addEventListener('click', () => {
-      if (on.has(v) && on.size === 1) return;
+      if (on.has(v) && on.size <= least) return;
       if (on.has(v)) on.delete(v);
       else on.add(v);
       b.classList.toggle('on', on.has(v));

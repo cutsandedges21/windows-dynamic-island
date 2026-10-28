@@ -12,6 +12,12 @@ export interface SpringConfig {
 export const springs = {
   /** The island's shape: quick, with a hint of overshoot. */
   shell: { response: 0.48, damping: 0.8 },
+  /**
+   * Opening and closing the island, and a card changing size: as quick, with no overshoot. Those
+   * move hundreds of pixels, and the shell's 1.5% overshoot then visibly settles back (Moss: "it
+   * shakes very slightly after opening").
+   */
+  open: { response: 0.46, damping: 1 },
   /** Travelling to another edge of the screen. */
   travel: { response: 0.7, damping: 0.84 },
   /** Content sliding to a new slot. */
