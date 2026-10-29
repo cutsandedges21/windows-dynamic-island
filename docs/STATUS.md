@@ -592,3 +592,12 @@ Moss: "on the mobile app, i want to be able to view my pc screen using chrome re
 - **Checked**: tsc (root and phone) clean; npm test 56 files, 844 tests; cargo test --lib 269 passed (incl. real PowerShell in a pty, and a native phone opening a terminal over the local relay, typing and reading it back); clippy clean; phone build into C:/tmp/phone-build-check; phone e2e against the fake island in headless Edge (22/22) and WebKit (20/20), 8 terminal checks each.
 - **Not done**: no exe built (release\Island.exe is still 0.4.1), phone site not deployed, nothing committed, not tried on the iPhone.
 - **Shipped to the phone (20:57)**: phone site deployed to islandphone.vercel.app (index-sQFg9vsN.js live); release\Island.exe rebuilt from the tree (15,408,640 bytes, still labelled 0.4.1) and running (`start v0.4.1`, `remote: on`, `island ready`). Still not committed; not tried on the iPhone.
+
+## 2026-10-28: v0.4.2 released (a terminal, Claude and your screen on your phone)
+
+Moss tried part 2 on the iPhone: "everything works. push to github. create new release, if its necessary".
+
+- Commits: de1ff52 (the feature) and 7502e26 "Version 0.4.2", tag v0.4.2, all pushed. docs/LAUNCH.md and PRICING.md stay untracked.
+- macOS run 40798325786 (check, build, update-test) passed: the terminal code compiles on a Mac; smoke log `start v0.4.2`, `island ready`.
+- Release "Island 0.4.2: a terminal, Claude and your screen on your phone", Latest: Island.exe (15,408,640 bytes, sha256 4faeb5c7…, ProductVersion 0.4.2) and Island.dmg (12,771,830 bytes, sha256 201f07ee…), both signed (two island-signature lines). `gh release download v0.4.2` gives the same bytes.
+- Moss's PC runs it (`start v0.4.2`, `remote: on`, `update: removed Island.old.exe`, `island ready`). The phone site was deployed at 20:57 and is unchanged since.
