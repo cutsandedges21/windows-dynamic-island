@@ -5,7 +5,8 @@
 //   ?demo            the pretend PC (fresh every load); &urgent: Claude asks at once;
 //                    &offline: it never answers; &pair: start unpaired; &install: the
 //                    Add to Home Screen screen; &two: a second pretend PC (MossDesktop) to
-//                    switch to in More
+//                    switch to in More; &noterm: terminals turned off on it;
+//                    &screen=off|missing|none: Chrome Remote Desktop not ready there
 //   #pair=<code>     a pairing code (the QR code on the PC opens this)
 //   ?open=<activity> that activity's card (a tapped notification)
 
@@ -44,6 +45,17 @@ function session(key: string, value?: string | null): string | null {
   return null;
 }
 
+/** The pretend PC, as the address asks for it. */
+function fakeLink(): FakeLink {
+  const screen = params.get('screen');
+  return new FakeLink({
+    urgent: params.has('urgent'),
+    offline: params.has('offline'),
+    term: !params.has('noterm'),
+    screen: screen === 'off' || screen === 'missing' ? screen : screen === 'none' ? null : 'ready',
+  });
+}
+
 function failed(root: HTMLElement, err: unknown): void {
   root.replaceChildren(
     h('main', { class: 'ph-screen ph-pair' }, [
@@ -78,7 +90,7 @@ async function boot(): Promise<void> {
   let demo = params.has('demo');
   let notice: string | null = null;
   let link: Link;
-  if (demo) link = new FakeLink({ urgent: params.has('urgent'), offline: params.has('offline') });
+  if (demo) link = fakeLink();
   else {
     const load = linkModule['./link/index.ts'];
     if (load) {
@@ -92,7 +104,7 @@ async function boot(): Promise<void> {
     } else {
       demo = true;
       notice = "A demo: this build of the site can't connect to a PC yet.";
-      link = new FakeLink({ urgent: params.has('urgent'), offline: params.has('offline') });
+      link = fakeLink();
     }
   }
 

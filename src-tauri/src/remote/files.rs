@@ -101,7 +101,8 @@ impl Remote {
         self.cfg.downloads.clone().unwrap_or_else(crate::land::share::downloads_dir)
     }
 
-    /// Every stream a phone opens after its control stream is a file. Ends with the connection.
+    /// Every stream a phone opens after its control stream is a file or a terminal (terms.rs).
+    /// Ends with the connection.
     pub(super) async fn file_streams(self: Arc<Self>, phone: String, conn: Connection) {
         while let Ok((send, recv)) = conn.accept_bi().await {
             tokio::spawn(self.clone().receive(phone.clone(), send, recv));
@@ -111,6 +112,9 @@ impl Remote {
     async fn receive(self: Arc<Self>, phone: String, mut send: SendStream, recv: RecvStream) {
         let mut reader = LineReader::new(recv, MAX_HEADER);
         let Ok(Ok(Some(head))) = timeout(HEADER_WITHIN, reader.next_line()).await else { return };
+        if super::terms::is_term(&head) {
+            return self.term_stream(phone, send, reader, head).await;
+        }
         let Some(h) = read_header(&head) else { return };
         let saved = self.save_file(&h, reader).await;
         let reply = match &saved {

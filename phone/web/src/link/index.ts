@@ -5,9 +5,11 @@
 // the page shows (ping every PING_MS; reconnect after 1 s, 2 s, 4 s … 30 s), drops it
 // HIDDEN_CLOSE_MS after the page is hidden and dials again when it shows. Files go on streams
 // of their own: read from the File piece by piece going up, kept whole in memory coming down.
+// Terminals too, each on a stream of frames (./term.ts).
 
-import { HIDDEN_CLOSE_MS, MAX_DOWNLOAD, MAX_UPLOAD, PING_MS, PROTOCOL_V, readIslandMsg, relayUrl, type FileHeader, type FileReply, type IslandMsg, type PairPayload, type PhoneMsg, type PushSub } from '../../../../src/remote/protocol';
-import type { CreateLink, IncomingFile, Link, LinkState, SavedIsland } from './api';
+import { HIDDEN_CLOSE_MS, MAX_DOWNLOAD, MAX_UPLOAD, PING_MS, PROTOCOL_V, readIslandMsg, relayUrl, type FileHeader, type FileReply, type IslandMsg, type PairPayload, type PhoneMsg, type TermHeader } from '../../../../src/remote/protocol';
+import type { CreateLink, IncomingFile, Link, LinkControl, LinkState, SavedIsland, TermHandle } from './api';
+import { LinkTerm, readTermAnswer, termHeaderLine, termOpenError, type TermEvents, type WasmTerm } from './term';
 
 // ------------------------------------------------------------------ phone/wasm (src/lib.rs)
 
@@ -30,6 +32,8 @@ interface WasmSession {
   onClosed(cb: (why: string) => void): void;
   onFile(cb: (header: string, file: WasmFileIn) => void): void;
   openFile(header: string): Promise<WasmFileOut>;
+  /** Writes the header line and resolves with the PC's answer; rejects "no answer" / "no answer in time" / a connection error. */
+  openTerm(header: string): Promise<WasmTerm>;
   close(why: string): void;
   paths(): string;
   free(): void;
@@ -218,7 +222,7 @@ class PhoneLink implements Link {
     return () => this.files.delete(cb);
   }
 
-  send(m: PhoneMsg | { t: 'push-sub'; sub: PushSub | null }): boolean {
+  send(m: PhoneMsg | LinkControl): boolean {
     const s = this.session;
     // The wasm refuses lines over MAX_LINE (bytes, newline included).
     return this.state.s === 'online' && s !== null && s.send(JSON.stringify(m));
@@ -248,6 +252,26 @@ class PhoneLink implements Link {
     } finally {
       queueMicrotask(() => out.free());
     }
+  }
+
+  async openTerm(header: TermHeader, on: TermEvents): Promise<TermHandle> {
+    const s = this.session;
+    if (this.state.s !== 'online' || !s) throw new Error('Not connected to the PC.');
+    const line = termHeaderLine(header);
+    if (!line) throw new Error("That folder's path is too long.");
+    let term: WasmTerm;
+    try {
+      term = await s.openTerm(line);
+    } catch (e) {
+      throw new Error(termOpenError(errText(e)));
+    }
+    const answer = readTermAnswer(term.reply());
+    if (answer?.t !== 'term-ok') {
+      term.close();
+      queueMicrotask(() => term.free());
+      throw new Error(answer?.t === 'term-error' ? answer.error : termOpenError('no answer'));
+    }
+    return new LinkTerm(term, answer.id, answer.title, on);
   }
 
   // ---------------------------------------------------------------- connecting

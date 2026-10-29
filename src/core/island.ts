@@ -15,7 +15,7 @@ import { PetBrain, type PetSignal } from './pet';
 import { BorderGlow, type GlowSpec } from './glow';
 import { CELLS, hiddenTest, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
 import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
-import { native, on, onFileDrop, sendTo, type FileDrop, type MenuItem } from './native';
+import { native, on, onFileDrop, onTermOpened, sendTo, type FileDrop, type MenuItem, type TermOpened } from './native';
 import { choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
 import type { MirrorFrame } from './mirror';
 import { PillRenderer } from './renderer';
@@ -27,9 +27,9 @@ import { mapActions, SheetRenderer, type SheetView, type Tile } from './sheet';
 import { springs } from './spring';
 import { workspaceEngine } from '../workspaces/engine';
 import { clip, timeOfDay } from './format';
-import { PhoneActs, PhoneHub, type PhoneDelivery, type PhoneIslandHooks } from '../remote/hub';
+import { PhoneActs, PhoneError, PhoneHub, termAllowed, type PhoneDelivery, type PhoneIslandHooks } from '../remote/hub';
 import { phoneNative } from '../remote/native';
-import { PHONE_ISLAND_ACTIONS, type BotState, type Nav } from '../remote/protocol';
+import { HELLO_FOLDERS, PHONE_ISLAND_ACTIONS, type BotState, type Nav, type ScreenState } from '../remote/protocol';
 import { urgentIds } from '../remote/views';
 
 type View = 'main' | 'overflow' | 'menu' | 'hide';
@@ -54,6 +54,10 @@ const GRID_MIN_W = GRID_COLS * 90 + GRID_GAP * (GRID_COLS - 1) + GRID_PAD * 2;
 const atLeast = (a: Level, b: Level): Level => (levelIdx(a) >= levelIdx(b) ? a : b);
 /** How long opening or closing keeps the pill's shape from overshooting: longer than the motion. */
 const CALM_MS = 1200;
+/** Chrome Remote Desktop's state is asked this often, for phones' Screen button. */
+const SCREEN_POLL_MS = 3 * 60_000;
+/** The island's own note on the pill (a phone opened a terminal) shows this long. */
+const NOTE_MS = 5000;
 
 export class Island {
   settings!: Settings;
@@ -145,6 +149,12 @@ export class Island {
   private botNow: BotState | null = null;
   /** Activities running what a phone pressed: a card one opens meanwhile opens on that phone. */
   private readonly phoneActs = new PhoneActs();
+  /** Phones may open terminals here (what Rust was last told, remote_term_allow). */
+  private termOn = false;
+  /** Chrome Remote Desktop on this PC, for phones' Screen button (screen_state). */
+  private screen: ScreenState = null;
+  /** A note of the island's own on the pill for a moment: a phone opened a terminal. */
+  private note: { text: string; icon: string; until: number } | null = null;
 
   constructor(
     stage: HTMLElement,
@@ -224,6 +234,13 @@ export class Island {
     // Island on your phone: paired phones see this island live and tap it.
     this.hub = new PhoneHub(this.phoneHooks(), phoneNative);
     this.hub.start().catch((err) => native.log(`phones failed to start: ${String(err)}`));
+    // A phone's terminals: Rust refuses them unless Settings › Your phone allows them.
+    this.termOn = termAllowed(this.settings);
+    void native.remoteTermAllow(this.termOn);
+    await onTermOpened((e) => this.onTermOpened(e));
+    // Chrome Remote Desktop, for phones' Screen button: asked now and every few minutes.
+    void this.pollScreen();
+    setInterval(() => void this.pollScreen(), SCREEN_POLL_MS);
 
     setInterval(() => this.tick(), 1000);
     setInterval(() => this.followCursor(), 1500);
@@ -262,6 +279,12 @@ export class Island {
     void this.updateHotkeys();
     if (prev.island.peekThrough !== next.island.peekThrough) void native.setPeek(next.island.peekThrough);
     if (prev.general.autoUpdate !== next.general.autoUpdate) void native.setAutoUpdate(next.general.autoUpdate);
+    // Terminal from your phone, or Windows Hello for Allow, changed: Rust is told, and phones get a fresh hello.
+    const term = termAllowed(next);
+    if (term !== this.termOn) {
+      this.termOn = term;
+      void native.remoteTermAllow(term);
+    }
     // Hidden or shown from the Settings page.
     this.syncHidden();
     this.schedule();
@@ -597,6 +620,10 @@ export class Island {
     if (!this.open) this.cardFor = null;
     // Files dragged over the island: the pill grows to say who takes them, a bigger target to drop on.
     if (this.fileDrag) level = atLeast(level, 'expanded');
+    // The island's own note (a phone opened a terminal) holds the pill for a moment.
+    if (this.note && this.note.until <= now) this.note = null;
+    const note = this.note && !this.open && this.view === 'main' ? this.note : null;
+    if (note) level = atLeast(level, 'expanded');
     // Urgency raises the pill until a tap outside dismisses it; a new urgent key raises it again.
     const urgentKeys = new Set<string>();
     for (const [id, st] of statuses) if (st.urgent) urgentKeys.add(`${id}:${st.urgent.key}`);
@@ -610,7 +637,7 @@ export class Island {
     const fsHide = !urgentNow && s.hideInFullscreen && !pStatus?.overFullscreen;
     const hiddenEverywhere =
       this.moving ||
-      (!primary && s.idle === 'hidden' && !this.open && !this.hover && this.view === 'main' && !this.previewLevel && !this.fileDrag);
+      (!primary && s.idle === 'hidden' && !this.open && !this.hover && this.view === 'main' && !this.previewLevel && !this.fileDrag && !note);
     const hidden = hiddenEverywhere || (fsHide && this.fullscreenOn !== null);
 
     const anchor = s.anchor;
@@ -626,6 +653,9 @@ export class Island {
       if (this.fileDrag) {
         segs = this.dropSegments(this.fileDrag.hint, vertical);
         viewKey = 'drop';
+      } else if (note) {
+        segs = this.noteSegments(note, vertical);
+        viewKey = 'note';
       } else if (this.view === 'hide') {
         segs = this.hideSegments(vertical);
         viewKey = 'hide';
@@ -874,6 +904,21 @@ export class Island {
         ],
       },
     };
+  }
+
+  /** The pill while the island's own note shows (a phone opened a terminal). */
+  private noteSegments(note: { text: string; icon: string }, vertical: boolean): Seg[] {
+    const segs: Seg[] = [{ t: 'icon', key: 'note/icon', icon: note.icon, tone: 'accent', prio: 0 }];
+    if (!vertical) segs.push({ t: 'text', key: 'note/text', text: note.text, weight: 'semibold', prio: 1 });
+    return segs;
+  }
+
+  /** Says something on the pill for a moment, with a nod (the island's own news, not an activity's). */
+  private showNote(text: string, icon: string): void {
+    this.note = { text, icon, until: Date.now() + NOTE_MS };
+    this.pendingBump = true;
+    this.schedule();
+    setTimeout(() => this.schedule(), NOTE_MS + 30);
   }
 
   /** What the pill says while files are dragged over it. */
@@ -1467,14 +1512,19 @@ export class Island {
     this.schedule();
   }
 
-  /** `act:<activity>:<name>` goes to that activity; the promise settles when it is done with it. */
-  private runAct(action: string, arg: unknown): Promise<void> {
+  /** `act:<activity>:<name>` goes to that activity; the promise settles when it is done with it. `phone`: a PhoneError rejects it, for the hub to show. */
+  private runAct(action: string, arg: unknown, phone = false): Promise<void> {
     const rest = action.slice(4);
     const i = rest.indexOf(':');
     const id = rest.slice(0, i);
     const name = rest.slice(i + 1);
     const act = this.running.get(id);
-    const done = act?.action ? Promise.resolve(act.action(name, arg)).catch((err) => native.log(`action ${id}:${name} failed: ${String(err)}`)) : Promise.resolve();
+    const done = act?.action
+      ? Promise.resolve(act.action(name, arg)).catch((err) => {
+          if (phone && err instanceof PhoneError) throw err;
+          native.log(`action ${id}:${name} failed: ${String(err)}`);
+        })
+      : Promise.resolve();
     this.schedule();
     return done.then(() => undefined);
   }
@@ -1493,9 +1543,39 @@ export class Island {
         version: __APP_VERSION__,
         // With Windows Hello asked before Allow, a phone can't pass it: no Allow from phones.
         allow: this.settings?.activities.config.claude?.options.requireHello !== true,
+        // Nor terminals then; otherwise as Settings › Your phone says.
+        term: this.settings ? termAllowed(this.settings) : false,
+        screen: this.screen,
+        folders: this.recentFolders(),
       }),
       fromPhone: (item) => this.fromPhone(item),
     };
+  }
+
+  /** Where Claude chats ran, newest first: a phone's terminal opens in one of these. */
+  private recentFolders(): string[] {
+    const claude = this.running.get('claude') as (Activity & { recentFolders?(max: number): string[] }) | undefined;
+    try {
+      return claude?.recentFolders?.(HELLO_FOLDERS) ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Chrome Remote Desktop's state, for hello: a change sends phones a fresh one. */
+  private async pollScreen(): Promise<void> {
+    const state = await native.screenState();
+    if (state === this.screen) return;
+    this.screen = state;
+    this.hub?.syncHello();
+  }
+
+  /** A phone opened a terminal on this PC: the island says so for a moment, the way Land shows an arrival. */
+  private onTermOpened(e: TermOpened | null): void {
+    if (!e || typeof e.phone !== 'string' || !e.phone) return;
+    const who = (typeof e.name === 'string' && e.name) || this.hub?.phoneName(e.phone) || 'Your phone';
+    native.log(`terminal opened from ${who}: ${String(e.title ?? e.id ?? '')}`);
+    this.showNote(`${who} opened a terminal`, 'terminal');
   }
 
   /**
@@ -1531,9 +1611,12 @@ export class Island {
     return { key: 'island/grid', wide: true, width, blocks: this.arrange(this.gridTiles(now, width, false), geo, false) };
   }
 
-  /** A phone's tap the hub allowed, run as a click here; a card its activity opens meanwhile opens on that phone. */
+  /**
+   * A phone's tap the hub allowed, run as a click here; a card its activity opens meanwhile opens
+   * on that phone, and what it says went wrong for the phone (a PhoneError) shows there.
+   */
   private async phoneAction(phone: string, action: string, arg: unknown): Promise<void> {
-    if (action.startsWith('act:')) return this.phoneActs.run(action.slice(4).split(':')[0], phone, () => this.runAct(action, arg));
+    if (action.startsWith('act:')) return this.phoneActs.run(action.slice(4).split(':')[0], phone, () => this.runAct(action, arg, true));
     if (PHONE_ISLAND_ACTIONS.includes(action)) this.handleAction(action, arg, this.renderer.pill);
   }
 

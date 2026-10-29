@@ -783,7 +783,7 @@ function settingsPage(): HTMLElement {
           ]
         : []),
     ]),
-    phoneSection(),
+    phoneSection({ settings: () => settings, save: () => save(true) }),
     section('Keyboard shortcuts', [
       row('Open or close the island', null, hotkey('toggleHotkey', 'island.toggle')),
       row('Open Activities', null, hotkey('activitiesHotkey', 'island.activities')),

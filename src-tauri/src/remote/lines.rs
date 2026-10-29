@@ -1,6 +1,6 @@
 // Control lines: one JSON object per line, `\n` after each, at most MAX_LINE bytes with its
 // newline. `Lines` cuts a byte stream into them; `Outbox` is what waits for a phone, keeping
-// only the newest `pill` and `view` when the phone falls behind.
+// only the newest `terms`, `view` and `pill` when the phone falls behind.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -116,11 +116,12 @@ impl LineReader {
 
 // ------------------------------------------------------------------ the outbox
 
-/// How a line waits: `pill` and `view` lines replace the one of their kind still waiting (only
-/// the newest matters), every other line waits its turn.
+/// How a line waits: `terms`, `view` and `pill` lines replace the one of their kind still
+/// waiting (only the newest matters), every other line waits its turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Fifo,
+    Terms,
     View,
     Pill,
 }
@@ -129,6 +130,7 @@ pub fn kind_of(msg: &Value) -> Kind {
     match msg.get("t").and_then(Value::as_str) {
         Some("pill") => Kind::Pill,
         Some("view") => Kind::View,
+        Some("terms") => Kind::Terms,
         _ => Kind::Fifo,
     }
 }
@@ -143,9 +145,11 @@ pub struct End {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Full;
 
-/// What waits for one phone. Lines in turn go first, then the newest view, then the newest pill.
+/// What waits for one phone. Lines in turn go first, then the newest terminal list, the newest
+/// view, and the newest pill.
 pub struct Outbox {
     fifo: VecDeque<Line>,
+    terms: Option<Line>,
     view: Option<Line>,
     pill: Option<Line>,
     cap: usize,
@@ -154,7 +158,7 @@ pub struct Outbox {
 
 impl Outbox {
     pub fn new(cap: usize) -> Outbox {
-        Outbox { fifo: VecDeque::new(), view: None, pill: None, cap, end: None }
+        Outbox { fifo: VecDeque::new(), terms: None, view: None, pill: None, cap, end: None }
     }
 
     /// Full: more than `cap` lines wait their turn, so the phone is too slow to keep.
@@ -163,6 +167,7 @@ impl Outbox {
             return Ok(());
         }
         match kind {
+            Kind::Terms => self.terms = Some(line),
             Kind::View => self.view = Some(line),
             Kind::Pill => self.pill = Some(line),
             Kind::Fifo if self.fifo.len() >= self.cap => return Err(Full),
@@ -172,15 +177,16 @@ impl Outbox {
     }
 
     pub fn pop(&mut self) -> Option<Line> {
-        self.fifo.pop_front().or_else(|| self.view.take()).or_else(|| self.pill.take())
+        self.fifo.pop_front().or_else(|| self.terms.take()).or_else(|| self.view.take()).or_else(|| self.pill.take())
     }
 
-    /// `last` goes after the lines in turn (a waiting pill and view are dropped), then nothing
-    /// more; the connection closes with `end`.
+    /// `last` goes after the lines in turn (a waiting list, view and pill are dropped), then
+    /// nothing more; the connection closes with `end`.
     pub fn end(&mut self, last: Option<Line>, end: End) {
         if self.end.is_some() {
             return;
         }
+        self.terms = None;
         self.view = None;
         self.pill = None;
         self.fifo.extend(last);
@@ -284,6 +290,26 @@ mod tests {
     }
 
     #[test]
+    fn only_the_newest_terminal_list_waits_and_it_goes_before_the_view() {
+        let mut out = Outbox::new(10);
+        let terms = |n: u32| line(&json!({ "t": "terms", "n": n }));
+        out.push(Kind::View, l("view")).unwrap();
+        for n in 1..=50 {
+            out.push(Kind::Terms, terms(n)).unwrap();
+        }
+        out.push(Kind::Fifo, l("toast")).unwrap();
+        assert_eq!(text(out.pop()), text(Some(l("toast"))));
+        assert_eq!(text(out.pop()), text(Some(terms(50))));
+        assert_eq!(text(out.pop()), text(Some(l("view"))));
+        assert_eq!(out.pop(), None);
+        // A phone being let go hears no list after its last line.
+        out.push(Kind::Terms, terms(51)).unwrap();
+        out.end(Some(l("bye")), End { code: 410, reason: b"removed" });
+        assert_eq!(text(out.pop()), text(Some(l("bye"))));
+        assert_eq!(out.pop(), None);
+    }
+
+    #[test]
     fn a_phone_that_falls_too_far_behind_is_full() {
         let mut out = Outbox::new(3);
         for _ in 0..3 {
@@ -315,6 +341,7 @@ mod tests {
     fn kinds_come_from_t() {
         assert_eq!(kind_of(&json!({ "t": "pill", "frame": {} })), Kind::Pill);
         assert_eq!(kind_of(&json!({ "t": "view" })), Kind::View);
+        assert_eq!(kind_of(&json!({ "t": "terms", "items": [] })), Kind::Terms);
         assert_eq!(kind_of(&json!({ "t": "toast" })), Kind::Fifo);
         assert_eq!(kind_of(&json!({})), Kind::Fifo);
     }

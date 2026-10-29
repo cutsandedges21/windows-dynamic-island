@@ -115,6 +115,71 @@ const t = {
     document.dispatchEvent(new Event('visibilitychange'));
   },
   send: (m: Parameters<Link['send']>[0]) => link.send(m),
+  /**
+   * A terminal on the fake island: open, type, rename, resize, a paste longer than a frame, close,
+   * open it again (its output so far comes first), exit; then an id it doesn't know; then the list.
+   */
+  async term() {
+    const r: Record<string, unknown> = {};
+    const watch = () => {
+      const dec = new TextDecoder();
+      const o = { text: '', titles: [] as string[], exits: [] as (number | null)[], closed: 0 };
+      const on = {
+        data: (b: Uint8Array) => void (o.text += dec.decode(b, { stream: true })),
+        title: (x: string) => void o.titles.push(x),
+        exit: (c: number | null) => void o.exits.push(c),
+        closed: () => void (o.closed += 1),
+      };
+      return { o, on };
+    };
+    const until = async (ok: () => boolean, what: string, wait = 10_000) => {
+      const t0 = now();
+      while (!ok()) {
+        if (now() - t0 > wait) throw new Error(`timed out waiting for ${what}`);
+        await new Promise((res) => setTimeout(res, 10));
+      }
+      return now() - t0;
+    };
+    const first = watch();
+    let t0 = now();
+    const h = await link.openTerm({ t: 'term', id: null, cols: 80, rows: 24, cwd: null, shell: null }, first.on);
+    r.openMs = now() - t0;
+    r.id = h.id;
+    r.title = h.title;
+    await until(() => first.o.text.includes('PS C:\\fake> '), 'the prompt');
+    t0 = now();
+    h.write('echo hi\r');
+    await until(() => first.o.text.includes('you typed: echo hi'), 'the echo');
+    r.echoMs = now() - t0;
+    h.write('title Build\r');
+    await until(() => first.o.titles.includes('Build'), 'the new title');
+    r.titleAfter = h.title;
+    h.resize(100, 30);
+    const paste = 'x'.repeat(150 * 1024);
+    const before = first.o.text.length;
+    h.write(paste);
+    await until(() => first.o.text.length - before >= paste.length, 'the paste echoed', 30_000);
+    h.close();
+    await new Promise((res) => setTimeout(res, 300));
+    r.closedAfterClose = first.o.closed;
+    const again = watch();
+    const h2 = await link.openTerm({ t: 'term', id: h.id, cols: 100, rows: 30, cwd: null, shell: null }, again.on);
+    await until(() => again.o.text.includes('you typed: echo hi'), 'the output replayed');
+    r.reattachedId = h2.id;
+    r.reattachedTitle = h2.title;
+    h2.write('exit\r');
+    await until(() => again.o.closed > 0, 'closed after exit');
+    r.exits = again.o.exits;
+    r.closedTimes = again.o.closed;
+    r.unknown = await link.openTerm({ t: 'term', id: 'deadbeef', cols: 80, rows: 24, cwd: null, shell: null }, watch().on).then(
+      () => 'opened',
+      (e: unknown) => (e instanceof Error ? e.message : String(e)),
+    );
+    const from = events.length;
+    link.send({ t: 'term-list' });
+    r.terms = (await waitEvent((e) => e.kind === 'msg' && (e.data as { t: string }).t === 'terms', 5_000, from)).data;
+    return r;
+  },
 };
 
 (window as unknown as { t: typeof t }).t = t;

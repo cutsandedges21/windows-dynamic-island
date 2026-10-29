@@ -66,7 +66,8 @@ body {
 .ph-back,
 .ph-note,
 .ph-hint,
-.ph-scan {
+.ph-scan,
+.ph-term {
   --fg: #f6f5f0;
   --muted: rgba(246, 245, 240, 0.64);
   --dim: rgba(246, 245, 240, 0.42);
@@ -195,7 +196,7 @@ body {
 .ph-ov-why { font: 500 12.5px/1.4 var(--font); color: var(--dim); max-width: 280px; }
 .ph-ov-card .ph-btn { margin-top: 10px; }
 
-/* the bar */
+/* the bar: five across, which fits a 320 px wide iPhone (Display Zoom) */
 .ph-bar {
   position: fixed;
   left: 0;
@@ -203,9 +204,9 @@ body {
   bottom: 0;
   z-index: 30;
   height: var(--bar-h);
-  padding: 0 calc(8px + var(--safe-r)) var(--safe-b) calc(8px + var(--safe-l));
+  padding: 0 calc(4px + var(--safe-r)) var(--safe-b) calc(4px + var(--safe-l));
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   background: rgba(9, 10, 12, 0.82);
   -webkit-backdrop-filter: blur(22px) saturate(1.4);
   backdrop-filter: blur(22px) saturate(1.4);
@@ -222,8 +223,10 @@ body {
   color: var(--muted);
   font: 500 11px/1 var(--font);
   min-height: 44px;
+  min-width: 0;
   padding: 0;
 }
+.ph-tab > span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ph-tab .ph-ico { width: 24px; height: 24px; }
 .ph-tab:active { color: var(--fg); }
 .ph-tab:disabled { opacity: 0.35; }
@@ -331,7 +334,8 @@ body {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(var(--bar-h) + var(--safe-b) + 14px);
+  /* --ph-kb: the keyboard's height while the terminal shows it (the page stays full height under it) */
+  bottom: calc(var(--bar-h) + var(--safe-b) + 14px + var(--ph-kb, 0px));
   z-index: 60;
   display: flex;
   flex-direction: column;
@@ -397,7 +401,8 @@ body {
 .ph-center { text-align: center; }
 .ph-error { margin: 0; min-height: 0; font: 500 14px/1.4 var(--font); color: var(--bad); }
 .ph-error:empty { display: none; }
-.ph-textarea {
+.ph-textarea,
+.ph-field {
   width: 100%;
   box-sizing: border-box;
   resize: none;
@@ -412,7 +417,10 @@ body {
   -webkit-user-select: text;
   user-select: text;
 }
-.ph-textarea:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent); }
+.ph-textarea:focus,
+.ph-field:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent); }
+.ph-field { height: 48px; }
+.ph-field::placeholder, .ph-textarea::placeholder { color: var(--dim); }
 .ph-file-input { display: none; }
 .ph-files { display: flex; flex-direction: column; gap: 8px; }
 .ph-files:empty { display: none; }
@@ -462,6 +470,48 @@ body {
 .ph-saved-row .ph-ico:last-child { color: var(--dim); width: 16px; height: 16px; }
 .ph-saved-row.on { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent); }
 .ph-saved-row.on .ph-ico:last-child { color: var(--accent); }
+.ph-saved-row:active { background: rgba(255, 255, 255, 0.1); }
+.ph-saved-row:disabled { opacity: 0.4; }
+.ph-menu-rows { gap: 6px; }
+
+/* a choice from a list (the new terminal's folder) and from a few (its shell) */
+.ph-picks { display: flex; flex-direction: column; gap: 6px; }
+.ph-pick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg);
+  text-align: left;
+}
+.ph-pick > .ph-ico:first-child { color: var(--muted); }
+.ph-pick-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ph-pick-title { font: 600 15px/1.25 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-pick-sub { font: 500 12px/1.3 var(--font); color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-pick .ph-pick-check { width: 18px; height: 18px; color: var(--accent); visibility: hidden; }
+.ph-pick.on { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent); }
+.ph-pick.on .ph-pick-check { visibility: visible; }
+.ph-pick:active { background: rgba(255, 255, 255, 0.1); }
+.ph-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ph-chip {
+  height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--muted);
+  font: 600 14px/1 var(--font);
+  white-space: nowrap;
+}
+.ph-chip.on {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent);
+}
 
 .ph-spin {
   width: 16px;
@@ -545,8 +595,196 @@ body {
 .ph-scan-status { font: 600 16px/1.4 var(--font); text-align: center; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6); }
 .ph-scan-bottom .ph-btn { min-width: 160px; }
 
+/* ------------------------------------------------------------------ the terminal */
+
+/* Over the island, under the sheets and toasts. screens/terminal.ts sizes it to the part of the
+   page the keyboard leaves free (height, and a shift down when iOS scrolls the page for it). */
+.ph-term {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 100%;
+  z-index: 33;
+  display: flex;
+  flex-direction: column;
+  background: var(--ph-bg);
+  touch-action: manipulation;
+}
+/* Quick taps on keys and tabs (← ← ←) must never zoom the page: each scroller pans sideways only. */
+.ph-term-tabs,
+.ph-term-keyscroll { touch-action: pan-x; }
+.ph-term-key,
+.ph-term-tab,
+.ph-term-head,
+.ph-term-keys { touch-action: manipulation; }
+.ph-term-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: calc(var(--safe-t) + 6px) calc(8px + var(--safe-r)) 6px calc(8px + var(--safe-l));
+  box-shadow: inset 0 -1px 0 var(--ph-line);
+}
+/* upright: below the 12 px band and iOS's gradient, as the island is (see the top of this file) */
+@media (orientation: portrait) {
+  .ph-term-head { padding-top: calc(var(--safe-t) + 12px + min(var(--safe-t) * 100, 38px)); }
+}
+.ph-term-back,
+.ph-term-new {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 20px;
+  display: grid;
+  place-items: center;
+  background: rgba(var(--ink), 0.08);
+  color: var(--fg);
+}
+.ph-term-back .ph-ico,
+.ph-term-new .ph-ico { width: 20px; height: 20px; }
+.ph-term-back:active,
+.ph-term-new:active { background: rgba(var(--ink), 0.16); }
+.ph-term-new:disabled { opacity: 0.35; }
+.ph-term-tabs {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.ph-term-tabs::-webkit-scrollbar { display: none; }
+.ph-term-tab {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  max-width: 150px;
+  padding: 0 2px 0 11px;
+  box-sizing: border-box;
+  border-radius: 18px;
+  background: rgba(var(--ink), 0.06);
+  color: var(--muted);
+  font: 600 13px/1 var(--font);
+  cursor: pointer;
+  outline: none;
+}
+.ph-term-tab.on { background: rgba(var(--ink), 0.15); color: var(--fg); }
+.ph-term-tab:focus-visible { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.ph-term-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+.ph-term-tab.ended .ph-term-dot { background: var(--dim); }
+.ph-term-tab .ph-term-tab-claude { width: 14px; height: 14px; color: var(--claude); }
+.ph-term-tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-term-tab-x {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--dim);
+}
+.ph-term-tab-x .ph-ico { width: 14px; height: 14px; }
+.ph-term-tab-x:active { background: rgba(var(--ink), 0.12); color: var(--fg); }
+
+/* connecting, offline, lost */
+.ph-term-banner {
+  flex: none;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 12px;
+  box-sizing: border-box;
+  background: rgba(var(--ink), 0.04);
+  box-shadow: inset 0 -1px 0 var(--ph-line);
+  font: 500 13px/1.3 var(--font);
+  color: var(--muted);
+}
+.ph-term-banner.on { display: flex; }
+.ph-term-banner .ph-btn { height: 30px; padding: 0 12px; font-size: 13px; }
+
+.ph-term-body { position: relative; flex: 1; min-height: 0; }
+/* touch-action: a drag scrolls the terminal (screens/terminal.ts), not the page */
+.ph-term-host { position: absolute; inset: 6px 2px 2px 8px; touch-action: none; transition: opacity 0.25s ease; }
+.ph-term.ph-term-wait .ph-term-host { opacity: 0.4; }
+.ph-term-host .xterm { height: 100%; }
+/* iOS zooms into any field under 16 px that takes the focus: xterm's hidden one too */
+.ph-term .xterm .xterm-helper-textarea { font-size: 16px !important; }
+.ph-term-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: none;
+  place-items: center;
+  padding: 20px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  background: var(--ph-bg);
+}
+.ph-term-panel.on { display: grid; }
+.ph-term-msg { width: min(340px, 100%); display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.ph-term-msg-icon { width: 40px; height: 40px; color: var(--muted); }
+.ph-term-msg-title { font: 650 19px/1.25 var(--font); }
+.ph-term-msg .ph-btn { margin-top: 6px; }
+
+/* the keys a phone keyboard lacks, above it */
+.ph-term-keys {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px calc(6px + var(--safe-r)) calc(6px + var(--safe-b)) calc(6px + var(--safe-l));
+  background: var(--ph-panel);
+  box-shadow: inset 0 1px 0 var(--ph-line);
+}
+/* the keyboard covers the home bar: no room needed for it */
+.ph-term.ph-kb .ph-term-keys { padding-bottom: 6px; }
+.ph-term-keyscroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.ph-term-keyscroll::-webkit-scrollbar { display: none; }
+.ph-term-key {
+  flex: none;
+  min-width: 38px;
+  height: 40px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 10px;
+  display: inline-grid;
+  place-items: center;
+  background: rgba(var(--ink), 0.09);
+  color: var(--fg);
+  font: 600 13.5px/1 var(--font);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.ph-term-key .ph-ico { width: 18px; height: 18px; }
+.ph-term-key:active { background: rgba(var(--ink), 0.2); }
+.ph-term-key.on { background: var(--accent); color: #1a0c06; }
+.ph-term-kb { min-width: 46px; }
+.ph-term-font { font-size: 13px; }
+
 @media (prefers-reduced-motion: reduce) {
-  .ph-sheet, .ph-toast, .ph-inbox-card, .ph-stage, .ph-stage::before { transition: none; }
+  .ph-sheet, .ph-toast, .ph-inbox-card, .ph-stage, .ph-stage::before, .ph-term-host { transition: none; }
 }
 
 /* Four columns on a phone are about 85 px each: the one-column tiles stack what the island lays

@@ -49,6 +49,7 @@ mod pipe;
 mod procs;
 mod reminders;
 mod remote;
+mod screen;
 mod secrets;
 #[cfg_attr(target_os = "macos", path = "mac/shell.rs")]
 mod shell;
@@ -58,6 +59,7 @@ mod store;
 mod notice;
 #[cfg_attr(target_os = "macos", path = "mac/system.rs")]
 mod system;
+mod term;
 mod updater;
 mod web;
 mod workspaces;
@@ -132,6 +134,7 @@ pub fn run() {
         .manage(app::Hotkeys::default())
         .manage(land::LandState::default())
         .manage(land::share::ShareState::default())
+        .manage(term::TermState::default())
         .manage(remote::RemoteState::default())
         .manage(workspaces::WsStore::default())
         .setup(move |app| {
@@ -149,6 +152,8 @@ pub fn run() {
                 crash_notice(handle.clone());
             }
             *app.state::<store::SettingsStore>().value.lock().unwrap() = store::load(&handle);
+            // Terminals (a phone's, and Claude chats started from one): windows hear the list.
+            term::setup(&handle);
             // Island on your phone: its endpoint starts in the background when a phone is paired.
             remote::setup(&handle);
             overlay::create(&handle)?;
@@ -256,6 +261,12 @@ pub fn run() {
             remote::remote_vapid,
             remote::remote_push,
             remote::remote_name,
+            remote::remote_term_allow,
+            term::term_open,
+            term::term_write,
+            term::term_list,
+            term::term_kill,
+            screen::screen_state,
             phonelink::phone_link_access,
             phonelink::phone_link_watch,
             app::app_open,
@@ -323,8 +334,14 @@ pub fn run() {
             brightness::brightness_get,
             btbattery::bt_batteries,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Island");
+        .build(tauri::generate_context!())
+        .expect("error while running Island")
+        .run(|app, event| {
+            // Quitting (or updating) ends every terminal (a crash too, on Windows: term/spawn.rs).
+            if let tauri::RunEvent::Exit = event {
+                term::quit(app);
+            }
+        });
 }
 
 #[cfg(test)]

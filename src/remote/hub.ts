@@ -6,12 +6,24 @@
 
 import type { MirrorFrame } from '../core/mirror';
 import type { RemoteFile, RemotePhone } from '../core/native';
+import type { Settings } from '../core/settings';
 import type { SheetView } from '../core/sheet';
-import { MAX_VIEWS_PER_S, PHONE_ISLAND_ACTIONS, PROTOCOL_V, readPhoneMsg, type BotState, type IslandMsg, type Nav } from './protocol';
+import { MAX_VIEWS_PER_S, PHONE_ISLAND_ACTIONS, PROTOCOL_V, readPhoneMsg, type BotState, type HelloFacts, type IslandMsg, type Nav } from './protocol';
 import { HELLO_GUARDED, mayPress, pressables, stripActions, stripPill, type Pressables } from './views';
 
 /** A paired phone, as Rust lists it (`remote_phones`, the `remote-phones` event). */
 export type PhoneInfo = RemotePhone;
+
+/** What a phone's tap ran into, in words for the phone: it shows there as a toast ("Couldn't start Claude: …"). */
+export class PhoneError extends Error {}
+
+/**
+ * A paired phone may open terminals on this PC: Settings › Your phone allows it, and Windows Hello
+ * isn't asked before Claude's Allow (a phone can't pass Hello, so it gets no terminals either).
+ */
+export function termAllowed(s: Pick<Settings, 'general' | 'activities'>): boolean {
+  return s.general.phoneTerminal === true && s.activities.config.claude?.options.requireHello !== true;
+}
 
 /** Something a phone sent the PC, for the island to show the way Land shows what another computer sent. */
 export type PhoneDelivery =
@@ -24,10 +36,14 @@ export interface PhoneIslandHooks {
   pill(): { frame: MirrorFrame; bot: BotState | null } | null;
   /** What shows under a phone's pill: an urgent card first, else what `nav` asks for. `nav` comes back as what it shows. */
   view(nav: Nav, width: number): { nav: Nav; view: SheetView | null; urgent: string | null };
-  /** Runs a tap the hub allowed, as a click on the island would; settles when the activity is done with it. */
+  /** Runs a tap the hub allowed, as a click on the island would; settles when the activity is done with it (a PhoneError rejects it). */
   act(phone: string, action: string, arg: unknown): Promise<void>;
-  /** This island, for `hello`. `allow`: Claude's Allow may be pressed from a phone (Windows Hello isn't asked first). */
-  facts(): { name: string; platform: 'windows' | 'macos'; version: string; allow: boolean };
+  /**
+   * This island, for `hello`. `allow`: Claude's Allow may be pressed from a phone (Windows Hello
+   * isn't asked first); `term`: a phone may open terminals; `screen`: Chrome Remote Desktop;
+   * `folders`: recent project folders. Asked after every compose: a change sends a fresh hello.
+   */
+  facts(): HelloFacts;
   /** Text or a file from a phone arrived (already copied, or saved to Downloads). */
   fromPhone(item: PhoneDelivery): void;
 }
@@ -123,6 +139,8 @@ interface Session {
   pillKey: string;
   pillFrame: MirrorFrame | null;
   pillPress: Pressables;
+  /** The facts its last hello said (JSON): a change sends a fresh one. */
+  helloKey: string;
   /** Lines go out one after another, in order (hello first). */
   chain: Promise<void>;
   pill: Throttle;
@@ -160,10 +178,24 @@ export class PhoneHub {
 
   /** After every island compose: whatever changed goes to each phone. */
   tick(): void {
+    this.syncHello();
     for (const s of this.sessions.values()) {
       s.pill.poke();
       s.view.poke();
     }
+  }
+
+  /** What hello says changed (terminals allowed, the screen, recent folders, Allow): each phone gets a fresh one. */
+  syncHello(): void {
+    if (!this.sessions.size) return;
+    const facts = this.hooks.facts();
+    const key = JSON.stringify(facts);
+    for (const s of this.sessions.values()) if (s.helloKey !== key) this.sendHello(s, facts, key);
+  }
+
+  /** A paired phone's name (the island says which phone opened a terminal); null for one it doesn't know. */
+  phoneName(id: string): string | null {
+    return this.sessions.get(id)?.name ?? this.phones.find((p) => p.id === id)?.name ?? null;
   }
 
   /** An activity opened its card while running what this phone pressed: the phone shows it. */
@@ -223,18 +255,23 @@ export class PhoneHub {
       pillKey: '',
       pillFrame: null,
       pillPress: new Map(),
+      helloKey: '',
       chain: Promise.resolve(),
       pill: new Throttle(GAP_MS, () => this.sendPill(s)),
       view: new Throttle(GAP_MS, () => this.sendView(s)),
     };
     this.sessions.set(p.id, s);
     this.native.log(`phone: ${p.name} connected`);
-    this.send(s, async () => {
-      const f = this.hooks.facts();
-      return { t: 'hello', v: PROTOCOL_V, name: f.name, platform: f.platform, version: f.version, allow: f.allow, vapid: await this.vapid() };
-    });
+    const facts = this.hooks.facts();
+    this.sendHello(s, facts, JSON.stringify(facts));
     s.pill.now();
     s.view.now();
+  }
+
+  /** Hello: who this island is, what a phone may do here, and the push key (asked once). */
+  private sendHello(s: Session, facts: HelloFacts, key: string): void {
+    s.helloKey = key;
+    this.send(s, async () => ({ t: 'hello', v: PROTOCOL_V, ...facts, vapid: await this.vapid() }));
   }
 
   /** Gone, offline or removed: the hub forgets it. */
@@ -349,6 +386,8 @@ export class PhoneHub {
       await this.hooks.act(s.id, action, arg);
     } catch (err) {
       this.native.log(`phone: ${action} failed: ${String(err)}`);
+      // Said for the phone ("Couldn't start Claude: …"): it flashes there.
+      if (err instanceof PhoneError) this.toast(s, err.message, 'bad');
     }
   }
 

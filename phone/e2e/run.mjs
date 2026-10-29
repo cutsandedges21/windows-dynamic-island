@@ -1,5 +1,6 @@
 // The phone link end to end: the real Link (phone/web/src/link) in headless Edge and WebKit,
-// dialing a native fake island (phone/wasm/fake-island) through n0's public relays.
+// dialing a native fake island (phone/wasm/fake-island) through n0's public relays: pairing,
+// round trips, files both ways, a terminal, reconnects, removal.
 //
 //   node scripts/phone.mjs e2e [msedge|webkit|both]     builds the wasm and the fake island first
 //   node phone/e2e/run.mjs [msedge|webkit|both]         uses what's built
@@ -169,6 +170,23 @@ async function runBrowser(name, island) {
     const fout = await waitFake((e) => e.e === 'file-out', 10_000, from);
     check(down.sha256 === fout.sha256 && down.size === 1024 * 1024 && /file-ok/.test(fout.reply), `${name}: file from the PC arrived whole and was answered file-ok`);
     r.download1MiBMs = round(down.ms);
+
+    // A terminal on the PC, over its own stream of frames.
+    from = fakeEvents.length;
+    const term = await page.evaluate(() => window.t.term());
+    const opened = await waitFake((e) => e.e === 'term-open' && e.id === term.id, 5_000, from);
+    check(opened.cols === 80 && opened.rows === 24 && term.title === 'Fake shell', `${name}: terminal ${term.id} opened in ${round(term.openMs)} ms`);
+    check(term.titleAfter === 'Build', `${name}: typed into it, echoed in ${round(term.echoMs)} ms; its title changed`);
+    const resized = await waitFake((e) => e.e === 'term-resize' && e.id === term.id, 5_000, from);
+    check(resized.cols === 100 && resized.rows === 30, `${name}: terminal resized to 100x30`);
+    const detached = await waitFake((e) => e.e === 'term-detach' && e.id === term.id, 5_000, from);
+    check(detached.inBytes === 'echo hi\r'.length + 'title Build\r'.length + 150 * 1024 && term.closedAfterClose === 0, `${name}: a 150 KiB paste went whole; close() ended only the stream (${detached.why})`);
+    const attached = await waitFake((e) => e.e === 'term-attach' && e.id === term.id, 5_000, from);
+    check(term.reattachedId === term.id && term.reattachedTitle === 'Build' && attached.replay > 150 * 1024, `${name}: opened it again, ${attached.replay} bytes of its output replayed`);
+    check(JSON.stringify(term.exits) === '[0]' && term.closedTimes === 1, `${name}: exit 0, then closed once`);
+    check(term.unknown === "That terminal isn't open anymore.", `${name}: an unknown terminal -> ${JSON.stringify(term.unknown)}`);
+    const listed = term.terms.items.find((i) => i.id === term.id);
+    check(term.terms.allowed === true && listed && listed.exit === 0 && listed.title === 'Build', `${name}: term-list -> terms (${term.terms.items.length})`);
 
     // A reload: same key, `hi` this time.
     await page.reload();

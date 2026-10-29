@@ -1,15 +1,24 @@
 // Settings › Your phone (Island on your phone): pair a phone with a QR code, then the paired
-// phones (Connected now or Last seen, Rename, Remove) and whether each takes notifications.
+// phones (Connected now or Last seen, Rename, Remove) and whether each takes notifications,
+// Terminal from your phone with the terminals open now (End), and Chrome Remote Desktop.
 // Made once and kept for the window's life, like the Workspaces page, so a code being shown
 // survives the Settings page redrawing for a settings change.
 
-import { row, section, stacked } from '../controls';
+import { row, section, stacked, toggle } from '../controls';
 import { clock, timeOfDay } from '../core/format';
 import { native, on, type RemotePairing, type RemotePhone } from '../core/native';
 import { platform } from '../core/platform';
+import type { Settings } from '../core/settings';
 import { qrSvg } from '../core/sheet';
 import { h } from '../dom';
-import { PHONE_SITE } from './protocol';
+import { termAllowed } from './hub';
+import { PHONE_SITE, SCREEN_SITE, type ScreenState, type TermInfo } from './protocol';
+
+/** What the Settings page gives the section: the settings it edits (Terminal from your phone), and saving them. */
+export interface PhoneSettingsHost {
+  settings(): Settings;
+  save(): void;
+}
 
 /** The phone site as the steps say it ("islandphone.vercel.app"), so a rename touches protocol.ts only. */
 export const SITE_HOST = new URL(PHONE_SITE).host;
@@ -42,12 +51,42 @@ export function codeLeft(expires: number, now: number): string {
   return `This code works for ${clock(Math.max(0, expires - now))} more.`;
 }
 
+/** Under Terminal from your phone: what it allows, and why phones get none while Windows Hello guards Allow. */
+export function termHelp(s: Pick<Settings, 'general' | 'activities'>): string {
+  const what = 'A paired phone can open a terminal on this PC and run any command.';
+  return s.general.phoneTerminal && !termAllowed(s) ? `${what} Off for phones while Windows Hello is asked before Allow (Activities › Claude Code).` : what;
+}
+
+/** Under a terminal's title: who started it, whether it runs, and where. */
+export function termDetail(t: TermInfo): string {
+  const state = t.exit === null ? `Running since ${timeOfDay(t.started)}` : `Ended, exit code ${t.exit}`;
+  return [t.claude ? 'Claude chat' : null, state, t.attached ? 'Open on your phone' : null, t.cwd].filter(Boolean).join(' · ');
+}
+
+/** The Chrome Remote Desktop row: its state, what to do, and the button. */
+export function screenWords(state: ScreenState): { title: string; help: string; button: string } {
+  const steps = 'Set it up opens remotedesktop.google.com/access: Set up remote access, install it, pick a name and a PIN.';
+  switch (state) {
+    case 'ready':
+      return { title: 'Chrome Remote Desktop: ready', help: "Your phone's Screen button opens it: sign in with the same Google account, tap this PC, enter its PIN.", button: 'Open' };
+    case 'off':
+      return { title: 'Chrome Remote Desktop: not set up', help: `It is installed but turned off. ${steps}`, button: 'Set it up' };
+    case 'missing':
+      return { title: 'Chrome Remote Desktop: not set up', help: `See and use this screen from your phone. ${steps}`, button: 'Set it up' };
+    default:
+      return { title: 'Chrome Remote Desktop', help: `See and use this screen from your phone. ${steps}`, button: 'Set it up' };
+  }
+}
+
 let built: HTMLElement | null = null;
 /** Scroll to the section next time it shows (the setup's "Use Island from your phone"). */
 let wantFocus = false;
+/** The Settings page's settings, given on every redraw. */
+let host: PhoneSettingsHost | null = null;
 
 /** The section, after Notifications on every redraw of Settings. */
-export function phoneSection(): HTMLElement {
+export function phoneSection(given?: PhoneSettingsHost): HTMLElement {
+  if (given) host = given;
   if (!built) built = build();
   else void refresh();
   if (wantFocus) {
@@ -72,6 +111,10 @@ let list!: HTMLElement;
 let testStatus!: HTMLElement;
 let pairButton!: HTMLButtonElement;
 let testRow: HTMLElement | null = null;
+let termBox!: HTMLElement;
+let screenBox!: HTMLElement;
+/** The terminals as Rust last listed them. */
+let terms: TermInfo[] = [];
 
 let phones: RemotePhone[] = [];
 /** The code shown now, the phones there were when it was made, and its countdown. */
@@ -97,6 +140,8 @@ function build(): HTMLElement {
     ),
   );
   testRow.hidden = true;
+  termBox = h('div');
+  screenBox = h('div');
   const kids: Node[] = [
     h('p', { class: 'muted', text: 'See and control Island from your phone, anywhere. Encrypted end to end; nothing goes through a server of ours.' }),
     row('Pair a phone', `An iPhone, through ${SITE_HOST} on its Home Screen. There is no app to install.`, pairButton),
@@ -104,10 +149,17 @@ function build(): HTMLElement {
     status,
     list,
     testRow,
+    termBox,
+    screenBox,
   ];
   if (platform === 'windows') kids.push(h('p', { class: 'muted', text: "Claude's Allow works from a phone too, unless Windows Hello is asked before Allow (Activities › Claude Code): then a phone can only Deny." }));
   void on<RemotePhone[]>('remote-phones', (l) => show(l));
   void on<{ phone: string; name: string }>('remote-paired', (p) => paired(p.name));
+  void on<TermInfo[]>('term-changed', (l) => showTerms(l));
+  // Terminals open and end from the phone meanwhile: the list keeps up while Settings shows.
+  setInterval(() => {
+    if (built?.isConnected && document.visibilityState === 'visible') void refreshTerms();
+  }, 4000);
   void refresh();
   return section('Your phone', kids);
 }
@@ -118,7 +170,60 @@ function say(text: string, tone: 'muted' | 'ok' | 'warn' = 'muted'): void {
 }
 
 async function refresh(): Promise<void> {
+  drawTerms();
+  void refreshTerms();
+  void native.screenState().then(drawScreen);
   show(await native.remotePhones());
+}
+
+// ---------------------------------------------------------------- terminals and the screen
+
+async function refreshTerms(): Promise<void> {
+  showTerms(await native.termList());
+}
+
+function showTerms(next: unknown): void {
+  terms = Array.isArray(next) ? (next as TermInfo[]) : [];
+  drawTerms();
+}
+
+/** Terminal from your phone, then every terminal open now with End (an ended one: Remove). */
+function drawTerms(): void {
+  if (!termBox) return;
+  const kids: Node[] = [];
+  const s = host?.settings();
+  if (s) {
+    const r = row(
+      'Terminal from your phone',
+      termHelp(s),
+      toggle(s.general.phoneTerminal, (v) => {
+        s.general.phoneTerminal = v;
+        host?.save();
+        // Only the words change: the switch keeps its motion.
+        const help = r.querySelector('.row-help');
+        if (help) help.textContent = termHelp(s);
+      }),
+    );
+    kids.push(r);
+  }
+  for (const t of terms) {
+    const end = h('button', { class: 'btn ghost', text: t.exit === null ? 'End' : 'Remove' });
+    end.addEventListener('click', async () => {
+      end.disabled = true;
+      const r = await native.termKill(t.id);
+      if (!r.ok) say(`Couldn't end ${t.title}: ${r.error}`, 'warn');
+      await refreshTerms();
+    });
+    kids.push(row(t.title || 'Terminal', termDetail(t), end));
+  }
+  termBox.replaceChildren(...kids);
+}
+
+/** Chrome Remote Desktop: ready, or not set up with the button that sets it up. */
+function drawScreen(state: ScreenState): void {
+  const w = screenWords(state);
+  const open = h('button', { class: state === 'ready' ? 'btn ghost' : 'btn', text: w.button, onclick: () => void native.openUrl(SCREEN_SITE) });
+  screenBox.replaceChildren(row(w.title, w.help, open));
 }
 
 function show(next: RemotePhone[]): void {

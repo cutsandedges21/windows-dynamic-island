@@ -236,3 +236,34 @@ export function describeTool(tool: string | null | undefined, input: unknown): {
       return { verb: tool ? `Using ${tool}` : 'Thinking', detail: null };
   }
 }
+
+/** describeTool's verbs, done: a chat's history on the phone says what Claude did. */
+const DONE: Record<string, string> = {
+  'Running command': 'Ran',
+  'Checking a command': 'Checked a command',
+  Editing: 'Edited',
+  Writing: 'Wrote',
+  'Editing notebook': 'Edited',
+  Reading: 'Read',
+  'Searching code': 'Searched for',
+  'Searching the web': 'Searched the web for',
+  'Reading the web': 'Read',
+  'Running an agent': 'Ran an agent:',
+  Planning: 'Updated its plan',
+  'Asking you': 'Asked you',
+  'Plan ready': 'Plan ready',
+};
+
+/** A tool call in a few words, done: "Edited island.ts", "Ran npm test", "Searched for TODO". */
+export function toolDone(tool: string | null | undefined, input: unknown): string {
+  const d = describeTool(tool, input);
+  const i = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  // A command says more than its description: "Ran npm test".
+  if (tool === 'Bash' || tool === 'PowerShell') {
+    const cmd = typeof i.command === 'string' ? i.command.trim().split('\n')[0] : '';
+    const detail = cmd ? (cmd.length > 60 ? `${cmd.slice(0, 59)}…` : cmd) : d.detail;
+    return detail ? `Ran ${detail}` : 'Ran a command';
+  }
+  const verb = DONE[d.verb] ?? (d.verb.startsWith('Using ') ? `Used ${d.verb.slice(6)}` : d.verb);
+  return d.detail ? `${verb} ${d.detail}` : verb.replace(/ (for|:)$/, '');
+}

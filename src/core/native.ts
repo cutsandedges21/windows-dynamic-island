@@ -7,7 +7,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { emit, emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import type { IslandMsg } from '../remote/protocol';
+import type { IslandMsg, ScreenState, TermInfo, TermShell } from '../remote/protocol';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 export const demo = !isTauri;
@@ -363,6 +363,32 @@ export interface RemoteFileSent {
   ok: boolean;
   error?: string | null;
 }
+/**
+ * What term_open starts in a terminal of Island's (src-tauri/src/term): `program` with `args`, run
+ * directly with no shell between (so nothing needs quoting), or the shell when program is null.
+ */
+export interface TermOpen {
+  /** Null: the home folder. */
+  cwd: string | null;
+  /** Null: the default shell (PowerShell on Windows). */
+  shell: TermShell | null;
+  program: string | null;
+  args: string[];
+  cols: number;
+  rows: number;
+  title: string | null;
+  /** Started for a Claude chat (TermInfo.claude). */
+  claude: boolean;
+}
+/** A paired phone opened a terminal on this PC ('term-opened'). */
+export interface TermOpened {
+  phone: string;
+  /** The phone's name, when Rust says it. */
+  name?: string | null;
+  id: string;
+  title?: string | null;
+}
+
 /** A button on a phone push: a tap posts `reply` to the reply topic (src-tauri/src/phone.rs). */
 export interface PushButton {
   label: string;
@@ -509,6 +535,16 @@ export async function onFileDrop(cb: (e: FileDrop) => void): Promise<UnlistenFn>
     window.removeEventListener('dragleave', leave);
     window.removeEventListener('drop', drop);
   };
+}
+
+/** Island's terminals changed (one opened, was renamed, ended or was removed): the whole list. */
+export function onTermChanged(cb: (list: TermInfo[]) => void): Promise<UnlistenFn> {
+  return on<TermInfo[]>('term-changed', cb);
+}
+
+/** A paired phone opened a terminal on this PC: the island says so for a moment. */
+export function onTermOpened(cb: (e: TermOpened) => void): Promise<UnlistenFn> {
+  return on<TermOpened>('term-opened', cb);
 }
 
 /** Demo mode only: deliver an event as if Rust had sent it. */
@@ -760,6 +796,20 @@ export const native = {
   remoteName: () => call<string>('remote_name', {}, ''),
   /** A notification to every phone that turned them on; a tap opens the app on `open`'s card. How many it went to. */
   remotePush: (title: string, body: string, tag: string, open: string, urgent: boolean) => call<number>('remote_push', { title, body, tag, open, urgent }, 0),
+  /** Whether Rust lets paired phones open terminals (Settings › Your phone, and Windows Hello isn't asked before Allow). */
+  remoteTermAllow: (on: boolean) => call<undefined>('remote_term_allow', { on }, undefined),
+
+  /** Starts a terminal of Island's (src-tauri/src/term); its id and its child's pid, or why it couldn't. */
+  termOpen: (o: TermOpen) =>
+    tryCall<{ id: string; pid: number }>('term_open', { cwd: o.cwd, shell: o.shell, program: o.program, args: o.args, cols: o.cols, rows: o.rows, title: o.title, claude: o.claude }),
+  /** Types into a terminal: the text goes in as raw input ('\r' is Enter). */
+  termWrite: (id: string, text: string) => tryCall<unknown>('term_write', { id, text }),
+  /** Island's terminals, running and recently ended ('term-changed' says when they change). */
+  termList: () => call<TermInfo[]>('term_list', {}, []),
+  /** Ends a terminal (if it runs) and takes it off the list. */
+  termKill: (id: string) => tryCall<unknown>('term_kill', { id }),
+  /** Chrome Remote Desktop's host on this PC (src-tauri/src/screen.rs); null on a Mac and in the browser preview. */
+  screenState: () => call<ScreenState>('screen_state', {}, null),
 
   /** Workspaces (src/workspaces/store.ts goes through these; outside the app it keeps them in the browser). */
   wsLoad: () => call<WsLoaded | null>('workspaces_load', {}, null),

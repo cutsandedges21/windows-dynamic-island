@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { actionsIn, decodePair, encodePair, pairUrl, readIslandMsg, readPhoneMsg, relayUrl, type PairPayload } from '../src/remote/protocol';
+import {
+  actionsIn, decodePair, encodePair, HELLO_FOLDERS, MAX_ACTION, MAX_TERMS, pairUrl, readIslandMsg, readPhoneMsg, readTermHeader, readTermInfo, readTermReply, relayUrl,
+  TERM_DATA, TERM_EXIT, TERM_FRAME_MAX, TERM_REPLAY_MAX, TERM_RESIZE, TERM_SIZE_MAX, TERM_TITLE, type PairPayload, type PhoneControl, type TermInfo,
+} from '../src/remote/protocol';
 
 const PAIR: PairPayload = {
   v: 1,
@@ -84,5 +87,87 @@ describe('what a phone may press', () => {
     expect([...actionsIn([view, pill])].sort()).toEqual(
       ['act:claude:reply', 'act:claude:send', 'act:land:close', 'act:music:next', 'act:music:open', 'act:music:prev', 'act:music:seek', 'act:music:toggle', 'act:phone:hide', 'act:workspaces:restore', 'island:cancel-input', 'island:sheet-engage'].sort(),
     );
+  });
+
+  it("takes Claude's New chat, whose action names its folder, up to MAX_ACTION", () => {
+    const folder = `C:\\Users\\moss\\${'deep\\'.repeat(40)}project`;
+    const action = `act:claude:say:new:${folder}`;
+    expect(action.length).toBeGreaterThan(200);
+    expect(readPhoneMsg({ t: 'act', action, arg: 'Write the README' })).toEqual({ t: 'act', action, arg: 'Write the README' });
+    expect(readPhoneMsg({ t: 'act', action: 'x'.repeat(MAX_ACTION + 1) })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------- terminals, the screen, folders (2026-10-28)
+
+const HELLO = { t: 'hello', v: 1, name: 'MossLaptop', platform: 'windows', version: '0.4.1', allow: true, vapid: null };
+const TERM: TermInfo = { id: 'a1b2c3d4', title: 'PowerShell', cwd: 'C:\\Users\\moss', shell: 'powershell', pid: 4321, started: 1_761_660_000_000, exit: null, attached: 1, claude: false };
+
+describe('hello', () => {
+  it("from an older island (no terminals, screen or folders): none of them", () => {
+    expect(readIslandMsg(HELLO)).toEqual({ ...HELLO, term: false, screen: null, folders: [] });
+  });
+
+  it('carries whether terminals are allowed, the screen, and recent folders (six at most)', () => {
+    const folders = ['C:\\code\\island', 'C:\\code\\app', '', '   ', 42, 'C:\\a', 'C:\\b', 'C:\\c', 'C:\\d', 'C:\\e'];
+    const got = readIslandMsg({ ...HELLO, term: true, screen: 'ready', folders });
+    expect(got).toEqual({ ...HELLO, term: true, screen: 'ready', folders: ['C:\\code\\island', 'C:\\code\\app', 'C:\\a', 'C:\\b', 'C:\\c', 'C:\\d'] });
+    expect(HELLO_FOLDERS).toBe(6);
+    for (const screen of ['ready', 'off', 'missing', null] as const) expect(readIslandMsg({ ...HELLO, screen })).toMatchObject({ screen });
+    // Anything else is read as an older island would say it.
+    expect(readIslandMsg({ ...HELLO, term: 'yes', screen: 'maybe', folders: 'C:\\x' })).toMatchObject({ term: false, screen: null, folders: [] });
+    // Still a hello only when its old fields are right.
+    expect(readIslandMsg({ ...HELLO, allow: 'yes', term: true })).toBeNull();
+  });
+});
+
+describe('terminals', () => {
+  it('reads the list Rust sends, dropping what it cannot read', () => {
+    const ended = { ...TERM, id: 'e5f6a7b8', exit: 1, attached: 0, claude: true };
+    const got = readIslandMsg({ t: 'terms', items: [TERM, ended, { ...TERM, id: 'bad id!' }, { ...TERM, pid: -1 }, null], allowed: true });
+    expect(got).toEqual({ t: 'terms', items: [TERM, ended], allowed: true });
+    expect(readIslandMsg({ t: 'terms', items: [] })).toBeNull();
+    expect(readIslandMsg({ t: 'terms', items: 'x', allowed: false })).toBeNull();
+  });
+
+  it('a terminal: exit null while it runs, attached and claude defaulted', () => {
+    expect(readTermInfo(TERM)).toEqual(TERM);
+    const { attached: _a, claude: _c, exit: _e, ...bare } = TERM;
+    expect(readTermInfo(bare)).toEqual({ ...TERM, attached: 0, claude: false, exit: null });
+    expect(readTermInfo({ ...TERM, exit: -1073741510 })?.exit).toBe(-1073741510);
+    expect(readTermInfo({ ...TERM, exit: 1.5 })).toBeNull();
+    expect(readTermInfo({ ...TERM, started: 'today' })).toBeNull();
+    expect(readTermInfo({ ...TERM, title: 7 })).toBeNull();
+    // A Mac reports its shell's own name.
+    expect(readTermInfo({ ...TERM, shell: 'zsh' })?.shell).toBe('zsh');
+  });
+
+  it("a stream's first line: a new terminal (defaults when null) or one to attach to", () => {
+    expect(readTermHeader({ t: 'term', id: null, cols: 80, rows: 24, cwd: null, shell: null })).toEqual({ t: 'term', id: null, cols: 80, rows: 24, cwd: null, shell: null });
+    expect(readTermHeader({ t: 'term', id: 'a1b2c3d4', cols: 40, rows: 30, cwd: null, shell: null })?.id).toBe('a1b2c3d4');
+    expect(readTermHeader({ t: 'term', cols: 80, rows: 24, cwd: 'C:\\code', shell: 'bash' })).toEqual({ t: 'term', id: null, cols: 80, rows: 24, cwd: 'C:\\code', shell: 'bash' });
+    expect(readTermHeader({ t: 'term', id: null, cols: 0, rows: 24 })).toBeNull();
+    expect(readTermHeader({ t: 'term', id: null, cols: 80, rows: TERM_SIZE_MAX + 1 })).toBeNull();
+    expect(readTermHeader({ t: 'term', id: null, cols: 80, rows: 24, shell: 'fish' })).toBeNull();
+    expect(readTermHeader({ t: 'file', id: null, cols: 80, rows: 24 })).toBeNull();
+  });
+
+  it("the PC's answer: term-ok or term-error", () => {
+    expect(readTermReply({ t: 'term-ok', id: 'a1b2c3d4', title: 'PowerShell' })).toEqual({ t: 'term-ok', id: 'a1b2c3d4', title: 'PowerShell' });
+    expect(readTermReply({ t: 'term-error', error: 'Turned on in Settings › Your phone on the PC' })).toEqual({ t: 'term-error', error: 'Turned on in Settings › Your phone on the PC' });
+    expect(readTermReply({ t: 'term-ok', title: 'x' })).toBeNull();
+    expect(readTermReply({ t: 'term-error' })).toBeNull();
+    expect(readTermReply({ t: 'pong' })).toBeNull();
+  });
+
+  it('frames, as Rust and the phone both cut them', () => {
+    expect([TERM_DATA, TERM_RESIZE, TERM_EXIT, TERM_TITLE]).toEqual([0, 1, 2, 3]);
+    expect(TERM_FRAME_MAX).toBe(65536);
+    expect(TERM_REPLAY_MAX).toBe(262144);
+    expect(TERM_SIZE_MAX).toBe(500);
+    expect(MAX_TERMS).toBe(8);
+    // term-list and term-kill are Rust's lines: never one of the island TypeScript's.
+    const lines: PhoneControl[] = [{ t: 'term-list' }, { t: 'term-kill', id: 'a1b2c3d4' }];
+    for (const l of lines) expect(readPhoneMsg(l)).toBeNull();
   });
 });

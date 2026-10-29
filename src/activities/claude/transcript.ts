@@ -5,7 +5,7 @@
 // (fsx.rs: claude_transcript_meta), so only small results cross IPC.
 
 import { native, type FileStat, type TranscriptMeta } from '../../core/native';
-import type { EntryKind } from './status';
+import { toolDone, type EntryKind } from './status';
 
 const TAIL_ESCALATION = [262144, 262144 * 8, 262144 * 64];
 const TITLE_MAX = 80;
@@ -176,19 +176,87 @@ export function parseLines(lines: string[]): TailState {
   return st;
 }
 
-/** Display text of a prompt: [text, isHousekeeping]. Works on the prompt's leading text. */
-export function promptText(text: string | null): [string | null, boolean] {
+/** Display text of a prompt: [text, isHousekeeping]. Works on the prompt's leading text; `limit` characters at most (a title's by default). */
+export function promptText(text: string | null, limit = TITLE_MAX): [string | null, boolean] {
   if (typeof text !== 'string') return [null, false];
   const cmd = COMMAND_NAME_RE.exec(text);
   if (cmd && cmd[1].trim()) {
     const name = cmd[1].trim();
     const argsMatch = COMMAND_ARGS_RE.exec(text);
     const args = argsMatch ? argsMatch[1].split(/\s+/).filter(Boolean).join(' ') : '';
-    return [clip(args ? `${name} ${args}` : name, TITLE_MAX), HOUSEKEEPING_COMMANDS.has(name)];
+    return [clip(args ? `${name} ${args}` : name, limit), HOUSEKEEPING_COMMANDS.has(name)];
   }
   const cleaned = text.replace(WRAPPER_RE, '').split(/\s+/).filter(Boolean).join(' ');
   if (!cleaned) return [null, false];
-  return [clip(cleaned, TITLE_MAX), false];
+  return [clip(cleaned, limit), false];
+}
+
+// ------------------------------------------------------------------ a chat's last messages (the phone)
+
+/** One line of a chat as Claude's card on a phone shows it. */
+export interface ChatMessage {
+  /** Stable while the transcript grows (the entry's uuid and the block's place in it). */
+  key: string;
+  /** you: a prompt; claude: Claude's text; tool: what Claude did ("Edited island.ts"); note: an API error. */
+  kind: 'you' | 'claude' | 'tool' | 'note';
+  text: string;
+  /** When it was written (ms); 0 when the entry has no time. */
+  at: number;
+}
+
+/** A prompt or a reply on the phone, at most this many characters. */
+const CHAT_TEXT_MAX = 2000;
+/** How much of a transcript's end is read for a chat's messages, wider until enough are there. */
+const CHAT_TAIL = [262144, 262144 * 8];
+
+/**
+ * The last `max` messages of a chat from transcript lines, oldest first: the user's prompts (not
+ * tool results, interrupts or local commands' output), Claude's text, one line per tool call, and
+ * API errors. Side chains (subagents) and meta entries stay out, as in parseLines.
+ */
+export function chatMessages(lines: string[], max: number): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  lines.forEach((line, n) => {
+    const entry = load(line);
+    if (!entry || entry.isSidechain === true || entry.isMeta === true) return;
+    const message = entry.message && typeof entry.message === 'object' ? (entry.message as Json) : null;
+    if (!message) return;
+    const at = parseTimestamp(entry.timestamp) ?? 0;
+    const id = typeof entry.uuid === 'string' && entry.uuid ? entry.uuid : `${n}:${at}`;
+    const content = message.content;
+    if (entry.type === 'user') {
+      if (Array.isArray(content) && content.some((b) => b && typeof b === 'object' && (b as Json).type === 'tool_result')) return;
+      if (startsWithAny(content, [INTERRUPT_MARKER, ...LOCAL_COMMAND_MARKERS])) return;
+      const [text] = promptText(leadingText(content), CHAT_TEXT_MAX);
+      if (text) out.push({ key: id, kind: 'you', text, at });
+    } else if (entry.type === 'assistant') {
+      if (entry.isApiErrorMessage === true) {
+        const text = leadingText(content)?.trim();
+        out.push({ key: id, kind: 'note', text: clip(text || 'Claude ran into an error.', 200), at });
+        return;
+      }
+      if (!Array.isArray(content)) return;
+      content.forEach((b, i) => {
+        if (!b || typeof b !== 'object') return;
+        const block = b as Json;
+        if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) out.push({ key: `${id}:${i}`, kind: 'claude', text: clip(block.text.trim(), CHAT_TEXT_MAX), at });
+        else if (block.type === 'tool_use') out.push({ key: `${id}:${i}`, kind: 'tool', text: toolDone(typeof block.name === 'string' ? block.name : null, block.input), at });
+      });
+    }
+  });
+  return out.slice(-max);
+}
+
+/** A chat's last `max` messages from the end of its transcript, reading further back when they aren't all there. */
+export async function readChat(file: string, max: number): Promise<ChatMessage[]> {
+  let out: ChatMessage[] = [];
+  for (const bytes of CHAT_TAIL) {
+    const t = await native.readTail(file, bytes);
+    if (!t) break;
+    out = chatMessages(t.lines, max);
+    if (out.length >= max || t.size <= bytes) break;
+  }
+  return out;
 }
 
 /** Usage Clip's promptDisplay(entry), for tests and parity: tool results have no prompt. */

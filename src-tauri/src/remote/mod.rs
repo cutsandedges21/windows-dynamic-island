@@ -7,12 +7,13 @@
 // endpoint runs while a phone is paired or being paired. Any key may connect on `island-phone/1`:
 // the phone opens a control stream whose first line pairs (with the one-time code from the QR
 // code) or says hi (a key in `<data dir>/phones.json`); anything else is closed within 10 s.
-// After that each line is one JSON object: Rust answers pings and keeps push subscriptions, and
-// hands every other line to the island's TypeScript as `remote-msg`.
+// After that each line is one JSON object: Rust answers pings, keeps push subscriptions and
+// answers about terminals, and hands every other line to the island's TypeScript as
+// `remote-msg`. Files and terminals (terms.rs) each get a stream of their own.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -23,6 +24,7 @@ use tokio::time::timeout;
 
 use crate::anywhere::Relays;
 use crate::land::Emit;
+use crate::term::{TermInfo, Terms};
 
 mod files;
 mod lines;
@@ -31,6 +33,7 @@ mod pair;
 mod push;
 mod session;
 mod store;
+mod terms;
 #[cfg(test)]
 mod tests;
 
@@ -125,12 +128,15 @@ pub struct Remote {
     net: tokio::sync::Mutex<Option<Endpoint>>,
     /// The VAPID key, once loaded (push.rs).
     vapid: Mutex<Option<Arc<ring::signature::EcdsaKeyPair>>>,
+    /// This computer's terminals (src/term), and whether phones may have them (terms.rs).
+    terms: Arc<Terms>,
+    term_allowed: AtomicBool,
 }
 
 impl Remote {
-    pub fn new(cfg: Config, emit: Emit) -> Arc<Remote> {
+    pub fn new(cfg: Config, emit: Emit, terms: Arc<Terms>) -> Arc<Remote> {
         let store = Store::load(cfg.dir.join("phones.json"));
-        Arc::new(Remote {
+        let remote = Arc::new(Remote {
             cfg,
             emit,
             store: Mutex::new(store),
@@ -140,7 +146,17 @@ impl Remote {
             session_seq: AtomicU64::new(0),
             net: tokio::sync::Mutex::new(None),
             vapid: Mutex::new(None),
-        })
+            terms: terms.clone(),
+            term_allowed: AtomicBool::new(false),
+        });
+        // Every phone hears the terminal list when it changes.
+        let weak = Arc::downgrade(&remote);
+        terms.listen(Arc::new(move |list: &[TermInfo]| {
+            if let Some(remote) = weak.upgrade() {
+                remote.send_terms(None, list);
+            }
+        }));
+        remote
     }
 
     fn name(&self) -> String {
@@ -408,7 +424,8 @@ pub fn setup(app: &tauri::AppHandle) {
             _ => handle.emit_to(crate::overlay::LABEL, event, payload),
         };
     });
-    let remote = Remote::new(Config::live(), emit);
+    let terms = app.state::<crate::term::TermState>().0.clone();
+    let remote = Remote::new(Config::live(), emit, terms);
     if app.state::<RemoteState>().0.set(remote.clone()).is_err() {
         return;
     }
@@ -485,4 +502,14 @@ pub async fn remote_push(app: tauri::AppHandle, title: String, body: String, tag
 #[tauri::command]
 pub fn remote_name(state: tauri::State<'_, RemoteState>) -> String {
     state.get().map(|r| r.name()).unwrap_or_else(crate::land::share::computer_name)
+}
+
+/// Whether paired phones may open terminals on this computer (Settings › Your phone › Terminal
+/// from your phone, and Windows Hello not asked before Allow). Off at start; the island says
+/// at boot and on every change. Off lets go of every terminal a phone shows.
+#[tauri::command]
+pub fn remote_term_allow(state: tauri::State<'_, RemoteState>, on: bool) {
+    if let Some(r) = state.get() {
+        r.term_allow(on);
+    }
 }

@@ -2,7 +2,8 @@
 // polling cadence, switching, reopening, alerts, hotkeys, tray), plus hooks for
 // answering from the island: permission prompts, Claude's questions, and the
 // reply window (a finished chat waits briefly for a reply typed here, which
-// then lands in that same chat). The views are the island's own.
+// then lands in that same chat). On a phone, its card is a chat with Claude
+// (phonechat.ts). The views are the island's own.
 
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../../core/activity';
 import { agoText, baseName, clip, elapsed, pace, plainText, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from '../../core/format';
@@ -12,15 +13,19 @@ import type { PetSignal } from '../../core/pet';
 import type { Seg, Tone } from '../../core/segments';
 import { hiddenNow } from '../../core/settings';
 import type { Block, SheetButton, SheetRow, SheetView, Tile } from '../../core/sheet';
+import { PhoneError } from '../../remote/hub';
+import type { TermInfo } from '../../remote/protocol';
 import { BaseActivity, chime } from '../base';
 import { chatUrl, DesktopChats, type DesktopChat } from './desktop';
 import { about, turnLeft } from './estimate';
 import { afterModifiersReleased, deepLink, focusSession, selectWindow } from './focus';
 import { HookState, questionsOf, type HookEvent, type PermissionCard, type ReplyHold } from './hooks';
+import { claudeArgs, oneLine, recentFolders, routeFor, routeHint, sameText, terminalFor, type ChatPane, type ChatRoute } from './phonechat';
 import { EDITOR_HOSTS } from './procinfo';
 import { askText, permissionText, PushGate, pushFor, type PushKind } from './pushes';
 import { describeTool, joinPath, projectName } from './status';
-import { ClosedHistory, SessionTracker, type ClosedView, type SessionView, type TrackerEvent } from './tracker';
+import { ClosedHistory, findTranscript, SessionTracker, type ClosedView, type SessionView, type TrackerEvent } from './tracker';
+import { readChat, type ChatMessage } from './transcript';
 import { UsageClient, WeeklyTokens, weekWindowStart, type UsageData, type UsageState } from './usage';
 
 interface Options {
@@ -55,6 +60,26 @@ const HOLD_MS = 240_000;
 const HOLD_CEILING_MS = 270_000;
 
 const TONE: Record<string, Tone> = { needs: 'claude', working: 'good', turn: 'info', error: 'bad', muted: 'muted' };
+
+/** Claude's card on a phone: chats in its list (live and closed together), folders to start a new one in, messages of one chat. */
+const PHONE_CHATS = 8;
+const PHONE_FOLDERS = 4;
+const CHAT_MESSAGES = 12;
+/** Enter goes into an Island terminal this long after the text: in the same write it would read as part of a paste. */
+const ENTER_GAP_MS = 150;
+/** A Claude started in an Island terminal is followed this long at most (it may wait in its terminal for an answer)… */
+const FOLLOW_MS = 10 * 60_000;
+/** …and after this long the phone is told it is taking a while. */
+const SLOW_START_MS = 45_000;
+/** A message from the phone shows under its chat until the transcript has it, at most this long (a working Claude queues it). */
+const PENDING_MS = 10 * 60_000;
+/** The size an Island terminal for a chat starts at; a phone that attaches resizes it. */
+const TERM_COLS = 120;
+const TERM_ROWS = 36;
+/** After ending a chat's Claude in its Island terminal, this long before its editor opens it. */
+const MOVE_GAP_MS = 400;
+/** Back to the list of chats, from one chat or a new one. */
+const CHATS_BACK: SheetButton = { key: 'back', icon: 'chevron-left', action: 'chat-back', style: 'ghost', tip: 'All chats' };
 
 /** The Claude mark that leads the pill. */
 const MARK: Seg = { t: 'icon', key: 'mark', icon: 'claude', tone: 'claude', prio: 0 };
@@ -106,6 +131,27 @@ export class ClaudeActivity extends BaseActivity {
   /** Answers picked so far on a question card: request id → question index → labels. */
   private readonly picks = new Map<string, Map<number, string[]>>();
 
+  // Claude's card on a phone (phonechat.ts).
+  private projectsDir = '';
+  /** Island's terminals (src-tauri/src/term), as Rust last listed them: chats from the phone run in them. */
+  private terms: TermInfo[] = [];
+  /** Chats Island started in its terminals: session id → terminal id. */
+  private readonly started = new Map<string, string>();
+  /** A chat the phone continued in a copy (a VS Code chat): original → the copy, which the phone's card follows. */
+  readonly forks = new Map<string, string>();
+  /** Claude just started in an Island terminal, until the tracker sees its chat there. `from`: the chat it continues; null for a new one. */
+  private follows: Array<{ term: string; pid: number; from: string | null; cwd: string; at: number }> = [];
+  /** What the card shows on the phone: every chat, one chat, or a new one. One for every phone. */
+  private pane: ChatPane = { kind: 'list' };
+  /** The open chat's last messages, as last read from its transcript. */
+  private chatLog: { id: string; file: string | null; size: number; messages: ChatMessage[] } | null = null;
+  private chatReading = false;
+  private chatAgain = false;
+  /** The phone's last message, under its chat until the transcript has it. */
+  private pending: { pane: string; text: string; at: number } | null = null;
+  /** Something a chat's card says for a while (Claude stopped before the chat began). */
+  private chatNote: { pane: string; text: string; until: number } | null = null;
+
   constructor() {
     super('claude');
   }
@@ -143,6 +189,8 @@ export class ClaudeActivity extends BaseActivity {
     });
     // Switching to a chat's own window means the user will answer it there: let it go at once.
     this.listen<{ pid: number }>('foreground', ({ pid }) => this.onForeground(pid));
+    // Chats from the phone run in Island's terminals: their list says which chat runs where.
+    this.listen<TermInfo[]>('term-changed', (list) => this.onTerms(list));
     this.every(1000, () => this.expireHolds());
     if (native.demo) {
       this.demo();
@@ -153,6 +201,8 @@ export class ClaudeActivity extends BaseActivity {
     const root = this.env.configDir;
     const sessionsDir = joinPath(root, 'sessions');
     const projectsDir = joinPath(root, 'projects');
+    this.projectsDir = projectsDir;
+    void this.refreshTerms();
     this.tracker = new SessionTracker(sessionsDir, projectsDir);
     this.history = new ClosedHistory(projectsDir);
     this.weekly = new WeeklyTokens(projectsDir);
@@ -217,12 +267,16 @@ export class ClaudeActivity extends BaseActivity {
       this.ctx.log('session poll failed', String(err));
       return;
     }
-    this.sessions = this.visibleSessions(result.sessions);
+    // A chat in an Island terminal has no window of its own: it says Island where others say their terminal.
+    this.sessions = this.visibleSessions(result.sessions).map((s) => (this.islandTerm(s) ? { ...s, host: 'Island' } : s));
     this.closed = this.visibleClosed(result.closed);
     for (const ev of result.events) this.onTrackerEvent(ev);
     const keepMs = this.opts().finishedSeconds * 1000 + 2000;
     for (const [id, at] of this.finished) if (Date.now() - at > keepMs) this.finished.delete(id);
     if (this.selected && !this.sessions.some((s) => s.id === this.selected)) this.selected = null;
+    this.followChats();
+    // A phone showing a chat sees it move: its transcript is read again once it grew.
+    if (this.pane.kind === 'chat' && this.ctx.cardOpen?.()) void this.loadChat();
     this.ctx.update();
   }
 
@@ -772,6 +826,8 @@ export class ClaudeActivity extends BaseActivity {
     if (id.startsWith('desktop:')) return this.openDesktop(id.slice('desktop:'.length));
     const s = this.tracker?.get(id);
     if (!s || !this.tracker) return false;
+    // A chat started from the phone runs in an Island terminal, with no window: Open moves it to VS Code.
+    if (s.alive && this.islandTerm(s)) return this.moveToEditor(s, source);
     let ok = false;
     try {
       if (!s.alive) ok = await native.claudeResume(s.sessionId, s.cwd, null, false);
@@ -822,6 +878,40 @@ export class ClaudeActivity extends BaseActivity {
     return native.openUrl(url);
   }
 
+  /**
+   * Open, on a chat running in an Island terminal (started from the phone): Island ends its Claude
+   * there and opens the chat in VS Code, which picks it up with everything said from the phone.
+   */
+  private async moveToEditor(s: SessionView, source: string): Promise<boolean> {
+    const term = this.islandTerm(s);
+    let ok = false;
+    try {
+      if (term) {
+        await native.termKill(term.id);
+        this.started.delete(s.sessionId);
+        // Its process lets go of the chat before the editor opens it.
+        await sleep(MOVE_GAP_MS);
+      }
+      ok = await this.openInEditor(s.sessionId, null, s.project);
+    } catch (err) {
+      this.ctx.log('switch error', String(err));
+    }
+    this.ctx.log('switch', { source, session: s.id, island: true, ok });
+    if (!ok) this.flash(`Couldn't open it in ${this.editorName()}`, 'bad', 'alert');
+    return ok;
+  }
+
+  /** The editor a chat moves to: the one running, else VS Code. */
+  private editorName(): string {
+    return this.tracker?.probe.runningEditor() ?? 'VS Code';
+  }
+
+  /** What Open does for a chat: brings up its window, or, for a chat in an Island terminal, moves it to the editor. */
+  private openText(s: SessionView | null | undefined): string {
+    if (s?.alive && this.islandTerm(s)) return `Open in ${this.editorName()}`;
+    return `Open ${s?.host ?? 'the chat'}`;
+  }
+
   private async openDesktop(uuid: string): Promise<boolean> {
     const url = chatUrl(uuid);
     if (!url) return false;
@@ -851,6 +941,10 @@ export class ClaudeActivity extends BaseActivity {
         await native.clipboardSetText(text);
         ok = await this.openInEditor(s.sessionId, live?.editorHost ?? closed?.editorHost ?? null, s.project, text);
         how = 'editor';
+      } else if (live && this.islandTerm(live)) {
+        // Started from the phone: it runs in an Island terminal, typed into like any other.
+        ok = (await this.typeInto(this.islandTerm(live)!.id, text)) === null;
+        how = 'island';
       } else if (live) {
         const r = await native.claudeInject(live.pid, text);
         ok = r.ok;
@@ -1051,7 +1145,7 @@ export class ClaudeActivity extends BaseActivity {
     if (s.status === 'awaiting_input' || s.status === 'interrupted' || s.status === 'errored') {
       segs.push({ t: 'button', key: 'continue', icon: 'enter', label: 'Continue', action: 'continue', arg: s.id, style: 'primary', side: 'end', prio: 1 });
     }
-    segs.push({ t: 'button', key: 'open', icon: 'external', action: 'switch', arg: s.id, style: s.needsYou ? 'primary' : 'ghost', side: 'end', prio: 2, tip: `Open ${s.host}${s.slot ? ` (Alt+Shift+${s.slot})` : ''}` });
+    segs.push({ t: 'button', key: 'open', icon: 'external', action: 'switch', arg: s.id, style: s.needsYou ? 'primary' : 'ghost', side: 'end', prio: 2, tip: `${this.openText(s)}${s.slot ? ` (Alt+Shift+${s.slot})` : ''}` });
     return segs;
   }
 
@@ -1132,7 +1226,7 @@ export class ClaudeActivity extends BaseActivity {
     if (env.level !== 'compact') {
       segs.push(
         { t: 'button', key: 'continue', icon: 'enter', label: 'Continue', action: 'continue', arg: s.id, style: 'primary', side: 'end', prio: 1 },
-        { t: 'button', key: 'open', icon: 'external', action: 'switch', arg: s.id, style: 'ghost', side: 'end', prio: 3, tip: `Open ${s.host}` },
+        { t: 'button', key: 'open', icon: 'external', action: 'switch', arg: s.id, style: 'ghost', side: 'end', prio: 3, tip: this.openText(s) },
       );
     }
     return segs;
@@ -1179,7 +1273,8 @@ export class ClaudeActivity extends BaseActivity {
       return null;
     }
     if (env.reason === 'hover') return this.hoverSheet(env);
-    return null;
+    // Only a phone opens Claude's own card (its Claude button): a chat with Claude.
+    return this.phoneSheet(env.now);
   }
 
   private where(s: SessionView | null | undefined, ...extra: Array<string | null | undefined>): string {
@@ -1263,7 +1358,7 @@ export class ClaudeActivity extends BaseActivity {
           tone: 'good',
           title: s?.displayTitle || 'Claude finished',
           sub: this.where(s, 'Finished'),
-          buttons: [{ key: 'open', icon: 'external', action: 'open-chat', arg: h.requestId, style: 'ghost', tip: `Open ${s?.host ?? 'the chat'}` }],
+          buttons: [{ key: 'open', icon: 'external', action: 'open-chat', arg: h.requestId, style: 'ghost', tip: this.openText(s) }],
         },
         { t: 'text', key: 'msg', text, bubble: true, lines: 9 },
         {
@@ -1297,7 +1392,7 @@ export class ClaudeActivity extends BaseActivity {
           tone: 'good',
           title: s.displayTitle,
           sub: this.where(s, 'Finished'),
-          buttons: [{ key: 'open', icon: 'external', action: 'switch', arg: sid, style: 'ghost', tip: `Open ${s.host}` }],
+          buttons: [{ key: 'open', icon: 'external', action: 'switch', arg: sid, style: 'ghost', tip: this.openText(s) }],
         },
         { t: 'text', key: 'msg', text, bubble: true, lines: 7 },
         { t: 'input', key: 'reply', placeholder: 'Reply to this chat…', action: `continue:${sid}`, engage: `keep:${sid}`, hint: this.lateHint(s) },
@@ -1308,6 +1403,7 @@ export class ClaudeActivity extends BaseActivity {
   private lateHint(s: SessionView): string {
     if (!s.alive) return 'Reopens the chat in a terminal with your reply.';
     if (s.entrypoint === 'claude-vscode') return `Opens the chat in ${s.editorHost || s.host} with your reply ready: press Enter there.`;
+    if (this.islandTerm(s)) return 'Types your reply into the chat in its Island terminal.';
     return 'Types your reply into its terminal and sends it.';
   }
 
@@ -1330,13 +1426,12 @@ export class ClaudeActivity extends BaseActivity {
       const op = this.operation(s);
       blocks.push({ t: 'text', key: 'msg', text: op ? `Waiting on you: ${op}` : 'Waiting on you in the chat.', tone: 'muted' });
     } else return null;
-    blocks.push({ t: 'buttons', key: 'b', items: [{ key: 'open', label: `Open ${s?.host ?? 'the chat'}`, icon: 'external', action: 'switch', arg: sid, style: 'primary' }] });
+    blocks.push({ t: 'buttons', key: 'b', items: [{ key: 'open', label: this.openText(s), icon: 'external', action: 'switch', arg: sid, style: 'primary' }] });
     return { key: `note:${sid}:${ask?.at ?? note?.at ?? 0}`, blocks };
   }
 
-  /** Hovering Claude: limits with pace, this week's tokens, every chat, recent closed ones. */
-  private hoverSheet(env: SheetEnv): SheetView {
-    const now = env.now;
+  /** The limits with their pace (session, week, per model), as the hover card and a phone's list of chats show them. */
+  private limitBlocks(now: number): Block[] {
     const blocks: Block[] = [];
     const d = this.limitsNow(now);
     const tone = (pct: number): Tone => (pct >= 90 ? 'bad' : pct >= 75 ? 'warn' : 'claude');
@@ -1356,6 +1451,13 @@ export class ClaudeActivity extends BaseActivity {
       blocks.push({ t: 'meter', key: `limit-${m.name}`, label: `${m.name} (week)`, value: m.pct / 100, text: `${Math.round(m.pct)}%`, tone: tone(m.pct) });
     }
     if (!d) blocks.push({ t: 'text', key: 'limits-none', text: this.usageState?.message ?? 'Limits not loaded yet', tone: 'muted', size: 'sm' });
+    return blocks;
+  }
+
+  /** Hovering Claude: limits with pace, this week's tokens, every chat, recent closed ones. */
+  private hoverSheet(env: SheetEnv): SheetView {
+    const now = env.now;
+    const blocks: Block[] = this.limitBlocks(now);
     const t = this.tokenTotals;
     if (t) {
       blocks.push({
@@ -1382,7 +1484,7 @@ export class ClaudeActivity extends BaseActivity {
           badge: s.slot ? String(s.slot) : undefined,
           action: 'switch',
           arg: s.id,
-          tip: `Open ${s.host}${s.slot ? ` (Alt+Shift+${s.slot})` : ''}`,
+          tip: `${this.openText(s)}${s.slot ? ` (Alt+Shift+${s.slot})` : ''}`,
           button: { key: 'hide', icon: 'x', action: 'hide-session', arg: s.sessionId, style: 'ghost', tip: 'Hide this chat from Island' },
         })),
       });
@@ -1473,6 +1575,271 @@ export class ClaudeActivity extends BaseActivity {
         empty: this.tokenTotals ? `No chats open · ${fmtTokens(this.tokenTotals.fresh)} tokens this week` : 'No chats open',
       },
     };
+  }
+
+  // ---------------------------------------------------------------- Claude's card on a phone (phonechat.ts)
+
+  /** The folders Claude chats ran in, newest first: a phone's New chat, and its terminal's folder picker (hello). */
+  recentFolders(max: number): string[] {
+    return recentFolders([...this.sessions.map((s) => ({ cwd: s.cwd, at: s.lastActivityMs })), ...this.closed.map((c) => ({ cwd: c.cwd, at: c.closedAt }))], max);
+  }
+
+  /** The card a phone shows for Claude: the chats, one chat, or a new chat in a folder. */
+  private phoneSheet(now: number): SheetView {
+    const pane = this.pane;
+    if (pane.kind === 'chat') {
+      const view = this.chatSheet(pane.id, now);
+      if (view) return view;
+    }
+    if (pane.kind === 'new') return this.newChatSheet(pane.folder, now);
+    return this.chatsSheet(now);
+  }
+
+  /** "Working…", "Your turn", "Needs you": a chat's state in a word or two. */
+  private statusWord(s: SessionView): string {
+    return s.status === 'working' ? 'Working…' : s.label;
+  }
+
+  /** The limits, then every chat (live ones, then the closed recently: 8 at most), then a new chat in a recent folder. */
+  private chatsSheet(now: number): SheetView {
+    const blocks = this.limitBlocks(now);
+    const live = this.sessions.slice(0, PHONE_CHATS);
+    const closed = this.closed.slice(0, PHONE_CHATS - live.length);
+    blocks.push({ t: 'text', key: 'chats-h', text: 'Chats', tone: 'muted', size: 'sm' });
+    if (live.length || closed.length) {
+      blocks.push({
+        t: 'rows',
+        key: 'chats',
+        items: [
+          ...live.map((s): SheetRow => ({ key: s.id, dot: TONE[s.tone] ?? 'muted', pulse: s.needsYou, title: s.displayTitle, detail: [this.statusWord(s), s.project].filter(Boolean).join(' · '), action: 'chat', arg: s.id })),
+          ...closed.map((c): SheetRow => ({ key: c.id, icon: 'history', title: c.displayTitle, detail: [`Closed ${agoText(now - c.closedAt)}`, c.project].filter(Boolean).join(' · '), action: 'chat', arg: c.id })),
+        ],
+      });
+    } else blocks.push({ t: 'text', key: 'chats-none', text: 'No Claude Code chats yet', tone: 'muted', size: 'sm' });
+    const folders = this.recentFolders(PHONE_FOLDERS);
+    if (folders.length) {
+      blocks.push(
+        { t: 'text', key: 'new-h', text: 'New chat', tone: 'muted', size: 'sm' },
+        { t: 'buttons', key: 'new', align: 'start', items: folders.map((f): SheetButton => ({ key: f, label: clip(projectName(f), 24), icon: 'plus', action: 'chat-new', arg: f, style: 'ghost', tip: f })) },
+      );
+    }
+    return { key: 'chats', blocks };
+  }
+
+  /** One chat: its last messages, what it is doing, and the box to message it, with where a message goes. */
+  private chatSheet(id: string, now: number): SheetView | null {
+    const live = this.sessions.find((s) => s.id === id) ?? null;
+    const chat = live ?? this.closed.find((c) => c.id === id) ?? null;
+    if (!chat) return null;
+    const pane = `chat:${id}`;
+    const log = this.chatLog?.id === id ? this.chatLog : null;
+    if (!log) void this.loadChat();
+    const blocks: Block[] = [
+      { t: 'head', key: 'h', icon: 'claude', tone: 'claude', title: chat.displayTitle, sub: [chat.project, live ? this.statusWord(live) : 'Closed'].filter(Boolean).join(' · '), buttons: [CHATS_BACK] },
+      ...this.messageBlocks(log?.messages ?? [], pane, now, log ? 'No messages yet' : 'Reading the chat…'),
+    ];
+    if (live?.status === 'working') blocks.push({ t: 'text', key: 'working', text: 'Claude is working…', tone: 'muted', size: 'sm' });
+    const card = this.hooks.cards.find((c) => c.sessionId === id);
+    if (card) blocks.push({ t: 'text', key: 'waiting', text: card.tool === 'AskUserQuestion' ? 'Claude asked you something: its card has the question.' : 'Claude waits for your OK: its card has Allow and Deny.', tone: 'claude', size: 'sm' });
+    blocks.push(...this.startBlocks(pane, now, { t: 'input', key: 'say', placeholder: 'Message Claude…', action: `say:${id}`, hint: routeHint(this.routeOf(chat)) }));
+    return { key: pane, blocks };
+  }
+
+  /** A new chat in a folder: what Claude should do. */
+  private newChatSheet(folder: string, now: number): SheetView {
+    const pane = `new:${folder}`;
+    const blocks: Block[] = [
+      { t: 'head', key: 'h', icon: 'claude', tone: 'claude', title: `New chat in ${projectName(folder)}`, sub: folder, buttons: [CHATS_BACK] },
+      ...this.messageBlocks([], pane, now, ''),
+      ...this.startBlocks(pane, now, { t: 'input', key: 'say', placeholder: 'What should Claude do?', action: `say:new:${folder}`, hint: routeHint({ how: 'new', cwd: folder }) }),
+    ];
+    return { key: pane, blocks };
+  }
+
+  /** A chat's messages, oldest first, and the phone's own message after them until the chat has it. */
+  private messageBlocks(messages: ChatMessage[], pane: string, now: number, empty: string): Block[] {
+    const out = messages.map((m): Block => {
+      const key = `m:${m.key}`;
+      if (m.kind === 'claude') return { t: 'text', key, text: plainText(m.text), bubble: true, lines: 9 };
+      if (m.kind === 'you') return { t: 'text', key, text: `You: ${m.text}` };
+      return { t: 'text', key, text: m.text, tone: m.kind === 'note' ? 'bad' : 'muted', size: 'sm' };
+    });
+    const p = this.pending;
+    if (p?.pane === pane && now - p.at < PENDING_MS) out.push({ t: 'text', key: 'pending', text: `You: ${p.text}` });
+    else if (!out.length && empty) out.push({ t: 'text', key: 'none', text: empty, tone: 'muted', size: 'sm' });
+    return out;
+  }
+
+  /** The box to message the chat, or, while Claude starts for it in an Island terminal, a line saying so; and a note when that failed. */
+  private startBlocks(pane: string, now: number, input: Block): Block[] {
+    const out: Block[] = [];
+    const note = this.chatNote?.pane === pane && this.chatNote.until > now ? this.chatNote : null;
+    if (note) out.push({ t: 'text', key: 'note', text: note.text, tone: 'warn', size: 'sm' });
+    const start = this.follows.find((f) => (f.from ? `chat:${f.from}` : `new:${f.cwd}`) === pane);
+    // Until the chat shows up, a second message would start Claude a second time.
+    if (start) out.push({ t: 'text', key: 'starting', text: now - start.at > SLOW_START_MS ? 'Still starting on your PC. Its terminal (Terminal) shows if it waits for something.' : 'Starting Claude on your PC…', tone: 'muted', size: 'sm' });
+    else out.push(input);
+    return out;
+  }
+
+  /** A chat on the list by its id: live, else closed recently. */
+  private findChat(id: string): SessionView | ClosedView | null {
+    return this.sessions.find((s) => s.id === id) ?? this.tracker?.get(id) ?? this.closed.find((c) => c.id === id) ?? this.tracker?.getClosed(id) ?? null;
+  }
+
+  /** The running Island terminal a live chat is in: Island started it there, or its process is the terminal's child. */
+  private islandTerm(s: Pick<SessionView, 'sessionId' | 'pid'>): TermInfo | null {
+    if (!this.terms.length) return null;
+    const mine = this.started.get(s.sessionId);
+    const t = mine ? this.terms.find((x) => x.id === mine && x.exit === null) : undefined;
+    return t ?? terminalFor(s.pid, this.terms, (pid) => this.chainOf(pid));
+  }
+
+  /** Where a message to this chat goes now (phonechat.ts routeFor). */
+  private routeOf(chat: SessionView | ClosedView): ChatRoute {
+    const live = 'pid' in chat && chat.alive ? chat : null;
+    return routeFor({ sessionId: chat.sessionId, cwd: chat.cwd, entrypoint: chat.entrypoint, pid: live?.pid ?? 0, alive: live !== null }, live ? this.islandTerm(live) : null);
+  }
+
+  /** Types a message into an Island terminal and presses Enter; why it couldn't, or null. */
+  private async typeInto(term: string, text: string): Promise<string | null> {
+    const typed = await native.termWrite(term, oneLine(text));
+    if (!typed.ok) return typed.error;
+    // Enter on its own, a moment later: in the same write it would read as part of a paste.
+    await sleep(ENTER_GAP_MS);
+    const entered = await native.termWrite(term, '\r');
+    return entered.ok ? null : entered.error;
+  }
+
+  /**
+   * A message from the phone's chat box, sent where its chat lives (phonechat.ts routeFor): typed
+   * into the Island terminal it runs in, or into its own terminal; a VS Code chat or a closed one
+   * continues in an Island terminal running `claude --resume` (a copy, with --fork-session, while
+   * the VS Code panel still holds it); `id` null starts a new chat in `folder`. The phone's card
+   * follows a chat started this way once the tracker sees it. A failure throws a PhoneError,
+   * which the phone shows.
+   */
+  async messageChat(id: string | null, text: string, folder = ''): Promise<ChatRoute> {
+    const words = text.trim();
+    if (!words) throw new PhoneError('Type a message first');
+    const chat = id === null ? null : this.findChat(id);
+    if (id !== null && !chat) throw new PhoneError('That chat is gone');
+    if (id === null && !folder) throw new PhoneError('Pick a folder first');
+    const route: ChatRoute = chat ? this.routeOf(chat) : { how: 'new', cwd: folder };
+    const pane = id === null ? `new:${folder}` : `chat:${id}`;
+    this.ctx.log('phone message', { session: id?.slice(0, 8) ?? 'new', how: route.how });
+    if (route.how === 'term') {
+      const why = await this.typeInto(route.term, words);
+      if (why !== null) throw new PhoneError(`Couldn't send it: ${why}`);
+    } else if (route.how === 'inject') {
+      const r = await native.claudeInject(route.pid, words);
+      if (!r.ok) throw new PhoneError(`Couldn't type it into its terminal: ${r.error ?? 'no answer'}`);
+    } else {
+      if (!route.cwd) throw new PhoneError("Couldn't start Claude: that chat's folder isn't known");
+      const title = chat ? clip(chat.displayTitle, 60) : clip(oneLine(words), 60);
+      const r = await native.termOpen({ cwd: route.cwd, shell: null, program: 'claude', args: claudeArgs(route, words) ?? [], cols: TERM_COLS, rows: TERM_ROWS, title, claude: true });
+      if (!r.ok) throw new PhoneError(`Couldn't start Claude: ${r.error}`);
+      this.follows.push({ term: r.value.id, pid: r.value.pid, from: route.how === 'new' ? null : route.sessionId, cwd: route.cwd, at: Date.now() });
+      void this.refreshTerms();
+    }
+    if (id !== null && (route.how === 'term' || route.how === 'inject')) {
+      this.finished.delete(id);
+      this.hooks.turnStart.set(id, Date.now());
+    }
+    this.pending = { pane, text: words, at: Date.now() };
+    if (this.chatNote?.pane === pane) this.chatNote = null;
+    this.pollSoon(400);
+    return route;
+  }
+
+  /**
+   * Claude started in an Island terminal: once the tracker sees its chat there (its process is the
+   * terminal's child), Island remembers it, and the phone's card moves to it from the chat it
+   * continues (or the new chat). A terminal that ended first says so on that card.
+   */
+  private followChats(now = Date.now()): void {
+    if (!this.follows.length) return;
+    // Their terminals' list moves meanwhile (started, ended): asked again with every poll.
+    void this.refreshTerms();
+    for (const f of [...this.follows]) {
+      const pane = f.from ? `chat:${f.from}` : `new:${f.cwd}`;
+      const s = f.pid > 0 ? this.sessions.find((x) => x.alive && x.pid > 0 && this.chainOf(x.pid).includes(f.pid)) : undefined;
+      if (s) {
+        this.follows = this.follows.filter((x) => x !== f);
+        this.started.set(s.sessionId, f.term);
+        if (f.from && f.from !== s.id) this.forks.set(f.from, s.id);
+        const next = `chat:${s.id}`;
+        if (this.paneKey() === pane) this.pane = { kind: 'chat', id: s.id };
+        if (this.pending?.pane === pane) this.pending.pane = next;
+        if (this.chatNote?.pane === pane) this.chatNote = null;
+        this.ctx.log('phone chat started', { session: s.id.slice(0, 8), from: f.from?.slice(0, 8) ?? 'new' });
+        if (this.pane.kind === 'chat' && this.pane.id === s.id) void this.loadChat();
+        continue;
+      }
+      const term = this.terms.find((t) => t.id === f.term);
+      // Ended, or not listed a while after it started: it is gone.
+      const ended = term ? term.exit !== null : now - f.at > 15_000;
+      if (!ended && now - f.at < FOLLOW_MS) continue;
+      this.follows = this.follows.filter((x) => x !== f);
+      if (this.pending?.pane === pane) this.pending = null;
+      const code = term?.exit != null ? ` (exit code ${term.exit})` : '';
+      this.chatNote = { pane, text: ended ? `Claude stopped on your PC before the chat began${code}. Its terminal shows why.` : "Claude didn't start on your PC. Its terminal shows why.", until: now + 5 * 60_000 };
+      this.ctx.log('phone chat did not start', { term: f.term, ended, exit: term?.exit ?? null });
+    }
+  }
+
+  private paneKey(): string {
+    const p = this.pane;
+    return p.kind === 'chat' ? `chat:${p.id}` : p.kind === 'new' ? `new:${p.folder}` : 'list';
+  }
+
+  /** Island's terminals, asked again (after starting one, while following one). */
+  private async refreshTerms(): Promise<void> {
+    this.onTerms(await native.termList());
+  }
+
+  private onTerms(list: unknown): void {
+    this.terms = Array.isArray(list) ? list.filter((t): t is TermInfo => typeof t === 'object' && t !== null && typeof (t as TermInfo).id === 'string' && typeof (t as TermInfo).pid === 'number') : [];
+    // A terminal that went: whatever Island started in it is no longer there.
+    for (const [sid, term] of this.started) if (!this.terms.some((t) => t.id === term && t.exit === null)) this.started.delete(sid);
+    this.ctx.update();
+  }
+
+  /** Reads the phone's open chat from its transcript again (only once it grew); one read at a time, the last asked always done. */
+  private async loadChat(): Promise<void> {
+    if (this.chatReading) {
+      this.chatAgain = true;
+      return;
+    }
+    this.chatReading = true;
+    try {
+      do {
+        this.chatAgain = false;
+        await this.readOpenChat();
+      } while (this.chatAgain);
+    } catch (err) {
+      this.ctx.log('chat read failed', String(err));
+    } finally {
+      this.chatReading = false;
+    }
+  }
+
+  private async readOpenChat(): Promise<void> {
+    if (this.pane.kind !== 'chat') return;
+    const id = this.pane.id;
+    const chat = this.findChat(id);
+    if (!chat) return;
+    const file = ('transcript' in chat && chat.transcript) || (this.projectsDir ? await findTranscript(this.projectsDir, chat.sessionId, chat.cwd) : null);
+    const [st] = file ? await native.statMany([file]) : [null];
+    const size = st?.size ?? 0;
+    const log = this.chatLog;
+    if (log && log.id === id && log.file === file && log.size === size) return;
+    const messages = file && st ? await readChat(file, CHAT_MESSAGES) : [];
+    this.chatLog = { id, file, size, messages };
+    // The phone's message is in the chat now: it shows as the chat's own line.
+    const p = this.pending;
+    if (p?.pane === `chat:${id}` && messages.some((m) => m.kind === 'you' && m.at >= p.at - 60_000 && sameText(m.text, p.text))) this.pending = null;
+    this.ctx.update();
   }
 
   // ---------------------------------------------------------------- actions
@@ -1577,6 +1944,30 @@ export class ClaudeActivity extends BaseActivity {
         break;
       case 'open-desktop':
         await this.openDesktop(id);
+        break;
+      // Claude's card on a phone. Its card opens on the phone that tapped (a phone-started action).
+      case 'chat':
+        if (!id) break;
+        this.pane = { kind: 'chat', id };
+        await this.loadChat();
+        this.ctx.openCard?.();
+        break;
+      case 'chat-new':
+        if (!id) break;
+        this.pane = { kind: 'new', folder: id };
+        this.ctx.openCard?.();
+        break;
+      case 'chat-back':
+        this.pane = { kind: 'list' };
+        break;
+      case 'say':
+        // The chat box: "say:<session id>", or "say:new:<folder>" for a new chat; the typed text is the arg.
+        if (!id.trim()) break;
+        try {
+          await (ref.startsWith('new:') ? this.messageChat(null, id, ref.slice(4)) : this.messageChat(ref, id));
+        } finally {
+          this.ctx.update();
+        }
         break;
     }
     this.ctx.update();

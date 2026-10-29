@@ -1,6 +1,7 @@
 // The island screen: the live copy of the island at the top, the card or Control Center under it,
-// a Back button under a card, the bar at the bottom (Send, Clipboard, Lock PC, more), and, while
-// the PC can't be reached, its name and when it was last seen.
+// a Back button under a card, the bar at the bottom (Claude, Terminal, Screen, Send, More; the
+// Clipboard and Lock PC are in More), and, while the PC can't be reached, its name and when it was
+// last seen.
 
 import type { Tone } from '../../../../src/core/segments';
 import type { IslandMsg } from '../../../../src/remote/protocol';
@@ -15,9 +16,12 @@ type ViewMsg = Extract<IslandMsg, { t: 'view' }>;
 export interface IslandHooks {
   action(action: string, arg: unknown): void;
   back(): void;
+  /** Claude's card (chats, and a box to message one). */
+  claude(): void;
+  terminal(): void;
+  /** The PC's screen (Chrome Remote Desktop). */
+  screen(): void;
   send(): void;
-  clipboard(): void;
-  lock(): void;
   menu(): void;
   retry(): void;
 }
@@ -62,10 +66,12 @@ export class IslandScreen {
       if (needsLink) this.barButtons.push(b);
       return b;
     };
+    // Five across fit a 320 px wide iPhone (Display Zoom): an icon over a one-word label.
     const bar = h('nav', { class: 'ph-bar' }, [
+      item('Claude', 'claude', () => hooks.claude(), true),
+      item('Terminal', 'terminal', () => hooks.terminal(), true),
+      item('Screen', 'laptop', () => hooks.screen(), false),
       item('Send', 'upload', () => hooks.send(), true),
-      item('Clipboard', 'clipboard', () => hooks.clipboard(), true),
-      item('Lock PC', 'lock', () => hooks.lock(), true),
       item('More', 'more', () => hooks.menu(), false),
     ]);
     this.inbox = h('div', { class: 'ph-inbox' });

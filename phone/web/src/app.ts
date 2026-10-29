@@ -1,8 +1,9 @@
-// The phone site's one controller: which screen shows (Add to Home Screen, pairing, the island),
-// what the link says (online, offline, denied, removed), what the island sends (hello, pill,
-// view, toasts, clipboard, text, files), and where a tap goes (routing.ts, nav.ts).
+// The phone site's one controller: which screen shows (Add to Home Screen, pairing, the island,
+// the terminal over it), what the link says (online, offline, denied, removed), what the island
+// sends (hello, pill, view, toasts, clipboard, text, files, terminals), and where a tap goes
+// (routing.ts, nav.ts).
 
-import type { IslandMsg, Nav, PairPayload } from '../../../src/remote/protocol';
+import type { IslandMsg, Nav, PairPayload, TermInfo } from '../../../src/remote/protocol';
 import { NavKeeper, navMsg } from './nav';
 import { deniedText, pairErrorText, phoneName } from './pairing';
 import { pushFlag, pushOff, pushOn, pushResend, pushState } from './push';
@@ -15,7 +16,10 @@ import { installScreen, platformOf } from './screens/install';
 import { IslandScreen } from './screens/island';
 import { openMenu } from './screens/menu';
 import { PairScreen } from './screens/pair';
+import { openScreen } from './screens/pc-screen';
 import { openSend } from './screens/send';
+// Only its type here: xterm.js loads with the terminal, the first time it opens.
+import type { TerminalScreen } from './screens/terminal';
 import { CARD_MARGIN } from './island-view';
 import { closeSheet, confirmSheet, toast } from './ui';
 
@@ -56,6 +60,11 @@ export class App {
   private seenTimer: ReturnType<typeof setInterval> | undefined;
   private width = 0;
   private openId: string | null;
+  /** The terminal screen, over the island while it shows. */
+  private termScreen: TerminalScreen | null = null;
+  private termLoading = false;
+  /** The PC's newest list of terminals, kept for the terminal screen's next opening. */
+  private terms: { items: TermInfo[]; allowed: boolean } | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -84,6 +93,7 @@ export class App {
 
   private mount(s: { destroy(): void } | null): void {
     closeSheet();
+    this.closeTerminal();
     this.screen?.destroy();
     this.screen = s;
     this.islandScreen = s instanceof IslandScreen ? s : null;
@@ -164,16 +174,16 @@ export class App {
       this.hello = null;
       this.lastPill = null;
       this.lastView = null;
+      this.terms = null;
     }
     this.clip = null;
     const s = new IslandScreen(this.root, {
       action: (a, arg) => this.action(a, arg),
       back: () => this.go(this.nav.back(Date.now())),
+      claude: () => this.claude(),
+      terminal: () => void this.openTerminal(),
+      screen: () => openScreen(this.hello?.screen ?? null, this.island?.name ?? 'your PC'),
       send: () => this.island && openSend(this.link, this.island.name),
-      clipboard: () => {
-        if (this.island) this.clip = new ClipSheet(this.link, this.island.name);
-      },
-      lock: () => void this.lock(),
       menu: () => this.menu(),
       retry: () => this.island && this.link.open(this.island),
     });
@@ -207,6 +217,7 @@ export class App {
       return;
     }
     this.islandScreen?.setLink(s, this.store.get(id)?.lastSeen ?? this.island.lastSeen);
+    this.termScreen?.setLink(s);
   }
 
   private went(to: 'online' | 'offline'): void {
@@ -232,9 +243,14 @@ export class App {
           s?.setName(m.name);
         }
         s?.setNote(m.allow ? '' : ALLOW_NOTE);
+        this.termScreen?.setHello(m.term === true, m.folders ?? []);
         this.sendNav(this.nav.resend(Date.now()));
         if (this.openId) this.openCard(this.openId);
         void this.resendPush();
+        return;
+      case 'terms':
+        this.terms = { items: m.items, allowed: m.allowed };
+        this.termScreen?.setTerms(m.items, m.allowed);
         return;
       case 'pill':
         this.lastPill = m;
@@ -314,6 +330,8 @@ export class App {
       url.searchParams.delete('open');
       history.replaceState(null, '', url);
     }
+    // A tapped notification shows its card, also from the terminal.
+    this.closeTerminal();
     this.go(this.nav.go({ open: 'card', id }, Date.now()));
   }
 
@@ -328,6 +346,44 @@ export class App {
   }
 
   // ---------------------------------------------------------------- the bar
+
+  /** Claude's card: the island draws it (its chats, a box to message one), like any card. */
+  private claude(): void {
+    if (this.state.s !== 'online') {
+      toast('Not connected', 'bad');
+      return;
+    }
+    this.go(this.nav.go({ open: 'card', id: 'claude' }, Date.now()));
+  }
+
+  private async openTerminal(): Promise<void> {
+    if (this.termScreen || this.termLoading || !this.island) return;
+    this.termLoading = true;
+    let mod: typeof import('./screens/terminal');
+    try {
+      mod = await import('./screens/terminal');
+    } catch (err) {
+      console.error('the terminal failed to load', err);
+      toast("Couldn't load the terminal. Close Island and open it again.", 'bad', 5000);
+      return;
+    } finally {
+      this.termLoading = false;
+    }
+    const island = this.island;
+    // Gone to another screen (or PC) while it loaded.
+    if (!island || !this.islandScreen || this.termScreen) return;
+    closeSheet();
+    this.termScreen = new mod.TerminalScreen(
+      this.root,
+      { link: this.link, pc: this.hello?.name || island.name, islandId: island.id, platform: this.hello?.platform ?? 'windows', back: () => this.closeTerminal() },
+      { state: this.state, allowed: this.hello ? this.hello.term === true : null, folders: this.hello?.folders ?? [], terms: this.terms },
+    );
+  }
+
+  private closeTerminal(): void {
+    this.termScreen?.destroy();
+    this.termScreen = null;
+  }
 
   private async lock(): Promise<void> {
     const name = this.island?.name ?? 'your PC';
@@ -344,6 +400,10 @@ export class App {
       state: this.state,
       version: this.hello?.version ?? this.opts.version,
       demo: this.opts.demo,
+      clipboard: () => {
+        if (this.island) this.clip = new ClipSheet(this.link, this.island.name);
+      },
+      lock: () => void this.lock(),
       switchTo: (id) => {
         const it = this.store.get(id);
         if (!it) return;

@@ -45,6 +45,9 @@ qrcode = { version = "0.14", default-features = false }
 # app: the VAPID signature (ECDSA P-256) and RFC 8291 encryption (ECDH P-256, HKDF-SHA-256,
 # AES-128-GCM). Already in the tree through iroh's TLS, so no new crates.
 ring = "0.17"
+# Terminals a phone (or a Claude chat from the phone) runs on this computer (src/term):
+# ConPTY on Windows, a Unix pty on a Mac.
+portable-pty = "0.9"
 # Windows Hello. The 0.3 line, which adds the Windows backend, only has release
 # candidates so far. The copy in vendor/ is 0.3.0-rc.3 with one fix: Tauri 2.12 builds on
 # `windows` 0.62 and the published plugin on 0.61, so its window handle did not type-check
@@ -115,6 +118,8 @@ features = [
   "Win32_System_Power",
   "Win32_System_ProcessStatus",
   "Win32_System_Registry",
+  # Whether Chrome Remote Desktop's service is installed and running (src/screen.rs).
+  "Win32_System_Services",
   "Win32_System_Shutdown",
   "Win32_System_SystemInformation",
   "Win32_System_Threading",

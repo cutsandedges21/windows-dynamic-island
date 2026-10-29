@@ -1,6 +1,7 @@
 // One phone's connection. The phone opens the control stream and its first line pairs or says
-// hi; after that Rust answers pings, keeps push subscriptions, and passes every other line to
-// the island's TypeScript as `remote-msg`. What the island sends waits in the session's outbox.
+// hi; after that Rust answers pings, keeps push subscriptions, answers about terminals
+// (`term-list`, `term-kill`: terms.rs), and passes every other line to the island's TypeScript
+// as `remote-msg`. What the island sends waits in the session's outbox.
 
 use iroh::endpoint::{Connection, SendStream, VarInt};
 use tokio::sync::Notify;
@@ -210,6 +211,7 @@ impl Remote {
                     session.send(Kind::Fifo, pong.clone());
                 }
                 Some("push-sub") => self.set_push(&phone, msg.get("sub")),
+                Some("term-list" | "term-kill") => self.term_control(&phone, &msg),
                 Some("pair" | "hi") => {}
                 _ => (self.emit)("remote-msg", json!({ "phone": phone, "msg": Value::Object(msg) })),
             }

@@ -7,10 +7,15 @@
 //!   phoneId(secret)                      the EndpointId of a 32-byte key
 //!   Phone.bind(secret)                   -> Promise<Phone>, this phone's endpoint
 //!   phone.connect(island, relays, ms)    -> Promise<Session>: dialed on island-phone/1, control stream open
-//!   session.send(line) onLine(cb) onClosed(cb) onFile(cb(header, FileIn)) openFile(header) close(why)
+//!   session.send(line) onLine(cb) onClosed(cb) onFile(cb(header, FileIn)) openFile(header) openTerm(header) close(why)
 //!   FileOut: write(bytes) finish() -> the PC's answer line, abort()
 //!   FileIn:  read() -> bytes | undefined at the end, reply(line)
+//!   Term:    reply() -> the PC's answer line, onFrame(cb(kind, bytes), ended(why)), send(kind, bytes), close()
 #![cfg(all(target_family = "wasm", target_os = "unknown"))]
+
+// The kinds other than data mean something only to index.ts (and the fake island).
+#[allow(dead_code)]
+mod frames;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -22,7 +27,7 @@ use iroh::endpoint::{presets, Connection, RecvStream, SendStream, VarInt};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey};
 use js_sys::{Function, Promise, Uint8Array};
 use serde_json::{json, Value};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::{future_to_promise, spawn_local};
 
@@ -34,6 +39,10 @@ const MAX_LINE: usize = 1024 * 1024;
 const MAX_DOWNLOAD: u64 = 200 * 1024 * 1024;
 /// A file stream's header or answer line.
 const MAX_FILE_LINE: usize = 64 * 1024;
+/// A terminal stream's header or answer line.
+const MAX_TERM_LINE: usize = 64 * 1024;
+/// The PC answers a terminal stream's header within this long (it starts the shell first).
+const TERM_ANSWER: Duration = Duration::from_secs(20);
 /// QUIC close codes this side uses.
 const CLOSE_NORMAL: u32 = 0;
 const CLOSE_LINE_TOO_LONG: u32 = 413;
@@ -269,6 +278,53 @@ impl Session {
         })
     }
 
+    /// Opens a terminal stream to the PC: writes its header line (`{"t":"term",…}`) and reads the
+    /// PC's one-line answer. Resolves with a Term whatever the answer was (`term-ok`: frames follow;
+    /// anything else: the stream is over); rejects with "no answer" if the PC ended the stream
+    /// without one (an Island from before terminals) or "no answer in time".
+    #[wasm_bindgen(js_name = openTerm)]
+    pub fn open_term(&self, header: String) -> Promise {
+        let conn = self.conn.clone();
+        future_to_promise(async move {
+            if header.len() + 1 > MAX_TERM_LINE || header.contains('\n') {
+                return Err(js_val("the terminal's header is too long"));
+            }
+            let (mut send, mut recv) = conn.open_bi().await.map_err(js_val)?;
+            send.write_all(format!("{header}\n").as_bytes()).await.map_err(js_val)?;
+            let answer = match n0_future::time::timeout(TERM_ANSWER, read_line(&mut recv, MAX_TERM_LINE)).await {
+                Ok(Ok(answer)) => Ok(answer),
+                Ok(Err(e)) if e == ENDED_EARLY => Err("no answer".to_string()),
+                Ok(Err(e)) => Err(e),
+                Err(_) => Err("no answer in time".to_string()),
+            };
+            let (reply, head) = match answer {
+                Ok(answer) => answer,
+                Err(e) => {
+                    let _ = send.reset(VarInt::from_u32(1));
+                    let _ = recv.stop(VarInt::from_u32(1));
+                    return Err(js_val(e));
+                }
+            };
+            let hooks = Rc::new(TermHooks::default());
+            let stop = Rc::new(Notify::new());
+            let ok = serde_json::from_str::<Value>(&reply).is_ok_and(|v| v["t"] == "term-ok");
+            let out = if ok {
+                let (out, rx) = mpsc::unbounded_channel();
+                spawn_local(write_frames(send, rx));
+                spawn_local(read_frames(recv, head, stop.clone(), hooks.clone()));
+                Some(out)
+            } else {
+                // `term-error` (the PC finishes its side after it): this side is done too.
+                let _ = recv.stop(VarInt::from_u32(CLOSE_NORMAL));
+                let _ = send.finish();
+                *hooks.ended_why.borrow_mut() = Some("refused".into());
+                hooks.told.set(true);
+                None
+            };
+            Ok(Term { reply, out: RefCell::new(out), stop, hooks }.into())
+        })
+    }
+
     /// Ends the connection now (the island sees `why`).
     pub fn close(&self, why: String) {
         self.conn.close(VarInt::from_u32(CLOSE_NORMAL), why.as_bytes());
@@ -328,6 +384,9 @@ async fn read_lines(conn: Connection, mut recv: RecvStream, hooks: Rc<Hooks>) {
     hooks.closed("the island ended the session".into());
 }
 
+/// read_line's error when the stream ends before a whole line.
+const ENDED_EARLY: &str = "the stream ended before its line";
+
 /// One line (without its newline) and whatever was read past it.
 async fn read_line(recv: &mut RecvStream, max: usize) -> Result<(String, Vec<u8>), String> {
     let mut buf = Vec::new();
@@ -343,7 +402,7 @@ async fn read_line(recv: &mut RecvStream, max: usize) -> Result<(String, Vec<u8>
         }
         match recv.read(&mut chunk).await.map_err(|e| e.to_string())? {
             Some(n) => buf.extend_from_slice(&chunk[..n]),
-            None => return Err("the stream ended before its line".into()),
+            None => return Err(ENDED_EARLY.into()),
         }
     }
 }
@@ -477,5 +536,164 @@ async fn accept_files(conn: Connection, hooks: Rc<Hooks>) {
                 let _ = send.finish();
             }
         });
+    }
+}
+
+// ------------------------------------------------------------------ terminals
+
+/// The JS side of one terminal stream. Frames that arrive before `onFrame` is set wait in `pending`.
+#[derive(Default)]
+struct TermHooks {
+    frame: RefCell<Option<Function>>,
+    ended: RefCell<Option<Function>>,
+    pending: RefCell<Vec<(u8, Vec<u8>)>>,
+    /// Set once the stream is over (or closed from this side): nothing more goes to JS.
+    ended_why: RefCell<Option<String>>,
+    /// The `ended` callback has been given (or never will be: closed from this side).
+    told: Cell<bool>,
+}
+
+impl TermHooks {
+    fn frame(&self, kind: u8, payload: Vec<u8>) {
+        if self.ended_why.borrow().is_some() {
+            return;
+        }
+        let cb = self.frame.borrow().clone();
+        match cb {
+            Some(cb) => {
+                let _ = cb.call2(&JsValue::NULL, &JsValue::from(kind), &Uint8Array::from(&payload[..]).into());
+            }
+            None => self.pending.borrow_mut().push((kind, payload)),
+        }
+    }
+
+    /// The first reason wins; JS hears it after the frames that came before it.
+    fn ended(&self, why: String) {
+        if self.ended_why.borrow().is_some() {
+            return;
+        }
+        *self.ended_why.borrow_mut() = Some(why.clone());
+        let cb = self.ended.borrow().clone();
+        if let Some(cb) = cb {
+            self.told.set(true);
+            let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&why));
+        }
+    }
+}
+
+/// A terminal on the PC, on a stream of its own (frames.rs). It keeps running on the PC when
+/// this stream closes.
+#[wasm_bindgen]
+pub struct Term {
+    reply: String,
+    /// Frames to the PC, written in order; None once closed (or refused).
+    out: RefCell<Option<mpsc::UnboundedSender<Vec<u8>>>>,
+    /// Wakes the reader to stop.
+    stop: Rc<Notify>,
+    hooks: Rc<TermHooks>,
+}
+
+#[wasm_bindgen]
+impl Term {
+    /// The PC's answer line: `term-ok` (frames follow) or `term-error` (the stream is over).
+    pub fn reply(&self) -> String {
+        self.reply.clone()
+    }
+
+    /// `frame(kind, bytes)` for every frame from the PC, then `ended(why)` once when the stream
+    /// is over (never after close); what came before this call is given now.
+    #[wasm_bindgen(js_name = onFrame)]
+    pub fn on_frame(&self, frame: Function, ended: Function) {
+        if self.hooks.told.get() {
+            return;
+        }
+        *self.hooks.frame.borrow_mut() = Some(frame.clone());
+        *self.hooks.ended.borrow_mut() = Some(ended.clone());
+        let pending = std::mem::take(&mut *self.hooks.pending.borrow_mut());
+        for (kind, payload) in pending {
+            // A callback may close it.
+            if self.hooks.told.get() {
+                return;
+            }
+            let _ = frame.call2(&JsValue::NULL, &JsValue::from(kind), &Uint8Array::from(&payload[..]).into());
+        }
+        let why = self.hooks.ended_why.borrow().clone();
+        if let (Some(why), false) = (why, self.hooks.told.get()) {
+            self.hooks.told.set(true);
+            let _ = ended.call1(&JsValue::NULL, &JsValue::from_str(&why));
+        }
+    }
+
+    /// Queues a frame to the PC; data longer than a frame goes as several. False (nothing sent)
+    /// if another kind is over 64 KiB or the stream is done.
+    pub fn send(&self, kind: u8, payload: Vec<u8>) -> bool {
+        let bytes = if kind == frames::DATA { Some(frames::encode_data(&payload)) } else { frames::encode(kind, &payload) };
+        let (Some(bytes), Some(out)) = (bytes, self.out.borrow().clone()) else { return false };
+        bytes.is_empty() || out.send(bytes).is_ok()
+    }
+
+    /// Finishes this side once what's queued is written, and stops reading: no callbacks after
+    /// this. The terminal keeps running on the PC.
+    pub fn close(&self) {
+        self.out.borrow_mut().take();
+        if self.hooks.ended_why.borrow().is_none() {
+            *self.hooks.ended_why.borrow_mut() = Some("closed by this phone".into());
+        }
+        self.hooks.told.set(true);
+        self.hooks.frame.borrow_mut().take();
+        self.hooks.ended.borrow_mut().take();
+        self.hooks.pending.borrow_mut().clear();
+        self.stop.notify_one();
+    }
+}
+
+async fn write_frames(mut send: SendStream, mut rx: mpsc::UnboundedReceiver<Vec<u8>>) {
+    while let Some(bytes) = rx.recv().await {
+        if send.write_all(&bytes).await.is_err() {
+            return;
+        }
+    }
+    let _ = send.finish();
+}
+
+/// Frames from the PC to the hooks, starting with `head` (read along with the answer line).
+async fn read_frames(mut recv: RecvStream, head: Vec<u8>, stop: Rc<Notify>, hooks: Rc<TermHooks>) {
+    let mut frames = frames::Decoder::default();
+    frames.push(&head);
+    let mut chunk = vec![0u8; 64 * 1024];
+    loop {
+        loop {
+            match frames.next() {
+                Ok(Some((kind, payload))) => hooks.frame(kind, payload),
+                Ok(None) => break,
+                Err(frames::TooLong(_)) => {
+                    let _ = recv.stop(VarInt::from_u32(1));
+                    return hooks.ended("the PC sent a frame over 64 KiB".into());
+                }
+            }
+        }
+        // Closed from this side (from a frame callback, say): stop now, even with more waiting.
+        if hooks.ended_why.borrow().is_some() {
+            let _ = recv.stop(VarInt::from_u32(CLOSE_NORMAL));
+            return;
+        }
+        let read = n0_future::future::or(
+            async {
+                stop.notified().await;
+                None
+            },
+            async { Some(recv.read(&mut chunk).await) },
+        )
+        .await;
+        match read {
+            None => {
+                let _ = recv.stop(VarInt::from_u32(CLOSE_NORMAL));
+                return;
+            }
+            Some(Ok(Some(n))) => frames.push(&chunk[..n]),
+            Some(Ok(None)) if frames.pending() > 0 => return hooks.ended("the PC cut a frame short".into()),
+            Some(Ok(None)) => return hooks.ended("the PC ended the terminal stream".into()),
+            Some(Err(e)) => return hooks.ended(e.to_string()),
+        }
     }
 }

@@ -2,7 +2,7 @@
 // iroh endpoint in phone/wasm) and the app (phone/web/src). The app never touches iroh; the link
 // never draws anything. Messages are src/remote/protocol.ts's.
 
-import type { FileHeader, IslandMsg, PairPayload, PhoneMsg, PushSub } from '../../../../src/remote/protocol';
+import type { FileHeader, IslandMsg, PairPayload, PhoneControl, PhoneMsg, TermHeader } from '../../../../src/remote/protocol';
 
 /** An island this phone is paired with. The app keeps the list (localStorage); the link only dials it. */
 export interface SavedIsland {
@@ -32,6 +32,22 @@ export interface IncomingFile {
   blob: Blob;
 }
 
+/**
+ * A terminal on the PC, open on a stream of its own (openTerm). The terminal keeps running on the
+ * PC when the stream closes; open it again with its id to pick it up.
+ */
+export interface TermHandle {
+  readonly id: string;
+  /** Its title: term-ok's, then the latest the PC sent. */
+  readonly title: string;
+  write(data: Uint8Array | string): void; // a data frame (strings as UTF-8)
+  resize(cols: number, rows: number): void; // a resize frame
+  close(): void; // finishes the stream; the terminal keeps running on the PC
+}
+
+/** Lines to the PC that its Rust handles itself (the rest of PhoneControl the link sends on its own). */
+export type LinkControl = Extract<PhoneControl, { t: 'push-sub' | 'term-list' | 'term-kill' }>;
+
 export interface Link {
   /** This phone's EndpointId: the public half of its key, made once and kept in localStorage. */
   readonly phoneId: string;
@@ -53,12 +69,20 @@ export interface Link {
   onState(cb: (s: LinkState) => void): () => void;
   /** Lines from the island, checked with readIslandMsg (pong is kept inside the link). */
   onMessage(cb: (m: IslandMsg) => void): () => void;
-  /** Sends a control line; false (and nothing sent) unless online. */
-  send(m: PhoneMsg | { t: 'push-sub'; sub: PushSub | null }): boolean;
+  /** Sends a control line; false (and nothing sent) unless online. `term-list` and `term-kill` are answered with `terms`. */
+  send(m: PhoneMsg | LinkControl): boolean;
   /** Phase 2: a file to the PC on its own stream; progress 0..1; resolves with the name it was saved under. */
   sendFile(file: File, onProgress?: (p: number) => void): Promise<{ name: string }>;
   /** Phase 2: files the PC sends to this phone. */
   onFile(cb: (f: IncomingFile) => void): () => void;
+  /**
+   * Opens a terminal stream (new when header.id is null); resolves after term-ok, rejects with term-error's text.
+   * `data` starts with the terminal's recent output (up to 256 KiB), so clear the screen before
+   * opening; then live output. `exit` comes when its program ends, then `closed`. `closed` comes
+   * once when the stream ends for any other reason too (the connection dropped, the terminal was
+   * ended), never after close().
+   */
+  openTerm(header: TermHeader, on: { data(bytes: Uint8Array): void; title(t: string): void; exit(code: number | null): void; closed(): void }): Promise<TermHandle>;
 }
 
 /** What phone/web/src/link/index.ts exports: makes the link, loading the wasm once. */

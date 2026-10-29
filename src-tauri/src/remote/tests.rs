@@ -8,6 +8,8 @@ use iroh::{EndpointAddr, RelayUrl, SecretKey};
 
 use super::lines::LineReader;
 use super::*;
+#[cfg(windows)]
+use crate::term::tests::plain;
 
 const WAIT: Duration = Duration::from_secs(20);
 
@@ -35,7 +37,7 @@ async fn rig(tag: &str) -> Rig {
     let log = events.clone();
     let emit: Emit = Arc::new(move |e: &str, v: Value| log.lock().unwrap().push((e.to_string(), v)));
     let cfg = Config { dir: dir.clone(), downloads: Some(dir.join("Downloads")), name: Some("Test PC".into()), relays: Relays::Local(map.clone()), pair_for: PAIR_FOR };
-    Rig { island: Remote::new(cfg, emit), events, map, dir, _relay: relay }
+    Rig { island: Remote::new(cfg, emit, Terms::new()), events, map, dir, _relay: relay }
 }
 
 impl Rig {
@@ -103,6 +105,17 @@ impl Control {
     async fn hear(&mut self) -> Value {
         let l = timeout(WAIT, self.lines.next_line()).await.unwrap().unwrap().unwrap();
         serde_json::from_slice(&l).unwrap()
+    }
+
+    /// Lines until a `terms` one that `want` takes (the list also comes whenever it changes).
+    #[cfg(windows)]
+    async fn terms_until(&mut self, want: impl Fn(&Value) -> bool) -> Value {
+        loop {
+            let v = self.hear().await;
+            if v["t"] == "terms" && want(&v) {
+                return v;
+            }
+        }
     }
 }
 
@@ -280,12 +293,12 @@ async fn the_endpoint_starts_at_launch_only_with_a_paired_phone() {
     let dir = temp_dir("launch");
     let emit: Emit = Arc::new(|_: &str, _: Value| {});
     let cfg = |dir: &PathBuf| Config { dir: dir.clone(), downloads: None, name: Some("Test PC".into()), relays: Relays::Off, pair_for: PAIR_FOR };
-    let island = Remote::new(cfg(&dir), emit.clone());
+    let island = Remote::new(cfg(&dir), emit.clone(), Terms::new());
     island.start_if_paired().await;
     assert!(!island.running().await);
     let id = SecretKey::generate().public().to_string();
     std::fs::write(dir.join("phones.json"), json!([{ "id": id, "name": "iPhone", "pairedAt": 1, "lastSeen": 2, "push": null }]).to_string()).unwrap();
-    let island = Remote::new(cfg(&dir), emit);
+    let island = Remote::new(cfg(&dir), emit, Terms::new());
     island.start_if_paired().await;
     assert!(island.running().await);
     let key = std::fs::read(dir.join("phone-endpoint.key")).unwrap();
@@ -387,6 +400,139 @@ async fn files_go_from_the_pc_to_a_phone() {
     assert!(rig.island.send_file(&my_id, &rig.dir).await.unwrap_err().contains("folders"));
     assert!(rig.island.send_file("not-a-phone", &src).await.unwrap_err().contains("isn't connected"));
     assert_eq!(rig.take("remote-file-sent").await["ok"], false);
+    me.close().await;
+    rig.island.close().await;
+}
+
+/// A terminal stream from the phone's side: the header, the island's answer, then frames.
+#[cfg(windows)]
+struct TermStream {
+    send: SendStream,
+    recv: iroh::endpoint::RecvStream,
+    frames: terms::Frames,
+    answer: Value,
+}
+
+#[cfg(windows)]
+impl TermStream {
+    async fn open(conn: &Connection, header: Value) -> TermStream {
+        let (mut send, recv) = conn.open_bi().await.unwrap();
+        send.write_all(&line(&header)).await.unwrap();
+        let mut lines = LineReader::new(recv, MAX_LINE);
+        let answer = serde_json::from_slice(&timeout(WAIT, lines.next_line()).await.unwrap().unwrap().unwrap()).unwrap();
+        let (recv, rest) = lines.into_parts();
+        let mut frames = terms::Frames::default();
+        frames.push(&rest);
+        TermStream { send, recv, frames, answer }
+    }
+
+    /// The next frame; None once the island finished the stream.
+    async fn frame(&mut self) -> Option<(u8, Vec<u8>)> {
+        loop {
+            if let Some(f) = self.frames.next_frame().unwrap() {
+                return Some(f);
+            }
+            match timeout(Duration::from_secs(30), self.recv.read_chunk(65536)).await.expect("a frame in time") {
+                Ok(Some(chunk)) => self.frames.push(&chunk),
+                _ => return None,
+            }
+        }
+    }
+
+    /// Output until `want` holds for its text (escape sequences left out).
+    async fn output_until(&mut self, text: &mut Vec<u8>, want: impl Fn(&str) -> bool) {
+        while !want(&plain(text)) {
+            match self.frame().await {
+                Some((terms::TERM_DATA, bytes)) => text.extend_from_slice(&bytes),
+                Some(_) => {}
+                None => panic!("the stream ended; the output: {:?}", plain(text)),
+            }
+        }
+    }
+
+    /// Frames until the stream ends: the exit's payload, if one came.
+    async fn to_the_end(&mut self) -> Option<Value> {
+        let mut exit = None;
+        while let Some((kind, payload)) = self.frame().await {
+            if kind == terms::TERM_EXIT {
+                exit = Some(serde_json::from_slice(&payload).unwrap());
+            }
+        }
+        exit
+    }
+
+    async fn keys(&mut self, text: &str) {
+        self.send.write_all(&terms::frame(terms::TERM_DATA, text.as_bytes())).await.unwrap();
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phone_opens_a_terminal_types_and_reads_it_back() {
+    let rig = rig("term").await;
+    let (me, _code, conn, mut c) = paired_phone(&rig, "iPhone").await;
+    let my_id = me.id().to_string();
+    // Off until the PC allows it: no list and no terminal.
+    c.say(json!({ "t": "term-list" })).await;
+    assert_eq!(c.terms_until(|_| true).await, json!({ "t": "terms", "items": [], "allowed": false }));
+    let header = json!({ "t": "term", "id": null, "cols": 100, "rows": 30, "cwd": null, "shell": "cmd" });
+    let mut refused = TermStream::open(&conn, header.clone()).await;
+    assert_eq!(refused.answer, json!({ "t": "term-error", "error": terms::NOT_ALLOWED }));
+    assert!(refused.frame().await.is_none(), "then the stream ends");
+    assert!(rig.island.terms.list().is_empty());
+    rig.island.term_allow(true);
+    assert_eq!(c.terms_until(|_| true).await, json!({ "t": "terms", "items": [], "allowed": true }));
+
+    // A new terminal: term-ok, the island hears which phone opened it, and keys go in.
+    let mut t = TermStream::open(&conn, header).await;
+    assert_eq!(t.answer["t"], "term-ok", "{}", t.answer);
+    let id = t.answer["id"].as_str().unwrap().to_string();
+    assert_eq!(id.len(), 8);
+    let opened = rig.take("term-opened").await;
+    assert_eq!((opened["phone"].as_str(), opened["id"].as_str()), (Some(my_id.as_str()), Some(id.as_str())));
+    assert_eq!(opened["title"], t.answer["title"]);
+    let mut text = Vec::new();
+    t.output_until(&mut text, |s| s.contains('>')).await;
+    // `^` keeps the typed line from holding the words it prints.
+    t.keys("echo is^land-hi\r").await;
+    t.output_until(&mut text, |s| s.contains("island-hi")).await;
+    t.send.write_all(&terms::frame(terms::TERM_RESIZE, br#"{"cols":120,"rows":40}"#)).await.unwrap();
+    let listed = c.terms_until(|v| v["items"][0]["attached"] == 1).await;
+    let item = &listed["items"][0];
+    assert_eq!((item["id"].as_str(), item["shell"].as_str(), item["exit"].is_null(), item["claude"].as_bool()), (Some(id.as_str()), Some("cmd"), true, Some(false)));
+    assert_eq!(rig.island.terms.list().len(), 1);
+
+    // Letting go leaves it running; attaching again replays what it printed.
+    t.send.finish().unwrap();
+    assert!(t.to_the_end().await.is_none(), "no exit: it still runs");
+    c.terms_until(|v| v["items"][0]["attached"] == 0).await;
+    let mut again = TermStream::open(&conn, json!({ "t": "term", "id": id, "cols": 80, "rows": 24, "cwd": null, "shell": null })).await;
+    assert_eq!((again.answer["t"].as_str(), again.answer["id"].as_str()), (Some("term-ok"), Some(id.as_str())));
+    let mut replay = Vec::new();
+    again.output_until(&mut replay, |s| s.contains("island-hi")).await;
+    let gone = TermStream::open(&conn, json!({ "t": "term", "id": "00000000", "cols": 80, "rows": 24 })).await;
+    assert_eq!(gone.answer, json!({ "t": "term-error", "error": "That terminal isn't open anymore." }));
+
+    // Turned off on the PC: the stream is let go, new ones are refused, and none can be ended.
+    rig.island.term_allow(false);
+    assert!(again.to_the_end().await.is_none());
+    c.terms_until(|v| v["allowed"] == false && v["items"] == json!([])).await;
+    let refused = TermStream::open(&conn, json!({ "t": "term", "id": id, "cols": 80, "rows": 24 })).await;
+    assert_eq!(refused.answer["error"], terms::NOT_ALLOWED);
+    c.say(json!({ "t": "term-kill", "id": id })).await;
+    c.terms_until(|v| v["allowed"] == false).await;
+    assert_eq!(rig.island.terms.list().len(), 1);
+
+    // Allowed again: term-kill ends it, the attached stream hears the exit, the list empties.
+    rig.island.term_allow(true);
+    let mut last = TermStream::open(&conn, json!({ "t": "term", "id": id, "cols": 80, "rows": 24 })).await;
+    assert_eq!(last.answer["t"], "term-ok");
+    c.say(json!({ "t": "term-kill", "id": id })).await;
+    c.terms_until(|v| v["allowed"] == true && v["items"] == json!([])).await;
+    let exit = last.to_the_end().await.expect("an exit frame before the end");
+    assert!(exit["code"].is_i64(), "{exit}");
+    assert!(rig.island.terms.list().is_empty());
+    assert_eq!(rig.count("remote-msg"), 0, "terminal lines stay in Rust");
     me.close().await;
     rig.island.close().await;
 }

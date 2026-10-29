@@ -6,8 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MirrorFrame } from '../src/core/mirror';
 import type { Placed } from '../src/core/segments';
 import type { SheetView } from '../src/core/sheet';
-import { CLIP_MAX, DEFAULT_WIDTH, PhoneActs, PhoneHub, type PhoneDelivery, type PhoneInfo, type PhoneIslandHooks, type PhoneNative } from '../src/remote/hub';
-import type { BotState, IslandMsg, Nav } from '../src/remote/protocol';
+import { defaultSettings } from '../src/core/settings';
+import { CLIP_MAX, DEFAULT_WIDTH, PhoneActs, PhoneError, PhoneHub, termAllowed, type PhoneDelivery, type PhoneInfo, type PhoneIslandHooks, type PhoneNative } from '../src/remote/hub';
+import type { BotState, IslandMsg, Nav, ScreenState } from '../src/remote/protocol';
 
 const T0 = Date.parse('2026-10-22T14:00:00Z');
 const IPHONE = 'k3m9xq7d1w5yhz8c4b2n6p0rtfa3e7gj9sv5ou1lqxw2y4z6c8d0';
@@ -65,6 +66,11 @@ function fakeIsland() {
     cards: { land: landCard } as Record<string, SheetView>,
     urgent: null as { id: string; view: SheetView } | null,
     allow: true,
+    term: false,
+    screen: 'ready' as ScreenState,
+    folders: ['C:\\code\\island'] as string[],
+    /** What act() throws, once. */
+    fail: null as Error | null,
     widths: [] as number[],
     acts: [] as Array<[string, string, unknown]>,
     got: [] as PhoneDelivery[],
@@ -78,8 +84,13 @@ function fakeIsland() {
       if (nav.open === 'card' && f.cards[nav.id]) return { nav, view: f.cards[nav.id], urgent: null };
       return { nav: { open: 'grid' }, view: f.grid, urgent: null };
     },
-    act: async (p, action, arg) => void f.acts.push([p, action, arg]),
-    facts: () => ({ name: 'MossLaptop', platform: 'windows', version: '0.3.1', allow: f.allow }),
+    act: async (p, action, arg) => {
+      f.acts.push([p, action, arg]);
+      const err = f.fail;
+      f.fail = null;
+      if (err) throw err;
+    },
+    facts: () => ({ name: 'MossLaptop', platform: 'windows', version: '0.3.1', allow: f.allow, term: f.term, screen: f.screen, folders: [...f.folders] }),
     fromPhone: (item) => void f.got.push(item),
   };
   return { f, hooks };
@@ -152,7 +163,7 @@ describe('a phone connecting', () => {
     r.phones([phone()]);
     await flush();
     expect(r.types()).toEqual(['hello', 'pill', 'view']);
-    expect(r.last('hello')).toEqual({ t: 'hello', v: 1, name: 'MossLaptop', platform: 'windows', version: '0.3.1', allow: true, vapid: null });
+    expect(r.last('hello')).toEqual({ t: 'hello', v: 1, name: 'MossLaptop', platform: 'windows', version: '0.3.1', allow: true, vapid: null, term: false, screen: 'ready', folders: ['C:\\code\\island'] });
     expect(r.last('pill')?.bot?.play).toBe(1);
     expect(r.last('view')).toMatchObject({ nav: { open: 'grid' }, urgent: null, view: { key: 'island/grid' } });
   });
@@ -459,6 +470,82 @@ describe('phone ↔ PC', () => {
     r.emit('remote-file', { phone: IPHONE, id: 'f1', name: 'IMG_0001.JPG', path: 'C:\\Users\\moss\\Downloads\\IMG_0001.JPG', size: 2_000_000, mime: 'image/jpeg' });
     r.emit('remote-file', { phone: IPHONE, id: 'f2', path: '' });
     expect(f.got).toEqual([{ kind: 'file', phone: IPHONE, from: 'iPhone', id: 'f1', name: 'IMG_0001.JPG', path: 'C:\\Users\\moss\\Downloads\\IMG_0001.JPG', size: 2_000_000, mime: 'image/jpeg' }]);
+  });
+});
+
+describe('terminals, the screen and folders in hello (2026-10-28)', () => {
+  it('a fresh hello goes out when one of them changes, and only then', async () => {
+    const { r, f, hub } = await setup([phone(), phone(OTHER)]);
+    hub.tick();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(r.types().filter((t) => t === 'hello')).toHaveLength(1);
+    f.term = true;
+    hub.tick();
+    await flush();
+    expect(r.last('hello')?.term).toBe(true);
+    expect(r.last('hello', OTHER)?.term).toBe(true);
+    f.screen = 'off';
+    hub.syncHello();
+    await flush();
+    expect(r.last('hello')?.screen).toBe('off');
+    f.folders = ['C:\\code\\app', 'C:\\code\\island'];
+    hub.tick();
+    await flush();
+    expect(r.last('hello')?.folders).toEqual(['C:\\code\\app', 'C:\\code\\island']);
+    expect(r.types().filter((t) => t === 'hello')).toHaveLength(4);
+    // Nothing changed: no hello.
+    hub.tick();
+    hub.syncHello();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(r.types().filter((t) => t === 'hello')).toHaveLength(4);
+  });
+
+  it('a fresh hello goes before the view it explains (Allow coming back)', async () => {
+    const { r, f, hub } = await setup();
+    f.allow = false;
+    f.urgent = { id: 'claude', view: permission };
+    r.phones([phone()]);
+    await flush();
+    f.allow = true;
+    hub.tick();
+    await vi.advanceTimersByTimeAsync(200);
+    const types = r.types();
+    expect(types.lastIndexOf('hello')).toBeLessThan(types.lastIndexOf('view'));
+    expect(r.last('hello')?.allow).toBe(true);
+  });
+
+  it("a tap that goes wrong for the phone shows there as a toast; other failures only go to the log", async () => {
+    const { r, f, hub } = await setup([phone()]);
+    f.cards.claude = { key: 'claude/chats', blocks: [{ t: 'input', key: 'say', placeholder: 'Message Claude…', action: 'act:claude:say:S1' }] };
+    hub.openCard(IPHONE, 'claude');
+    await flush();
+    f.fail = new PhoneError("Couldn't start Claude: claude is not installed");
+    r.line({ t: 'act', action: 'act:claude:say:S1', arg: 'hello' });
+    await flush();
+    expect(f.acts).toEqual([[IPHONE, 'act:claude:say:S1', 'hello']]);
+    expect(r.last('toast')).toEqual({ t: 'toast', text: "Couldn't start Claude: claude is not installed", tone: 'bad' });
+    f.fail = new Error('a bug');
+    r.line({ t: 'act', action: 'act:claude:say:S1', arg: 'again' });
+    await flush();
+    expect(r.types().filter((t) => t === 'toast')).toHaveLength(1);
+    expect(r.logs.some((l) => l.includes('a bug'))).toBe(true);
+  });
+
+  it("knows a phone's name (the island says which phone opened a terminal)", async () => {
+    const { hub } = await setup([phone(), phone(OTHER, false)]);
+    expect(hub.phoneName(IPHONE)).toBe('iPhone');
+    expect(hub.phoneName(OTHER)).toBe('Other');
+    expect(hub.phoneName('nobody')).toBeNull();
+  });
+
+  it('terminals are allowed with the switch on, and not while Windows Hello guards Allow', () => {
+    const s = defaultSettings();
+    expect(s.general.phoneTerminal).toBe(false);
+    expect(termAllowed(s)).toBe(false);
+    s.general.phoneTerminal = true;
+    expect(termAllowed(s)).toBe(true);
+    s.activities.config.claude.options.requireHello = true;
+    expect(termAllowed(s)).toBe(false);
   });
 });
 

@@ -11,7 +11,7 @@ import { MOMENT_LOOKS, MOOD_LOOKS } from '../../../../src/core/looks';
 import type { MirrorFrame } from '../../../../src/core/mirror';
 import { fitSegments, signature, type Seg } from '../../../../src/core/segments';
 import { mapActions, type Block, type SheetView, type Tile } from '../../../../src/core/sheet';
-import type { BotState, IslandMsg, Nav } from '../../../../src/remote/protocol';
+import type { BotState, IslandMsg, Nav, ScreenState } from '../../../../src/remote/protocol';
 
 /** The demo PC: a 1920×1080 laptop screen at 125 %, as the island sees it. */
 const AREA: Area = { width: 1536, height: 864 };
@@ -382,6 +382,10 @@ export function demoView(d: DemoState, nav: Nav, width: number, now: number): Ex
   return { t: 'view', nav, view, urgent: null };
 }
 
-export function demoHello(name = DEMO_NAME): Extract<IslandMsg, { t: 'hello' }> {
-  return { t: 'hello', v: 1, name, platform: 'windows', version: '0.3.1', allow: true, vapid: null };
+/** The demo PC's recent project folders (hello's `folders`, the new terminal's folder picker). */
+export const DEMO_FOLDERS = ['C:\\Users\\Moss\\Projects\\windows-dynamic-island', 'C:\\Users\\Moss\\Projects\\degreepilot', 'C:\\Users\\Moss\\Projects\\summit-rebrand'];
+
+/** The demo's hello: terminals on and Chrome Remote Desktop ready, unless ?demo asks otherwise. */
+export function demoHello(name = DEMO_NAME, opts: { term?: boolean; screen?: ScreenState } = {}): Extract<IslandMsg, { t: 'hello' }> {
+  return { t: 'hello', v: 1, name, platform: 'windows', version: '0.3.1', allow: true, vapid: null, term: opts.term ?? true, screen: opts.screen === undefined ? 'ready' : opts.screen, folders: [...DEMO_FOLDERS] };
 }

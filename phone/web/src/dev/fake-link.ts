@@ -1,12 +1,18 @@
 // A pretend connection for ?demo (and the fallback while the real link isn't built): a PC
 // named MossLaptop with music playing, Claude working, a Control Center of every tile kind, and
 // a permission card that comes in after a few seconds (?urgent: at once). Taps change the demo
-// and answer with a toast, so a press visibly does something. ?offline: it never answers.
+// and answer with a toast, so a press visibly does something. ?offline: it never answers. Its
+// terminals are pretend ones too (fake-term.ts), and its Screen says Chrome Remote Desktop is
+// ready (?noterm: terminals off; ?screen=off|missing|none: Screen's other answers).
 
-import type { FileHeader, IslandMsg, Nav, PairPayload, PhoneMsg, PushSub } from '../../../../src/remote/protocol';
+import type { FileHeader, IslandMsg, Nav, PairPayload, ScreenState, TermHeader } from '../../../../src/remote/protocol';
 import { MAX_UPLOAD } from '../../../../src/remote/protocol';
-import type { IncomingFile, Link, LinkState, SavedIsland } from '../link/api';
+import type { IncomingFile, Link, LinkState, SavedIsland, TermHandle } from '../link/api';
 import { DEMO_NAME, DESKTOP_NAME, TRACKS, demoHello, demoPill, demoView, desktopDemo, initialDemo, position, type DemoState } from './demo-data';
+import { FakeTerms } from './fake-term';
+
+type Sent = Parameters<Link['send']>[0];
+type TermEvents = Parameters<Link['openTerm']>[1];
 
 export const DEMO_ISLAND: SavedIsland = {
   id: 'k3m9xq7d1w5yhz8c4b2n6p0rtfa3e7gj9sv5ou1lqxw2y4z6c8d0',
@@ -30,6 +36,10 @@ export interface FakeOptions {
   urgent?: boolean;
   /** Never come online (the offline screen). */
   offline?: boolean;
+  /** Terminals from phones allowed on the pretend PC (yes unless false). */
+  term?: boolean;
+  /** Chrome Remote Desktop on the pretend PC ('ready' unless given). */
+  screen?: ScreenState;
 }
 
 export class FakeLink implements Link {
@@ -48,8 +58,20 @@ export class FakeLink implements Link {
   private askSeq = 0;
   /** The pretend PC this link is open to. */
   private island: SavedIsland | null = null;
+  /** Each pretend PC's terminals: they keep running while the phone is away, as on a PC. */
+  private readonly termsByPc = new Map<string, FakeTerms>();
 
   constructor(private readonly opts: FakeOptions = {}) {}
+
+  private get terms(): FakeTerms {
+    const key = this.island?.id ?? '';
+    let t = this.termsByPc.get(key);
+    if (!t) {
+      t = new FakeTerms({ emit: (m) => this.emit(m), later: (ms, fn) => this.later(ms, fn) }, { allowed: this.opts.term !== false });
+      this.termsByPc.set(key, t);
+    }
+    return t;
+  }
 
   get state(): LinkState {
     return this.st;
@@ -112,7 +134,7 @@ export class FakeLink implements Link {
     // Claude asks for permission on the laptop only: the desktop is the quiet one.
     if (!desktop && this.opts.urgent) this.ask();
     else if (!desktop) this.later(9000, () => this.ask());
-    this.emit(demoHello(desktop ? DESKTOP_NAME : DEMO_NAME));
+    this.emit(demoHello(desktop ? DESKTOP_NAME : DEMO_NAME, { term: this.opts.term !== false, screen: this.opts.screen }));
     this.push(true);
     // The tiles' bars and clocks move; the island sends a view when something in it changes.
     this.ticker = setInterval(() => this.tick(), 1000);
@@ -185,6 +207,8 @@ export class FakeLink implements Link {
     this.lastPill = '';
     this.lastView = '';
     if (this.st.s !== 'idle') this.set({ s: 'idle' });
+    // The connection's streams go with it; the terminals keep running.
+    for (const t of this.termsByPc.values()) t.dropStreams();
   }
 
   onState(cb: (s: LinkState) => void): () => void {
@@ -202,15 +226,26 @@ export class FakeLink implements Link {
     return () => this.files.delete(cb);
   }
 
-  send(m: PhoneMsg | { t: 'push-sub'; sub: PushSub | null }): boolean {
+  send(m: Sent): boolean {
     if (this.st.s !== 'online') return false;
     // The real island answers within a frame or two; so does the demo.
     this.later(60, () => this.handle(m));
     return true;
   }
 
-  private handle(m: PhoneMsg | { t: 'push-sub'; sub: PushSub | null }): void {
+  openTerm(header: TermHeader, on: TermEvents): Promise<TermHandle> {
+    if (this.st.s !== 'online') return Promise.reject(new Error('Not connected'));
+    return this.terms.open(header, on);
+  }
+
+  private handle(m: Sent): void {
     switch (m.t) {
+      case 'term-list':
+        this.terms.sendList();
+        return;
+      case 'term-kill':
+        this.terms.kill(m.id);
+        return;
       case 'nav':
         this.nav = m.open === 'card' ? { open: 'card', id: m.id } : { open: m.open };
         if (m.width) this.width = m.width;

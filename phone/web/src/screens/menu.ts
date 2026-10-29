@@ -1,4 +1,5 @@
-// More: switch between paired PCs, pair another, notifications (phase 3), remove this PC.
+// More: the PC's clipboard and Lock PC, switch between paired PCs, pair another, notifications
+// (phase 3), remove this PC.
 
 import { lastSeenText } from '../format';
 import type { LinkState, SavedIsland } from '../link/api';
@@ -11,6 +12,10 @@ export interface MenuHooks {
   state: LinkState;
   version: string;
   demo: boolean;
+  /** What is on the PC's clipboard, to copy here. */
+  clipboard(): void;
+  /** Locks the PC (asks first). */
+  lock(): void;
   switchTo(id: string): void;
   pairAnother(): void;
   remove(): void;
@@ -18,7 +23,22 @@ export interface MenuHooks {
 }
 
 export function openMenu(m: MenuHooks): void {
-  const s = openSheet({ title: m.current.name, sub: m.state.s === 'online' ? 'Connected' : `Last seen ${lastSeenText(m.current.lastSeen, Date.now())}`, icon: 'laptop' });
+  const online = m.state.s === 'online';
+  const s = openSheet({ title: m.current.name, sub: online ? 'Connected' : `Last seen ${lastSeenText(m.current.lastSeen, Date.now())}`, icon: 'laptop' });
+
+  const row = (label: string, iconName: string, fn: () => void) => {
+    const b = h('button', { class: 'ph-saved-row ph-menu-row', type: 'button' }, [ico(iconName), h('span', { text: label }), ico('chevron-right')]);
+    b.disabled = !online;
+    b.addEventListener('click', () => {
+      s.close();
+      fn();
+    });
+    return b;
+  };
+  const pcActions = h('div', { class: 'ph-section ph-menu-rows' }, [
+    row(`${m.current.name}'s clipboard`, 'clipboard', () => m.clipboard()),
+    row(`Lock ${m.current.name}`, 'lock', () => m.lock()),
+  ]);
 
   const pcs =
     m.islands.length > 1
@@ -67,6 +87,7 @@ export function openMenu(m: MenuHooks): void {
   void drawPush();
 
   s.body.append(
+    pcActions,
     ...(pcs ? [pcs] : []),
     h('div', { class: 'ph-section' }, [h('div', { class: 'ph-label', text: 'Notifications' }), pushBox]),
     h('div', { class: 'ph-section ph-stack' }, [

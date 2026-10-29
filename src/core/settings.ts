@@ -94,6 +94,8 @@ export interface Settings {
     phoneApprove: boolean;
     /** The second private topic those buttons post to; made when phoneApprove is first turned on. */
     phoneReplyTopic: string;
+    /** Settings › Your phone › Terminal from your phone: a paired phone may open a terminal here (src-tauri/src/term). */
+    phoneTerminal: boolean;
   };
   privacy: {
     clipboardContent: boolean;
@@ -180,6 +182,8 @@ export function defaultSettings(): Settings {
       phoneTopic: '',
       phoneApprove: false,
       phoneReplyTopic: '',
+      // Off until switched on at the PC: a terminal runs any command.
+      phoneTerminal: false,
     },
     privacy: { clipboardContent: true, screenshotPreview: true },
   };

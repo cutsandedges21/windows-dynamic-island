@@ -28,6 +28,8 @@
     "@choochmeque/tauri-plugin-biometry-api": "^0.3.0-rc.3",
     "@tauri-apps/api": "^2.12.1",
     "@tauri-apps/plugin-autostart": "^2.7.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "jsqr": "^1.4.0"
   },
   "devDependencies": {
