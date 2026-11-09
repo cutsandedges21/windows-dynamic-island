@@ -13,7 +13,7 @@ import { MENU_ITEMS } from './core/menu';
 import { isTauri, native, on, sendTo, type MonitorInfo } from './core/native';
 import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
-import { ACCENTS, backAt, cloneSettings, HIDE_CHOICES, hideUntil, migrate, newPhoneTopic, type ActivityConfig, type Settings } from './core/settings';
+import { ACCENTS, backAt, cloneSettings, growsChoices, growsOf, GROWS_BELOW, HIDE_CHOICES, hideUntil, migrate, newPhoneTopic, type ActivityConfig, type Grows, type Settings } from './core/settings';
 import { springs } from './core/spring';
 import { catchErrors } from './core/errors';
 import { codeGrid } from './codegrid';
@@ -187,6 +187,13 @@ function activitiesPage(): HTMLElement {
 }
 
 /** What Priority means, under its switch on every activity. */
+/** The Grows choices in plain words (Settings › When pointed at, and each activity's Grows). */
+const GROWS_LABEL: Record<Grows, string> = { wide: 'Sideways', card: 'Into a card', below: 'Below' };
+const GROWS_HELP = [
+  'When you point at it: Sideways widens the pill, Into a card grows a card out of it.',
+  'When you point at it: Below hangs its card under the pill, Into a card grows the card out of the pill, Sideways widens the pill too.',
+];
+
 const PRIORITY_HELP = 'When several things happen at once, the highest one gets the pill and the others wait beside it as small icons. A tie goes to the one higher on this page.';
 
 /** Each behavior switch, with what it does in plain words (shown under it, not hidden in a tooltip). */
@@ -226,10 +233,19 @@ function activityCard(meta: ActivityMeta): HTMLElement {
 
 function cardBody(meta: ActivityMeta): HTMLElement {
   const c = cfg(meta.id);
-  const behaviors = BEHAVIORS.map(([key, label, help]) => row(label, help, toggle(c[key], (v) => { c[key] = v; save(true); }, label)));
+  const behaviors = BEHAVIORS.map(([key, label, help]) =>
+    row(label, help, toggle(c[key], (v) => {
+      c[key] = v;
+      save(true);
+      // The Grows row is only there while Persistent is on.
+      if (key === 'persistent') render();
+    }, label)),
+  );
   const body = h('div', { class: 'act-body' }, [
     row('Priority', PRIORITY_HELP, segmented(c.priority, [['high', 'High'], ['medium', 'Medium'], ['low', 'Low']], (v) => { c.priority = v; c.enabled = true; save(true); flipRender(); })),
     ...behaviors,
+    // Pointing at a persistent activity: widen the pill, or grow a card out of it like the music player.
+    c.persistent ? row('Grows', GROWS_HELP[meta.id === GROWS_BELOW ? 1 : 0], segmented(growsOf(c, settings.island.defaultGrows, meta.id), growsChoices(meta.id).map((g) => [g, GROWS_LABEL[g]] as [Grows, string]), (v) => { c.grows = v; save(true); render(); })) : null,
     // Local AI's model is picked in its panel below, not typed.
     ...meta.options.filter((o) => optionHere(o) && !(meta.id === 'local' && o.key === 'model')).map((o) => optionRow(meta.id, o)),
   ]);
@@ -743,6 +759,7 @@ function settingsPage(): HTMLElement {
       row('Distance from the edge', 'Gap between the island and its screen edge.', edge),
       row('When nothing is happening', null, segmented(i.idle, [['pill', 'Small pill'], ['hidden', 'Tuck away']], (v) => { i.idle = v; save(true); render(); })),
       row('Reduce motion', 'Springs jump straight to their end.', segmented(i.reduceMotion, [['system', 'System'], ['on', 'On'], ['off', 'Off']], (v) => { i.reduceMotion = v; save(true); render(); })),
+      row('When pointed at', 'How an activity grows when you point at it. Each one can override this in Activities.', segmented(i.defaultGrows, [['wide', 'Sideways'], ['card', 'Into a card']], (v) => { i.defaultGrows = v; save(true); render(); })),
       row('Hover card', "What shows under the island when you point at it. Music's player and Phone's list still show when you point at them.", segmented(i.hoverCard, [['pointer', 'What you point at'], ['claude', 'Claude stats']], (v) => { i.hoverCard = v; save(true); render(); })),
       row('Border glow', 'Light that circles the pill while something works; orange is Claude. Off saves the most battery.', segmented(i.glow, [['off', 'Off'], ['slow', 'Slow'], ['medium', 'Medium'], ['fast', 'Fast']], (v) => { i.glow = v; save(true); render(); })),
     ]),

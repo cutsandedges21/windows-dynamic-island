@@ -21,9 +21,11 @@ import type { MirrorFrame } from './mirror';
 import { PillRenderer } from './renderer';
 import { menuMain, menuSegments } from './menu';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
-import { accentColor, backAt, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type HideChoice, type Settings, type TileSize } from './settings';
+import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
-import { mapActions, SheetRenderer, type SheetView, type Tile } from './sheet';
+import { mapActions, SheetRenderer, type Block, type SheetChip, type SheetView, type Tile } from './sheet';
+import { chatView, flatView, hoverView } from './grow';
+import { tileCard } from './tilecard';
 import { springs } from './spring';
 import { workspaceEngine } from '../workspaces/engine';
 import { clip, timeOfDay } from './format';
@@ -42,7 +44,7 @@ const WIDE_SIZES: TileSize[] = ['2x1', '2x2'];
 /** Row height per island size (the width comes from the pill). */
 const CELL_PX = { small: 80, medium: 92, large: 106 } as const;
 const SIZE_SCALE = { small: 0.88, medium: 1, large: 1.14 } as const;
-/** Music's player at the medium size, about an iPhone's expanded island against the pill. */
+/** A card grown out of the pill (Music's player) at the medium size, about an iPhone's expanded island against the pill. */
 const MORPH_W = 372;
 const GRID_GAP = 8;
 const GRID_PAD = 14;
@@ -117,6 +119,8 @@ export class Island {
   private hoverKey: string | null = null;
   /** The pointer is on the pill itself (not the card). */
   private pointerOnPill = false;
+  /** Pointed at, this activity grows into a card but had none to show: the pill widens for it instead. */
+  private hoverBare: string | null = null;
   /** Rust holds Ctrl+V for Land (the pointer rests on its icon). */
   private pasteArmed = false;
   /** Light on the pill's edge and on an urgent card's, in the tone of whatever is happening. */
@@ -130,6 +134,8 @@ export class Island {
   /** What the bot shows, from what every activity reports (src/core/pet.ts). */
   private readonly brain = new PetBrain();
   private readonly cardGlow: BorderGlow;
+  /** The pill's light, moved onto a card grown out of the pill (same corners as .sheet.morph). */
+  private readonly grownGlow: BorderGlow;
   /** Duplicate mode: how many copies of the pill run on other screens, and the last frame sent to them. */
   private mirrorCount = 0;
   private mirrorKey = '';
@@ -166,12 +172,15 @@ export class Island {
       (action, arg, el) => this.handleAction(action, arg, el),
       () => {
         const card = this.sheet?.rect;
-        if (card) this.cardGlow?.place(card);
+        if (card) {
+          this.cardGlow?.place(card);
+          this.grownGlow?.place(card);
+        }
         this.publishHit(this.renderer.rect, false);
       },
       (cover) => {
         this.renderer.setCover(cover);
-        // The player is back in the pill: the pill's light may come back too.
+        // The card is back in the pill (or the island opened from it): the pill's light comes back to the pill.
         if (cover === 'off') this.schedule();
       },
     );
@@ -180,6 +189,7 @@ export class Island {
     this.bubble = new BubbleView(stage, { interactive: true, onClick: () => this.handleAction('island:bot', null, this.bubble.el) });
     this.chat = new ChatBar(stage, (action, arg) => this.chatAction(action, arg), () => this.publishHit(this.renderer.rect, true));
     this.cardGlow = new BorderGlow(stage, 24);
+    this.grownGlow = new BorderGlow(stage, 34);
     this.renderer.onFrame((r) => {
       this.sheet.follow(r);
       this.pillGlow.place(r);
@@ -611,9 +621,14 @@ export class Island {
     // Level: resting compact, raised by events, hover, the user, or urgency.
     let level: Level = primary || loneChips.length ? 'compact' : 'idle';
     const surf = primary ? this.surfaces.filter((x) => x.id === primary).sort((a, b) => b.at - a.at)[0] : undefined;
-    if (surf) level = atLeast(level, surf.level);
-    // Music's player grows out of the pill and covers it: the pill underneath stays as it is.
-    const morphing = this.hover && !this.open && this.view === 'main' && this.claims(this.hoverOwner()) === 'morph';
+    // Pointed at, a card grows out of the pill and covers it: the pill underneath stays as it is.
+    if (!this.hover || this.hoverOwner() !== this.hoverBare) this.hoverBare = null;
+    const morphing = this.hover && !this.open && this.view === 'main' && this.growsCard(this.hoverOwner());
+    // A chat's card grown out of the pill (it finished, it needs you) covers it: the pill rests under
+    // it, so when the card shrinks back there is no raised layout to swap out for a split second.
+    // Under a hover card the pill stays as it is, so it is as it was when the card goes back.
+    const underCard = this.sheet.grown && !morphing;
+    if (surf && !underCard) level = atLeast(level, surf.level);
     if (this.hover && s.hoverExpand && primary && !this.open && !morphing) level = atLeast(level, 'expanded');
     if (this.open || this.view !== 'main') level = 'maximum';
     // An activity's own card belongs to the open island; closing the island goes back to Control Center.
@@ -628,7 +643,7 @@ export class Island {
     const urgentKeys = new Set<string>();
     for (const [id, st] of statuses) if (st.urgent) urgentKeys.add(`${id}:${st.urgent.key}`);
     for (const k of this.dismissedUrgent) if (!urgentKeys.has(k)) this.dismissedUrgent.delete(k);
-    if (choice.urgent && pStatus?.urgent && !this.dismissedUrgent.has(`${primary}:${pStatus.urgent.key}`)) {
+    if (choice.urgent && pStatus?.urgent && !underCard && !this.dismissedUrgent.has(`${primary}:${pStatus.urgent.key}`)) {
       level = atLeast(level, pStatus.urgent.level ?? 'maximum');
     }
     if (this.previewLevel) level = this.previewLevel;
@@ -739,8 +754,15 @@ export class Island {
     const botShown = s.bot && !this.moving && !(fsHide && this.fullscreenOn !== null);
     const botD = bubbleSize(s.size, s.widths.compact);
     const restPill = pillRect(this.area, anchor, w, h, s.edge);
-    // The card is picked now so the bot can step aside when the player grows out of the pill.
-    const picked = hidden ? null : this.pickSheet(choice, statuses, now, orient, w);
+    // The card is picked now so the bot can step aside when a card grows out of the pill.
+    let picked = hidden ? null : this.pickSheet(choice, statuses, now, orient, w);
+    // Grown out of the pill, the card covers its chips: it carries them itself.
+    if (picked?.view.morph) picked = { ...picked, view: { ...picked.view, blocks: this.withChips(picked.view.blocks, picked.owner, choice, statuses, now) } };
+    // Pointed at, it was to grow into a card but there was none: next time the pill widens instead.
+    if (morphing && !picked && this.hoverBare === null) {
+      this.hoverBare = this.hoverOwner();
+      this.schedule();
+    }
     const morph = picked?.view.morph ? this.morphRect(restPill, this.sheetWidth(picked.view, orient, w)) : null;
     const botRect = bubbleRect(morph ? union(restPill, morph) : restPill, anchor, botD);
     this.bubble.place(botShown ? botRect : null, { immediate });
@@ -766,9 +788,10 @@ export class Island {
       this.renderer.bump();
     }
     this.composeSheet(picked, orient, w, immediate);
+    // The pill rests under a chat's grown card (see underCard): compose once more when that changes.
+    if (this.sheet.grown && !morphing !== underCard) this.schedule();
     const beam: ActivityStatus['beam'] = this.fileDrag ? { tone: 'accent', motion: 'pulse' } : (pStatus?.beam ?? this.busyElsewhere(choice.visible, statuses));
-    // The pill's light would run around the pill over the player covering it, also while the player shrinks back.
-    this.syncGlow(hidden || morph || this.sheet.covering ? null : beam, !hidden && choice.urgent && this.sheet.visible, morph !== null);
+    this.syncGlow(hidden ? null : beam, !hidden && choice.urgent && this.sheet.visible, morph !== null || this.sheet.covering);
     // Every frame is kept for phones, whether or not Duplicate copies run.
     this.lastFrame = {
       sig, swap, bump: bump && !hiddenEverywhere, placed, w, h, orient, anchor, edge: s.edge,
@@ -973,8 +996,10 @@ export class Island {
     const ask = (id: string, reason: SheetEnv['reason']) => this.askSheet(id, reason, now, this.sheetWidth(null, orient, pillW) - 28, vertical, id === choice.primary ? choice.surfaced : null);
     const primary = choice.primary;
     const pStatus = primary ? statuses.get(primary) : undefined;
+    // Claude Code's finished and needs-you cards grow out of the pill like its hover card, when it grows into one.
+    const chat = (card: { owner: string; view: SheetView } | null) => card && { ...card, view: chatView(card.owner, this.grows(card.owner), card.view) };
     if (primary && choice.urgent && pStatus?.urgent && !this.dismissedUrgent.has(`${primary}:${pStatus.urgent.key}`)) {
-      const card = ask(primary, 'urgent');
+      const card = chat(ask(primary, 'urgent'));
       if (card) return card;
     }
     if (this.open) {
@@ -984,15 +1009,79 @@ export class Island {
       return this.gridSheet(now, orient, pillW);
     }
     if (primary && choice.surfaced) {
-      const card = ask(primary, 'surfaced');
+      const card = chat(ask(primary, 'surfaced'));
       if (card) return card;
     }
     if (this.hover) {
       const owner = this.hoverOwner();
-      const card = owner ? ask(owner, 'hover') : null;
+      const card = owner ? this.hoverCardOf(owner, ask(owner, 'hover'), now, vertical) : null;
       if (card) return card;
     }
     return null;
+  }
+
+  /** How `id` grows when pointed at: its own choice (Activities › Grows), else Settings › When pointed at. */
+  private grows(id: string): Grows {
+    return growsOf(this.settings.activities.config[id], this.settings.island.defaultGrows, id);
+  }
+
+  /**
+   * Pointing at `id` grows a card out of the pill: it grows into one and has a card to show (its own,
+   * or its Control Center tile's). Asked before the card is picked, so the pill under it can rest.
+   */
+  private growsCard(id: string | null): boolean {
+    if (!id || id === this.hoverBare || this.grows(id) !== 'card') return false;
+    const act = this.running.get(id);
+    return Boolean(act?.sheet || act?.tile);
+  }
+
+  /**
+   * The hover card by how the activity grows (grow.ts hoverView): its own card grown out of the
+   * pill, or else one made from its Control Center tile; hanging below; or, for Sideways, only an
+   * own card that can hang below.
+   */
+  private hoverCardOf(id: string, own: { owner: string; view: SheetView } | null, now: number, vertical: boolean): { owner: string; view: SheetView } | null {
+    const view = hoverView(this.grows(id), own?.view ?? null, () => this.tileCardOf(id, now, vertical));
+    return view ? { owner: id, view } : null;
+  }
+
+  /** A card made from an activity's Control Center tile, for one with no hover card of its own. */
+  private tileCardOf(id: string, now: number, vertical: boolean): SheetView | null {
+    const act = this.running.get(id);
+    if (!act?.tile) return null;
+    const interactive = this.settings.activities.config[id]?.interactive ?? true;
+    try {
+      const tile = act.tile({ reason: 'hover', now, width: 320, vertical, interactive, surfaced: null });
+      if (!tile) return null;
+      const meta = CATALOG_BY_ID.get(id) ?? act.meta;
+      return { key: `${id}/tile-card`, blocks: mapActions(tileCard(tile, meta.name, meta.icon), (a) => this.nsAction(id, a)) };
+    } catch (err) {
+      console.error(`tile card ${id}`, err);
+      return null;
+    }
+  }
+
+  /**
+   * A card grown out of the pill covers it, chips and all: it carries them itself, so the other
+   * activities and "+N" stay one click away. Its top row takes them: a player's, else its heading.
+   */
+  private withChips(blocks: Block[], owner: string, choice: Picked, statuses: Map<string, ActivityStatus>, now: number): Block[] {
+    if (!this.settings.island.showSecondary) return blocks;
+    // Everything but the card's own activity: pointing at a chip shows that chip's card, and then
+    // the pill's own activity is one of the others.
+    const others = choice.visible.filter((id) => id !== owner);
+    const MAX = 2;
+    const chips: SheetChip[] = [];
+    for (const seg of this.secondarySegments(others.slice(0, MAX), statuses, 'expanded', now, true)) {
+      if (seg.t !== 'chip' || !seg.action) continue;
+      chips.push({ key: seg.key, icon: seg.icon, dot: seg.dot, pulse: seg.pulse, tone: seg.tone, action: seg.action, arg: seg.arg, tip: seg.tip });
+    }
+    if (others.length > MAX) chips.push({ key: 'island/more', icon: 'more', label: `+${others.length - MAX}`, action: 'island:overflow', tip: 'More activities' });
+    if (!chips.length) return blocks;
+    const at = blocks.findIndex((b) => b.t === 'player');
+    const i = at >= 0 ? at : blocks.findIndex((b) => b.t === 'head');
+    if (i < 0) return blocks;
+    return blocks.map((b, j) => (j === i && (b.t === 'player' || b.t === 'head') ? { ...b, chips } : b));
   }
 
   /** An activity's card for `reason`, its actions named for it; for this screen and for phones alike. */
@@ -1244,17 +1333,24 @@ export class Island {
    * busy, pulse when something waits on the user, progress while filling up); an
    * urgent card gets a slow orbit in the same tone.
    */
-  private syncGlow(want: ActivityStatus['beam'], cardUrgent: boolean, now = false): void {
+  private syncGlow(want: ActivityStatus['beam'], cardUrgent: boolean, grown = false): void {
     const speed = this.settings.island.glow;
     if (speed === 'off') {
       this.pillGlow.set(null);
       this.cardGlow.set(null);
+      this.grownGlow.set(null);
       return;
     }
     this.pillGlow.setSpeed(speed);
     this.cardGlow.setSpeed(speed);
-    this.pillGlow.set(beamSpec(want), now);
-    this.cardGlow.set(cardUrgent ? { tone: want?.tone ?? 'accent', motion: 'orbit' } : null);
+    this.grownGlow.setSpeed(speed);
+    const urgent: GlowSpec = { tone: want?.tone ?? 'accent', motion: 'orbit' };
+    // A card grown out of the pill covers it: the light runs round the card's edge, not across its
+    // text, also while it shrinks back, until it lands. The pill's is cut at once: fading, its ring
+    // would show through the card as it grows.
+    this.pillGlow.set(grown ? null : beamSpec(want), grown);
+    this.grownGlow.set(grown ? (cardUrgent ? urgent : beamSpec(want)) : null);
+    this.cardGlow.set(cardUrgent && !grown ? urgent : null);
   }
 
   /**
@@ -1468,6 +1564,8 @@ export class Island {
       case 'island:select':
         this.selected = String(arg);
         this.view = 'main';
+        // The card follows the pick, not the segment the pointer last crossed (a grown card hides the pill's).
+        this.hoverKey = `chip/${String(arg)}`;
         break;
       case 'island:overflow':
         this.view = 'overflow';
@@ -1589,7 +1687,7 @@ export class Island {
     // A phone draws every card under its pill: none grows out of it there.
     const card = (id: string, reason: SheetEnv['reason']) => {
       const got = this.askSheet(id, reason, now, width - 28, false, null);
-      return got ? { ...got.view, morph: undefined } : null;
+      return got ? flatView(got.view) : null;
     };
     for (const id of urgentIds(this.settings.activities.order, this.statuses(), this.dismissedUrgent)) {
       const view = card(id, 'urgent');
