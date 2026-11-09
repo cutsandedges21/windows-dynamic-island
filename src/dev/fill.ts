@@ -27,6 +27,11 @@ export async function fillPreview(island: Island, native: typeof Native, emit: t
       status: 'playing', position: 120, duration: 300, updatedAt: Date.now(), canPlay: true, canPause: true, canNext: true, canPrev: true, thumbnail: ART,
     }),
     sysSample: async () => ({ cpu: 37, memUsed: 10.4e9, memTotal: 16e9, gpu: 22, top: { name: 'chrome.exe', cpu: 12 } }),
+    sysTop: async (kind: string) => [
+      { name: 'Google Chrome', exe: 'chrome.exe', value: kind === 'mem' ? 3.1e9 : 12, count: 24 },
+      { name: 'Visual Studio Code', exe: 'code.exe', value: kind === 'mem' ? 1.2e9 : 6.4, count: 9 },
+      { name: 'Desktop Window Manager', exe: 'dwm.exe', value: kind === 'mem' ? 0.2e9 : 2.1, count: 1 },
+    ],
     netSample: async () => ({ rxBps: 2.1e6, txBps: 1.8e5, connected: true, internet: true, name: 'HomeWiFi', wifi: true, vpn: false }),
     ports: async () => [
       { port: 3000, pid: 11, process: 'node.exe', address: '127.0.0.1' },

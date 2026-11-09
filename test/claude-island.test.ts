@@ -622,6 +622,7 @@ describe('helpers', () => {
       { t: 'input', key: 'i', placeholder: '', action: 'send', engage: 'hold' },
       { t: 'rows', key: 'r', items: [{ key: 'a', title: 'a', action: 'pick', button: { key: 'x', icon: 'x', action: 'hide' } }, { key: 'b', title: 'b' }] },
       { t: 'choices', key: 'c', items: [{ key: 'c', label: 'c', action: 'choose' }] },
+      { t: 'meter', key: 'm', label: 'CPU', value: 0.4, text: '40%', action: 'focus', arg: 'cpu' },
       {
         t: 'tiles',
         key: 'g',
@@ -634,7 +635,7 @@ describe('helpers', () => {
       },
     ];
     const out = JSON.stringify(mapActions(blocks, (a) => (a.startsWith('island:') ? a : `act:x:${a}`)));
-    for (const a of ['open', 'go', 'send', 'hold', 'pick', 'hide', 'choose', 'tap', 'start', 'row', 'play']) expect(out).toContain(`"act:x:${a}"`);
+    for (const a of ['open', 'go', 'send', 'hold', 'pick', 'hide', 'choose', 'focus', 'tap', 'start', 'row', 'play']) expect(out).toContain(`"act:x:${a}"`);
     expect(out).toContain('"island:app"');
     expect(out).not.toMatch(/"action":"(?!act:|island:)/);
   });

@@ -43,6 +43,8 @@ export interface ChipView {
   pulse?: boolean;
   /** What a click does (one of the activity's actions); without it a click brings the activity onto the pill. */
   action?: string;
+  /** On the small island, where chips are normally icon only, show the label instead of the icon. */
+  keepLabel?: boolean;
 }
 
 export interface RenderEnv {

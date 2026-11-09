@@ -240,6 +240,13 @@ export function migrate(saved: unknown): Settings {
   if (askOpts && (askOpts.backend === 'api' || askOpts.backend === 'claude-code') && !(localOpts && 'backend' in localOpts) && out.activities.config.local) {
     out.activities.config.local.options.backend = askOpts.backend;
   }
+  // System Stats before its priority order: "On the pill" defaulted to CPU and was saved like that.
+  // That CPU was never picked; with nothing picked the pill follows the priority's top stat instead.
+  const sysOpts = isObj(savedCfg.system) && isObj(savedCfg.system.options) ? savedCfg.system.options : null;
+  const show = sysOpts?.show;
+  if (sysOpts && !('order' in sysOpts) && Array.isArray(show) && show.length === 1 && show[0] === 'cpu' && out.activities.config.system) {
+    out.activities.config.system.options.show = [];
+  }
   // Order: saved order of known ids, then any new activities in catalog order.
   const known = new Set(CATALOG.map((m) => m.id));
   const order = Array.isArray(savedActs.order) ? (savedActs.order as unknown[]).filter((id): id is string => typeof id === 'string' && known.has(id)) : [];

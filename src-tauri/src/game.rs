@@ -174,7 +174,7 @@ fn steam_app(id: u32) -> Option<(String, PathBuf)> {
     None
 }
 
-fn exe_path(pid: u32) -> Option<String> {
+pub(crate) fn exe_path(pid: u32) -> Option<String> {
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buf = [0u16; 1024];

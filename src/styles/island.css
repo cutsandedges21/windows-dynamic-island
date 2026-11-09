@@ -1079,6 +1079,9 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 .sb-meter.tone-bad { color: var(--bad); }
 .sb-meter.tone-warn { color: var(--warn); }
 .sb-meter.tone-good { color: var(--good); }
+/* A meter that opens something: the same hover as a row, padded out without moving its content. */
+.sb-meter[data-action] { cursor: pointer; margin: -5px -8px; padding: 5px 8px; border-radius: 12px; transition: background-color 0.16s ease; }
+.sb-meter[data-action]:hover { background: rgba(var(--ink), 0.07); }
 
 /* rows (sessions, lists) */
 .sb-rows { display: flex; flex-direction: column; gap: 2px; }
@@ -1106,6 +1109,15 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 .sb-rows .rt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .sb-rows .r1 { font: 500 13px/1.25 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-rows .r2 { font: 500 11.5px/1.25 var(--font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A row's own progress: a thin bar after its detail, running to the end of the row */
+.sb-rows .r2.with-bar { display: flex; align-items: center; gap: 7px; }
+.sb-rows .rbd { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sb-rows .rbd:empty { display: none; }
+.sb-rows .rbar { position: relative; flex: 1 1 40px; min-width: 28px; height: 3px; border-radius: 2px; background: rgba(var(--ink), 0.13); overflow: hidden; }
+.sb-rows .rbar .fill { position: absolute; inset: 0; transform-origin: 0 50%; transform: scaleX(0); background: currentColor; border-radius: 2px; transition: transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.sb-rows .rbs { flex: none; font-size: 10.5px; color: var(--dim); }
+.sb-rows .rbs:empty { display: none; }
+.sb-rows .rbt { flex: none; color: var(--fg); font-variant-numeric: tabular-nums; }
 .sb-rows .rbtn { flex: none; width: 24px; height: 24px; opacity: 0; transition: opacity 0.15s ease; }
 .sb-rows .rbtn .bi { width: 13px; height: 13px; }
 .sb-rows .row:hover .rbtn { opacity: 1; }

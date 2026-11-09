@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { contentOrigin, expansionVector, levelWidth, normalizeWidths, orientationFor, pillRect, pillSize } from '../src/core/layout';
 import { choosePrimary, rankOf, type Candidate } from '../src/core/priority';
-import { timeLike } from '../src/core/renderer';
+import { ticksInPlace, timeLike } from '../src/core/renderer';
 import { fitSegments, fitVertical, type Seg } from '../src/core/segments';
 import { accentColor, defaultActivityConfig, migrate } from '../src/core/settings';
 import { solve, Spring, springEasing, springs } from '../src/core/spring';
@@ -239,9 +239,40 @@ describe('settings migration', () => {
   });
 });
 
+describe('System Stats settings: both forks load', () => {
+  const sys = (options: Record<string, unknown>) => migrate({ version: 5, activities: { config: { system: { enabled: true, options } } } }).activities.config.system.options;
+
+  it("loads Moss's On the pill picks as they were", () => {
+    const o = sys({ show: ['cpu', 'ram'], always: true });
+    expect(o.show).toEqual(['cpu', 'ram']);
+    // The new ones start at their defaults: the usual priority, everything expanded, the hover card on.
+    expect(o).toMatchObject({ order: 'cpu,mem,gpu', expandedCpu: true, expandedRam: true, expandedGpu: true, hoverCard: true, always: true });
+  });
+
+  it("Moss's untouched default (CPU alone) means nothing picked, so the pill follows the priority", () => {
+    expect(sys({ show: ['cpu'] }).show).toEqual([]);
+    // Saved with the priority order around: a real pick, kept.
+    expect(sys({ show: ['cpu'], order: 'mem,cpu,gpu' }).show).toEqual(['cpu']);
+    expect(sys({ show: ['gpu'] }).show).toEqual(['gpu']);
+  });
+
+  it("loads Justin's priority, expanded switches and hover card, with nothing picked for the pill", () => {
+    const o = sys({ always: true, hoverCard: false, order: 'mem,gpu,cpu', expandedCpu: false, expandedRam: true, expandedGpu: true, cpuSpike: 80, memSpike: 90 });
+    expect(o).toMatchObject({ always: true, hoverCard: false, order: 'mem,gpu,cpu', expandedCpu: false, expandedRam: true, expandedGpu: true, cpuSpike: 80, memSpike: 90 });
+    expect(o.show).toEqual([]);
+    expect(migrate({}).activities.config.system.options.show).toEqual([]);
+  });
+});
+
 describe('time text ticks in place', () => {
   it('recognises clocks, counters and percentages, not words', () => {
     for (const t of ['0:52', '1:37 / 5:12', '12m 43s', '84%', '4.1M', '9:41 PM']) expect(timeLike(t)).toBe(true);
     for (const t of ['Working…', 'Your turn', 'in 10m', 'SICKO MODE']) expect(timeLike(t)).toBe(false);
+    // A label whose only change is its digits ticks too; new wording rolls.
+    expect(ticksInPlace('CPU 17%', 'CPU 18%')).toBe(true);
+    expect(ticksInPlace('RAM 9%', 'RAM 10%')).toBe(true);
+    expect(ticksInPlace('0:59', '1:00')).toBe(true);
+    expect(ticksInPlace('CPU 17%', 'RAM 17%')).toBe(false);
+    expect(ticksInPlace('Working…', 'Your turn')).toBe(false);
   });
 });

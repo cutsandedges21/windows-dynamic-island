@@ -33,7 +33,7 @@ import { QuickActivity } from '../src/activities/quick';
 import { ScreenshotsActivity } from '../src/activities/screenshots';
 import { ServersActivity } from '../src/activities/servers';
 import { SoundActivity } from '../src/activities/sound';
-import { pickedStats, SystemActivity } from '../src/activities/system';
+import { parseOrder, pickedStats, SystemActivity } from '../src/activities/system';
 import { headphonesLike, MusicActivity } from '../src/activities/music';
 import { PhoneActivity } from '../src/activities/phone';
 import { WeatherActivity } from '../src/activities/weather';
@@ -713,36 +713,78 @@ describe('system', () => {
     expect(act.status()).toMatchObject({ active: true, weight: 'background' });
     expect(act.render(env('compact')).find((s) => s.t === 'text')).toMatchObject({ text: 'CPU 42%' });
     const expanded = act.render(env('expanded')).map((s) => (s.t === 'text' ? s.text : ''));
-    expect(expanded).toEqual(expect.arrayContaining(['CPU 42%', 'RAM 14.0 GB', 'GPU 12%']));
+    expect(expanded).toEqual(expect.arrayContaining(['CPU 42%', 'RAM 94%', 'GPU 12%']));
     expect(act.render(env('maximum')).filter((s) => s.t === 'meter').map((s) => s.key)).toEqual(['cpu', 'mem', 'gpu']);
+    expect(act.chip()).toMatchObject({ icon: 'cpu', label: '42%', keepLabel: true });
     smoke(act, 'system always');
   });
 
-  it('"On the pill": the resting pill, the tile and the chip show the picked stats', async () => {
+  it('shows the chosen stats in the chosen order', async () => {
+    h.native.sysSample = vi.fn(async () => sample(42, { memUsed: 8e9 }));
+    const { act } = await boot(new SystemActivity(), {
+      always: true, order: 'mem,gpu,cpu', expandedCpu: false, expandedRam: true, expandedGpu: true,
+    });
+    await tick(1000);
+    const texts = (level: Parameters<typeof env>[0]) => act.render(env(level)).flatMap((s) => (s.t === 'text' ? [s.text] : []));
+    expect(texts('compact')).toEqual(['RAM 50%']);
+    expect(texts('expanded')).toEqual(['RAM 50%', 'GPU 12%']);
+    expect(act.render(env('maximum')).filter((s) => s.t === 'meter').map((s) => s.key)).toEqual(['mem', 'gpu']);
+    expect(act.chip()).toMatchObject({ icon: 'memory', label: '50%' });
+    expect(act.status().summary).toBe('RAM 50%');
+    // A normal card here (cards that grow out of the pill come with the hover cards).
+    const card = act.sheet({ reason: 'hover', now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null });
+    expect(card).toMatchObject({ key: 'system' });
+    expect(card!.blocks.filter((b) => b.t === 'meter').map((b) => b.key)).toEqual(['mem', 'gpu']);
+    // Hover card off: no card.
+    const { act: off } = await boot(new SystemActivity(), { always: true, hoverCard: false });
+    await tick(1000);
+    expect(off.sheet({ reason: 'hover', now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null })).toBe(null);
+  });
+
+  it('"On the pill": several stats side by side on the resting pill, in priority order', async () => {
     h.native.sysSample = vi.fn(async () => sample(42, { memUsed: 6e9 }));
     const { act } = await boot(new SystemActivity(), { show: ['gpu', 'ram'], always: true, cpuSpike: 90, memSpike: 92 });
     await tick(1000);
-    const texts = (level: Level) => act.render(env(level)).flatMap((s) => (s.t === 'text' ? [s.text] : []));
-    // CPU, RAM, GPU order whatever order they were picked in; CPU stays off the resting pill.
+    const texts = (level: Level, vertical = false) => act.render(env(level, { vertical })).flatMap((s) => (s.t === 'text' ? [s.text] : []));
+    // CPU, RAM, GPU (the default priority) whatever order they were picked in; CPU stays off the resting pill.
     expect(texts('compact')).toEqual(['RAM 38%', 'GPU 12%']);
     expect(act.render(env('compact'))[0]).toMatchObject({ t: 'icon', icon: 'memory' });
-    // Pointed at: the picked ones first, then the rest.
-    expect(texts('expanded')).toEqual(['RAM 5.6 GB', 'GPU 12%', 'CPU 42%']);
-    expect(act.tile()?.body).toMatchObject({ k: 'stat', label: 'RAM', value: '38%', sub: 'GPU 12%' });
-    expect(act.chip()).toMatchObject({ icon: 'memory', label: '38%' });
+    // Vertical has room for one number only.
+    expect(texts('compact', true)).toEqual(['38%']);
+    // Pointed at (expanded) and the tile are the priority's, whatever the pill shows.
+    expect(texts('expanded')).toEqual(['CPU 42%', 'RAM 38%', 'GPU 12%']);
+    expect(act.tile()?.body).toMatchObject({ k: 'stat', label: 'CPU', value: '42%', sub: 'RAM 38%' });
+    // Beside other activities: the pill's leading stat.
+    expect(act.chip()).toMatchObject({ icon: 'memory', label: '38%', keepLabel: true });
     expect(act.status().summary).toBe('RAM 38% · GPU 12%');
     smoke(act, 'system picked');
   });
 
-  it('"On the pill": no GPU counter drops GPU, and nothing valid picked means CPU', async () => {
+  it('"On the pill" follows a changed priority', async () => {
+    h.native.sysSample = vi.fn(async () => sample(42, { memUsed: 6e9 }));
+    const { act } = await boot(new SystemActivity(), { show: ['cpu', 'ram'], order: 'gpu,mem,cpu', always: true });
+    await tick(1000);
+    expect(act.render(env('compact')).flatMap((s) => (s.t === 'text' ? [s.text] : []))).toEqual(['RAM 38%', 'CPU 42%']);
+    expect(act.chip()).toMatchObject({ icon: 'memory', label: '38%' });
+  });
+
+  it('"On the pill": no GPU counter drops GPU, and nothing valid picked means the top of the priority', async () => {
     h.native.sysSample = vi.fn(async () => sample(42, { gpu: null }));
     const { act } = await boot(new SystemActivity(), { show: ['gpu'], always: true, cpuSpike: 90, memSpike: 92 });
     await tick(1000);
     expect(act.render(env('compact')).flatMap((s) => (s.t === 'text' ? [s.text] : []))).toEqual(['CPU 42%']);
     expect(act.tile()?.body).toMatchObject({ label: 'CPU', sub: 'RAM 50%' });
-    expect(pickedStats(['nope', 3])).toEqual(['cpu']);
-    expect(pickedStats('cpu')).toEqual(['cpu']);
+    // GPU first in the priority but not measured here: the next one leads.
+    const { act: next } = await boot(new SystemActivity(), { order: 'gpu,mem,cpu', always: true });
+    await tick(1000);
+    expect(next.render(env('compact')).flatMap((s) => (s.t === 'text' ? [s.text] : []))).toEqual(['RAM 50%']);
+    expect(pickedStats(['nope', 3])).toEqual([]);
+    expect(pickedStats('cpu')).toEqual([]);
     expect(pickedStats(['gpu', 'cpu'])).toEqual(['cpu', 'gpu']);
+    // 'ram' (On the pill) and 'mem' (the priority) are the same stat.
+    expect(pickedStats(['gpu', 'ram'], parseOrder('mem,gpu,cpu'))).toEqual(['mem', 'gpu']);
+    expect(pickedStats(['mem'])).toEqual(['mem']);
+    expect(parseOrder('gpu,nope')).toEqual(['gpu', 'cpu', 'mem']);
   });
 });
 
