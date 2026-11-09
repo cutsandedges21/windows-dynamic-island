@@ -3,7 +3,6 @@
 
 import type { Activity } from '../core/activity';
 import { BatteryActivity } from './battery';
-import { BrightnessActivity } from './brightness';
 import { SportsActivity } from './sports';
 import { LandActivity } from './land';
 import { CalendarActivity } from './calendar';
@@ -15,7 +14,6 @@ import { DownloadsActivity } from './downloads';
 import { ExternalActivity } from './external';
 import { GameActivity } from './game';
 import { GithubActivity } from './integrations/github';
-import { KeysActivity } from './keys';
 import { NotionActivity } from './integrations/notion';
 import { VercelActivity } from './integrations/vercel';
 import { LocalActivity } from './local';
@@ -26,8 +24,8 @@ import { QuickActivity } from './quick';
 import { RemindersActivity } from './reminders';
 import { ScreenshotsActivity } from './screenshots';
 import { ServersActivity } from './servers';
-import { SoundActivity } from './sound';
 import { SystemActivity } from './system';
+import { SystemControlsActivity } from './system-controls';
 import { TimerActivity } from './timer';
 import { WeatherActivity } from './weather';
 import { WorkspacesActivity } from './workspaces';
@@ -42,9 +40,7 @@ export function createRegistry(): Map<string, () => Activity> {
     ['downloads', () => new DownloadsActivity()],
     ['land', () => new LandActivity()],
     ['battery', () => new BatteryActivity()],
-    ['sound', () => new SoundActivity()],
-    ['keys', () => new KeysActivity()],
-    ['brightness', () => new BrightnessActivity()],
+    ['system-controls', () => new SystemControlsActivity()],
     ['screenshots', () => new ScreenshotsActivity()],
     ['calls', () => new CallsActivity()],
     ['phone', () => new PhoneActivity()],

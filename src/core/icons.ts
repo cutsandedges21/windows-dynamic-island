@@ -125,6 +125,10 @@ const P: Record<string, string> = {
   'sun-low': '<circle cx="12" cy="12" r="3.5"/><path d="M12 5.5v.5M12 18v.5M5.5 12h.5M18 12h.5M7.4 7.4l.35.35M16.25 16.25l.35.35M7.4 16.6l.35-.35M16.25 7.75l.35-.35"/>',
   // Sports: a hockey puck.
   puck: '<ellipse cx="12" cy="9.5" rx="8" ry="3.5"/><path d="M4 9.5v4.5c0 1.9 3.6 3.5 8 3.5s8-1.6 8-3.5V9.5"/>',
+  // System Controls: two sliders; battery saver: Windows' leaf; a screen recording: a dot in a ring.
+  sliders: '<path d="M4 7.5h9M17 7.5h3M4 16.5h3M11 16.5h9"/><circle cx="15" cy="7.5" r="2"/><circle cx="9" cy="16.5" r="2"/>',
+  leaf: '<path d="M5 19.5C5 11 10.5 5 20 4.5c0 9.5-5.5 15-14 15z"/><path d="M5 19.5c3-4.5 6.5-7.5 10.5-9.5"/>',
+  record: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>',
 };
 
 export type IconName = keyof typeof P | string;

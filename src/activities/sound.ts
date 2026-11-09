@@ -1,12 +1,13 @@
-// Sound: a volume flyout when the volume or mute changes, and a note when the
-// default output device changes (headphones connecting).
+// Sound, a part of System Controls: a volume flyout when the volume or mute changes, a note
+// when the default output device changes (headphones connecting), and the Speakers tile with
+// − and + volume buttons.
 
-import type { ActivityStatus, RenderEnv, SheetEnv } from '../core/activity';
+import type { RenderEnv, SheetEnv } from '../core/activity';
 import { clip } from '../core/format';
 import { native, type AudioState } from '../core/native';
 import type { Seg } from '../core/segments';
 import type { Tile } from '../core/sheet';
-import { BaseActivity } from './base';
+import type { Flash, Host, Part } from './system-controls';
 
 type View = { kind: 'volume' | 'device'; at: number; ms: number };
 
@@ -15,20 +16,23 @@ const VOLUME_MS = 1600;
 const DEVICE_MS = 3500;
 const STEP = 0.05;
 
-export class SoundActivity extends BaseActivity {
+export class Sound implements Part {
   private a: AudioState | null = null;
   private view: View | null = null;
 
-  constructor() {
-    super('sound');
-  }
+  constructor(private host: Host) {}
 
-  protected init(): void {
-    this.listen<AudioState>('audio', (a) => this.apply(a));
+  start(): void {
+    this.host.listen<AudioState>('audio', (a) => this.apply(a));
     // The first state (Rust sends one at startup) is the baseline, not news.
     void native.audioState().then((a) => {
       if (a && !this.a) this.a = a;
     });
+  }
+
+  /** The volume and the output now (null until Rust said). */
+  state(): AudioState | null {
+    return this.a;
   }
 
   private apply(a: AudioState): void {
@@ -36,31 +40,36 @@ export class SoundActivity extends BaseActivity {
     this.a = a;
     if (!prev) return;
     if (a.deviceId && a.deviceId !== prev.deviceId) {
+      // Options › Audio device off: no note, but the tile still follows the new output.
+      if (!this.host.on('device')) return this.host.update();
       this.show('device', DEVICE_MS);
-      this.saw('audio-device', 'sound:device');
+      this.host.saw('audio-device', 'sound:device');
     } else if (a.muted !== prev.muted || Math.abs(a.volume - prev.volume) >= 0.005) {
+      if (!this.host.on('volume')) return this.host.update();
       this.show('volume', VOLUME_MS);
       // One key for all of it, so holding a volume key is one long reaction; a bigger step bounces higher.
       const step = a.volume - prev.volume;
-      if (a.muted && !prev.muted) this.saw('muted', 'sound:volume');
-      else this.saw(step > 0 || (prev.muted && !a.muted) ? 'volume-up' : 'volume-down', 'sound:volume', Math.min(1, 0.2 + Math.abs(step) * 8));
+      if (a.muted && !prev.muted) this.host.saw('muted', 'sound:volume');
+      else this.host.saw(step > 0 || (prev.muted && !a.muted) ? 'volume-up' : 'volume-down', 'sound:volume', Math.min(1, 0.2 + Math.abs(step) * 8));
     }
   }
 
   private show(kind: View['kind'], ms: number): void {
     this.view = { kind, at: Date.now(), ms };
-    this.ctx.surface({ key: kind, ms, level: 'expanded' });
-    this.ctx.update();
+    this.host.show(kind, ms);
   }
 
-  status(): ActivityStatus {
-    const v = this.view;
+  flash(): Flash | null {
+    return this.view && this.a ? this.view : null;
+  }
+
+  summary(): string {
     const a = this.a;
-    if (!v || !a || Date.now() - v.at >= v.ms) return { active: false };
-    return { active: true, weight: 'foreground', summary: v.kind === 'device' ? `Audio: ${a.device ?? 'device'}` : a.muted ? 'Muted' : `Volume ${Math.round(a.volume * 100)}%` };
+    if (!a) return '';
+    return this.view?.kind === 'device' ? `Audio: ${a.device ?? 'device'}` : a.muted ? 'Muted' : `Volume ${Math.round(a.volume * 100)}%`;
   }
 
-  /** The volume and where it goes; tapping the cell mutes and unmutes. */
+  /** The volume and where it goes; tapping the cell mutes and unmutes, − and + step the volume. */
   tile(env: SheetEnv): Tile | null {
     const a = this.a;
     if (!a) return null;
@@ -77,6 +86,12 @@ export class SoundActivity extends BaseActivity {
         label: clip(a.device ?? 'Audio output', 24),
         value: a.muted ? 'Muted' : `${pct}%`,
         progress: pct / 100,
+        buttons: env.interactive
+          ? [
+              { key: 'down', icon: 'minus', action: 'vol-down', style: 'secondary', tip: 'Volume down' },
+              { key: 'up', icon: 'plus', action: 'vol-up', style: 'secondary', tip: 'Volume up' },
+            ]
+          : undefined,
       },
     };
   }
@@ -120,17 +135,19 @@ export class SoundActivity extends BaseActivity {
     return segs;
   }
 
-  async action(name: string): Promise<void> {
+  /** Volume up, down and mute; false for an action that isn't Sound's. */
+  async action(name: string): Promise<boolean> {
+    if (name !== 'vol-up' && name !== 'vol-down' && name !== 'mute') return false;
     const a = this.a ?? (await native.audioState());
-    if (!a) return;
-    if (name === 'vol-up' || name === 'vol-down') {
+    if (!a) return true;
+    if (name === 'mute') await native.audioSet(null, !a.muted);
+    else {
       const next = Math.min(1, Math.max(0, Math.round((a.volume + (name === 'vol-up' ? STEP : -STEP)) * 100) / 100));
       await native.audioSet(next, name === 'vol-up' && a.muted ? false : null);
-    } else if (name === 'mute') {
-      await native.audioSet(null, !a.muted);
-    } else return;
+    }
     // Rust's poll reports the change within 300 ms; reading now makes the buttons feel instant.
     const now = await native.audioState();
-    if (now && this.alive) this.apply(now);
+    if (now && this.host.alive()) this.apply(now);
+    return true;
   }
 }

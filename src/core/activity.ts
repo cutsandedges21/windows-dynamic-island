@@ -143,6 +143,8 @@ export interface Activity {
   claimsHover?(): boolean | 'morph';
   /** This activity's cell in the open island's grid. Null hides it. */
   tile?(env: SheetEnv): Tile | null;
+  /** Several cells, in place of tile() (System Controls: Speakers, Brightness and its buttons); each key its own. */
+  tiles?(env: SheetEnv): Tile[];
   /** The bot's chat, shown in the bar under the bot (Local AI is the only one). */
   chat?(): ChatView | null;
   /** What this activity tells the bot (src/core/pet.ts): its mood while something is true, and its latest moment. */

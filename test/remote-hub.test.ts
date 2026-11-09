@@ -385,6 +385,37 @@ describe('what a phone may press', () => {
     expect(JSON.stringify(r.last('view'))).toContain('act:claude:allow');
   });
 
+  it("System Controls' Screenshot and Record stay on the PC: never shown on a phone, never pressed from one", async () => {
+    const { r, f } = await setup();
+    const controls: SheetView = {
+      key: 'system-controls',
+      blocks: [
+        {
+          t: 'buttons', key: 'controls',
+          items: [
+            { key: 'shot', label: 'Screenshot', action: 'act:system-controls:screenshot' },
+            { key: 'record', label: 'Record', action: 'act:system-controls:record' },
+            { key: 'up', label: 'Volume', action: 'act:system-controls:vol-up' },
+          ],
+        },
+      ],
+    };
+    f.urgent = { id: 'system-controls', view: controls };
+    r.phones([phone()]);
+    await flush();
+    const sent = JSON.stringify(r.last('view'));
+    expect(sent).toContain('act:system-controls:vol-up');
+    expect(sent).not.toContain('act:system-controls:screenshot');
+    expect(sent).not.toContain('act:system-controls:record');
+    r.line({ t: 'act', action: 'act:system-controls:record', arg: null });
+    await flush();
+    expect(f.acts).toEqual([]);
+    expect(r.last('toast')?.text).toBe('Only on the PC');
+    r.line({ t: 'act', action: 'act:system-controls:vol-up', arg: null });
+    await flush();
+    expect(f.acts).toEqual([[IPHONE, 'act:system-controls:vol-up', null]]);
+  });
+
   it('ignores lines it cannot read', async () => {
     await pressing();
     r.line({ t: 'act', action: '' });

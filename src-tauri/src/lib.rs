@@ -240,6 +240,7 @@ pub fn run() {
             shell::shell_edit_image,
             shell::shell_lock,
             shell::shell_snip,
+            shell::screen_capture,
             shell::clipboard_set_text,
             shell::clipboard_copy_image,
             shell::clipboard_history,

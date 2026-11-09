@@ -10,6 +10,12 @@ import type { Block, SheetButton, SheetRow, SheetView, TileBody } from '../core/
 /** Claude's Allow: with Windows Hello asked before Allow, phones never get it or press it. */
 export const HELLO_GUARDED: readonly string[] = ['act:claude:allow'];
 
+/**
+ * Buttons that only make sense at the PC: System Controls' Screenshot and Record open Snipping
+ * Tool's overlay there, to drag an area with the PC's mouse. Phones never get them or press them.
+ */
+export const PC_ONLY: readonly string[] = ['act:system-controls:screenshot', 'act:system-controls:record'];
+
 /** Every action shown, with the arguments it was shown with (as JSON); ANY for typed text and seeking. */
 export type Pressables = Map<string, Set<string>>;
 
@@ -68,7 +74,8 @@ export function stripActions(view: SheetView, blocked: ReadonlySet<string>): She
   const ok = (a: string | undefined) => !a || !blocked.has(a);
   const buttons = (list: SheetButton[]) => list.filter((b) => ok(b.action));
   const row = (r: SheetRow): SheetRow => ({ ...r, action: ok(r.action) ? r.action : undefined, button: r.button && ok(r.button.action) ? r.button : undefined });
-  const body = (b: TileBody): TileBody => (b.k === 'media' || b.k === 'actions' ? { ...b, buttons: buttons(b.buttons) } : b.k === 'list' ? { ...b, rows: b.rows.map(row) } : b);
+  const body = (b: TileBody): TileBody =>
+    b.k === 'media' || b.k === 'actions' ? { ...b, buttons: buttons(b.buttons) } : b.k === 'stat' && b.buttons ? { ...b, buttons: buttons(b.buttons) } : b.k === 'list' ? { ...b, rows: b.rows.map(row) } : b;
   const blocks = view.blocks.flatMap((b): Block[] => {
     switch (b.t) {
       case 'head':
