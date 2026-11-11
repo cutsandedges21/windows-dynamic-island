@@ -358,7 +358,7 @@ export function migrate(saved: unknown): Settings {
  * Settings from before System Controls (Moss's 0.4.2 had Sound, Brightness and Caps Lock; Justin's
  * 0.2.11 only Sound): on if any of them was. Each one's switch, and its Auto-show (all a flash
  * did), becomes that part's option; one never saved counts as on, as it was by default. Sound's
- * Interactive and priority carry over (it was the one with buttons). Settings that already have
+ * Interactive, priority and Grows carry over (it was the one with buttons). Settings that already have
  * System Controls are left alone.
  */
 function intoControls(savedCfg: Json, out: Settings): void {
@@ -377,6 +377,8 @@ function intoControls(savedCfg: Json, out: Settings): void {
   const sound = cfg('sound');
   if (typeof sound.interactive === 'boolean') sc.interactive = sound.interactive;
   if (sound.priority === 'high' || sound.priority === 'medium' || sound.priority === 'low') sc.priority = sound.priority;
+  // Justin's 0.2.11 saved how Sound grows when pointed at (hover-cards' Grows).
+  if (growsChoices('system-controls').includes(sound.grows as Grows)) sc.grows = sound.grows as Grows;
 }
 
 // ------------------------------------------------------------------ hiding the island
