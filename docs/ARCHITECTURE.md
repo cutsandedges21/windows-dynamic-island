@@ -17,7 +17,7 @@ Activities ──► Priority ──► Layout ──► Animation ──► Ren
 | Window | What it is |
 |---|---|
 | `island` | Transparent, borderless, always-on-top, non-activating tool window that covers the **work area** of the chosen monitor. The pill is drawn inside it with CSS transforms, so moving it between the four anchors is a spring animation inside one window, never an OS window move. Outside the pill the window ignores the mouse: a Rust thread polls the cursor and toggles click-through against the hit rect the island publishes. |
-| `app` | A normal window (Mica) with three pages: **Activities**, **Workspaces** and **Settings**. Opened from the tray, the island's quick menu, or `Alt+Shift+A`. |
+| `app` | A normal window (Mica) with four pages: **Activities**, **Workspaces**, **Settings** and **Controls** (every gesture and key, from `src/gestures.ts`, and the keyboard shortcuts). Opened from the tray, the island's quick menu, or `Alt+Shift+A`. |
 
 Decisions Moss made during the build (they override the spec where they differ):
 

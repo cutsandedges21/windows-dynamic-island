@@ -124,7 +124,7 @@ export class PhoneActs {
 
 /** What makes a pill different to a phone: the key Duplicate mode's copies use (island.ts sendMirror), and the bot. */
 export function pillKey(frame: MirrorFrame, bot: BotState | null): string {
-  return `${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.reduce}|${frame.bot?.d ?? 0}|${JSON.stringify(bot)}`;
+  return `${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.glass}|${frame.reduce}|${frame.bot?.d ?? 0}|${JSON.stringify(bot)}`;
 }
 
 interface Session {

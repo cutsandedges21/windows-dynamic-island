@@ -7,6 +7,7 @@
 
 import { setReducedMotion } from '../../../src/core/animator';
 import { BubbleView } from '../../../src/core/bubble';
+import { applyGlass } from '../../../src/core/glass';
 import { BorderGlow } from '../../../src/core/glow';
 import type { Rect } from '../../../src/core/layout';
 import type { MirrorFrame } from '../../../src/core/mirror';
@@ -96,6 +97,7 @@ export class IslandView {
     const root = document.documentElement;
     root.style.setProperty('--accent', frame.accent);
     root.dataset.pill = frame.color;
+    applyGlass(root, frame.glass);
     const reduce = frame.reduce || matchMedia('(prefers-reduced-motion: reduce)').matches;
     setReducedMotion(reduce);
     root.classList.toggle('reduce', reduce);

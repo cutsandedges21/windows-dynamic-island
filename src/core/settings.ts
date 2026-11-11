@@ -3,6 +3,7 @@
 
 import { CATALOG, type Band, type Behavior } from '../activities/catalog';
 import { normalizeWidths, type Anchor, type IslandSize, type Widths } from './layout';
+import { GLASS_DEFAULT } from './glass';
 import { FULL_MENU, type MenuShown } from './menu';
 
 export type DisplayMode = 'primary' | 'cursor' | 'active' | 'specific' | 'duplicate';
@@ -81,6 +82,8 @@ export interface Settings {
     accent: string;
     /** The pill's own colour, and the card's under it. */
     color: PillColor;
+    /** Glass only, like iOS Liquid Glass: 0 is clear, 100 is tinted (less of what is behind shows through). */
+    glass: number;
     reduceMotion: 'system' | 'on' | 'off';
     /** How fast the border glow moves, or off. */
     glow: 'off' | 'slow' | 'medium' | 'fast';
@@ -187,6 +190,7 @@ export function defaultSettings(): Settings {
       showSecondary: true,
       accent: 'sky',
       color: 'black',
+      glass: GLASS_DEFAULT,
       reduceMotion: 'system',
       glow: 'medium',
       hoverCard: 'pointer',
@@ -263,6 +267,8 @@ export function migrate(saved: unknown): Settings {
   const renamed: Record<string, PillColor> = { silver: 'matte-white', blur: 'matte-black' };
   out.island.color = renamed[out.island.color] ?? out.island.color;
   if (!['black', 'white', 'matte-white', 'matte-black', 'glass'].includes(out.island.color)) out.island.color = 'black';
+  // Justin's 0.2.11 saved the glass slider; Moss's 0.4.2 had none and gets the old look.
+  out.island.glass = Number.isFinite(out.island.glass) ? Math.max(0, Math.min(100, out.island.glass)) : GLASS_DEFAULT;
 
   // Activity configs: merge each known one; options keep any extra saved keys.
   const savedActs = isObj(saved.activities) ? saved.activities : {};
