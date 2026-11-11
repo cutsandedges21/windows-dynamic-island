@@ -11,6 +11,32 @@ export interface ActivityConfig extends Behavior {
   enabled: boolean;
   priority: Band;
   options: Record<string, unknown>;
+  /** Pointed at: 'wide' widens the pill, 'card' grows a card out of it, 'below' hangs one under it. Unset: growsOf's default. */
+  grows?: Grows;
+}
+
+/**
+ * How an activity grows when pointed at. 'below' is the card hanging under the pill, Claude Code's
+ * own look (its stats and chats): only it offers that, and it is its default.
+ */
+export type Grows = 'wide' | 'card' | 'below';
+
+/** Only Claude Code's card can hang below the pill (Activities › Grows). */
+export const GROWS_BELOW = 'claude';
+
+/** The choices an activity offers: Sideways and Into a card, and Below for Claude Code. */
+export function growsChoices(id: string): Grows[] {
+  return id === GROWS_BELOW ? ['wide', 'card', 'below'] : ['wide', 'card'];
+}
+
+/**
+ * An activity's own choice, else the island's default (Settings › When pointed at). With `id`, a
+ * choice that activity doesn't offer is ignored, and Claude Code falls back to hanging below.
+ */
+export function growsOf(c: Pick<ActivityConfig, 'grows'> | undefined, fallback: Grows, id?: string): Grows {
+  if (id === undefined) return c?.grows ?? fallback;
+  if (c?.grows && growsChoices(id).includes(c.grows)) return c.grows;
+  return id === GROWS_BELOW ? 'below' : fallback;
 }
 
 /** Cell sizes in the open island's grid: columns x rows. */
@@ -60,6 +86,8 @@ export interface Settings {
     glow: 'off' | 'slow' | 'medium' | 'fast';
     /** What hovering the island shows: the card of whatever is pointed at, or always Claude's stats. */
     hoverCard: 'pointer' | 'claude';
+    /** How a persistent activity grows when pointed at, unless it has its own choice (Activities › Grows). */
+    defaultGrows: Exclude<Grows, 'below'>;
     /** Tapping Ctrl over the pill fades it and lets clicks through to what is behind. */
     peekThrough: boolean;
     /** The bot in its bubble beside the pill (src/core/bubble.ts). */
@@ -162,6 +190,7 @@ export function defaultSettings(): Settings {
       reduceMotion: 'system',
       glow: 'medium',
       hoverCard: 'pointer',
+      defaultGrows: 'card',
       peekThrough: true,
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
@@ -214,6 +243,7 @@ export function migrate(saved: unknown): Settings {
   if (!['top', 'bottom', 'left', 'right'].includes(out.island.anchor)) out.island.anchor = 'top';
   if (!['off', 'slow', 'medium', 'fast'].includes(out.island.glow)) out.island.glow = 'medium';
   if (!['pointer', 'claude'].includes(out.island.hoverCard)) out.island.hoverCard = 'pointer';
+  if (out.island.defaultGrows !== 'wide' && out.island.defaultGrows !== 'card') out.island.defaultGrows = 'card';
   // 0.2.4 called matte white "silver" and matte black "blur".
   const renamed: Record<string, PillColor> = { silver: 'matte-white', blur: 'matte-black' };
   out.island.color = renamed[out.island.color] ?? out.island.color;
@@ -230,6 +260,8 @@ export function migrate(saved: unknown): Settings {
     // Whatever ends up under a secret option's name (a paste in the wrong place) is dropped, not kept.
     for (const o of m.options) if (o.type === 'secret') delete merged.options[o.key];
     if (!['high', 'medium', 'low'].includes(merged.priority)) merged.priority = def.priority;
+    // Unset by default, so it is not in `def` for mergeInto to carry over; only a choice this activity offers.
+    if (isObj(s) && growsChoices(m.id).includes(s.grows as Grows)) merged.grows = s.grows as Grows;
     // Built into Island (Land): on, whatever an older version saved.
     if (m.builtIn) merged.enabled = true;
     out.activities.config[m.id] = merged;
