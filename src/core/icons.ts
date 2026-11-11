@@ -23,6 +23,7 @@ const P: Record<string, string> = {
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
   timer: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V9.5M9.5 2.5h5M18.5 6.5l1.5-1.5"/>',
   stopwatch: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5l3-3M10 2.5h4M12 2.5v3.5"/>',
+  flag: '<path d="M6 21V4M6 4h11.5l-2.5 4.5 2.5 4.5H6"/>',
   focus: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/>',
   cpu: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 2.5v4M14.5 2.5v4M9.5 17.5v4M14.5 17.5v4M2.5 9.5h4M2.5 14.5h4M17.5 9.5h4M17.5 14.5h4"/>',
   memory: '<rect x="3" y="7" width="18" height="10" rx="1.5"/><path d="M7 10.5v3M11 10.5v3M15 10.5v3M6 17v3M18 17v3"/>',

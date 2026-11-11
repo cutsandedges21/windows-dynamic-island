@@ -199,13 +199,6 @@ export const CATALOG: ActivityMeta[] = [
     options: [
       { key: 'focusMinutes', type: 'number', label: 'Focus length', default: 25, min: 5, max: 120, unit: 'min' },
       { key: 'breakMinutes', type: 'number', label: 'Break length', default: 5, min: 1, max: 60, unit: 'min' },
-      {
-        key: 'quietFocus',
-        type: 'toggle',
-        label: 'Quiet while focusing',
-        help: "A focus round turns Quiet on: nothing pops up and notifications wait, in Island and in Windows. The break, or stopping, turns it off again. Quiet you turned on yourself is left alone.",
-        default: true,
-      },
     ],
   },  {
     id: 'reminders',
