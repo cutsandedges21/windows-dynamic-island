@@ -51,4 +51,13 @@ describe('scrolling the pill', () => {
     expect(wheelDelta({ deltaY: 0, deltaX: -1, deltaMode: 2 } as WheelEvent)).toBe(-400);
     expect(wheelDelta({ deltaY: -57, deltaX: 0, deltaMode: 0 } as WheelEvent)).toBe(-57);
   });
+
+  it('a card grown out of the pill passes the scroll on in pixels, like the pill, so a notch still switches', () => {
+    const sheet = readFileSync(new URL('../src/core/sheet.ts', import.meta.url), 'utf8');
+    expect(sheet).toContain("'island:wheel', wheelDelta(e)");
+    expect(sheet).not.toMatch(/'island:wheel', Math\.sign/);
+    // Its sign alone would be 1 px a notch: far short of a switch.
+    expect(new WheelGesture().step(1, 0)).toBe(0);
+    expect(new WheelGesture().step(wheelDelta({ deltaY: 100, deltaX: 0, deltaMode: 0 } as WheelEvent), 0)).toBe(1);
+  });
 });

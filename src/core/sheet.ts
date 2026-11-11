@@ -15,7 +15,7 @@ import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
 import { closeCurve, GROW_MS, GROW_SPRING, growCurve, handOff } from './grow';
 import { buildPlayer, patchPlayer, type PlayerBlock } from './player';
-import { springAnimate, type PillCover } from './renderer';
+import { springAnimate, wheelDelta, type PillCover } from './renderer';
 import type { Tone } from './segments';
 import { springs } from './spring';
 
@@ -470,7 +470,8 @@ export class SheetRenderer {
         if (this.inner.scrollHeight > this.inner.clientHeight + 1) return;
         // Scrolling picks another activity: the card follows it, not the segment last pointed at.
         this.onAction('island:hover-key', null, this.el);
-        this.onAction('island:wheel', Math.sign(e.deltaY || e.deltaX), this.el);
+        // In pixels, like the pill's: one flick on a touchpad switches once (wheel.ts).
+        this.onAction('island:wheel', wheelDelta(e), this.el);
       },
       { passive: true },
     );
