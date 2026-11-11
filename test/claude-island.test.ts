@@ -2,6 +2,8 @@
 // and question cards, notifications, the hover card, and the helpers behind them.
 // The native layer is faked; a stub tracker supplies sessions and process chains.
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({ bus: new Map<string, Set<(p: unknown) => void>>(), native: {} as Record<string, any> }));
@@ -19,6 +21,7 @@ vi.mock('../src/core/native', () => ({
 
 import type { ActivityContext, RenderEnv, SheetEnv } from '../src/core/activity';
 import { plainText } from '../src/core/format';
+import { beamSpec } from '../src/core/glow';
 import { mapActions, type Block, type SheetView } from '../src/core/sheet';
 import { defaultSettings } from '../src/core/settings';
 import { ClaudeActivity, chatTone } from '../src/activities/claude';
@@ -717,13 +720,15 @@ describe("status colours (Justin's Claude Status)", () => {
     const { act } = await boot();
     stubTracker(act, [session({ ...working })], { 100: [50] });
     expect(act.status().beam).toEqual({ tone: 'info' });
+    expect(beamSpec(act.status().beam)).toMatchObject({ tone: 'info', motion: 'orbit' });
     stubTracker(act, [session({ ...needsYou })], { 100: [50] });
     expect(act.status().beam).toEqual({ tone: 'warn', urgent: true });
+    expect(beamSpec(act.status().beam)).toMatchObject({ tone: 'warn', motion: 'pulse' });
     stubTracker(act, [session({})], { 100: [50] });
     expect(act.status().beam ?? null).toBeNull();
   });
 
-  it('a permission card is amber; a finished chat holding for a reply glows green', async () => {
+  it('a permission card is amber; a finished chat holding for a reply glows a still green', async () => {
     const { act, calls } = await boot();
     stubTracker(act, [session({})], { 100: [50, 10] });
     emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'p1', tool_name: 'Bash', tool_input: { command: 'ls' } });
@@ -736,7 +741,10 @@ describe("status colours (Justin's Claude Status)", () => {
     h.native.foregroundPid.mockResolvedValue(999);
     emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1', last_assistant_message: 'Done.' });
     await tick(0);
-    expect(act.status().beam).toEqual({ tone: 'good', urgent: true });
+    // Still, like Justin's Claude Status "done": not a pulse.
+    expect(act.status().beam).toEqual({ tone: 'good', motion: 'still', urgent: true });
+    expect(beamSpec(act.status().beam)).toMatchObject({ tone: 'good', motion: 'still' });
+    expect(readFileSync(resolve(__dirname, '../src/styles/island.css'), 'utf8')).toContain(".glow[data-motion='still'] .ring i {");
     expect(calls.alerts.at(-1)).toEqual(['glow', 'good']);
     expect(block(act.sheet!(senv('urgent')), 'head')?.tone).toBe('good');
   });

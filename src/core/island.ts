@@ -12,7 +12,7 @@ import { BubbleView } from './bubble';
 import { ChatBar, type ChatAction, type ChatView } from './chat';
 import { lookFor } from './looks';
 import { PetBrain, type PetSignal } from './pet';
-import { BorderGlow, type GlowSpec } from './glow';
+import { beamSpec, BorderGlow, type GlowSpec } from './glow';
 import { cellsOf, CELLS, hiddenTest, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
 import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
 import { native, on, onFileDrop, onTermOpened, sendTo, type FileDrop, type MenuItem, type TermOpened } from './native';
@@ -1361,7 +1361,8 @@ export class Island {
     this.pillGlow.setSpeed(speed);
     this.cardGlow.setSpeed(speed);
     this.grownGlow.setSpeed(speed);
-    const urgent: GlowSpec = { tone: want?.tone ?? 'accent', motion: 'orbit' };
+    // A still glow (Claude's reply hold) keeps the card still too.
+    const urgent: GlowSpec = { tone: want?.tone ?? 'accent', motion: want?.motion === 'still' ? 'still' : 'orbit' };
     // A card grown out of the pill covers it: the light runs round the card's edge, not across its
     // text, also while it shrinks back, until it lands. The pill's is cut at once: fading, its ring
     // would show through the card as it grows.
@@ -2053,10 +2054,6 @@ export class Island {
     this.lastAppPush = now;
     void sendTo('app', 'island-state', this.snapshot(statuses));
   }
-}
-
-function beamSpec(want: ActivityStatus['beam']): GlowSpec | null {
-  return want ? { tone: want.tone, motion: want.motion ?? (want.urgent ? 'pulse' : 'orbit'), value: want.value, fast: want.fast } : null;
 }
 
 function prefixMenu(id: string, m: MenuItem): MenuItem {

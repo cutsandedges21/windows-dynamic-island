@@ -1027,15 +1027,15 @@ export class ClaudeActivity extends BaseActivity {
     else if (note) urgent = { key: `note:${note.sessionId}`, level: 'expanded' };
     else if (needs.length) urgent = { key: `needs:${needs[0].id}`, level: 'expanded' };
     const weight = card || hold || note || needs.length || working.length || this.inputFor ? 'foreground' : 'background';
-    // Border light: brisk when a chat waits on the user (amber when it needs you, green when it
-    // finished and waits for a reply), a slow blue comet while Claude works.
-    const beam =
+    // Border light: an amber pulse when a chat needs you, a still green glow while a finished
+    // chat holds for your reply (Justin's Claude Status "done"), a slow blue comet while Claude works.
+    const beam: ActivityStatus['beam'] =
       card || note || needs.length
-        ? { tone: 'warn' as Tone, urgent: true }
+        ? { tone: 'warn', urgent: true }
         : hold
-          ? { tone: 'good' as Tone, urgent: true }
+          ? { tone: 'good', motion: 'still', urgent: true }
           : working.length
-            ? { tone: 'info' as Tone }
+            ? { tone: 'info' }
             : null;
     const n = this.sessions.length;
     const summary =
