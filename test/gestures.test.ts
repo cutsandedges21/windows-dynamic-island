@@ -52,4 +52,8 @@ describe('the Controls page', () => {
     expect(how(gestureGroups(s, 'windows'))).toContain('Tray icon › Hide island');
     expect(how(gestureGroups(s, 'macos'))).toContain('Menu bar icon › Hide island');
   });
+
+  it("doesn't promise the album art's jump to the player app before the music merge brings it", () => {
+    expect(how(gestureGroups(defaultSettings(), 'windows'))).not.toContain('Click the album art');
+  });
 });

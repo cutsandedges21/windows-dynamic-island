@@ -57,7 +57,6 @@ export function gestureGroups(s: Settings, on: Platform): GestureGroup[] {
     {
       title: 'In activities',
       items: [
-        ['Click the album art', 'Jumps to the app that is playing.'],
         ['Timer: scroll a box', 'Over the hours, minutes or seconds: down adds, up takes away.'],
         ['Timer: click a box', 'Type the time yourself, HH MM SS. Enter sets it.'],
         // Top apps and Snipping Tool are Windows' (not on a Mac yet).
