@@ -18,6 +18,8 @@
   place-items: center;
   color: var(--muted);
 }
+/* Clicking the art brings the app playing forward. */
+.pl-art[data-action] { cursor: pointer; }
 .pl-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .pl-art .ico { width: 50%; height: 50%; }
 .pl-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }

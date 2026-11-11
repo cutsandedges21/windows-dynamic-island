@@ -189,6 +189,19 @@ describe('priority', () => {
     expect(choosePrimary([music, download], { selected: 'downloads', surfaces: old, now: 3000, dnd: false }).primary).toBe('downloads');
   });
 
+  it('a pop-up that stays in front shows its event first, then keeps the pill', () => {
+    const download = cand('downloads', {}, 'high', 0);
+    const music = cand('music', {}, 'high', 1);
+    // The island picks Music just before its "new song" event (island.ts surface()).
+    const song = [{ id: 'music', key: 'track:Song', until: 5000, level: 'expanded' as const, at: 1000 }];
+    const during = choosePrimary([download, music], { selected: 'music', pickedAt: 999, surfaces: song, now: 2000, dnd: false });
+    expect(during).toMatchObject({ primary: 'music', surfaced: 'track:Song' });
+    const after = choosePrimary([download, music], { selected: 'music', pickedAt: 999, surfaces: [], now: 6000, dnd: false });
+    expect(after).toMatchObject({ primary: 'music', surfaced: null });
+    // Without the pick, the higher-ranked download would take the pill back.
+    expect(choosePrimary([download, music], { selected: null, surfaces: [], now: 6000, dnd: false }).primary).toBe('downloads');
+  });
+
   it('scrolling steps through every activity in one steady order, whichever is picked', () => {
     const all = [cand('music', {}, 'high', 0), cand('claude', {}, 'high', 1), cand('downloads', {}, 'medium', 2)];
     const ranked = (selected: string | null) => choosePrimary(all, { selected, pickedAt: 1, surfaces: [], now: 2, dnd: false }).ranked;

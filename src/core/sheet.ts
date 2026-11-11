@@ -162,7 +162,8 @@ export type TileBody =
   /** `buttons`: small ones beside the number (volume − and +). */
   | { k: 'stat'; icon: string; label: string; value: string; sub?: string; progress?: number | null; buttons?: SheetButton[] }
   | { k: 'battery'; pct: number; charging: boolean; head: string; sub: string }
-  | { k: 'media'; art?: string | null; title: string; artist: string; playing: boolean; progress?: number | null; buttons: SheetButton[] }
+  /** `open`: clicking the art (Music: the app playing comes forward). */
+  | { k: 'media'; art?: string | null; title: string; artist: string; playing: boolean; progress?: number | null; buttons: SheetButton[]; open?: string }
   | { k: 'week'; title: string; sub: string; days: Array<{ label: string; num: number; today: boolean; busy: number }> }
   | { k: 'dots'; label: string; pct: number; sub?: string }
   | { k: 'forecast'; icon: string; temp: string; label: string; hours: Array<{ t: string; icon: string; temp: string }> }
@@ -247,7 +248,8 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
   const row = (r: SheetRow): SheetRow => ({ ...r, action: r.action ? fn(r.action) : undefined, button: r.button ? btn(r.button) : undefined });
   const body = (b: TileBody): TileBody => {
     if (b.k === 'actions' && b.dial) return { ...b, buttons: b.buttons.map(btn), dial: { ...b.dial, action: fn(b.dial.action), start: btn(b.dial.start) } };
-    if (b.k === 'media' || b.k === 'actions') return { ...b, buttons: b.buttons.map(btn) };
+    if (b.k === 'media') return { ...b, buttons: b.buttons.map(btn), open: b.open ? fn(b.open) : undefined };
+    if (b.k === 'actions') return { ...b, buttons: b.buttons.map(btn) };
     if (b.k === 'stat' && b.buttons) return { ...b, buttons: b.buttons.map(btn) };
     if (b.k === 'list') return { ...b, rows: b.rows.map(row) };
     return b;
@@ -273,7 +275,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
       case 'player': {
         // An empty action stays empty: a player with no buttons (not interactive).
         const m = <T extends string | undefined>(a: T): T => (a ? (fn(a) as T) : a);
-        return { ...b, actions: { prev: m(b.actions.prev), toggle: m(b.actions.toggle), next: m(b.actions.next), seek: m(b.actions.seek), output: m(b.actions.output) } };
+        return { ...b, actions: { prev: m(b.actions.prev), toggle: m(b.actions.toggle), next: m(b.actions.next), seek: m(b.actions.seek), output: m(b.actions.output), open: m(b.actions.open) } };
       }
       default:
         return b;
@@ -2201,6 +2203,7 @@ export class SheetRenderer {
           img.src = b.art;
           art.append(img);
         } else art.innerHTML = icon('music');
+        this.bind(art, b.open, undefined);
         const meta = make('div', 'mm');
         meta.append(make('div', 'm1', b.title), make('div', 'm2', b.artist));
         const top = make('div', 'mtop');

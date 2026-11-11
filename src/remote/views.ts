@@ -33,8 +33,8 @@ function argKey(arg: unknown): string {
 
 /**
  * What a view or pill offers to press. Buttons, rows, tiles, choices and avatars carry their
- * argument; an input sends what is typed, a player's seek a time and a timer's dial (and its
- * Start) the length it was turned to, so those take any.
+ * argument (a media tile's art none); an input sends what is typed, a player's seek a time and a
+ * timer's dial (and its Start) the length it was turned to, so those take any.
  */
 export function pressables(value: unknown, out: Pressables = new Map()): Pressables {
   const add = (action: unknown, arg: string) => {
@@ -62,6 +62,8 @@ export function pressables(value: unknown, out: Pressables = new Map()): Pressab
       add(dial.action, ANY);
       add(dial.start?.action, ANY);
     } else if ('action' in o) add(o.action, argKey(o.arg));
+    // Music's tile: its art is pressed with no argument.
+    if (o.k === 'media') add(o.open, argKey(null));
     for (const x of Object.values(o)) if (typeof x === 'object' && x !== null) walk(x);
   };
   walk(value);
@@ -80,8 +82,11 @@ export function stripActions(view: SheetView, blocked: ReadonlySet<string>): She
   const ok = (a: string | undefined) => !a || !blocked.has(a);
   const buttons = (list: SheetButton[]) => list.filter((b) => ok(b.action));
   const row = (r: SheetRow): SheetRow => ({ ...r, action: ok(r.action) ? r.action : undefined, button: r.button && ok(r.button.action) ? r.button : undefined });
-  const body = (b: TileBody): TileBody =>
-    b.k === 'media' || b.k === 'actions' ? { ...b, buttons: buttons(b.buttons) } : b.k === 'stat' && b.buttons ? { ...b, buttons: buttons(b.buttons) } : b.k === 'list' ? { ...b, rows: b.rows.map(row) } : b;
+  const body = (b: TileBody): TileBody => {
+    if (b.k === 'media') return { ...b, buttons: buttons(b.buttons), open: ok(b.open) ? b.open : undefined };
+    if (b.k === 'actions' || (b.k === 'stat' && b.buttons)) return { ...b, buttons: buttons(b.buttons!) };
+    return b.k === 'list' ? { ...b, rows: b.rows.map(row) } : b;
+  };
   const blocks = view.blocks.flatMap((b): Block[] => {
     switch (b.t) {
       case 'head':
@@ -103,7 +108,7 @@ export function stripActions(view: SheetView, blocked: ReadonlySet<string>): She
       case 'player': {
         const a = b.actions;
         const keep = (x: string | undefined) => (ok(x) ? x : '');
-        return [{ ...b, actions: { prev: keep(a.prev)!, toggle: keep(a.toggle)!, next: keep(a.next)!, seek: keep(a.seek), output: keep(a.output) } }];
+        return [{ ...b, actions: { prev: keep(a.prev)!, toggle: keep(a.toggle)!, next: keep(a.next)!, seek: keep(a.seek), output: keep(a.output), open: keep(a.open) } }];
       }
       default:
         return [b];

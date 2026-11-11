@@ -5,6 +5,7 @@ import type { ActivityStatus } from '../src/core/activity';
 import type { MirrorFrame } from '../src/core/mirror';
 import type { Placed } from '../src/core/segments';
 import type { SheetView } from '../src/core/sheet';
+import { actionsIn } from '../src/remote/protocol';
 import { HELLO_GUARDED, mayPress, PC_ONLY, pressables, stripActions, stripPill, urgentIds } from '../src/remote/views';
 
 const card: SheetView = {
@@ -59,6 +60,24 @@ describe('what a phone may press', () => {
     expect(mayPress(p, 'act:timer:start-secs', 90)).toBe(true);
     expect(mayPress(p, 'act:timer:focus', undefined)).toBe(true);
     expect(mayPress(p, 'act:timer:focus', 3)).toBe(false);
+  });
+
+  it("takes Music's album art, in the player and on its tile, with no argument", () => {
+    const art: SheetView = {
+      key: 'g',
+      blocks: [
+        { t: 'player', key: 'p', art: null, title: 't', artist: 'a', playing: true, position: null, duration: null, color: null, actions: { prev: '', toggle: '', next: '', open: 'act:music:open' } },
+        { t: 'tiles', key: 't', cols: 4, rows: 1, pages: 1, cell: 80, items: [{ key: 'music', body: { k: 'media', title: 't', artist: 'a', playing: true, buttons: [], open: 'act:music:open-tile' } }] },
+      ],
+    };
+    const p = pressables(art);
+    expect(mayPress(p, 'act:music:open', undefined)).toBe(true);
+    expect(mayPress(p, 'act:music:open-tile', null)).toBe(true);
+    expect(mayPress(p, 'act:music:open-tile', 'C:\\x')).toBe(false);
+    expect([...actionsIn(art)].sort()).toEqual(['act:music:open', 'act:music:open-tile']);
+    // Held back from phones, the art does nothing there.
+    const out = stripActions(art, new Set(['act:music:open', 'act:music:open-tile']));
+    expect(JSON.stringify(out)).not.toContain('act:music:open');
   });
 
   it("reads a pill's segments too, an input's cancel included", () => {
