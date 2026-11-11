@@ -32,7 +32,8 @@ function argKey(arg: unknown): string {
 
 /**
  * What a view or pill offers to press. Buttons, rows, tiles, choices and avatars carry their
- * argument; an input sends what is typed and a player's seek a time, so those take any.
+ * argument; an input sends what is typed, a player's seek a time and a timer's dial (and its
+ * Start) the length it was turned to, so those take any.
  */
 export function pressables(value: unknown, out: Pressables = new Map()): Pressables {
   const add = (action: unknown, arg: string) => {
@@ -55,6 +56,10 @@ export function pressables(value: unknown, out: Pressables = new Map()): Pressab
       add(o.cancel, argKey(null));
     } else if (o.t === 'player' && typeof o.actions === 'object' && o.actions !== null) {
       for (const [k, a] of Object.entries(o.actions)) add(a, k === 'seek' ? ANY : argKey(null));
+    } else if (o.k === 'actions' && typeof o.dial === 'object' && o.dial !== null) {
+      const dial = o.dial as { action?: unknown; start?: { action?: unknown } };
+      add(dial.action, ANY);
+      add(dial.start?.action, ANY);
     } else if ('action' in o) add(o.action, argKey(o.arg));
     for (const x of Object.values(o)) if (typeof x === 'object' && x !== null) walk(x);
   };

@@ -44,6 +44,23 @@ describe('what a phone may press', () => {
     expect(mayPress(shown, 'act:music:toggle', 'C:\\x')).toBe(false);
   });
 
+  it("takes any length from a timer's dial and its Start", () => {
+    const grid: SheetView = {
+      key: 'grid',
+      blocks: [
+        {
+          t: 'tiles', key: 'tiles', cols: 4, rows: 4, pages: 1, cell: 80,
+          items: [{ key: 'timer/timer', body: { k: 'actions', label: 'Timer', buttons: [{ key: 'focus', action: 'act:timer:focus' }], dial: { seconds: 300, action: 'act:timer:length', start: { key: 'start', action: 'act:timer:start-secs' } } } }],
+        },
+      ],
+    };
+    const p = pressables(grid);
+    expect(mayPress(p, 'act:timer:length', 5430)).toBe(true);
+    expect(mayPress(p, 'act:timer:start-secs', 90)).toBe(true);
+    expect(mayPress(p, 'act:timer:focus', undefined)).toBe(true);
+    expect(mayPress(p, 'act:timer:focus', 3)).toBe(false);
+  });
+
   it("reads a pill's segments too, an input's cancel included", () => {
     const placed = [
       { seg: { t: 'chip', key: 'chip/land', label: '', action: 'act:land:card' }, x: 0, w: 20 },

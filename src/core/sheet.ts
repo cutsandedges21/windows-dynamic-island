@@ -166,8 +166,19 @@ export type TileBody =
   | { k: 'week'; title: string; sub: string; days: Array<{ label: string; num: number; today: boolean; busy: number }> }
   | { k: 'dots'; label: string; pct: number; sub?: string }
   | { k: 'forecast'; icon: string; temp: string; label: string; hours: Array<{ t: string; icon: string; temp: string }> }
-  | { k: 'actions'; icon?: string; label: string; sub?: string; buttons: SheetButton[] }
+  /**
+   * `dial`: hours, minutes and seconds like the iPhone's timer (scroll one to change it, click to
+   * type), with `start` beside them; `buttons` then sit small at the heading's end.
+   */
+  | { k: 'actions'; icon?: string; label: string; sub?: string; buttons: SheetButton[]; dial?: Dial }
   | { k: 'list'; icon: string; label: string; rows: SheetRow[]; empty?: string };
+
+/** A length picker: `action` gets the new total in seconds, `start` is sent with it as its arg. */
+export interface Dial {
+  seconds: number;
+  action: string;
+  start: SheetButton;
+}
 
 export interface SheetView {
   /** What the card is about. A different key cross-fades the content. */
@@ -235,6 +246,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
   const btn = (b: SheetButton): SheetButton => ({ ...b, action: fn(b.action) });
   const row = (r: SheetRow): SheetRow => ({ ...r, action: r.action ? fn(r.action) : undefined, button: r.button ? btn(r.button) : undefined });
   const body = (b: TileBody): TileBody => {
+    if (b.k === 'actions' && b.dial) return { ...b, buttons: b.buttons.map(btn), dial: { ...b.dial, action: fn(b.dial.action), start: btn(b.dial.start) } };
     if (b.k === 'media' || b.k === 'actions') return { ...b, buttons: b.buttons.map(btn) };
     if (b.k === 'stat' && b.buttons) return { ...b, buttons: b.buttons.map(btn) };
     if (b.k === 'list') return { ...b, rows: b.rows.map(row) };
@@ -314,6 +326,8 @@ const MORPH_RADIUS = 34;
 const CARD_RADIUS = 24;
 
 const args = new WeakMap<HTMLElement, unknown>();
+/** A dial's way to take a new length from the activity without being rebuilt. */
+const dialSetters = new WeakMap<Element, (seconds: number) => void>();
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 /** Rounds a CSS length to whole device pixels (125% and 150% scaling make those fractions of a CSS px). */
@@ -1967,6 +1981,7 @@ export class SheetRenderer {
    */
   private patchTile(el: HTMLElement, t: Tile, editing: boolean): boolean {
     const b = t.body;
+    if (b.k === 'actions' && b.dial) return el.dataset.mode === this.tileMode(t, editing) && this.patchDial(el, t, b.dial);
     if (b.k !== 'battery' || !el.classList.contains('k-battery') || el.dataset.mode !== this.tileMode(t, editing)) return false;
     const was = this.tileSigs.get(el);
     const prev = was ? (JSON.parse(was.split('|')[0]) as Tile) : null;
@@ -1977,6 +1992,154 @@ export class SheetRenderer {
     el.querySelector<HTMLElement>('.bb i')!.style.width = `${Math.max(3, Math.min(100, b.pct))}%`;
     el.classList.toggle('low', !b.charging && b.pct <= 20);
     return true;
+  }
+
+  /** Only the dial's length changed (it was just scrolled or typed): set it in place, keeping the pointer's spot. */
+  private patchDial(el: HTMLElement, t: Tile, dial: Dial): boolean {
+    const was = this.tileSigs.get(el);
+    const prev = was ? (JSON.parse(was.split('|')[0]) as Tile) : null;
+    if (!prev || prev.body.k !== 'actions' || !prev.body.dial) return false;
+    // Everything but the length the same (where it sits aside, as in its signature).
+    const same = (x: Tile) => this.tileSig({ ...x, body: { ...x.body, dial: { ...(x.body as { dial: Dial }).dial, seconds: 0 } } } as Tile, false);
+    if (same(prev) !== same(t)) return false;
+    const set = dialSetters.get(el.querySelector('.dial')!);
+    if (!set) return false;
+    set(dial.seconds);
+    return true;
+  }
+
+  /**
+   * Hours, minutes and seconds, like the iPhone's timer. Each box is a field: scroll over it to turn
+   * it (down adds, up takes away), or click it and type (two digits move on to the next box; Enter or
+   * clicking away sets it, Esc puts it back). The length is shown at once and sent a moment later.
+   */
+  private dial(d: Dial): HTMLElement {
+    const row = make('div', 'dial');
+    const MAX = [23, 59, 59];
+    let secs = Math.max(0, Math.min(86399, Math.round(d.seconds)));
+    const parts = () => [Math.floor(secs / 3600), Math.floor(secs / 60) % 60, secs % 60];
+    const shown = (i: number, n: number) => (i === 0 ? String(n) : String(n).padStart(2, '0'));
+    const inputs: HTMLInputElement[] = [];
+    const cols = ['h', 'm', 's'].map((u, i) => {
+      const c = make('div', 'dc');
+      const inp = make('input', 'di');
+      inp.type = 'text';
+      inp.inputMode = 'numeric';
+      inp.maxLength = 2;
+      inp.spellcheck = false;
+      inp.autocomplete = 'off';
+      inp.placeholder = ['HH', 'MM', 'SS'][i];
+      inputs.push(inp);
+      c.append(inp, make('span', 'du', u));
+      return c;
+    });
+    const start = this.button(d.start);
+    const paint = () => {
+      const p = parts();
+      // The box being typed in keeps what is typed.
+      inputs.forEach((inp, i) => {
+        if (document.activeElement !== inp) inp.value = shown(i, p[i]);
+      });
+      args.set(start, secs);
+      start.disabled = secs === 0;
+    };
+    let sendTimer = 0;
+    const send = (wait: number) => {
+      clearTimeout(sendTimer);
+      sendTimer = window.setTimeout(() => this.onAction(d.action, secs, row), wait);
+    };
+    /** What is typed in box i becomes its part of the length. */
+    const take = (i: number) => {
+      const p = parts();
+      p[i] = Math.min(MAX[i], Number(inputs[i].value.replace(/\D/g, '')) || 0);
+      secs = p[0] * 3600 + p[1] * 60 + p[2];
+    };
+    const focusBox = (i: number) => {
+      this.engagedInput = inputs[i];
+      inputs[i].focus({ preventScroll: true });
+      // The island takes the keyboard only while typing here (focus lands once it has it).
+      this.onAction('island:sheet-engage', 'dial', row);
+    };
+
+    inputs.forEach((inp, i) => {
+      inp.addEventListener('focus', () => {
+        this.engagedInput = inp;
+        inp.select();
+      });
+      inp.addEventListener('input', () => {
+        inp.value = inp.value.replace(/\D/g, '').slice(0, 2);
+        if (inp.value.length === 2 && i < 2) {
+          take(i);
+          focusBox(i + 1);
+        }
+      });
+      inp.addEventListener('blur', () => {
+        take(i);
+        paint();
+        send(0);
+      });
+      inp.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          inp.blur();
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault();
+          ev.stopPropagation();
+          inp.value = shown(i, parts()[i]);
+          inp.blur();
+        } else if (ev.key === 'Backspace' && !inp.value && i > 0) {
+          ev.preventDefault();
+          focusBox(i - 1);
+        }
+      });
+    });
+
+    cols.forEach((c, i) => {
+      let acc = 0;
+      c.addEventListener(
+        'wheel',
+        (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          // A mouse notch is one step; a touchpad's small deltas add up to one.
+          const dy = ev.deltaMode === 1 ? ev.deltaY * 40 : ev.deltaY;
+          let steps = 0;
+          if (Math.abs(dy) >= 50) steps = Math.sign(dy);
+          else {
+            acc += dy;
+            if (Math.abs(acc) >= 30) {
+              steps = Math.sign(acc);
+              acc = 0;
+            }
+          }
+          if (!steps) return;
+          // Scrolling a box mid-typing starts from what is typed.
+          if (document.activeElement === inputs[i]) take(i);
+          const p = parts();
+          // Hours stop at 0 and 23; minutes and seconds go round, as on the iPhone.
+          p[i] = i === 0 ? Math.min(MAX[0], Math.max(0, p[0] + steps)) : (p[i] + steps + MAX[i] + 1) % (MAX[i] + 1);
+          secs = p[0] * 3600 + p[1] * 60 + p[2];
+          if (document.activeElement === inputs[i]) inputs[i].value = shown(i, p[i]);
+          paint();
+          send(250);
+        },
+        { passive: false },
+      );
+      // Anywhere on the box (its letter too) types into it; the grid and the card never see the press.
+      c.addEventListener('pointerdown', (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        focusBox(i);
+      });
+    });
+
+    row.append(...cols, start);
+    paint();
+    dialSetters.set(row, (v) => {
+      secs = Math.max(0, Math.min(86399, Math.round(v)));
+      paint();
+    });
+    return row;
   }
 
   private tile(t: Tile, editing = false): HTMLElement {
@@ -2099,6 +2262,13 @@ export class SheetRenderer {
         tx.append(make('div', 'tl strong', b.label));
         if (b.sub) tx.append(make('div', 'ts', b.sub));
         head.append(tx);
+        if (b.dial) {
+          const side = make('div', 'step');
+          for (const x of b.buttons) side.append(this.button(x, 'sm'));
+          head.append(side);
+          e.append(head, this.dial(b.dial));
+          break;
+        }
         const bar = make('div', 'ab');
         for (const x of b.buttons) bar.append(this.button(x));
         e.append(head, bar);

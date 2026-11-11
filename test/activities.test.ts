@@ -22,6 +22,7 @@ import { fitSegments, fitVertical } from '../src/core/segments';
 import { defaultSettings } from '../src/core/settings';
 import { BatteryActivity, batteryTime } from '../src/activities/battery';
 import { TimerActivity } from '../src/activities/timer';
+import { tileCard } from '../src/core/tilecard';
 import { CalendarActivity } from '../src/activities/calendar';
 import { CallsActivity } from '../src/activities/calls';
 import { ClipboardActivity } from '../src/activities/clipboard';
@@ -101,6 +102,7 @@ async function boot<T extends Activity>(act: T, options: Record<string, unknown>
     isPrimary: () => true,
     notify: (...a) => void calls.notify.push(a),
     log: (...a) => void calls.log.push(a),
+    setOptions: (patch) => void Object.assign(options, patch),
   };
   await act.start(ctx);
   await tick(0);
@@ -227,77 +229,131 @@ describe('battery', () => {
   });
 });
 
-describe('focus and Quiet', () => {
-  /** A timer whose context keeps options and Quiet the way the island does. */
-  async function focusTimer(options: Record<string, unknown> = {}, quietAlready = false) {
-    const quiet: boolean[] = [];
-    const booted = await boot(new TimerActivity(), { focusMinutes: 25, breakMinutes: 5, ...options }, (s) => {
-      s.general.dnd = quietAlready;
-    });
-    const settings = booted.act['ctx'].settings();
-    Object.assign(booted.act['ctx'], {
-      setQuiet: (on: boolean) => {
-        quiet.push(on);
-        settings.general.dnd = on;
-      },
-      setOptions: (patch: Record<string, unknown>) => Object.assign(booted.options, patch),
-    });
-    return { ...booted, quiet, settings };
-  }
+describe('timer', () => {
+  it('the dial sets the length in seconds, and Start uses it', async () => {
+    const { act, options } = await boot(new TimerActivity());
+    const tileEnv = { reason: 'open' as const, now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null };
+    const body = () => act.tile(tileEnv)!.body;
+    expect(body()).toMatchObject({ k: 'actions', dial: { seconds: 300, action: 'length', start: { action: 'start-secs' } } });
+    // Focus and stopwatch stay; the quick 5m button gives way to the dial's Start.
+    expect(body().k === 'actions' && body().buttons.map((b) => b.key)).toEqual(['focus', 'sw']);
 
-  it('a focus round turns Quiet on; its end turns it off before the done notification', async () => {
-    const { act, calls, quiet, settings } = await focusTimer();
-    act.action('focus', undefined);
-    expect(quiet).toEqual([true]);
-    let quietWhenNotified: boolean | null = null;
-    act['ctx'].notify = (...a: unknown[]) => {
-      quietWhenNotified = settings.general.dnd;
-      calls.notify.push(a);
+    act.action('length', 5430); // 1:30:30
+    expect(options.timerSeconds).toBe(5430);
+    expect(body()).toMatchObject({ dial: { seconds: 5430 } });
+    expect(act.home().find((s) => s.key === 'start5')).toMatchObject({ label: '1h 30m 30s', arg: 5430 });
+    act.action('length', 999999);
+    expect(options.timerSeconds).toBe(86399);
+
+    act.action('start-secs', 0); // an empty dial starts nothing
+    expect(act.status().active).toBe(false);
+    act.action('start-secs', 90);
+    expect(act.status()).toMatchObject({ active: true, summary: '1m 30s timer 1:30' });
+  });
+
+  it("the dial's tile card shows the length, and its Start starts that length", async () => {
+    const { act } = await boot(new TimerActivity(), { timerSeconds: 3725 });
+    const tile = act.tile({ reason: 'hover', now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null })!;
+    const blocks = tileCard(tile, 'Timer', 'timer');
+    expect(blocks[0]).toMatchObject({ t: 'head', title: 'Timer', sub: '1:02:05' });
+    const buttons = blocks.find((b) => b.t === 'buttons');
+    expect(buttons?.t === 'buttons' && buttons.items.map((b) => [b.action, b.arg])).toEqual([
+      ['start-secs', 3725],
+      ['focus', undefined],
+      ['stopwatch', undefined],
+    ]);
+  });
+
+  it('a stopwatch laps while running and resets while paused', async () => {
+    const { act } = await boot(new TimerActivity());
+    const sheetEnv = (reason: 'hover' | 'open' = 'hover') => ({ reason, now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null });
+    const keys = () => {
+      const b = act.tile(sheetEnv('open'))!.body;
+      return b.k === 'actions' ? b.buttons.map((x) => x.key) : [];
     };
-    await tick(25 * 60_000 + 500);
-    expect(quiet).toEqual([true, false]);
-    expect(calls.notify.at(-1)?.[0]).toBe('Focus session done');
-    expect(quietWhenNotified).toBe(false);
-    // The break stays loud; the next round is quiet again.
-    act.action('next', undefined);
-    expect(quiet).toEqual([true, false]);
-    act.action('next', undefined);
-    expect(quiet).toEqual([true, false, true]);
-    act.action('stop', undefined);
-    expect(quiet).toEqual([true, false, true, false]);
+    act.action('stopwatch', null);
+    expect(keys()).toEqual(['lap', 'toggle', 'stop']);
+    expect(act.sheet(sheetEnv())).toBeNull(); // no laps yet: the tile's own card
+
+    await tick(12340);
+    act.action('lap', null);
+    await tick(5000);
+    act.action('lap', null);
+    await tick(3000);
+    expect(act.render(env('maximum')).find((s) => s.key === 'label')).toMatchObject({ text: 'Lap 3' });
+    expect(act.tile(sheetEnv('open'))!.body).toMatchObject({ label: 'Stopwatch 0:20', sub: 'Lap 3 · 0:03' });
+    const card = act.sheet(sheetEnv())!;
+    expect(card).toMatchObject({ key: 'tile-card' });
+    const rows = card.blocks.find((b) => b.t === 'rows');
+    expect(rows?.t === 'rows' && rows.items.map((r) => [r.title, r.badge])).toEqual([
+      ['Lap 2', '0:05.00'],
+      ['Lap 1', '0:12.34'],
+    ]);
+    expect(act.sheet({ ...sheetEnv(), reason: 'surfaced' })).toBeNull();
+
+    act.action('toggle', null); // pause: Lap gives way to Reset
+    expect(keys()).toEqual(['reset', 'toggle', 'stop']);
+    act.action('lap', null); // a paused stopwatch takes no laps
+    act.action('reset', null);
+    expect(act.status()).toMatchObject({ active: true, summary: 'Stopwatch 0:00' });
+    expect(act.sheet(sheetEnv())).toBeNull();
+    act.action('toggle', null);
+    await tick(2000);
+    expect(act.status()).toMatchObject({ summary: 'Stopwatch 0:02' });
   });
 
-  it('leaves Quiet alone when the user turned it on, or switched the option off', async () => {
-    const already = await focusTimer({}, true);
-    already.act.action('focus', undefined);
-    already.act.action('stop', undefined);
-    expect(already.quiet).toEqual([]);
-    expect(already.settings.general.dnd).toBe(true);
-
-    const off = await focusTimer({ quietFocus: false });
-    off.act.action('focus', undefined);
-    expect(off.quiet).toEqual([]);
+  it("a finished timer's card has the pill's buttons", async () => {
+    const { act } = await boot(new TimerActivity());
+    act.action('start', 1);
+    await tick(60_500);
+    const body = act.tile({ reason: 'urgent', now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null })!.body;
+    expect(body.k === 'actions' && body.buttons.map((b) => [b.key, b.action])).toEqual([
+      ['snooze', 'add'],
+      ['restart', 'restart'],
+      ['dismiss', 'dismiss'],
+    ]);
   });
 
-  it('a plain timer is not a focus round', async () => {
-    const { act, quiet } = await focusTimer();
-    act.action('start', 5);
-    expect(quiet).toEqual([]);
-  });
-
-  it('Quiet left on by a round that Island closed during goes at the next start', async () => {
+  /** A timer started with saved options, its context keeping Quiet the way the island does. */
+  async function savedTimer(options: Record<string, unknown>, quietOn: boolean) {
     const quiet: boolean[] = [];
-    const options: Record<string, unknown> = { quietByFocus: true };
     const act = new TimerActivity();
     const settings = defaultSettings();
-    settings.general.dnd = true;
+    settings.general.dnd = quietOn;
     await act.start({
       id: 'timer', config: () => settings.activities.config.timer, options: () => options as never, settings: () => settings,
       update: () => {}, surface: () => {}, alert: () => {}, open: () => {}, close: () => {}, isOpen: () => false, isPrimary: () => true, notify: () => {}, log: () => {},
-      setQuiet: (on) => void quiet.push(on), setOptions: (patch) => void Object.assign(options, patch),
+      setQuiet: (on) => {
+        quiet.push(on);
+        settings.general.dnd = on;
+      },
+      setOptions: (patch) => void Object.assign(options, patch),
     });
-    expect(quiet).toEqual([false]);
-    expect(options.quietByFocus).toBe(false);
+    return { act, quiet, settings };
+  }
+
+  it("a focus round keeps Moss's saved lengths and leaves Quiet alone", async () => {
+    const { act, quiet } = await savedTimer({ focusMinutes: 50, breakMinutes: 10, quietFocus: true }, false);
+    act.action('focus', undefined);
+    expect(act.status()).toMatchObject({ summary: 'Focus 50:00' });
+    act.action('stop', undefined);
+    expect(quiet).toEqual([]);
+  });
+
+  it('Quiet left on by a focus round that Island closed during goes once, at the next start', async () => {
+    const options: Record<string, unknown> = { quietFocus: true, quietByFocus: true };
+    const stuck = await savedTimer(options, true);
+    expect(stuck.quiet).toEqual([false]);
+    expect(stuck.settings.general.dnd).toBe(false);
+    expect(options.quietByFocus).toBeUndefined();
+
+    // Quiet already off (turned off by hand): only the flag goes.
+    const off = await savedTimer({ quietByFocus: true }, false);
+    expect(off.quiet).toEqual([]);
+    // No flag: Quiet the user turned on stays.
+    const mine = await savedTimer({}, true);
+    expect(mine.quiet).toEqual([]);
+    expect(mine.settings.general.dnd).toBe(true);
   });
 });
 
