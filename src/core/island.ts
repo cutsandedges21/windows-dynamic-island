@@ -20,6 +20,7 @@ import { choosePrimary, type Candidate, type Choice as Picked, type Surface } fr
 import type { MirrorFrame } from './mirror';
 import { PillRenderer } from './renderer';
 import { menuMain, menuSegments } from './menu';
+import { quietMoon } from './quiet';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { accentColor, backAt, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
@@ -699,6 +700,8 @@ export class Island {
         viewKey = `act:${primary}`;
         if (s.showSecondary && level !== 'idle') segs = segs.concat(this.secondarySegments(choice.visible.filter((id) => id !== primary), statuses, level, now, vertical));
       }
+      // Quiet on: a small moon at the end of the pill, like the iPhone's Focus icon, so it is never on unnoticed.
+      segs = segs.concat(quietMoon(this.settings.general.dnd, viewKey, s.menu.quiet));
       return { size, inner, crossMax, segs, viewKey };
     };
     let orient: Orientation = orientationFor(anchor);
