@@ -21,6 +21,7 @@ import type { MirrorFrame } from './mirror';
 import { PillRenderer } from './renderer';
 import { menuMain, menuSegments } from './menu';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
+import { applyGlass } from './glass';
 import { accentColor, backAt, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type SheetView, type Tile } from './sheet';
@@ -268,6 +269,7 @@ export class Island {
     document.documentElement.style.setProperty('--accent', accentColor(s));
     this.bubble.colour(accentColor(s));
     document.documentElement.dataset.pill = s.color;
+    applyGlass(document.documentElement, s.glass);
   }
 
   private applySettings(next: Settings): void {
@@ -382,7 +384,7 @@ export class Island {
 
   private sendMirror(frame: MirrorFrame): void {
     if (!this.mirrorCount) return;
-    const key = `${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.reduce}|${frame.bot?.d ?? 0}`;
+    const key = `${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.glass}|${frame.reduce}|${frame.bot?.d ?? 0}`;
     if (key === this.mirrorKey && !frame.bump) return;
     this.mirrorKey = key;
     this.mirrorFrame = frame;
@@ -775,7 +777,7 @@ export class Island {
       hidden: hiddenEverywhere, fsHide, fullscreen: this.fullscreenAny,
       glow: beamSpec(beam), speed: s.glow,
       bot: botShown ? { d: botD } : null,
-      accent: accentColor(s), color: s.color, reduce: s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches),
+      accent: accentColor(s), color: s.color, glass: s.glass, reduce: s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches),
     };
     this.sendMirror(this.lastFrame);
     this.pillInput = placed.some((p) => p.seg.t === 'input');
