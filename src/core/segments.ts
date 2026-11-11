@@ -5,7 +5,7 @@
 
 import type { IconName } from './icons';
 
-export type Tone = 'default' | 'muted' | 'dim' | 'accent' | 'claude' | 'good' | 'warn' | 'bad' | 'info' | 'violet';
+export type Tone = 'default' | 'muted' | 'dim' | 'accent' | 'claude' | 'good' | 'warn' | 'bad' | 'info' | 'violet' | 'purple';
 export type Side = 'start' | 'center' | 'end';
 
 interface Base {
@@ -28,7 +28,8 @@ export type Seg =
       action?: string;
       arg?: unknown;
     })
-  | (Base & { t: 'dot'; tone: Tone; pulse?: boolean })
+  /** badge: a small pink dot on its corner, something new to read. */
+  | (Base & { t: 'dot'; tone: Tone; pulse?: boolean; badge?: boolean })
   | (Base & {
       t: 'text';
       text: string;

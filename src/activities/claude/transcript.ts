@@ -101,7 +101,8 @@ export function parseLines(lines: string[]): TailState {
     const entry = load(line);
     if (!entry) continue;
     st.anyParsed = true;
-    if (entry.isSidechain === true || entry.isMeta === true) continue;
+    // A compaction's summary is written as a user message, but nobody sent it: no new turn.
+    if (entry.isSidechain === true || entry.isMeta === true || entry.isCompactSummary === true) continue;
 
     const type = entry.type;
     if (typeof entry.timestamp === 'string' && TURN_TYPES.has(type as string)) st.lastTimestamp = entry.timestamp;

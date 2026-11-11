@@ -332,6 +332,210 @@ pub fn usage_entries(path: &Path, offset: u64) -> std::io::Result<UsageScan> {
     Ok(out)
 }
 
+// ------------------------------------------------------------------ Claude Status
+
+const WORK_EVENTS_MAX: usize = 5000;
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkScan {
+    consumed: f64,
+    size: f64,
+    /// In file order. { k: "prompt" | "stop" | "todo" | "taskCreate" | "taskUpdate" | "shell" | "result", at, ... }
+    events: Vec<Value>,
+}
+
+fn clip_chars(s: &str, n: usize) -> String {
+    s.trim().chars().take(n).collect()
+}
+
+/// What Claude Status follows in a transcript from `offset` on: prompts (a run
+/// starts), turn ends (Claude Code's turn_duration line), Claude's task list (TodoWrite, TaskCreate, TaskUpdate), the shell
+/// commands it ran (Bash, PowerShell), and the results of those commands, also
+/// of the `open` ones an earlier scan saw without a result yet.
+pub fn transcript_work(path: &Path, offset: u64, open: &[String]) -> std::io::Result<WorkScan> {
+    let size = std::fs::metadata(path)?.len();
+    let offset = if offset > size { 0 } else { offset };
+    let mut out = WorkScan { size: size as f64, ..Default::default() };
+    let mut shells: std::collections::HashSet<String> = open.iter().cloned().collect();
+    let consumed = scan_lines(path, offset, size, |line| {
+        let tool = contains(line, b"\"tool_use\"");
+        let user = contains(line, b"\"type\":\"user\"");
+        let stop = contains(line, b"\"turn_duration\"");
+        if !tool && !user && !stop {
+            return;
+        }
+        let Ok(entry) = serde_json::from_slice::<Value>(line) else { return };
+        if entry.get("isSidechain").and_then(Value::as_bool) == Some(true) || entry.get("isMeta").and_then(Value::as_bool) == Some(true) {
+            return;
+        }
+        let Some(at) = entry.get("timestamp").and_then(Value::as_str).and_then(parse_ts) else { return };
+        let content = entry.get("message").and_then(|m| m.get("content"));
+        let blocks = content.and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+        let mut push = |v: Value| {
+            if out.events.len() < WORK_EVENTS_MAX {
+                out.events.push(v);
+            }
+        };
+        match entry.get("type").and_then(Value::as_str) {
+            Some("assistant") => {
+                for b in blocks.iter().filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_use")) {
+                    let input = b.get("input").cloned().unwrap_or(Value::Null);
+                    let s = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+                    match b.get("name").and_then(Value::as_str).unwrap_or("") {
+                        "TodoWrite" => {
+                            let todos = input.get("todos").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+                            let done = todos.iter().filter(|t| t.get("status").and_then(Value::as_str) == Some("completed")).count();
+                            push(serde_json::json!({ "k": "todo", "at": at, "total": todos.len(), "done": done }));
+                        }
+                        "TaskCreate" => push(serde_json::json!({ "k": "taskCreate", "at": at })),
+                        "TaskUpdate" => {
+                            let id = input.get("taskId").or_else(|| input.get("id")).map(|v| match v {
+                                Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            });
+                            push(serde_json::json!({ "k": "taskUpdate", "at": at, "id": id.unwrap_or_default(), "status": s("status") }));
+                        }
+                        "Bash" | "PowerShell" => {
+                            let id = b.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                            let cmd = clip_chars(&s("command"), 400);
+                            if id.is_empty() || cmd.is_empty() {
+                                continue;
+                            }
+                            shells.insert(id.clone());
+                            push(serde_json::json!({
+                                "k": "shell", "at": at, "id": id, "cmd": cmd, "desc": clip_chars(&s("description"), 80),
+                                "bg": input.get("run_in_background").and_then(Value::as_bool) == Some(true),
+                            }));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Some("system") if entry.get("subtype").and_then(Value::as_str) == Some("turn_duration") => {
+                push(serde_json::json!({ "k": "stop", "at": at }));
+            }
+            Some("user") => {
+                let results: Vec<&Value> = blocks.iter().filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_result")).collect();
+                if results.is_empty() {
+                    let text = content.and_then(leading_text).unwrap_or_default();
+                    let t = text.trim_start();
+                    // A prompt you sent (what UserPromptSubmit sees): newer Claude Code marks
+                    // it origin "human"; without that, not a local command's output or a
+                    // background task's notice.
+                    let human = match entry.get("origin").and_then(|o| o.get("kind")).and_then(Value::as_str) {
+                        Some(kind) => kind == "human",
+                        None => !t.starts_with("<local-command") && !t.starts_with("Caveat:") && !t.starts_with("<task-notification>"),
+                    };
+                    if human && !t.is_empty() {
+                        push(serde_json::json!({ "k": "prompt", "at": at }));
+                    }
+                    return;
+                }
+                let task = entry.get("toolUseResult").and_then(|r| r.get("backgroundTaskId")).and_then(Value::as_str);
+                for r in results {
+                    let Some(id) = r.get("tool_use_id").and_then(Value::as_str) else { continue };
+                    if shells.contains(id) {
+                        push(serde_json::json!({ "k": "result", "at": at, "id": id, "task": task }));
+                    }
+                }
+            }
+            _ => {}
+        }
+    })?;
+    out.consumed = consumed as f64;
+    Ok(out)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowRun {
+    session: String,
+    started: u32,
+    finished: u32,
+    first_ms: f64,
+}
+
+fn created_ms(meta: &std::fs::Metadata) -> f64 {
+    meta.created()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs_f64() * 1000.0)
+        .unwrap_or_else(|| mtime_ms(meta))
+}
+
+/// Background workflow agents still working for these sessions, from
+/// <projects>/<project>/<session>/subagents/workflows/<run>/journal.jsonl
+/// (launched / started / result / failed). A run whose files have not changed
+/// for `stale_ms` is dead, not running.
+pub fn workflows(projects: &Path, sessions: &[String], stale_ms: f64) -> Vec<WorkflowRun> {
+    let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
+    let Ok(rd) = std::fs::read_dir(projects) else { return Vec::new() };
+    let project_dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    let mut out = Vec::new();
+    for sid in sessions.iter().filter(|s| crate::claude::is_uuid(s)) {
+        let (mut started, mut finished, mut first) = (0u32, 0u32, f64::MAX);
+        for proj in &project_dirs {
+            let Ok(runs) = std::fs::read_dir(proj.join(sid).join("subagents").join("workflows")) else { continue };
+            for run in runs.flatten().map(|e| e.path()) {
+                let journal = run.join("journal.jsonl");
+                let Ok(jmeta) = std::fs::metadata(&journal) else { continue };
+                let last = std::fs::read_dir(&run)
+                    .map(|rd| {
+                        rd.flatten()
+                            .filter(|e| e.file_name().to_string_lossy().ends_with(".jsonl"))
+                            .filter_map(|e| e.metadata().ok())
+                            .map(|m| mtime_ms(&m))
+                            .fold(0.0, f64::max)
+                    })
+                    .unwrap_or(0.0);
+                if now - last > stale_ms {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&journal) else { continue };
+                let (mut s, mut f) = (0u32, 0u32);
+                for line in text.lines() {
+                    let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+                    match v.get("type").and_then(Value::as_str) {
+                        Some("started") => s += 1,
+                        Some("result") | Some("failed") => f += 1,
+                        _ => {}
+                    }
+                }
+                if s > f {
+                    started += s;
+                    finished += f;
+                    first = first.min(created_ms(&jmeta));
+                }
+            }
+        }
+        if started > 0 {
+            out.push(WorkflowRun { session: sid.clone(), started, finished, first_ms: first });
+        }
+    }
+    out
+}
+
+/// A background shell that ran to the end (not stopped): Claude Code ends its
+/// output file, %TEMP%\claude\<project>\<session>\tasks\<task>.output, with
+/// "[exited with code N]".
+pub fn task_finished(session: &str, task: &str) -> bool {
+    if !crate::claude::is_uuid(session) || task.is_empty() || !task.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    let Ok(rd) = std::fs::read_dir(std::env::temp_dir().join("claude")) else { return false };
+    for proj in rd.flatten() {
+        let file = proj.path().join(session).join("tasks").join(format!("{task}.output"));
+        let Ok(mut f) = std::fs::File::open(&file) else { continue };
+        let size = f.metadata().map(|m| m.len()).unwrap_or(0);
+        let mut buf = Vec::new();
+        if f.seek(SeekFrom::Start(size.saturating_sub(200))).is_ok() && f.read_to_end(&mut buf).is_ok() {
+            return contains(&buf, b"[exited with code");
+        }
+    }
+    false
+}
+
 fn read_tail(path: &Path, max_bytes: u64) -> std::io::Result<Tail> {
     let meta = std::fs::metadata(path)?;
     let size = meta.len();
@@ -491,6 +695,38 @@ pub async fn claude_usage_entries(path: String, offset: f64) -> Option<UsageScan
     .await
     .ok()
     .flatten()
+}
+
+#[tauri::command]
+pub async fn claude_transcript_work(path: String, offset: f64, open: Vec<String>) -> Option<WorkScan> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = PathBuf::from(&path);
+        if !allowed(&p) {
+            return None;
+        }
+        transcript_work(&p, offset.max(0.0) as u64, &open).ok()
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[tauri::command]
+pub async fn claude_workflows(projects_dir: String, sessions: Vec<String>, stale_ms: f64) -> Vec<WorkflowRun> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = PathBuf::from(&projects_dir);
+        if !allowed(&p) {
+            return Vec::new();
+        }
+        workflows(&p, &sessions, stale_ms)
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[tauri::command]
+pub async fn claude_task_finished(session_id: String, task: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || task_finished(&session_id, &task)).await.unwrap_or(false)
 }
 
 // ------------------------------------------------------------------ watching
@@ -688,6 +924,46 @@ mod tests {
             marks,
             vec![("p", 0.0, 0.0), ("u", 5.0, 10_052.0), ("u", 60.0, 11_403.0), ("e", 60.0, 0.0), ("x", 180.0, 0.0), ("x", 240.0, 0.0), ("c", 300.0, 0.0)]
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn work_scan_follows_prompts_tasks_and_shells() {
+        let dir = std::env::temp_dir().join(format!("island-work-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("w.jsonl");
+        let lines = [
+            r#"{"type":"user","message":{"content":"build it"},"timestamp":"2026-09-30T00:00:00.000Z"}"#,
+            r#"{"type":"user","message":{"content":"<local-command-stdout>ok</local-command-stdout>"},"timestamp":"2026-09-30T00:00:00.500Z"}"#,
+            r#"{"type":"user","origin":{"kind":"task-notification"},"message":{"content":"<task-notification>done</task-notification>"},"timestamp":"2026-09-30T00:00:00.600Z"}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"TodoWrite","input":{"todos":[{"status":"completed"},{"status":"pending"}]}},{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"npm run dev","description":"Dev server","run_in_background":true}}]},"timestamp":"2026-09-30T00:00:01.000Z"}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"started"}]},"toolUseResult":{"backgroundTaskId":"b9"},"timestamp":"2026-09-30T00:00:02.000Z"}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]},"timestamp":"2026-09-30T00:00:02.500Z"}"#,
+            r#"{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"tool_use","id":"s1","name":"TaskCreate","input":{}}]},"timestamp":"2026-09-30T00:00:03.000Z"}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t3","name":"TaskUpdate","input":{"taskId":7,"status":"completed"}}]},"timestamp":"2026-09-30T00:00:04.000Z"}"#,
+            r#"{"type":"system","subtype":"turn_duration","durationMs":4000,"timestamp":"2026-09-30T00:00:04.500Z"}"#,
+            r#"{"type":"system","subtype":"away_summary","timestamp":"2026-09-30T00:09:00.000Z"}"#,
+        ];
+        let mut body = lines.join("\n");
+        body.push('\n');
+        std::fs::write(&file, &body).unwrap();
+
+        let scan = transcript_work(&file, 0, &[]).unwrap();
+        let kinds: Vec<&str> = scan.events.iter().map(|e| e["k"].as_str().unwrap()).collect();
+        assert_eq!(kinds, vec!["prompt", "todo", "shell", "result", "taskUpdate", "stop"], "local output, other results, sidechains and later notes are skipped");
+        assert_eq!(scan.events[1]["total"], 2);
+        assert_eq!(scan.events[1]["done"], 1);
+        assert_eq!(scan.events[2]["cmd"], "npm run dev");
+        assert_eq!(scan.events[2]["bg"], true);
+        assert_eq!(scan.events[3]["task"], "b9");
+        assert_eq!(scan.events[4]["id"], "7");
+        assert_eq!(scan.consumed, scan.size);
+
+        // A later scan still sees results for calls an earlier one left open.
+        std::fs::write(&file, format!("{body}{}\n", r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t9","content":"done"}]},"timestamp":"2026-09-30T00:00:05.000Z"}"#)).unwrap();
+        let later = transcript_work(&file, scan.consumed as u64, &["t9".to_string()]).unwrap();
+        assert_eq!(later.events.len(), 1);
+        assert_eq!(later.events[0]["k"], "result");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

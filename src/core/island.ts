@@ -8,6 +8,7 @@
 import { CATALOG_BY_ID } from '../activities/catalog';
 import type { Activity, ActivityContext, ActivityStatus, RenderEnv, SheetEnv, SurfaceOptions } from './activity';
 import { setReducedMotion } from './animator';
+import { pillBeam } from './beam';
 import { BubbleView } from './bubble';
 import { ChatBar, type ChatAction, type ChatView } from './chat';
 import { lookFor } from './looks';
@@ -803,7 +804,7 @@ export class Island {
     this.composeSheet(picked, orient, w, immediate);
     // The pill rests under a chat's grown card (see underCard): compose once more when that changes.
     if (this.sheet.grown && !morphing !== underCard) this.schedule();
-    const beam: ActivityStatus['beam'] = this.fileDrag ? { tone: 'accent', motion: 'pulse' } : (pStatus?.beam ?? this.busyElsewhere(choice.visible, statuses));
+    const beam: ActivityStatus['beam'] = this.fileDrag ? { tone: 'accent', motion: 'pulse' } : pillBeam(primary, [...choice.visible, ...this.settings.activities.order], statuses);
     this.syncGlow(hidden ? null : beam, !hidden && choice.urgent && this.sheet.visible, morph !== null || this.sheet.covering);
     // Every frame is kept for phones, whether or not Duplicate copies run.
     this.lastFrame = {
@@ -1373,20 +1374,6 @@ export class Island {
     this.pillGlow.set(grown ? null : beamSpec(want), grown);
     this.grownGlow.set(grown ? (cardUrgent ? urgent : beamSpec(want)) : null);
     this.cardGlow.set(cardUrgent && !grown ? urgent : null);
-  }
-
-  /**
-   * The pill's own activity has no glow: something busy elsewhere may still circle
-   * the edge (Claude thinking while music has the pill). Only orbits: a fill or a
-   * pulse belongs to whatever is on the pill.
-   */
-  private busyElsewhere(visible: string[], statuses: Map<string, ActivityStatus>): ActivityStatus['beam'] {
-    for (const id of [...visible, ...this.settings.activities.order]) {
-      const st = statuses.get(id);
-      const motion = st?.beam ? (st.beam.motion ?? (st.beam.urgent ? 'pulse' : 'orbit')) : null;
-      if (st?.active && st.weight === 'foreground' && motion === 'orbit') return st.beam;
-    }
-    return null;
   }
 
   /** Activity actions get the activity's id; island actions pass through. */

@@ -232,12 +232,12 @@ fn disk_free(path: &Path) -> Option<u64> {
 
 /// Downloads `url` to `dest`, carrying on from a `.part` left by an earlier try, and keeps
 /// the file only if its SHA-256 is `sha256`. `progress(done, total)` follows the bytes.
-async fn download(url: &str, sha256: &str, dest: &Path, mut progress: impl FnMut(u64, u64)) -> Result<(), String> {
+pub(crate) async fn download(url: &str, sha256: &str, dest: &Path, mut progress: impl FnMut(u64, u64)) -> Result<(), String> {
     let stopped = || "The download stopped. Next time it carries on where it left off.".to_string();
     let name = dest.file_name().and_then(|n| n.to_str()).unwrap_or("download");
     let part = dest.with_file_name(format!("{name}.part"));
     if let Some(dir) = dest.parent() {
-        std::fs::create_dir_all(dir).map_err(|_| "Island could not make its AI folder.".to_string())?;
+        std::fs::create_dir_all(dir).map_err(|_| "Island could not make its download folder.".to_string())?;
     }
     // What an earlier try already fetched counts towards the checksum.
     let mut hasher = Sha256::new();
@@ -292,10 +292,10 @@ async fn download(url: &str, sha256: &str, dest: &Path, mut progress: impl FnMut
 
 /// Unpacks a zip into `dir` with Windows' own tar.exe (bsdtar reads zips).
 #[cfg(windows)]
-fn extract(zip: &Path, dir: &Path) -> Result<(), String> {
+pub(crate) fn extract(zip: &Path, dir: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    std::fs::create_dir_all(dir).map_err(|_| "Island could not make its AI folder.".to_string())?;
+    std::fs::create_dir_all(dir).map_err(|_| "Island could not make its download folder.".to_string())?;
     let root = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
     let status = std::process::Command::new(root.join("System32").join("tar.exe"))
         .arg("-xf")
@@ -304,11 +304,11 @@ fn extract(zip: &Path, dir: &Path) -> Result<(), String> {
         .arg(dir)
         .creation_flags(CREATE_NO_WINDOW)
         .status()
-        .map_err(|_| "Windows could not unpack the model runtime.".to_string())?;
+        .map_err(|_| "Windows could not unpack the download.".to_string())?;
     if status.success() {
         Ok(())
     } else {
-        Err("Windows could not unpack the model runtime.".to_string())
+        Err("Windows could not unpack the download.".to_string())
     }
 }
 

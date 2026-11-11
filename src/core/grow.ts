@@ -56,10 +56,13 @@ export function hoverGrows(id: string, grows: Grows, options: Record<string, unk
 /**
  * Claude Code's finished and needs-you cards (keys `claude/done:…`, `claude/note:…`, a held reply
  * `claude/reply:…`) grow out of the pill like its hover card when it grows into a card; its
- * permission and question cards always hang below.
+ * permission and question cards always hang below. Claude Status's card, raised by a session
+ * finishing or one waiting on you, grows out of the pill the same way (it has no question to type into).
  */
 export function chatView(owner: string, grows: Grows, view: SheetView): SheetView {
-  if (owner !== 'claude' || grows !== 'card') return view;
+  if (grows !== 'card') return view;
+  if (owner === 'claudeStatus') return { ...view, morph: true };
+  if (owner !== 'claude') return view;
   return /^claude\/(done|note|reply):/.test(view.key) ? { ...view, morph: true } : view;
 }
 

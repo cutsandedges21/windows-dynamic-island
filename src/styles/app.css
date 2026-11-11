@@ -62,6 +62,9 @@ button { cursor: pointer; }
 .section h2 + .row { border-top: 0; }
 .row-title { font-weight: 500; }
 .row-help { color: var(--muted); font-size: 12.5px; }
+/* A status line under a row's help (Auto model): its own paragraph; amber when something failed. */
+.row-help + .row-help { margin-top: 6px; }
+.row-help.warn { color: var(--warn); }
 /* Long help text wraps; it never squeezes the control beside it into two rows. */
 .row-text { flex: 1 1 0; min-width: 0; }
 .glass-slider { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
