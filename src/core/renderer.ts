@@ -73,6 +73,12 @@ export function springAnimate(target: Element, keyframes: Keyframe[], cfg: Sprin
   return run({ duration, easing: springBezier(cfg), ...extra });
 }
 
+/** How far a wheel event scrolls, in px (a line-based wheel counts 40 px a line). */
+export function wheelDelta(e: WheelEvent): number {
+  const d = e.deltaY || e.deltaX;
+  return e.deltaMode === 1 ? d * 40 : e.deltaMode === 2 ? d * 400 : d;
+}
+
 export class PillRenderer {
   readonly pill: HTMLElement;
   private readonly content: HTMLElement;
@@ -111,7 +117,7 @@ export class PillRenderer {
       e.preventDefault();
       this.onAction('island:menu', null, this.pill);
     });
-    this.pill.addEventListener('wheel', (e) => this.onAction('island:wheel', Math.sign(e.deltaY || e.deltaX), this.pill), { passive: true });
+    this.pill.addEventListener('wheel', (e) => this.onAction('island:wheel', wheelDelta(e), this.pill), { passive: true });
     this.pill.addEventListener('pointerenter', () => this.onAction('island:hover', true, this.pill));
     this.pill.addEventListener('pointerleave', () => this.onAction('island:hover', false, this.pill));
     // Which segment the pointer rests on: hovering a chip asks that activity for its card.

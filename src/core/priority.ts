@@ -2,7 +2,8 @@
 // island is about right now. Pure functions, so the rules are easy to test.
 //
 // 1. An urgent activity whose Interrupt behaviour is on takes the island.
-// 2. Else an activity the user picked (chip, wheel) keeps it while visible.
+// 2. Else an activity the user picked (chip, wheel) keeps it while visible; an
+//    event newer than the pick shows over it, and then the pick comes back.
 // 3. Else the newest surfaced event (music started, download finished…).
 // 4. Else the best-ranked persistent activity: happening-now beats quiet,
 //    then High > Medium > Low, then the user's order in the Activities page.
@@ -36,6 +37,8 @@ export interface Choice {
   urgent: boolean;
   /** Activities that may show (primary first, then by rank). */
   visible: string[];
+  /** The same in rank order only, chip-only ones left out: what scrolling the pill steps through. */
+  ranked: string[];
 }
 
 export function rankOf(c: Candidate): number {
@@ -44,7 +47,7 @@ export function rankOf(c: Candidate): number {
 
 export function choosePrimary(
   candidates: Candidate[],
-  opts: { selected: string | null; surfaces: Surface[]; now: number; dnd: boolean },
+  opts: { selected: string | null; /** When the user picked `selected` (0: an activity opened itself). */ pickedAt?: number; surfaces: Surface[]; now: number; dnd: boolean },
 ): Choice {
   const live = candidates.filter((c) => c.config.enabled && c.status.active);
   const byRank = [...live].sort((a, b) => rankOf(b) - rankOf(a));
@@ -56,18 +59,22 @@ export function choosePrimary(
     (c) => c.config.persistent || surfacedIds.has(c.id) || (c.status.urgent && c.config.interrupt) || c.status.weight === 'foreground',
   );
 
-  const urgent = byRank.find((c) => c.status.urgent && c.config.interrupt);
-  if (urgent) return { primary: urgent.id, surfaced: null, urgent: true, visible: order(visible, urgent.id) };
+  // A chip-only activity (Land's icon) is a chip whatever has the pill: scrolling never lands on it.
+  const ranked = visible.filter((c) => !c.status.chipOnly).map((c) => c.id);
 
-  if (opts.selected && visible.some((c) => c.id === opts.selected)) {
-    return { primary: opts.selected, surfaced: null, urgent: false, visible: order(visible, opts.selected) };
-  }
+  const urgent = byRank.find((c) => c.status.urgent && c.config.interrupt);
+  if (urgent) return { primary: urgent.id, surfaced: null, urgent: true, visible: order(visible, urgent.id), ranked };
+
   const newest = [...surfaces].sort((a, b) => b.at - a.at)[0];
-  if (newest) return { primary: newest.id, surfaced: newest.key, urgent: false, visible: order(visible, newest.id) };
+  const outshone = Boolean(opts.pickedAt && newest && newest.at > opts.pickedAt);
+  if (opts.selected && !outshone && visible.some((c) => c.id === opts.selected)) {
+    return { primary: opts.selected, surfaced: null, urgent: false, visible: order(visible, opts.selected), ranked };
+  }
+  if (newest) return { primary: newest.id, surfaced: newest.key, urgent: false, visible: order(visible, newest.id), ranked };
 
   // A chip-only activity (Land's icon) never takes the pill: it sits beside whatever does, or alone.
   const top = visible.find((c) => c.config.persistent && !c.status.chipOnly);
-  return { primary: top?.id ?? null, surfaced: null, urgent: false, visible: order(visible, top?.id ?? null) };
+  return { primary: top?.id ?? null, surfaced: null, urgent: false, visible: order(visible, top?.id ?? null), ranked };
 }
 
 function order(list: Candidate[], first: string | null): string[] {

@@ -25,6 +25,7 @@ import { accentColor, backAt, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type SheetView, type Tile } from './sheet';
 import { springs } from './spring';
+import { WheelGesture } from './wheel';
 import { workspaceEngine } from '../workspaces/engine';
 import { clip, timeOfDay } from './format';
 import { PhoneActs, PhoneError, PhoneHub, termAllowed, type PhoneDelivery, type PhoneIslandHooks } from '../remote/hub';
@@ -72,6 +73,8 @@ export class Island {
   private hover = false;
   private hoverTimer: ReturnType<typeof setTimeout> | undefined;
   private selected: string | null = null;
+  /** When the user picked `selected` (chip, wheel): such a pick outlasts a tap away. 0: an activity opened itself. */
+  private pickedAt = 0;
   private lastPrimary: string | null | undefined = undefined;
   private lastViewKey = '';
   private lastSig = '';
@@ -93,7 +96,10 @@ export class Island {
   private lastTraySig = '';
   private lastHitAt = 0;
   private cursorMonitorCandidate: string | null = null;
+  /** What scrolling the pill steps through, in rank order (Choice.ranked). */
   private visibleIds: string[] = [];
+  /** The scroll gesture in progress: one gesture switches one activity. */
+  private readonly wheel = new WheelGesture();
   private primaryId: string | null = null;
   /** `${activity}:${urgent key}` the user tapped away; they stop forcing the pill open. */
   private readonly dismissedUrgent = new Set<string>();
@@ -481,6 +487,7 @@ export class Island {
         this.open = true;
         this.view = 'main';
         this.selected = id;
+        this.pickedAt = 0;
         this.schedule();
       },
       close: () => {
@@ -600,10 +607,11 @@ export class Island {
       order: order.indexOf(id),
     }));
     if (this.selected && !statuses.get(this.selected)?.active) this.selected = null;
-    const choice = choosePrimary(candidates, { selected: this.selected, surfaces: this.surfaces, now, dnd: this.settings.general.dnd });
+    const choice = choosePrimary(candidates, { selected: this.selected, pickedAt: this.pickedAt, surfaces: this.surfaces, now, dnd: this.settings.general.dnd });
     const primary = choice.primary;
     this.primaryId = primary;
-    this.visibleIds = choice.visible;
+    // Scrolling steps through a steady order: the primary-first one would only flip between two.
+    this.visibleIds = choice.ranked;
     const pStatus = primary ? statuses.get(primary) : undefined;
     // Chip-only activities (Land's icon) with nothing else on: the pill holds just their chips.
     const loneChips = primary ? [] : choice.visible.filter((id) => statuses.get(id)?.chipOnly);
@@ -1374,7 +1382,8 @@ export class Island {
     this.cardFor = null;
     this.fileDrag = null;
     this.view = 'main';
-    this.selected = null;
+    // What the user picked stays on the pill; what an activity opened for itself goes.
+    if (!this.pickedAt) this.selected = null;
     this.surfaces = [];
     this.chatOpen = false;
     for (const [id, st] of this.statuses()) {
@@ -1462,11 +1471,16 @@ export class Island {
       case 'island:grid-cancel':
         this.gridAction(action, arg);
         break;
-      case 'island:wheel':
-        this.cycle(Number(arg) || 1);
+      case 'island:wheel': {
+        const dir = this.wheel.step(Number(arg) || 0, performance.now());
+        if (!dir) return;
+        this.cycle(dir);
         break;
+      }
       case 'island:select':
         this.selected = String(arg);
+        // A chip-only activity (Land's icon, picked from the overflow list) never keeps the pill at rest.
+        this.pickedAt = this.statuses().get(String(arg))?.chipOnly ? 0 : Date.now();
         this.view = 'main';
         break;
       case 'island:overflow':
@@ -1743,6 +1757,7 @@ export class Island {
     if (ids.length < 2) return;
     const i = Math.max(0, ids.indexOf(this.primaryId ?? ''));
     this.selected = ids[(i + dir + ids.length) % ids.length];
+    this.pickedAt = Date.now();
   }
 
   private tick(): void {
