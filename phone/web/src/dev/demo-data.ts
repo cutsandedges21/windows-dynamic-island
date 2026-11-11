@@ -122,7 +122,7 @@ export function demoPill(d: DemoState, now: number): Extract<IslandMsg, { t: 'pi
       { t: 'chip', key: 'chip/music', label: track.title, icon: 'music', tone: d.playing ? 'accent' : 'muted', action: 'island:select', arg: 'music', side: 'end', prio: 6, max: 150, tip: `${track.title} · ${track.artist}` },
     ];
     if (d.timer) segs.push({ t: 'chip', key: 'chip/timer', label: clock(timerLeft(d, now) / 1000), icon: 'timer', action: 'island:select', arg: 'timer', side: 'end', prio: 7, max: 150 });
-    return { t: 'pill', frame: frame('maximum', 'act:claude', segs, { tone: 'claude', motion: 'pulse' }), bot: botFor(d) };
+    return { t: 'pill', frame: frame('maximum', 'act:claude', segs, { tone: 'warn', motion: 'pulse' }), bot: botFor(d) };
   }
   const segs: Seg[] = [
     { t: 'art', key: 'music/art', src: ART, icon: 'music', prio: 3 },
@@ -130,7 +130,7 @@ export function demoPill(d: DemoState, now: number): Extract<IslandMsg, { t: 'pi
   ];
   if (d.working) segs.push({ t: 'icon', key: 'chip/claude', icon: 'claude', tone: 'claude', size: 'sm', side: 'end', prio: 8, tip: 'Claude is working' });
   if (d.timer) segs.push({ t: 'icon', key: 'chip/timer', icon: 'timer', tone: 'accent', size: 'sm', side: 'end', prio: 9, tip: d.timer.label });
-  const glow: GlowSpec | null = d.working ? { tone: 'claude', motion: 'orbit' } : null;
+  const glow: GlowSpec | null = d.working ? { tone: 'info', motion: 'orbit' } : null;
   return { t: 'pill', frame: frame('compact', 'act:music', segs, glow), bot: botFor(d) };
 }
 
@@ -233,7 +233,7 @@ function tiles(d: DemoState, now: number): Tile[] {
         icon: 'claude',
         label: 'Claude Code',
         rows: [
-          { key: 's1', dot: d.ask ? 'warn' : 'claude', pulse: d.working || d.ask !== null, title: 'island-phone', detail: d.ask ? 'Needs you' : d.working ? 'Working · 4 min' : 'Finished', action: 'switch', arg: 's1' },
+          { key: 's1', dot: d.ask ? 'warn' : d.working ? 'info' : 'good', pulse: d.working || d.ask !== null, title: 'island-phone', detail: d.ask ? 'Needs you' : d.working ? 'Working · 4 min' : 'Finished', action: 'switch', arg: 's1' },
           { key: 's2', dot: 'good', title: 'degreepilot', detail: 'Finished · 12 min ago', action: 'switch', arg: 's2' },
         ],
       },
@@ -313,7 +313,7 @@ function permissionCard(d: DemoState): SheetView {
           { key: 'allow', label: 'Allow', icon: 'check', action: 'allow', arg: id, style: 'primary' },
         ],
       },
-      { t: 'countdown', key: 'left', until: d.ask!.at + PERMISSION_MS, total: PERMISSION_MS },
+      { t: 'countdown', key: 'left', until: d.ask!.at + PERMISSION_MS, total: PERMISSION_MS, tone: 'warn' },
     ],
   });
 }
@@ -325,7 +325,7 @@ function claudeCard(d: DemoState): SheetView {
       t: 'rows',
       key: 'sessions',
       items: [
-        { key: 's1', dot: 'claude', pulse: d.working, title: 'island-phone', detail: d.working ? 'Working · 4 min · Windows Terminal' : 'Finished · Windows Terminal', action: 'switch', arg: 's1', meter: { value: 0.42, text: '42%', tip: 'Context used' } },
+        { key: 's1', dot: d.working ? 'info' : 'good', pulse: d.working, title: 'island-phone', detail: d.working ? 'Working · 4 min · Windows Terminal' : 'Finished · Windows Terminal', action: 'switch', arg: 's1', meter: { value: 0.42, text: '42%', tip: 'Context used' } },
         { key: 's2', dot: 'good', title: 'degreepilot', detail: 'Finished · 12 min ago · VS Code', action: 'switch', arg: 's2', button: { key: 'hide', icon: 'x', action: 'hide', arg: 's2', style: 'ghost', tip: 'Hide' } },
       ],
     },

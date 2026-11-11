@@ -1,6 +1,7 @@
 // The border glow: light along the pill's edge (or a card's) that says what kind
-// of thing is happening, in the colour of the activity doing it. Orange is
-// Claude's alone; the others pick their own tone.
+// of thing is happening, in the colour of the activity doing it. Claude's is
+// in its chats' status colours (blue while it works, amber when a chat needs
+// you, green when one finished and waits for a reply); the others pick their own tone.
 //
 //   orbit     a comet with a fading tail circling the edge: busy (Claude thinking)
 //   pulse     the whole edge breathing: something is waiting on you
