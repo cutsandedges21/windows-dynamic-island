@@ -175,6 +175,38 @@ describe('priority', () => {
     expect(c.visible).toEqual(['land']);
   });
 
+  it("a picked activity keeps the pill; only an event newer than the pick shows over it", () => {
+    const music = cand('music', {}, 'high', 0);
+    const download = cand('downloads', {}, 'medium', 1);
+    const old = [{ id: 'music', key: 'song', until: 9000, level: 'expanded' as const, at: 500 }];
+    const fresh = [{ id: 'music', key: 'song', until: 9000, level: 'expanded' as const, at: 2000 }];
+    expect(choosePrimary([music, download], { selected: 'downloads', pickedAt: 1000, surfaces: [], now: 3000, dnd: false }).primary).toBe('downloads');
+    expect(choosePrimary([music, download], { selected: 'downloads', pickedAt: 1000, surfaces: old, now: 3000, dnd: false }).primary).toBe('downloads');
+    expect(choosePrimary([music, download], { selected: 'downloads', pickedAt: 1000, surfaces: fresh, now: 3000, dnd: false }).primary).toBe('music');
+    // Once that event has had its time, the pick is back.
+    expect(choosePrimary([music, download], { selected: 'downloads', pickedAt: 1000, surfaces: fresh, now: 9500, dnd: false }).primary).toBe('downloads');
+    // What an activity opened for itself (no pick time) gives way to any event, as before.
+    expect(choosePrimary([music, download], { selected: 'downloads', surfaces: old, now: 3000, dnd: false }).primary).toBe('downloads');
+  });
+
+  it('scrolling steps through every activity in one steady order, whichever is picked', () => {
+    const all = [cand('music', {}, 'high', 0), cand('claude', {}, 'high', 1), cand('downloads', {}, 'medium', 2)];
+    const ranked = (selected: string | null) => choosePrimary(all, { selected, pickedAt: 1, surfaces: [], now: 2, dnd: false }).ranked;
+    expect(ranked(null)).toEqual(['music', 'claude', 'downloads']);
+    expect(ranked('claude')).toEqual(ranked(null));
+    expect(ranked('downloads')).toEqual(ranked(null));
+  });
+
+  it("scrolling never lands on a chip-only activity (Land's icon)", () => {
+    const land = cand('land', { weight: 'background', chipOnly: true }, 'high', 0);
+    const system = cand('system', { weight: 'background' }, 'low', 5);
+    const music = cand('music', {}, 'low', 2);
+    const c = choosePrimary([land, system, music], { selected: null, surfaces: [], now: 1000, dnd: false });
+    expect(c.visible).toContain('land');
+    expect(c.ranked).toEqual(['music', 'system']);
+    expect(choosePrimary([land], { selected: null, surfaces: [], now: 1000, dnd: false }).ranked).toEqual([]);
+  });
+
   it('a surfaced event shows briefly unless do-not-disturb is on; interrupts need the setting', () => {
     const music = cand('music', {}, 'low');
     const battery = cand('battery', { weight: 'background' }, 'low', 1, { persistent: false });
