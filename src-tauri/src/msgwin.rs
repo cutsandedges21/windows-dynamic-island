@@ -43,6 +43,8 @@ const DRIVE_REMOVABLE: u32 = 2;
 const MAX_TEXT: usize = 2000;
 /// GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS: the brightness of the screen Windows controls, 0–100.
 const BRIGHTNESS: windows::core::GUID = windows::core::GUID::from_u128(0x8ffee2c6_2d01_46be_adb9_398addc5b4ff);
+/// GUID_POWER_SAVING_STATUS: battery saver (Windows 11's energy saver) turned on or off.
+const SAVER: windows::core::GUID = windows::core::GUID::from_u128(0xe00958c0_c213_4ace_ac77_fecced2eeea5);
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -244,8 +246,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_CLIPBOARDUPDATE => on_clipboard(hwnd),
         WM_DEVICECHANGE => on_device(wparam.0, lparam.0),
         WM_POWERBROADCAST if wparam.0 == PBT_POWERSETTINGCHANGE as usize => {
-            if let (Some(app), Some(percent)) = (APP.get(), unsafe { brightness_of(lparam.0) }) {
-                crate::brightness::report(app, percent);
+            if let Some(app) = APP.get() {
+                if let Some(percent) = unsafe { brightness_of(lparam.0) } {
+                    crate::brightness::report(app, percent);
+                } else if unsafe { setting_is(lparam.0, &SAVER) } {
+                    // System Controls' Battery saver button shows it at once, not at the next 15 s poll.
+                    crate::system::emit_power(app);
+                }
             }
         }
         WM_POWERBROADCAST => {
@@ -290,6 +297,9 @@ pub fn start(app: AppHandle) {
         if RegisterPowerSettingNotification(HANDLE(hwnd.0), &BRIGHTNESS, DEVICE_NOTIFY_WINDOW_HANDLE).is_err() {
             crate::log::line("brightness: no notifications");
         }
+        if RegisterPowerSettingNotification(HANDLE(hwnd.0), &SAVER, DEVICE_NOTIFY_WINDOW_HANDLE).is_err() {
+            crate::log::line("battery saver: no notifications");
+        }
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
@@ -309,6 +319,11 @@ unsafe fn brightness_of(lparam: isize) -> Option<u32> {
     }
     let data = std::ptr::addr_of!(setting.Data) as *const u8;
     Some(unsafe { std::ptr::read_unaligned(data as *const u32) })
+}
+
+/// Whether a power-setting notification is about `guid`.
+unsafe fn setting_is(lparam: isize, guid: &windows::core::GUID) -> bool {
+    lparam != 0 && unsafe { &*(lparam as *const POWERBROADCAST_SETTING) }.PowerSetting == *guid
 }
 
 #[allow(dead_code)]
@@ -337,5 +352,15 @@ mod tests {
         let short = Setting { guid: BRIGHTNESS, len: 0, data: 65 };
         assert_eq!(unsafe { brightness_of(&short as *const Setting as isize) }, None);
         assert_eq!(unsafe { brightness_of(0) }, None);
+    }
+
+    #[test]
+    fn tells_battery_saver_from_the_brightness() {
+        let saver = Setting { guid: SAVER, len: 4, data: 1 };
+        assert!(unsafe { setting_is(&saver as *const Setting as isize, &SAVER) });
+        assert_eq!(unsafe { brightness_of(&saver as *const Setting as isize) }, None);
+        let bright = Setting { guid: BRIGHTNESS, len: 4, data: 65 };
+        assert!(!unsafe { setting_is(&bright as *const Setting as isize, &SAVER) });
+        assert!(!unsafe { setting_is(0, &SAVER) });
     }
 }

@@ -9,7 +9,7 @@ import type { RemoteFile, RemotePhone } from '../core/native';
 import type { Settings } from '../core/settings';
 import type { SheetView } from '../core/sheet';
 import { MAX_VIEWS_PER_S, PHONE_ISLAND_ACTIONS, PROTOCOL_V, readPhoneMsg, type BotState, type HelloFacts, type IslandMsg, type Nav } from './protocol';
-import { HELLO_GUARDED, mayPress, pressables, stripActions, stripPill, type Pressables } from './views';
+import { HELLO_GUARDED, mayPress, PC_ONLY, pressables, stripActions, stripPill, type Pressables } from './views';
 
 /** A paired phone, as Rust lists it (`remote_phones`, the `remote-phones` event). */
 export type PhoneInfo = RemotePhone;
@@ -68,7 +68,7 @@ export const DEFAULT_WIDTH = 390;
 const GAP_MS = Math.ceil(1000 / MAX_VIEWS_PER_S);
 /** Clipboard text a phone gets at most: a control line holds 1 MiB, and escaped text takes up to 6 bytes a character. */
 export const CLIP_MAX = 100_000;
-const NONE: ReadonlySet<string> = new Set();
+const AT_THE_PC: ReadonlySet<string> = new Set(PC_ONLY);
 
 /** At most one run per `gap` ms; a poke inside the gap runs once at its end, so the newest state always goes. */
 export class Throttle {
@@ -124,7 +124,7 @@ export class PhoneActs {
 
 /** What makes a pill different to a phone: the key Duplicate mode's copies use (island.ts sendMirror), and the bot. */
 export function pillKey(frame: MirrorFrame, bot: BotState | null): string {
-  return `${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.reduce}|${frame.bot?.d ?? 0}|${JSON.stringify(bot)}`;
+  return `${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.glass}|${frame.reduce}|${frame.bot?.d ?? 0}|${JSON.stringify(bot)}`;
 }
 
 interface Session {
@@ -309,9 +309,9 @@ export class PhoneHub {
     this.send(s, { t: 'toast', text, tone });
   }
 
-  /** Claude's Allow is held back while Windows Hello is asked before it. */
+  /** Claude's Allow is held back while Windows Hello is asked before it; the PC's own buttons always are. */
   private blocked(): ReadonlySet<string> {
-    return this.hooks.facts().allow ? NONE : new Set(HELLO_GUARDED);
+    return this.hooks.facts().allow ? AT_THE_PC : new Set([...PC_ONLY, ...HELLO_GUARDED]);
   }
 
   private sendPill(s: Session): void {
@@ -379,7 +379,7 @@ export class PhoneHub {
     const guarded = action.startsWith('act:') && this.blocked().has(action);
     if (guarded || !this.allowed(s, action, arg)) {
       this.native.log(`phone: refused ${action} from ${s.name}`);
-      this.toast(s, guarded ? 'Allow needs Windows Hello, on the PC' : "That button isn't there any more", 'bad');
+      this.toast(s, guarded ? (AT_THE_PC.has(action) ? 'Only on the PC' : 'Allow needs Windows Hello, on the PC') : "That button isn't there any more", 'bad');
       return;
     }
     try {

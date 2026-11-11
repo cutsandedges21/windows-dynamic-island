@@ -43,6 +43,8 @@ export interface ChipView {
   pulse?: boolean;
   /** What a click does (one of the activity's actions); without it a click brings the activity onto the pill. */
   action?: string;
+  /** On the small island, where chips are normally icon only, show the label instead of the icon. */
+  keepLabel?: boolean;
 }
 
 export interface RenderEnv {
@@ -143,6 +145,8 @@ export interface Activity {
   claimsHover?(): boolean | 'morph';
   /** This activity's cell in the open island's grid. Null hides it. */
   tile?(env: SheetEnv): Tile | null;
+  /** Several cells, in place of tile() (System Controls: Speakers, Brightness and its buttons); each key its own. */
+  tiles?(env: SheetEnv): Tile[];
   /** The bot's chat, shown in the bar under the bot (Local AI is the only one). */
   chat?(): ChatView | null;
   /** What this activity tells the bot (src/core/pet.ts): its mood while something is true, and its latest moment. */

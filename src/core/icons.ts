@@ -23,6 +23,7 @@ const P: Record<string, string> = {
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
   timer: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V9.5M9.5 2.5h5M18.5 6.5l1.5-1.5"/>',
   stopwatch: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5l3-3M10 2.5h4M12 2.5v3.5"/>',
+  flag: '<path d="M6 21V4M6 4h11.5l-2.5 4.5 2.5 4.5H6"/>',
   focus: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/>',
   cpu: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 2.5v4M14.5 2.5v4M9.5 17.5v4M14.5 17.5v4M2.5 9.5h4M2.5 14.5h4M17.5 9.5h4M17.5 14.5h4"/>',
   memory: '<rect x="3" y="7" width="18" height="10" rx="1.5"/><path d="M7 10.5v3M11 10.5v3M15 10.5v3M6 17v3M18 17v3"/>',
@@ -125,6 +126,10 @@ const P: Record<string, string> = {
   'sun-low': '<circle cx="12" cy="12" r="3.5"/><path d="M12 5.5v.5M12 18v.5M5.5 12h.5M18 12h.5M7.4 7.4l.35.35M16.25 16.25l.35.35M7.4 16.6l.35-.35M16.25 7.75l.35-.35"/>',
   // Sports: a hockey puck.
   puck: '<ellipse cx="12" cy="9.5" rx="8" ry="3.5"/><path d="M4 9.5v4.5c0 1.9 3.6 3.5 8 3.5s8-1.6 8-3.5V9.5"/>',
+  // System Controls: two sliders; battery saver: Windows' leaf; a screen recording: a dot in a ring.
+  sliders: '<path d="M4 7.5h9M17 7.5h3M4 16.5h3M11 16.5h9"/><circle cx="15" cy="7.5" r="2"/><circle cx="9" cy="16.5" r="2"/>',
+  leaf: '<path d="M5 19.5C5 11 10.5 5 20 4.5c0 9.5-5.5 15-14 15z"/><path d="M5 19.5c3-4.5 6.5-7.5 10.5-9.5"/>',
+  record: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>',
 };
 
 export type IconName = keyof typeof P | string;

@@ -1,0 +1,443 @@
+{
+  "version": 5,
+  "island": {
+    "anchor": "top",
+    "display": "primary",
+    "displayId": null,
+    "displayIds": [],
+    "widths": {
+      "compact": 0.12,
+      "expanded": 0.26,
+      "maximum": 0.45
+    },
+    "edge": 8,
+    "size": "medium",
+    "idle": "pill",
+    "hoverExpand": true,
+    "hideInFullscreen": false,
+    "showSecondary": true,
+    "accent": "sky",
+    "color": "glass",
+    "reduceMotion": "system",
+    "glow": "medium",
+    "hoverCard": "claude",
+    "peekThrough": true,
+    "bot": true,
+    "grid": {
+      "order": [],
+      "sizes": {
+        "sound/sound": "2x1",
+        "timer/timer": "1x1"
+      },
+      "hidden": [
+        "keys"
+      ],
+      "pages": [
+        [
+          "music/music",
+          "sound/sound",
+          "brightness/brightness",
+          null,
+          "timer/timer"
+        ]
+      ]
+    },
+    "hiddenUntil": 0,
+    "menu": {
+      "position": true,
+      "quiet": true,
+      "hide": true,
+      "reminders": true,
+      "workspaces": true,
+      "activities": true
+    }
+  },
+  "activities": {
+    "order": [
+      "claude",
+      "music",
+      "game",
+      "downloads",
+      "land",
+      "timer",
+      "reminders",
+      "battery",
+      "sound",
+      "keys",
+      "brightness",
+      "screenshots",
+      "calls",
+      "phone",
+      "devices",
+      "external",
+      "system",
+      "weather",
+      "calendar",
+      "sports",
+      "clipboard",
+      "network",
+      "workspaces",
+      "servers",
+      "quick",
+      "local",
+      "github",
+      "vercel",
+      "notion"
+    ],
+    "config": {
+      "claude": {
+        "enabled": true,
+        "priority": "high",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": true,
+        "options": {
+          "resetAlerts": true,
+          "sessionHotkeys": true,
+          "notifications": true,
+          "phone": true,
+          "showLimits": true,
+          "showDesktop": true,
+          "finishedSeconds": 8,
+          "onlyOtherChats": false,
+          "replyWindowSeconds": 45,
+          "requireHello": false
+        }
+      },
+      "music": {
+        "enabled": true,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "hoverPlayer": false,
+          "showArt": true,
+          "lyrics": true,
+          "pausedMinutes": 5
+        }
+      },
+      "game": {
+        "enabled": true,
+        "priority": "high",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "showPing": true,
+          "overGames": true
+        }
+      },
+      "downloads": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "folder": ""
+        }
+      },
+      "land": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": true,
+        "options": {
+          "visible": true,
+          "name": "",
+          "tile": false,
+          "anywhere": true
+        }
+      },
+      "timer": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": true,
+        "options": {
+          "focusMinutes": 50,
+          "breakMinutes": 5,
+          "quietFocus": true,
+          "quietByFocus": true
+        }
+      },
+      "reminders": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": true,
+        "options": {}
+      },
+      "battery": {
+        "enabled": true,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": false,
+        "interrupt": true,
+        "options": {
+          "lowAt": 20,
+          "showCharging": false
+        }
+      },
+      "sound": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "keys": {
+        "enabled": true,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": false,
+        "interrupt": false,
+        "options": {
+          "caps": true,
+          "num": false
+        }
+      },
+      "brightness": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": false,
+        "interrupt": false,
+        "options": {}
+      },
+      "screenshots": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "preview": true
+        }
+      },
+      "calls": {
+        "enabled": true,
+        "priority": "high",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "phone": {
+        "enabled": true,
+        "priority": "high",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "keepHours": 24
+        }
+      },
+      "devices": {
+        "enabled": true,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "external": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "system": {
+        "enabled": true,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": false,
+        "interrupt": false,
+        "options": {
+          "show": [
+            "cpu",
+            "ram"
+          ],
+          "always": false,
+          "cpuSpike": 90,
+          "memSpike": 92
+        }
+      },
+      "weather": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": false,
+        "interrupt": false,
+        "options": {
+          "city": "",
+          "units": "celsius"
+        }
+      },
+      "calendar": {
+        "enabled": false,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": true,
+        "options": {
+          "source": "windows",
+          "ics": "",
+          "leadMinutes": 15
+        }
+      },
+      "sports": {
+        "enabled": false,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": false,
+        "interrupt": false,
+        "options": {
+          "team": "MTL"
+        }
+      },
+      "clipboard": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "network": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": false,
+        "interrupt": false,
+        "options": {
+          "always": false
+        }
+      },
+      "workspaces": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": true,
+        "options": {
+          "notice": false,
+          "leaveNote": true,
+          "suggest": true,
+          "titles": false,
+          "days": 14
+        }
+      },
+      "servers": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "quick": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": false,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "local": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": true,
+        "options": {
+          "model": "",
+          "backend": "claude-code"
+        }
+      },
+      "github": {
+        "enabled": false,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "repos": ""
+        }
+      },
+      "vercel": {
+        "enabled": false,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "team": ""
+        }
+      },
+      "notion": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      }
+    }
+  },
+  "general": {
+    "startWithWindows": false,
+    "notifications": true,
+    "sounds": false,
+    "dnd": true,
+    "toggleHotkey": "Alt+Shift+Space",
+    "activitiesHotkey": "Alt+Shift+A",
+    "onboarded": true,
+    "autoUpdate": true,
+    "phonePush": false,
+    "phoneTopic": "",
+    "phoneApprove": false,
+    "phoneReplyTopic": "",
+    "phoneTerminal": false
+  },
+  "privacy": {
+    "clipboardContent": true,
+    "screenshotPreview": true
+  }
+}

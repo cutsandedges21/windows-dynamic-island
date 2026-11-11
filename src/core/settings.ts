@@ -3,6 +3,7 @@
 
 import { CATALOG, type Band, type Behavior } from '../activities/catalog';
 import { normalizeWidths, type Anchor, type IslandSize, type Widths } from './layout';
+import { GLASS_DEFAULT } from './glass';
 import { FULL_MENU, type MenuShown } from './menu';
 
 export type DisplayMode = 'primary' | 'cursor' | 'active' | 'specific' | 'duplicate';
@@ -11,6 +12,32 @@ export interface ActivityConfig extends Behavior {
   enabled: boolean;
   priority: Band;
   options: Record<string, unknown>;
+  /** Pointed at: 'wide' widens the pill, 'card' grows a card out of it, 'below' hangs one under it. Unset: growsOf's default. */
+  grows?: Grows;
+}
+
+/**
+ * How an activity grows when pointed at. 'below' is the card hanging under the pill, Claude Code's
+ * own look (its stats and chats): only it offers that, and it is its default.
+ */
+export type Grows = 'wide' | 'card' | 'below';
+
+/** Only Claude Code's card can hang below the pill (Activities › Grows). */
+export const GROWS_BELOW = 'claude';
+
+/** The choices an activity offers: Sideways and Into a card, and Below for Claude Code. */
+export function growsChoices(id: string): Grows[] {
+  return id === GROWS_BELOW ? ['wide', 'card', 'below'] : ['wide', 'card'];
+}
+
+/**
+ * An activity's own choice, else the island's default (Settings › When pointed at). With `id`, a
+ * choice that activity doesn't offer is ignored, and Claude Code falls back to hanging below.
+ */
+export function growsOf(c: Pick<ActivityConfig, 'grows'> | undefined, fallback: Grows, id?: string): Grows {
+  if (id === undefined) return c?.grows ?? fallback;
+  if (c?.grows && growsChoices(id).includes(c.grows)) return c.grows;
+  return id === GROWS_BELOW ? 'below' : fallback;
 }
 
 /** Cell sizes in the open island's grid: columns x rows. */
@@ -55,11 +82,15 @@ export interface Settings {
     accent: string;
     /** The pill's own colour, and the card's under it. */
     color: PillColor;
+    /** Glass only, like iOS Liquid Glass: 0 is clear, 100 is tinted (less of what is behind shows through). */
+    glass: number;
     reduceMotion: 'system' | 'on' | 'off';
     /** How fast the border glow moves, or off. */
     glow: 'off' | 'slow' | 'medium' | 'fast';
     /** What hovering the island shows: the card of whatever is pointed at, or always Claude's stats. */
     hoverCard: 'pointer' | 'claude';
+    /** How a persistent activity grows when pointed at, unless it has its own choice (Activities › Grows). */
+    defaultGrows: Exclude<Grows, 'below'>;
     /** Tapping Ctrl over the pill fades it and lets clicks through to what is behind. */
     peekThrough: boolean;
     /** The bot in its bubble beside the pill (src/core/bubble.ts). */
@@ -159,9 +190,11 @@ export function defaultSettings(): Settings {
       showSecondary: true,
       accent: 'sky',
       color: 'black',
+      glass: GLASS_DEFAULT,
       reduceMotion: 'system',
       glow: 'medium',
       hoverCard: 'pointer',
+      defaultGrows: 'card',
       peekThrough: true,
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
@@ -190,6 +223,21 @@ export function defaultSettings(): Settings {
 }
 
 type Json = Record<string, unknown>;
+
+/** Sound (Justin's), Brightness and Caps Lock (Moss's): one activity, System Controls, since the forks merged. */
+const INTO_CONTROLS = ['sound', 'brightness', 'keys'];
+/**
+ * Their Control Center tiles under System Controls' keys, for a saved grid. An entry naming a whole
+ * activity ('sound', as setup hides helpers) hides only that one's tile; Caps Lock never had one.
+ */
+const CONTROLS_TILES: Record<string, string> = {
+  'sound/sound': 'system-controls/sound',
+  sound: 'system-controls/sound',
+  'brightness/brightness': 'system-controls/brightness',
+  brightness: 'system-controls/brightness',
+  keys: '',
+};
+const controlsTile = (key: string) => CONTROLS_TILES[key] ?? key;
 const isObj = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Saved values over the defaults, key by key; unknown or mistyped values fall back. */
@@ -214,10 +262,13 @@ export function migrate(saved: unknown): Settings {
   if (!['top', 'bottom', 'left', 'right'].includes(out.island.anchor)) out.island.anchor = 'top';
   if (!['off', 'slow', 'medium', 'fast'].includes(out.island.glow)) out.island.glow = 'medium';
   if (!['pointer', 'claude'].includes(out.island.hoverCard)) out.island.hoverCard = 'pointer';
+  if (out.island.defaultGrows !== 'wide' && out.island.defaultGrows !== 'card') out.island.defaultGrows = 'card';
   // 0.2.4 called matte white "silver" and matte black "blur".
   const renamed: Record<string, PillColor> = { silver: 'matte-white', blur: 'matte-black' };
   out.island.color = renamed[out.island.color] ?? out.island.color;
   if (!['black', 'white', 'matte-white', 'matte-black', 'glass'].includes(out.island.color)) out.island.color = 'black';
+  // Justin's 0.2.11 saved the glass slider; Moss's 0.4.2 had none and gets the old look.
+  out.island.glass = Number.isFinite(out.island.glass) ? Math.max(0, Math.min(100, out.island.glass)) : GLASS_DEFAULT;
 
   // Activity configs: merge each known one; options keep any extra saved keys.
   const savedActs = isObj(saved.activities) ? saved.activities : {};
@@ -230,6 +281,8 @@ export function migrate(saved: unknown): Settings {
     // Whatever ends up under a secret option's name (a paste in the wrong place) is dropped, not kept.
     for (const o of m.options) if (o.type === 'secret') delete merged.options[o.key];
     if (!['high', 'medium', 'low'].includes(merged.priority)) merged.priority = def.priority;
+    // Unset by default, so it is not in `def` for mergeInto to carry over; only a choice this activity offers.
+    if (isObj(s) && growsChoices(m.id).includes(s.grows as Grows)) merged.grows = s.grows as Grows;
     // Built into Island (Land): on, whatever an older version saved.
     if (m.builtIn) merged.enabled = true;
     out.activities.config[m.id] = merged;
@@ -240,17 +293,28 @@ export function migrate(saved: unknown): Settings {
   if (askOpts && (askOpts.backend === 'api' || askOpts.backend === 'claude-code') && !(localOpts && 'backend' in localOpts) && out.activities.config.local) {
     out.activities.config.local.options.backend = askOpts.backend;
   }
-  // Order: saved order of known ids, then any new activities in catalog order.
+  // System Stats before its priority order: "On the pill" defaulted to CPU and was saved like that.
+  // That CPU was never picked; with nothing picked the pill follows the priority's top stat instead.
+  const sysOpts = isObj(savedCfg.system) && isObj(savedCfg.system.options) ? savedCfg.system.options : null;
+  const show = sysOpts?.show;
+  if (sysOpts && !('order' in sysOpts) && Array.isArray(show) && show.length === 1 && show[0] === 'cpu' && out.activities.config.system) {
+    out.activities.config.system.options.show = [];
+  }
+  intoControls(savedCfg, out);
+  // Order: saved order of known ids, then any new activities in catalog order. System Controls
+  // takes the place of the first of the three it took in.
   const known = new Set(CATALOG.map((m) => m.id));
-  const order = Array.isArray(savedActs.order) ? (savedActs.order as unknown[]).filter((id): id is string => typeof id === 'string' && known.has(id)) : [];
+  const savedOrder = Array.isArray(savedActs.order) ? (savedActs.order as unknown[]).map((id) => (typeof id === 'string' && INTO_CONTROLS.includes(id) ? 'system-controls' : id)) : [];
+  const order = savedOrder.filter((id): id is string => typeof id === 'string' && known.has(id));
   for (const m of CATALOG) if (!order.includes(m.id)) order.push(m.id);
   out.activities.order = [...new Set(order)];
 
   // The grid layout is free-form (tile keys come from activities), so it is checked by hand.
   const savedGrid = isObj(saved.island) && isObj(saved.island.grid) ? saved.island.grid : {};
   const strings = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length < 120))] : []);
+  const tiles = (v: unknown) => [...new Set(strings(v).map(controlsTile).filter(Boolean))];
   const sizes: Record<string, TileSize> = {};
-  if (isObj(savedGrid.sizes)) for (const [k, v] of Object.entries(savedGrid.sizes)) if (TILE_SIZES.includes(v as TileSize)) sizes[k] = v as TileSize;
+  if (isObj(savedGrid.sizes)) for (const [k, v] of Object.entries(savedGrid.sizes)) if (TILE_SIZES.includes(v as TileSize) && controlsTile(k)) sizes[controlsTile(k)] = v as TileSize;
   // Pages: tile keys (each on one page at most) and nulls for the empty cells the user left.
   const seen = new Set<string>();
   const pages: Array<Array<string | null>> = [];
@@ -259,14 +323,14 @@ export function migrate(saved: unknown): Settings {
     const list: Array<string | null> = [];
     for (const e of p.slice(0, 96)) {
       if (e === null) list.push(null);
-      else if (typeof e === 'string' && e.length > 0 && e.length < 120 && !seen.has(e)) {
-        seen.add(e);
-        list.push(e);
+      else if (typeof e === 'string' && e.length > 0 && e.length < 120 && controlsTile(e) && !seen.has(controlsTile(e))) {
+        seen.add(controlsTile(e));
+        list.push(controlsTile(e));
       }
     }
     pages.push(list);
   }
-  out.island.grid = { order: strings(savedGrid.order), sizes, hidden: strings(savedGrid.hidden), pages };
+  out.island.grid = { order: tiles(savedGrid.order), sizes, hidden: tiles(savedGrid.hidden), pages };
   out.island.displayIds = strings(isObj(saved.island) ? saved.island.displayIds : null);
   if (!Number.isFinite(out.island.hiddenUntil) || out.island.hiddenUntil < 0) out.island.hiddenUntil = 0;
   out.island.hiddenUntil = Math.min(out.island.hiddenUntil, HIDE_UNTIL_SHOWN);
@@ -288,6 +352,33 @@ export function migrate(saved: unknown): Settings {
   if (from < 5) out.island.hideInFullscreen = false;
   out.version = SETTINGS_VERSION;
   return out;
+}
+
+/**
+ * Settings from before System Controls (Moss's 0.4.2 had Sound, Brightness and Caps Lock; Justin's
+ * 0.2.11 only Sound): on if any of them was. Each one's switch, and its Auto-show (all a flash
+ * did), becomes that part's option; one never saved counts as on, as it was by default. Sound's
+ * Interactive, priority and Grows carry over (it was the one with buttons). Settings that already have
+ * System Controls are left alone.
+ */
+function intoControls(savedCfg: Json, out: Settings): void {
+  const sc = out.activities.config['system-controls'];
+  if (!sc || isObj(savedCfg['system-controls']) || !INTO_CONTROLS.some((id) => isObj(savedCfg[id]))) return;
+  const cfg = (id: string): Json => (isObj(savedCfg[id]) ? savedCfg[id] : {});
+  const on = (id: string) => cfg(id).enabled !== false;
+  const shows = (id: string) => on(id) && cfg(id).autoShow !== false;
+  const keys = isObj(cfg('keys').options) ? (cfg('keys').options as Json) : {};
+  sc.enabled = INTO_CONTROLS.some(on);
+  sc.options.volume = shows('sound');
+  sc.options.device = shows('sound');
+  sc.options.brightness = shows('brightness');
+  sc.options.caps = shows('keys') && keys.caps !== false;
+  sc.options.num = shows('keys') && keys.num !== false;
+  const sound = cfg('sound');
+  if (typeof sound.interactive === 'boolean') sc.interactive = sound.interactive;
+  if (sound.priority === 'high' || sound.priority === 'medium' || sound.priority === 'low') sc.priority = sound.priority;
+  // Justin's 0.2.11 saved how Sound grows when pointed at (hover-cards' Grows).
+  if (growsChoices('system-controls').includes(sound.grows as Grows)) sc.grows = sound.grows as Grows;
 }
 
 // ------------------------------------------------------------------ hiding the island

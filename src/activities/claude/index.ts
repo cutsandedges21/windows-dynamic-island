@@ -59,7 +59,17 @@ const HOLD_MS = 240_000;
 /** …but never past this, measured from the Stop (the pipe's own ceiling is 280 s). */
 const HOLD_CEILING_MS = 270_000;
 
-const TONE: Record<string, Tone> = { needs: 'claude', working: 'good', turn: 'info', error: 'bad', muted: 'muted' };
+/**
+ * A chat's status in the island's tones, the colours of Justin's Claude Status: blue while
+ * Claude works, green when it's your turn, amber when it needs you, red for an error or a
+ * turn stopped with Esc, dim when idle. The Claude mark and the limits stay Claude's orange.
+ */
+const TONE: Record<string, Tone> = { needs: 'warn', working: 'info', turn: 'good', error: 'bad', stopped: 'bad', muted: 'dim' };
+
+/** A chat's dot: its status colour (statusTone's name, or desktop.ts's for the Claude app). */
+export function chatTone(tone: string): Tone {
+  return TONE[tone] ?? 'dim';
+}
 
 /** Claude's card on a phone: chats in its list (live and closed together), folders to start a new one in, messages of one chat. */
 const PHONE_CHATS = 8;
@@ -430,7 +440,7 @@ export class ClaudeActivity extends BaseActivity {
           void this.holdQuestion(ev.request_id, sid, ev);
         } else {
           void native.hookReply(ev.request_id, 'ack');
-          this.ctx.alert('glow', 'claude');
+          this.ctx.alert('glow', 'warn');
           this.saw('claude-asks', `claude:ask:${ev.request_id}`);
           if (this.ctx.settings().general.sounds) chime('attention');
         }
@@ -452,7 +462,7 @@ export class ClaudeActivity extends BaseActivity {
         this.toPhone(sid, 'waiting', ev.message ?? '', '', ev.cwd);
       } else {
         this.ctx.surface({ key: `note:${sid}`, ms: 15000, level: 'expanded' });
-        this.ctx.alert('glow', 'claude');
+        this.ctx.alert('glow', 'warn');
         this.saw('claude-asks', `claude:note:${sid}`);
         if (kind === 'note') this.toPhone(sid, 'needs', ev.message ?? '', '', ev.cwd);
         else this.askToPhone(sid, ev);
@@ -503,7 +513,7 @@ export class ClaudeActivity extends BaseActivity {
       this.ctx.log('stop: window already closed', { session: sid.slice(0, 8) });
     } else {
       this.ctx.log('stop', { session: sid.slice(0, 8), held: true, seconds: o.replyWindowSeconds });
-      this.ctx.alert('glow', 'claude');
+      this.ctx.alert('glow', 'good');
       if (this.ctx.settings().general.sounds) chime('attention');
     }
     this.ctx.update();
@@ -530,7 +540,7 @@ export class ClaudeActivity extends BaseActivity {
     }
     void native.hookReply(requestId, 'ack');
     this.ctx.log('question', { session: sid.slice(0, 8), held: true });
-    this.ctx.alert('glow', 'claude');
+    this.ctx.alert('glow', 'warn');
     this.saw('claude-asks', `claude:ask:${requestId}`);
     if (this.ctx.settings().general.sounds) chime('attention');
     this.ctx.update();
@@ -761,7 +771,7 @@ export class ClaudeActivity extends BaseActivity {
     this.ctx.surface({ key: `needs:${session.id}`, ms: 7000, level: 'expanded' });
     this.ctx.alert('shake');
     this.saw('claude-asks', `claude:needs:${session.id}`);
-    this.ctx.alert('glow', 'claude');
+    this.ctx.alert('glow', 'warn');
     // The phone gets this from toPhone, once, however many ways the moment is reported.
     if (this.opts().notifications) this.ctx.notify(session.displayTitle, `Needs you in ${session.project}. Alt+Shift+0 to switch.`, false);
     this.toPhone(session.id, 'needs', `${session.label} · ${session.project}`, '', session.cwd);
@@ -1017,8 +1027,16 @@ export class ClaudeActivity extends BaseActivity {
     else if (note) urgent = { key: `note:${note.sessionId}`, level: 'expanded' };
     else if (needs.length) urgent = { key: `needs:${needs[0].id}`, level: 'expanded' };
     const weight = card || hold || note || needs.length || working.length || this.inputFor ? 'foreground' : 'background';
-    // Border light: brisk when a chat waits on the user, slow while Claude works.
-    const beam = card || hold || note || needs.length ? { tone: 'claude' as Tone, urgent: true } : working.length ? { tone: 'claude' as Tone } : null;
+    // Border light: an amber pulse when a chat needs you, a still green glow while a finished
+    // chat holds for your reply (Justin's Claude Status "done"), a slow blue comet while Claude works.
+    const beam: ActivityStatus['beam'] =
+      card || note || needs.length
+        ? { tone: 'warn', urgent: true }
+        : hold
+          ? { tone: 'good', motion: 'still', urgent: true }
+          : working.length
+            ? { tone: 'info' }
+            : null;
     const n = this.sessions.length;
     const summary =
       n > 1
@@ -1044,7 +1062,7 @@ export class ClaudeActivity extends BaseActivity {
     return {
       icon: 'claude',
       label: needs ? 'Needs you' : n > 1 ? `×${n}` : this.sessions[0].label,
-      dot: needs ? 'claude' : working ? 'good' : 'info',
+      dot: needs ? 'warn' : working ? 'info' : 'good',
       pulse: needs,
       tone: 'claude',
     };
@@ -1078,7 +1096,7 @@ export class ClaudeActivity extends BaseActivity {
   }
 
   private dot(s: SessionView): Seg {
-    return { t: 'dot', key: `dot`, tone: TONE[s.tone] ?? 'muted', pulse: s.needsYou, prio: 0 };
+    return { t: 'dot', key: `dot`, tone: chatTone(s.tone), pulse: s.needsYou, prio: 0 };
   }
 
 
@@ -1124,7 +1142,7 @@ export class ClaudeActivity extends BaseActivity {
   private sessionView(s: SessionView, env: RenderEnv): Seg[] {
     const now = env.now;
     const dot = this.dot(s);
-    const label: Seg = { t: 'text', key: 'label', text: s.status === 'working' ? 'Working…' : s.label, tone: s.needsYou ? 'claude' : 'muted', prio: 1 };
+    const label: Seg = { t: 'text', key: 'label', text: s.status === 'working' ? 'Working…' : s.label, tone: s.needsYou ? 'warn' : 'muted', prio: 1 };
     if (env.level === 'compact' || env.level === 'idle') {
       if (env.vertical) return [MARK, dot];
       return [dot, { t: 'text', key: 'name', text: 'Claude', weight: 'semibold', prio: 0 }, { ...label, side: 'end' }];
@@ -1153,13 +1171,13 @@ export class ClaudeActivity extends BaseActivity {
     const n = this.sessions.length;
     const needs = this.sessions.filter((s) => s.needsYou).length;
     const working = this.sessions.filter((s) => s.status === 'working').length;
-    const tone: Tone = needs ? 'claude' : working ? 'good' : 'info';
+    const tone: Tone = needs ? 'warn' : working ? 'info' : 'good';
     if (env.level === 'compact' || env.level === 'idle') {
       if (env.vertical) return [MARK, { t: 'text', key: 'count', text: `×${n}`, weight: 'semibold', prio: 0 }];
       return [
         { t: 'dot', key: 'dot', tone, pulse: needs > 0, prio: 0 },
         { t: 'text', key: 'name', text: `Claude ×${n}`, weight: 'semibold', prio: 0 },
-        { t: 'text', key: 'label', text: needs ? `${needs} need${needs > 1 ? '' : 's'} you` : working ? `${working} working` : 'Your turn', tone: needs ? 'claude' : 'muted', side: 'end', prio: 3 },
+        { t: 'text', key: 'label', text: needs ? `${needs} need${needs > 1 ? '' : 's'} you` : working ? `${working} working` : 'Your turn', tone: needs ? 'warn' : 'muted', side: 'end', prio: 3 },
       ];
     }
     const segs: Seg[] = [MARK];
@@ -1168,7 +1186,7 @@ export class ClaudeActivity extends BaseActivity {
         t: 'chip',
         key: `s-${s.id}`,
         label: env.level === 'maximum' ? `${clip(s.displayTitle, 26)} · ${s.status === 'working' ? 'Working' : s.label}` : clip(s.displayTitle, 18),
-        dot: TONE[s.tone] ?? 'muted',
+        dot: chatTone(s.tone),
         pulse: s.needsYou,
         badge: s.slot ? String(s.slot) : undefined,
         action: 'select',
@@ -1199,7 +1217,7 @@ export class ClaudeActivity extends BaseActivity {
     const s = this.sessions.find((x) => x.id === card.sessionId);
     const more = this.hooks.cards.length - 1;
     const segs: Seg[] = [
-      { t: 'icon', key: 'perm-icon', icon: card.tool === 'AskUserQuestion' ? 'chat' : 'claude', tone: 'claude', anim: 'pulse', prio: 0 },
+      { t: 'icon', key: 'perm-icon', icon: card.tool === 'AskUserQuestion' ? 'chat' : 'claude', tone: card.tool === 'AskUserQuestion' ? 'warn' : 'claude', anim: 'pulse', prio: 0 },
       { t: 'text', key: 'perm-ask', text: this.askOf(card), weight: 'semibold', prio: 0 },
       { t: 'text', key: 'perm-title', text: s?.displayTitle || baseName(card.cwd) || 'Claude Code', tone: 'muted', prio: 4, max: env.vertical ? 60 : 200 },
     ];
@@ -1247,7 +1265,7 @@ export class ClaudeActivity extends BaseActivity {
     const s = this.sessions.find((x) => x.id === sid);
     const ask = this.hooks.asks.get(sid);
     return [
-      { t: 'icon', key: 'note-icon', icon: ask ? 'chat' : 'bell', tone: 'claude', anim: 'pulse', prio: 0 },
+      { t: 'icon', key: 'note-icon', icon: ask ? 'chat' : 'bell', tone: 'warn', anim: 'pulse', prio: 0 },
       { t: 'text', key: 'note-what', text: ask ? 'Claude is asking' : 'Claude needs you', weight: 'semibold', prio: 0 },
       { t: 'text', key: 'note-title', text: s?.displayTitle ?? 'a chat', tone: 'muted', prio: 4, max: env.vertical ? 60 : 220 },
     ];
@@ -1304,7 +1322,7 @@ export class ClaudeActivity extends BaseActivity {
           { key: 'allow', label: this.opts().requireHello ? 'Allow with Hello' : 'Allow', icon: 'check', action: 'allow', arg: card.requestId, style: 'primary' },
         ],
       },
-      { t: 'countdown', key: 'left', until: card.at + PERMISSION_MS, total: PERMISSION_MS },
+      { t: 'countdown', key: 'left', until: card.at + PERMISSION_MS, total: PERMISSION_MS, tone: 'warn' },
     );
     return { key: `perm:${card.requestId}`, blocks };
   }
@@ -1313,7 +1331,7 @@ export class ClaudeActivity extends BaseActivity {
     const s = this.sessions.find((x) => x.id === card.sessionId);
     const qs = questionsOf(card.input);
     const chosen = this.picks.get(card.requestId);
-    const blocks: Block[] = [{ t: 'head', key: 'h', icon: 'chat', tone: 'claude', title: this.askOf(card), sub: [s?.displayTitle || baseName(card.cwd), s?.host].filter(Boolean).join(' · ') }];
+    const blocks: Block[] = [{ t: 'head', key: 'h', icon: 'chat', tone: 'warn', title: this.askOf(card), sub: [s?.displayTitle || baseName(card.cwd), s?.host].filter(Boolean).join(' · ') }];
     qs.forEach((q, n) => {
       blocks.push({ t: 'text', key: `q${n}`, text: q.header ? `${q.header} · ${q.question}` : q.question });
       blocks.push({
@@ -1341,7 +1359,7 @@ export class ClaudeActivity extends BaseActivity {
     if (qs.length > 1 || qs.some((q) => q.multiSelect)) {
       buttons.push({ key: 'send', label: 'Send answers', icon: 'send', action: 'answer', arg: card.requestId, style: qs.length > 0 && open < 0 ? 'primary' : 'secondary' });
     }
-    blocks.push({ t: 'buttons', key: 'b', items: buttons }, { t: 'countdown', key: 'left', until: card.at + PERMISSION_MS, total: PERMISSION_MS });
+    blocks.push({ t: 'buttons', key: 'b', items: buttons }, { t: 'countdown', key: 'left', until: card.at + PERMISSION_MS, total: PERMISSION_MS, tone: 'warn' });
     return { key: `ask:${card.requestId}`, blocks };
   }
 
@@ -1413,7 +1431,7 @@ export class ClaudeActivity extends BaseActivity {
     const ask = this.hooks.asks.get(sid);
     const note = this.hooks.notes.get(sid);
     const blocks: Block[] = [
-      { t: 'head', key: 'h', icon: ask ? 'chat' : 'bell', tone: 'claude', title: ask ? 'Claude is asking' : note?.title || 'Claude needs you', sub: [s?.displayTitle, s?.host].filter(Boolean).join(' · ') },
+      { t: 'head', key: 'h', icon: ask ? 'chat' : 'bell', tone: 'warn', title: ask ? 'Claude is asking' : note?.title || 'Claude needs you', sub: [s?.displayTitle, s?.host].filter(Boolean).join(' · ') },
     ];
     if (ask) {
       ask.questions.forEach((q, n) => {
@@ -1476,7 +1494,7 @@ export class ClaudeActivity extends BaseActivity {
         key: 'sessions',
         items: this.sessions.map((s): SheetRow => ({
           key: s.id,
-          dot: TONE[s.tone] ?? 'muted',
+          dot: chatTone(s.tone),
           pulse: s.needsYou,
           title: s.displayTitle,
           detail: this.rowDetail(s, now),
@@ -1555,7 +1573,7 @@ export class ClaudeActivity extends BaseActivity {
     const limits = [d?.fiveHour ? `S ${Math.round(d.fiveHour.pct)}%` : null, d?.sevenDay ? `W ${Math.round(d.sevenDay.pct)}%` : null].filter(Boolean).join(' · ');
     const rows: SheetRow[] = this.sessions.slice(0, 3).map((s) => ({
       key: s.id,
-      dot: TONE[s.tone] ?? 'muted',
+      dot: chatTone(s.tone),
       pulse: s.needsYou,
       title: s.displayTitle,
       detail: `${s.status === 'working' ? 'Working' : s.label} · ${this.timing(s, now)}`,
@@ -1611,7 +1629,7 @@ export class ClaudeActivity extends BaseActivity {
         t: 'rows',
         key: 'chats',
         items: [
-          ...live.map((s): SheetRow => ({ key: s.id, dot: TONE[s.tone] ?? 'muted', pulse: s.needsYou, title: s.displayTitle, detail: [this.statusWord(s), s.project].filter(Boolean).join(' · '), action: 'chat', arg: s.id })),
+          ...live.map((s): SheetRow => ({ key: s.id, dot: chatTone(s.tone), pulse: s.needsYou, title: s.displayTitle, detail: [this.statusWord(s), s.project].filter(Boolean).join(' · '), action: 'chat', arg: s.id })),
           ...closed.map((c): SheetRow => ({ key: c.id, icon: 'history', title: c.displayTitle, detail: [`Closed ${agoText(now - c.closedAt)}`, c.project].filter(Boolean).join(' · '), action: 'chat', arg: c.id })),
         ],
       });
@@ -1640,7 +1658,7 @@ export class ClaudeActivity extends BaseActivity {
     ];
     if (live?.status === 'working') blocks.push({ t: 'text', key: 'working', text: 'Claude is working…', tone: 'muted', size: 'sm' });
     const card = this.hooks.cards.find((c) => c.sessionId === id);
-    if (card) blocks.push({ t: 'text', key: 'waiting', text: card.tool === 'AskUserQuestion' ? 'Claude asked you something: its card has the question.' : 'Claude waits for your OK: its card has Allow and Deny.', tone: 'claude', size: 'sm' });
+    if (card) blocks.push({ t: 'text', key: 'waiting', text: card.tool === 'AskUserQuestion' ? 'Claude asked you something: its card has the question.' : 'Claude waits for your OK: its card has Allow and Deny.', tone: 'warn', size: 'sm' });
     blocks.push(...this.startBlocks(pane, now, { t: 'input', key: 'say', placeholder: 'Message Claude…', action: `say:${id}`, hint: routeHint(this.routeOf(chat)) }));
     return { key: pane, blocks };
   }
@@ -2059,8 +2077,8 @@ export class ClaudeActivity extends BaseActivity {
         if (s) this.announceNeedsYou({ ...s, displayTitle: `${s.displayTitle} (test)` });
         else {
           this.ctx.alert('shake');
-          this.ctx.alert('glow', 'claude');
-          this.flash('Test alert: a session that needs you looks like this', 'claude', 'bell', 4000);
+          this.ctx.alert('glow', 'warn');
+          this.flash('Test alert: a session that needs you looks like this', 'warn', 'bell', 4000);
         }
         return true;
       }

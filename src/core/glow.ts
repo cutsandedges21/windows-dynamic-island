@@ -1,10 +1,13 @@
 // The border glow: light along the pill's edge (or a card's) that says what kind
-// of thing is happening, in the colour of the activity doing it. Orange is
-// Claude's alone; the others pick their own tone.
+// of thing is happening, in the colour of the activity doing it. Claude's is
+// in its chats' status colours (blue while it works, amber when a chat needs
+// you, green when one finished and waits for a reply); the others pick their own tone.
 //
 //   orbit     a comet with a fading tail circling the edge: busy (Claude thinking)
 //   pulse     the whole edge breathing: something is waiting on you
 //   progress  the edge filling up from the top: a timer, charging
+//   still     the whole edge softly lit, not moving: done, your turn (a Claude chat
+//             holding for your reply, like Justin's Claude Status)
 //
 // How it is drawn matters as much as how it looks. The island is a see-through
 // window the size of the screen, and anything that *repaints* inside it makes
@@ -19,7 +22,7 @@ import { reducedMotion } from './animator';
 import type { Rect } from './layout';
 import type { Tone } from './segments';
 
-export type GlowMotion = 'orbit' | 'pulse' | 'progress';
+export type GlowMotion = 'orbit' | 'pulse' | 'progress' | 'still';
 export type GlowSpeed = 'off' | 'slow' | 'medium' | 'fast';
 
 export interface GlowSpec {
@@ -29,6 +32,14 @@ export interface GlowSpec {
   value?: number;
   /** A brisker orbit or pulse (one notch faster than the user's speed). */
   fast?: boolean;
+}
+
+/**
+ * The light an activity's status asks for (`ActivityStatus.beam`): its own motion, else a pulse
+ * when it waits on the user and an orbit while it is busy.
+ */
+export function beamSpec(want: { tone: Tone; motion?: GlowMotion; value?: number; fast?: boolean; urgent?: boolean } | null | undefined): GlowSpec | null {
+  return want ? { tone: want.tone, motion: want.motion ?? (want.urgent ? 'pulse' : 'orbit'), value: want.value, fast: want.fast } : null;
 }
 
 /** Seconds per lap (orbit) and per breath (pulse) for each speed setting. */

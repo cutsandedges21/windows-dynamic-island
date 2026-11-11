@@ -7,18 +7,19 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { CATALOG_BY_ID, type ActivityMeta, type Band, type OptionSpec } from './activities/catalog';
 import { SpringSet } from './core/animator';
 import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from './core/format';
-import { icon } from './core/icons';
+import { icon, type IconName } from './core/icons';
 import { levelWidth, normalizeWidths, type Anchor, type Level } from './core/layout';
 import { MENU_ITEMS } from './core/menu';
 import { isTauri, native, on, sendTo, type MonitorInfo } from './core/native';
 import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
-import { ACCENTS, backAt, cloneSettings, HIDE_CHOICES, hideUntil, migrate, newPhoneTopic, type ActivityConfig, type Settings } from './core/settings';
+import { ACCENTS, backAt, cloneSettings, growsChoices, growsOf, GROWS_BELOW, HIDE_CHOICES, hideUntil, migrate, newPhoneTopic, type ActivityConfig, type Grows, type Settings } from './core/settings';
 import { springs } from './core/spring';
 import { catchErrors } from './core/errors';
 import { codeGrid } from './codegrid';
 import { multiSegmented, row, section, segmented, stacked, toggle } from './controls';
 import { h } from './dom';
+import { gestureGroups } from './gestures';
 import { landPanel } from './land-panel';
 import { modelPicker } from './models-ui';
 import { phoneSection } from './remote/settings';
@@ -27,8 +28,8 @@ import { noticePanel } from './workspaces/notice/panel';
 import { workspacesPage, type WorkspacesPage } from './workspaces/page';
 
 /** 'welcome' is the first-run setup: the whole window, no sidebar. */
-type Page = 'activities' | 'workspaces' | 'settings' | 'welcome';
-const PAGES: Page[] = ['activities', 'workspaces', 'settings', 'welcome'];
+type Page = 'activities' | 'workspaces' | 'settings' | 'controls' | 'welcome';
+const PAGES: Page[] = ['activities', 'workspaces', 'settings', 'controls', 'welcome'];
 
 let settings: Settings = migrate(null);
 // Rust passes the page to open in an init script (a # in the window URL is not reliable).
@@ -81,6 +82,7 @@ function nav(): HTMLElement {
     item('activities', 'Activities', 'pulse'),
     item('workspaces', 'Workspaces', 'grid'),
     item('settings', 'Settings', 'settings'),
+    item('controls', 'Controls', 'keyboard'),
   ]);
 }
 
@@ -118,7 +120,7 @@ function render(): void {
     return;
   }
   const scroll = root.querySelector('.content')?.scrollTop ?? 0;
-  const body = page === 'activities' ? activitiesPage() : page === 'workspaces' ? workspacesView().el : settingsPage();
+  const body = page === 'activities' ? activitiesPage() : page === 'workspaces' ? workspacesView().el : page === 'controls' ? controlsPage() : settingsPage();
   root.replaceChildren(h('div', { class: 'body' }, [nav(), h('main', { class: 'content' }, [body])]));
   const content = root.querySelector('.content');
   if (content) content.scrollTop = scroll;
@@ -187,6 +189,13 @@ function activitiesPage(): HTMLElement {
 }
 
 /** What Priority means, under its switch on every activity. */
+/** The Grows choices in plain words (Settings › When pointed at, and each activity's Grows). */
+const GROWS_LABEL: Record<Grows, string> = { wide: 'Sideways', card: 'Into a card', below: 'Below' };
+const GROWS_HELP = [
+  'When you point at it: Sideways widens the pill, Into a card grows a card out of it.',
+  'When you point at it: Below hangs its card under the pill, Into a card grows the card out of the pill, Sideways widens the pill too.',
+];
+
 const PRIORITY_HELP = 'When several things happen at once, the highest one gets the pill and the others wait beside it as small icons. A tie goes to the one higher on this page.';
 
 /** Each behavior switch, with what it does in plain words (shown under it, not hidden in a tooltip). */
@@ -226,12 +235,23 @@ function activityCard(meta: ActivityMeta): HTMLElement {
 
 function cardBody(meta: ActivityMeta): HTMLElement {
   const c = cfg(meta.id);
-  const behaviors = BEHAVIORS.map(([key, label, help]) => row(label, help, toggle(c[key], (v) => { c[key] = v; save(true); }, label)));
+  const behaviors = BEHAVIORS.map(([key, label, help]) =>
+    row(label, help, toggle(c[key], (v) => {
+      c[key] = v;
+      save(true);
+      // The Grows row is only there while Persistent is on.
+      if (key === 'persistent') render();
+    }, label)),
+  );
   const body = h('div', { class: 'act-body' }, [
     row('Priority', PRIORITY_HELP, segmented(c.priority, [['high', 'High'], ['medium', 'Medium'], ['low', 'Low']], (v) => { c.priority = v; c.enabled = true; save(true); flipRender(); })),
     ...behaviors,
-    // Local AI's model is picked in its panel below, not typed.
-    ...meta.options.filter((o) => optionHere(o) && !(meta.id === 'local' && o.key === 'model')).map((o) => optionRow(meta.id, o)),
+    // Pointing at a persistent activity: widen the pill, or grow a card out of it like the music player.
+    c.persistent ? row('Grows', GROWS_HELP[meta.id === GROWS_BELOW ? 1 : 0], segmented(growsOf(c, settings.island.defaultGrows, meta.id), growsChoices(meta.id).map((g) => [g, GROWS_LABEL[g]] as [Grows, string]), (v) => { c.grows = v; save(true); render(); })) : null,
+    // Local AI's model is picked in its panel below, not typed; System Stats' picks live in its table.
+    ...meta.options
+      .filter((o) => optionHere(o) && !(meta.id === 'local' && o.key === 'model') && !(meta.id === 'system' && SYSTEM_TABLE_KEYS.has(o.key)))
+      .flatMap((o) => (meta.id === 'system' && o.key === 'always' ? [optionRow(meta.id, o), systemTable()] : [optionRow(meta.id, o)])),
   ]);
   if (meta.id === 'claude') body.append(claudePanel());
   if (meta.id === 'local') body.append(localPanel());
@@ -263,6 +283,96 @@ function optionRow(id: string, o: OptionSpec): HTMLElement {
     control = input;
   }
   return row(o.label, o.help ?? null, control);
+}
+
+// ------------------------------------------------------------------ System Stats table
+
+const SYSTEM_STATS: Array<{ key: 'cpu' | 'mem' | 'gpu'; label: string; icon: IconName; opt: 'Cpu' | 'Ram' | 'Gpu'; pill: string }> = [
+  { key: 'cpu', label: 'CPU', icon: 'cpu', opt: 'Cpu', pill: 'cpu' },
+  { key: 'mem', label: 'RAM', icon: 'memory', opt: 'Ram', pill: 'ram' },
+  { key: 'gpu', label: 'GPU', icon: 'gpu', opt: 'Gpu', pill: 'gpu' },
+];
+const SYSTEM_TABLE_KEYS = new Set(['order', 'show', ...SYSTEM_STATS.map((s) => `expanded${s.opt}`)]);
+
+/**
+ * One row per stat: drag the grip to set the priority (the top one leads), a switch for the
+ * resting pill ("On the pill": nothing picked means the top one alone) and one for the expanded island.
+ */
+function systemTable(): HTMLElement {
+  const meta = CATALOG_BY_ID.get('system')!;
+  const opts = cfg('system').options;
+  const value = (key: string) => Boolean(opts[key] ?? meta.options.find((o) => o.key === key)?.default);
+  const saved = String(opts.order ?? 'cpu,mem,gpu').split(',');
+  const stats = [...SYSTEM_STATS].sort((a, b) => (saved.indexOf(a.key) + 4) % 4 - ((saved.indexOf(b.key) + 4) % 4));
+  const shown = new Set<unknown>(Array.isArray(opts.show) ? opts.show : []);
+
+  const list = h('div', { class: 'stat-rows' });
+  const order = () => [...list.children].map((el) => (el as HTMLElement).dataset.key);
+  /** With nothing picked for the pill, the top row's switch shows that it is the one there. */
+  const fillPill = () => {
+    for (const el of list.children) {
+      const on = shown.size ? shown.has(SYSTEM_STATS.find((s) => s.key === (el as HTMLElement).dataset.key)!.pill) : el === list.firstElementChild;
+      const sw = el.querySelector<HTMLElement>('.pill-cell .switch')!;
+      sw.classList.toggle('on', on);
+      sw.setAttribute('aria-checked', String(on));
+    }
+  };
+  for (const s of stats) {
+    const grip = h('span', { class: 'grip', html: icon('more'), title: 'Drag to change the priority' });
+    const pill = toggle(false, (v) => {
+      // The first pick starts from what the pill already shows: the top one.
+      if (!shown.size) shown.add(SYSTEM_STATS.find((x) => x.key === order()[0])!.pill);
+      if (v) shown.add(s.pill);
+      else shown.delete(s.pill);
+      opts.show = SYSTEM_STATS.map((x) => x.pill).filter((k) => shown.has(k));
+      save();
+      fillPill();
+    }, `${s.label} on the pill`);
+    const line = h('div', { class: 'stat-row', 'data-key': s.key }, [
+      grip,
+      h('span', { class: 'stat-icon', html: icon(s.icon) }),
+      h('span', { class: 'stat-name', text: s.label }),
+      h('span', { class: 'stat-cell pill-cell' }, [pill]),
+      h('span', { class: 'stat-cell' }, [toggle(value(`expanded${s.opt}`), (v) => { opts[`expanded${s.opt}`] = v; save(); }, `${s.label} when expanded`)]),
+    ]);
+    grip.addEventListener('pointerdown', (e) => dragStat(e as PointerEvent, line, list, () => {
+      opts.order = order().join(',');
+      save();
+      fillPill();
+    }));
+    list.append(line);
+  }
+  fillPill();
+  return h('div', { class: 'stat-table' }, [
+    h('div', { class: 'stat-head' }, [h('span', { class: 'stat-title', text: 'Priority' }), h('span', { class: 'stat-cell', text: 'On the pill' }), h('span', { class: 'stat-cell', text: 'Expanded' })]),
+    list,
+    h('div', { class: 'row-help', text: 'The top stat leads, and it is the one beside other activities. On the pill picks what the resting pill shows side by side (none: the top one alone); Expanded shows the ones switched on. Both go in this order.' }),
+  ]);
+}
+
+/** Drag a stat row up or down; it swaps past a neighbour once the pointer crosses that neighbour's middle. */
+function dragStat(e: PointerEvent, line: HTMLElement, list: HTMLElement, done: () => void): void {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const grip = e.currentTarget as HTMLElement;
+  grip.setPointerCapture(e.pointerId);
+  line.classList.add('dragging');
+  const move = (ev: PointerEvent) => {
+    const others = [...list.children].filter((el) => el !== line) as HTMLElement[];
+    const before = others.find((el) => { const r = el.getBoundingClientRect(); return ev.clientY < r.top + r.height / 2; });
+    if (before ? line.nextElementSibling !== before : list.lastElementChild !== line) list.insertBefore(line, before ?? null);
+  };
+  const up = () => {
+    grip.removeEventListener('pointermove', move);
+    grip.removeEventListener('pointerup', up);
+    grip.removeEventListener('pointercancel', up);
+    line.classList.remove('dragging');
+    done();
+  };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', up);
+  grip.addEventListener('pointercancel', up);
 }
 
 function toggleCard(id: string): void {
@@ -725,24 +835,25 @@ function settingsPage(): HTMLElement {
       },
     }, [h('b', { text: `${m.name}${m.primary ? ' (primary)' : ''}` }), h('span', { class: 'muted', text: `${m.bounds.width}×${m.bounds.height} · ${Math.round(m.scale * 100)}% · taskbar ${m.taskbar}` })]),
   ));
-  const hotkey = (key: 'toggleHotkey' | 'activitiesHotkey', failId: string) => {
-    const input = h('input', { type: 'text', value: g[key], spellcheck: 'false', placeholder: 'e.g. Alt+Shift+Space' });
-    input.addEventListener('change', () => {
-      g[key] = input.value.trim();
-      save(true);
-    });
-    return h('div', { class: 'hotkey' }, [input, hotkeyFailures.includes(failId) ? h('span', { class: 'warn', text: 'Taken by another app' }) : null]);
-  };
+  // Clear ↔ Tinted, like iOS Liquid Glass; the island follows while dragging.
+  const glass = h('input', { type: 'range', min: 0, max: 100, value: String(i.glass), 'aria-label': 'Glass' });
+  glass.addEventListener('input', () => {
+    i.glass = Number(glass.value);
+    save();
+  });
+  const glassSlider = h('div', { class: 'glass-slider' }, [h('span', { class: 'muted', text: 'Clear' }), glass, h('span', { class: 'muted', text: 'Tinted' })]);
   return h('div', { class: 'page' }, [
     h('div', { class: 'page-head' }, [h('h1', { text: 'Settings' }), h('p', { text: 'How Island looks and behaves everywhere.' })]),
     section('Appearance', [
       row('Pill colour', 'The whole island, card included.', segmented(i.color, [['black', 'Black'], ['white', 'White'], ['matte-white', 'Matte white'], ['matte-black', 'Matte black'], ['glass', 'Glass']], (v) => { i.color = v; save(true); render(); })),
+      ...(i.color === 'glass' ? [row('Glass', 'Clear is more see-through; tinted lets less of what is behind show through.', glassSlider)] : []),
       row('Accent', null, accents),
       row('Bot', 'A little bot beside the pill, in your accent colour. It reacts to what happens; click it to talk to it.', toggle(i.bot, (v) => { i.bot = v; save(true); render(); })),
       row('Size', 'Pill height and text size.', segmented(i.size, [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], (v) => { i.size = v; save(true); render(); })),
       row('Distance from the edge', 'Gap between the island and its screen edge.', edge),
       row('When nothing is happening', null, segmented(i.idle, [['pill', 'Small pill'], ['hidden', 'Tuck away']], (v) => { i.idle = v; save(true); render(); })),
       row('Reduce motion', 'Springs jump straight to their end.', segmented(i.reduceMotion, [['system', 'System'], ['on', 'On'], ['off', 'Off']], (v) => { i.reduceMotion = v; save(true); render(); })),
+      row('When pointed at', 'How an activity grows when you point at it. Each one can override this in Activities.', segmented(i.defaultGrows, [['wide', 'Sideways'], ['card', 'Into a card']], (v) => { i.defaultGrows = v; save(true); render(); })),
       row('Hover card', "What shows under the island when you point at it. Music's player and Phone's list still show when you point at them.", segmented(i.hoverCard, [['pointer', 'What you point at'], ['claude', 'Claude stats']], (v) => { i.hoverCard = v; save(true); render(); })),
       row('Border glow', 'Light that circles the pill while something works; orange is Claude. Off saves the most battery.', segmented(i.glow, [['off', 'Off'], ['slow', 'Slow'], ['medium', 'Medium'], ['fast', 'Fast']], (v) => { i.glow = v; save(true); render(); })),
     ]),
@@ -784,12 +895,6 @@ function settingsPage(): HTMLElement {
         : []),
     ]),
     phoneSection({ settings: () => settings, save: () => save(true) }),
-    section('Keyboard shortcuts', [
-      row('Open or close the island', null, hotkey('toggleHotkey', 'island.toggle')),
-      row('Open Activities', null, hotkey('activitiesHotkey', 'island.activities')),
-      // Claude Code comes to the Mac in part 2, its session keys with it.
-      ...(mac ? [] : [h('p', { class: 'muted', text: 'Claude Code sessions: Alt+Shift+1–9 switches, Alt+Shift+0 jumps to the one that needs you (Activities › Claude Code).' })]),
-    ]),
     section('Privacy', [
       row('Show what you copied', 'Off: the Clipboard activity only says "Copied". Password managers are always skipped.', toggle(s.privacy.clipboardContent, (v) => { s.privacy.clipboardContent = v; save(true); })),
       row('Screenshot thumbnails', null, toggle(s.privacy.screenshotPreview, (v) => { s.privacy.screenshotPreview = v; save(true); })),
@@ -801,6 +906,35 @@ function settingsPage(): HTMLElement {
         h('button', { class: 'btn ghost', text: 'Open log folder', onclick: () => void (islandData && native.open(islandData)) }),
         h('button', { class: 'btn danger', text: 'Quit Island', onclick: () => void native.quit() }),
       ]),
+    ]),
+  ]);
+}
+
+// ------------------------------------------------------------------ controls page
+
+/** Every gesture and key the island answers to, in one place; the keys can be changed here too. */
+function controlsPage(): HTMLElement {
+  const g = settings.general;
+  const mac = platform === 'macos';
+  const hotkey = (key: 'toggleHotkey' | 'activitiesHotkey', failId: string) => {
+    const input = h('input', { type: 'text', value: g[key], spellcheck: 'false', placeholder: 'e.g. Alt+Shift+Space' });
+    input.addEventListener('change', () => {
+      g[key] = input.value.trim();
+      save(true);
+      // The Hide and show lines name the toggle key.
+      render();
+    });
+    return h('div', { class: 'hotkey' }, [input, hotkeyFailures.includes(failId) ? h('span', { class: 'warn', text: 'Taken by another app' }) : null]);
+  };
+  const line = ([how, what]: [string, string]) => h('div', { class: 'ctl-row' }, [h('span', { class: 'ctl-how', text: how }), h('span', { class: 'ctl-what', text: what })]);
+  return h('div', { class: 'page' }, [
+    h('div', { class: 'page-head' }, [h('h1', { text: 'Controls' }), h('p', { text: 'Every gesture and key the island answers to.' })]),
+    ...gestureGroups(settings, platform).map((grp) => section(grp.title, grp.items.map(line))),
+    section('Keyboard shortcuts', [
+      row('Open or close the island', null, hotkey('toggleHotkey', 'island.toggle')),
+      row('Open Activities', null, hotkey('activitiesHotkey', 'island.activities')),
+      // Claude Code comes to the Mac in part 2, its session keys with it.
+      ...(mac ? [] : [h('p', { class: 'muted', text: 'Claude Code sessions: Alt+Shift+1–9 switches, Alt+Shift+0 jumps to the one that needs you (Activities › Claude Code).' })]),
     ]),
   ]);
 }

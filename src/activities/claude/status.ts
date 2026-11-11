@@ -116,6 +116,8 @@ const TONES: Partial<Record<Status, string>> = {
   working: 'working',
   awaiting_input: 'turn',
   errored: 'error',
+  // A turn stopped with Esc: red like an error in the island, but its own name, so nothing reads it as a failure.
+  interrupted: 'stopped',
 };
 
 function isUsageLimitError(raw: RawStatus): boolean {
@@ -128,7 +130,7 @@ export function statusLabel(status: Status, raw: RawStatus = { alive: false, has
   return LABELS[status] || 'Idle';
 }
 
-/** Usage Clip's tone names: needs | working | turn | error | muted. */
+/** Usage Clip's tone names: needs | working | turn | error | muted, and stopped (Esc mid-turn). */
 export function statusTone(status: Status): string {
   return TONES[status] || 'muted';
 }

@@ -21,7 +21,9 @@ import type { Level } from '../src/core/layout';
 import { fitSegments, fitVertical } from '../src/core/segments';
 import { defaultSettings } from '../src/core/settings';
 import { BatteryActivity, batteryTime } from '../src/activities/battery';
-import { TimerActivity } from '../src/activities/timer';
+import { TILE_SPAN, TimerActivity } from '../src/activities/timer';
+import { cellsOf } from '../src/core/grid';
+import { tileCard } from '../src/core/tilecard';
 import { CalendarActivity } from '../src/activities/calendar';
 import { CallsActivity } from '../src/activities/calls';
 import { ClipboardActivity } from '../src/activities/clipboard';
@@ -32,8 +34,8 @@ import { NetworkActivity } from '../src/activities/network';
 import { QuickActivity } from '../src/activities/quick';
 import { ScreenshotsActivity } from '../src/activities/screenshots';
 import { ServersActivity } from '../src/activities/servers';
-import { SoundActivity } from '../src/activities/sound';
-import { pickedStats, SystemActivity } from '../src/activities/system';
+import { parseOrder, pickedStats, SystemActivity } from '../src/activities/system';
+import { CAPTURE_DELAY_MS, SAVER_SETTINGS, SystemControlsActivity } from '../src/activities/system-controls';
 import { headphonesLike, MusicActivity } from '../src/activities/music';
 import { PhoneActivity } from '../src/activities/phone';
 import { WeatherActivity } from '../src/activities/weather';
@@ -69,6 +71,9 @@ function resetNative() {
     snip: vi.fn(async () => undefined),
     clipboardCopyImage: vi.fn(async () => true),
     clipboardHistory: vi.fn(async () => undefined),
+    lockKeys: vi.fn(async () => null),
+    brightnessGet: vi.fn(async () => null),
+    screenCapture: vi.fn(async () => true),
   });
 }
 
@@ -77,14 +82,15 @@ const emit = (event: string, payload: unknown) => {
 };
 const tick = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
 
-type Calls = { surface: Array<{ key?: string; ms?: number; level?: string }>; update: number; alert: unknown[][]; close: number; notify: unknown[][]; log: unknown[][] };
+type Calls = { surface: Array<{ key?: string; ms?: number; level?: string }>; update: number; alert: unknown[][]; close: number; notify: unknown[][]; log: unknown[][]; openCard: number };
 
 async function boot<T extends Activity>(act: T, options: Record<string, unknown> = {}, tweak: (s: ReturnType<typeof defaultSettings>) => void = () => {}) {
   const settings = defaultSettings();
   tweak(settings);
-  const calls: Calls = { surface: [], update: 0, alert: [], close: 0, notify: [], log: [] };
+  const calls: Calls = { surface: [], update: 0, alert: [], close: 0, notify: [], log: [], openCard: 0 };
   const ctx: ActivityContext = {
     id: act.meta.id,
+    openCard: () => void calls.openCard++,
     config: () => settings.activities.config[act.meta.id],
     options: () => options as never,
     settings: () => settings,
@@ -97,6 +103,7 @@ async function boot<T extends Activity>(act: T, options: Record<string, unknown>
     isPrimary: () => true,
     notify: (...a) => void calls.notify.push(a),
     log: (...a) => void calls.log.push(a),
+    setOptions: (patch) => void Object.assign(options, patch),
   };
   await act.start(ctx);
   await tick(0);
@@ -223,86 +230,156 @@ describe('battery', () => {
   });
 });
 
-describe('focus and Quiet', () => {
-  /** A timer whose context keeps options and Quiet the way the island does. */
-  async function focusTimer(options: Record<string, unknown> = {}, quietAlready = false) {
-    const quiet: boolean[] = [];
-    const booted = await boot(new TimerActivity(), { focusMinutes: 25, breakMinutes: 5, ...options }, (s) => {
-      s.general.dnd = quietAlready;
-    });
-    const settings = booted.act['ctx'].settings();
-    Object.assign(booted.act['ctx'], {
-      setQuiet: (on: boolean) => {
-        quiet.push(on);
-        settings.general.dnd = on;
-      },
-      setOptions: (patch: Record<string, unknown>) => Object.assign(booted.options, patch),
-    });
-    return { ...booted, quiet, settings };
-  }
+describe('timer', () => {
+  it('the dial sets the length in seconds, and Start uses it', async () => {
+    const { act, options } = await boot(new TimerActivity());
+    const tileEnv = { reason: 'open' as const, now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null };
+    const body = () => act.tile(tileEnv)!.body;
+    expect(body()).toMatchObject({ k: 'actions', dial: { seconds: 300, action: 'length', start: { action: 'start-secs' } } });
+    // Focus and stopwatch stay; the quick 5m button gives way to the dial's Start.
+    expect(body().k === 'actions' && body().buttons.map((b) => b.key)).toEqual(['focus', 'sw']);
 
-  it('a focus round turns Quiet on; its end turns it off before the done notification', async () => {
-    const { act, calls, quiet, settings } = await focusTimer();
-    act.action('focus', undefined);
-    expect(quiet).toEqual([true]);
-    let quietWhenNotified: boolean | null = null;
-    act['ctx'].notify = (...a: unknown[]) => {
-      quietWhenNotified = settings.general.dnd;
-      calls.notify.push(a);
+    act.action('length', 5430); // 1:30:30
+    expect(options.timerSeconds).toBe(5430);
+    expect(body()).toMatchObject({ dial: { seconds: 5430 } });
+    expect(act.home().find((s) => s.key === 'start5')).toMatchObject({ label: '1h 30m 30s', arg: 5430 });
+    act.action('length', 999999);
+    expect(options.timerSeconds).toBe(86399);
+
+    act.action('start-secs', 0); // an empty dial starts nothing
+    expect(act.status().active).toBe(false);
+    act.action('start-secs', 90);
+    expect(act.status()).toMatchObject({ active: true, summary: '1m 30s timer 1:30' });
+  });
+
+  it('the tile is 2x1 in Control Center by default, whatever it shows; a size the user set stays', async () => {
+    const { act } = await boot(new TimerActivity());
+    const tileEnv = { reason: 'open' as const, now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null };
+    expect(TILE_SPAN).toBe(2);
+    const idle = act.tile(tileEnv)!;
+    expect(idle).toMatchObject({ key: 'timer', span: 2 });
+    expect(idle.rows).toBeUndefined();
+    act.action('start-secs', 90);
+    expect(act.tile(tileEnv)).toMatchObject({ key: 'timer', span: 2 });
+    expect(cellsOf(idle, undefined)).toEqual([2, 1]);
+    expect(cellsOf(idle, '1x1')).toEqual([1, 1]);
+    expect(cellsOf(idle, '2x2')).toEqual([2, 2]);
+  });
+
+  it("the dial's tile card shows the length, and its Start starts that length", async () => {
+    const { act } = await boot(new TimerActivity(), { timerSeconds: 3725 });
+    const tile = act.tile({ reason: 'hover', now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null })!;
+    const blocks = tileCard(tile, 'Timer', 'timer');
+    expect(blocks[0]).toMatchObject({ t: 'head', title: 'Timer', sub: '1:02:05' });
+    const buttons = blocks.find((b) => b.t === 'buttons');
+    expect(buttons?.t === 'buttons' && buttons.items.map((b) => [b.action, b.arg])).toEqual([
+      ['start-secs', 3725],
+      ['focus', undefined],
+      ['stopwatch', undefined],
+    ]);
+  });
+
+  it('a stopwatch laps while running and resets while paused', async () => {
+    const { act } = await boot(new TimerActivity());
+    const sheetEnv = (reason: 'hover' | 'open' = 'hover') => ({ reason, now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null });
+    const keys = () => {
+      const b = act.tile(sheetEnv('open'))!.body;
+      return b.k === 'actions' ? b.buttons.map((x) => x.key) : [];
     };
-    await tick(25 * 60_000 + 500);
-    expect(quiet).toEqual([true, false]);
-    expect(calls.notify.at(-1)?.[0]).toBe('Focus session done');
-    expect(quietWhenNotified).toBe(false);
-    // The break stays loud; the next round is quiet again.
-    act.action('next', undefined);
-    expect(quiet).toEqual([true, false]);
-    act.action('next', undefined);
-    expect(quiet).toEqual([true, false, true]);
-    act.action('stop', undefined);
-    expect(quiet).toEqual([true, false, true, false]);
+    act.action('stopwatch', null);
+    expect(keys()).toEqual(['lap', 'toggle', 'stop']);
+    expect(act.sheet(sheetEnv())).toBeNull(); // no laps yet: the tile's own card
+
+    await tick(12340);
+    act.action('lap', null);
+    await tick(5000);
+    act.action('lap', null);
+    await tick(3000);
+    expect(act.render(env('maximum')).find((s) => s.key === 'label')).toMatchObject({ text: 'Lap 3' });
+    expect(act.tile(sheetEnv('open'))!.body).toMatchObject({ label: 'Stopwatch 0:20', sub: 'Lap 3 · 0:03' });
+    const card = act.sheet(sheetEnv())!;
+    expect(card).toMatchObject({ key: 'tile-card' });
+    const rows = card.blocks.find((b) => b.t === 'rows');
+    expect(rows?.t === 'rows' && rows.items.map((r) => [r.title, r.badge])).toEqual([
+      ['Lap 2', '0:05.00'],
+      ['Lap 1', '0:12.34'],
+    ]);
+    expect(act.sheet({ ...sheetEnv(), reason: 'surfaced' })).toBeNull();
+
+    act.action('toggle', null); // pause: Lap gives way to Reset
+    expect(keys()).toEqual(['reset', 'toggle', 'stop']);
+    act.action('lap', null); // a paused stopwatch takes no laps
+    act.action('reset', null);
+    expect(act.status()).toMatchObject({ active: true, summary: 'Stopwatch 0:00' });
+    expect(act.sheet(sheetEnv())).toBeNull();
+    act.action('toggle', null);
+    await tick(2000);
+    expect(act.status()).toMatchObject({ summary: 'Stopwatch 0:02' });
   });
 
-  it('leaves Quiet alone when the user turned it on, or switched the option off', async () => {
-    const already = await focusTimer({}, true);
-    already.act.action('focus', undefined);
-    already.act.action('stop', undefined);
-    expect(already.quiet).toEqual([]);
-    expect(already.settings.general.dnd).toBe(true);
-
-    const off = await focusTimer({ quietFocus: false });
-    off.act.action('focus', undefined);
-    expect(off.quiet).toEqual([]);
+  it("a finished timer's card has the pill's buttons", async () => {
+    const { act } = await boot(new TimerActivity());
+    act.action('start', 1);
+    await tick(60_500);
+    const body = act.tile({ reason: 'urgent', now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null })!.body;
+    expect(body.k === 'actions' && body.buttons.map((b) => [b.key, b.action])).toEqual([
+      ['snooze', 'add'],
+      ['restart', 'restart'],
+      ['dismiss', 'dismiss'],
+    ]);
   });
 
-  it('a plain timer is not a focus round', async () => {
-    const { act, quiet } = await focusTimer();
-    act.action('start', 5);
-    expect(quiet).toEqual([]);
-  });
-
-  it('Quiet left on by a round that Island closed during goes at the next start', async () => {
+  /** A timer started with saved options, its context keeping Quiet the way the island does. */
+  async function savedTimer(options: Record<string, unknown>, quietOn: boolean) {
     const quiet: boolean[] = [];
-    const options: Record<string, unknown> = { quietByFocus: true };
     const act = new TimerActivity();
     const settings = defaultSettings();
-    settings.general.dnd = true;
+    settings.general.dnd = quietOn;
     await act.start({
       id: 'timer', config: () => settings.activities.config.timer, options: () => options as never, settings: () => settings,
       update: () => {}, surface: () => {}, alert: () => {}, open: () => {}, close: () => {}, isOpen: () => false, isPrimary: () => true, notify: () => {}, log: () => {},
-      setQuiet: (on) => void quiet.push(on), setOptions: (patch) => void Object.assign(options, patch),
+      setQuiet: (on) => {
+        quiet.push(on);
+        settings.general.dnd = on;
+      },
+      setOptions: (patch) => void Object.assign(options, patch),
     });
-    expect(quiet).toEqual([false]);
-    expect(options.quietByFocus).toBe(false);
+    return { act, quiet, settings };
+  }
+
+  it("a focus round keeps Moss's saved lengths and leaves Quiet alone", async () => {
+    const { act, quiet } = await savedTimer({ focusMinutes: 50, breakMinutes: 10, quietFocus: true }, false);
+    act.action('focus', undefined);
+    expect(act.status()).toMatchObject({ summary: 'Focus 50:00' });
+    act.action('stop', undefined);
+    expect(quiet).toEqual([]);
+  });
+
+  it('Quiet left on by a focus round that Island closed during goes once, at the next start', async () => {
+    const options: Record<string, unknown> = { quietFocus: true, quietByFocus: true };
+    const stuck = await savedTimer(options, true);
+    expect(stuck.quiet).toEqual([false]);
+    expect(stuck.settings.general.dnd).toBe(false);
+    expect(options.quietByFocus).toBeUndefined();
+
+    // Quiet already off (turned off by hand): only the flag goes.
+    const off = await savedTimer({ quietByFocus: true }, false);
+    expect(off.quiet).toEqual([]);
+    // No flag: Quiet the user turned on stays.
+    const mine = await savedTimer({}, true);
+    expect(mine.quiet).toEqual([]);
+    expect(mine.settings.general.dnd).toBe(true);
   });
 });
 
-describe('sound', () => {
+describe('system controls: sound', () => {
   const audio = (over: Record<string, unknown> = {}) => ({ volume: 0.5, muted: false, device: 'Speakers (Realtek)', deviceId: 'a', micMuted: false, micDevice: 'Mic', ...over });
+  const tileEnv = { reason: 'open' as const, now: T0, width: 300, vertical: false, interactive: true, surfaced: null };
+  const speakers = (act: SystemControlsActivity, e = tileEnv) => act.tiles(e).find((t) => t.key === 'sound');
 
   it('skips startup, shows volume changes and device changes', async () => {
     h.native.audioState = vi.fn(async () => audio());
-    const { act, calls } = await boot(new SoundActivity());
+    const { act, calls } = await boot(new SystemControlsActivity());
     emit('audio', audio()); // the startup event
     expect(calls.surface).toEqual([]);
 
@@ -318,6 +395,11 @@ describe('sound', () => {
     expect(calls.surface.at(-1)).toMatchObject({ key: 'volume' });
     expect(act.render(env('compact')).find((s) => s.t === 'icon')).toMatchObject({ icon: 'speaker-mute' });
     expect(act.render(env('maximum')).filter((s) => s.t === 'button').map((s) => s.key)).toEqual(['down', 'mute', 'up']);
+    // Justin's Speakers tile: − and + in circles beside the number, only with buttons on.
+    const body = speakers(act)!.body;
+    expect(body.k === 'stat' && body.buttons?.map((b) => b.action)).toEqual(['vol-down', 'vol-up']);
+    const quiet = speakers(act, { ...tileEnv, interactive: false })!.body;
+    expect(quiet.k === 'stat' && quiet.buttons).toBeUndefined();
 
     emit('audio', audio({ volume: 0.4, deviceId: 'b', device: 'AirPods Pro' }));
     expect(calls.surface.at(-1)).toMatchObject({ key: 'device', ms: 3500 });
@@ -332,13 +414,116 @@ describe('sound', () => {
 
   it('buttons change the volume through the native layer', async () => {
     h.native.audioState = vi.fn(async () => audio({ volume: 0.5 }));
-    const { act } = await boot(new SoundActivity());
+    const { act } = await boot(new SystemControlsActivity());
     await act.action!('vol-up', null);
     expect(h.native.audioSet).toHaveBeenLastCalledWith(0.55, null);
     await act.action!('vol-down', null);
     expect(h.native.audioSet).toHaveBeenLastCalledWith(0.45, null);
     await act.action!('mute', null);
     expect(h.native.audioSet).toHaveBeenLastCalledWith(null, true);
+  });
+
+  it('Volume and Audio device switched off: no flyouts, the tile still follows', async () => {
+    h.native.audioState = vi.fn(async () => audio());
+    const { act, calls } = await boot(new SystemControlsActivity(), { volume: false, device: false });
+    emit('audio', audio({ volume: 0.7 }));
+    emit('audio', audio({ volume: 0.7, deviceId: 'b', device: 'AirPods' }));
+    expect(calls.surface).toEqual([]);
+    expect(act.status().active).toBe(false);
+    expect(act.pet!(Date.now())).toBeNull();
+    expect(speakers(act)!.body).toMatchObject({ label: 'AirPods', value: '70%' });
+  });
+});
+
+describe('system controls: the parts together', () => {
+  const tileEnv = { reason: 'open' as const, now: T0, width: 300, vertical: false, interactive: true, surfaced: null };
+  const power = (over: Record<string, unknown> = {}) => ({ hasBattery: true, percent: 80, ac: false, charging: false, saver: false, secondsLeft: 7200, ...over });
+  const controls = (act: SystemControlsActivity, e = tileEnv) => act.tiles(e).find((t) => t.key === 'controls');
+
+  it('the pill shows whichever part changed last', async () => {
+    h.native.audioState = vi.fn(async () => ({ volume: 0.5, muted: false, device: 'Speakers', deviceId: 'a', micMuted: false, micDevice: 'Mic' }));
+    h.native.lockKeys = vi.fn(async () => ({ caps: false, num: true }));
+    h.native.brightnessGet = vi.fn(async () => 40);
+    const { act } = await boot(new SystemControlsActivity());
+    emit('lock-keys', { caps: true, num: true });
+    expect(act.status()).toMatchObject({ active: true, summary: 'Caps Lock on' });
+    await tick(10);
+    emit('brightness', 60);
+    expect(act.status()).toMatchObject({ summary: 'Brightness 60%' });
+    await tick(10);
+    emit('audio', { volume: 0.3, muted: false, device: 'Speakers', deviceId: 'a', micMuted: false, micDevice: 'Mic' });
+    expect(act.status()).toMatchObject({ summary: 'Volume 30%' });
+    expect(act.tiles(tileEnv).map((t) => t.key)).toEqual(['sound', 'brightness', 'controls']);
+  });
+
+  it('Screenshot and Record close the card, then open Snipping Tool', async () => {
+    const { act, calls } = await boot(new SystemControlsActivity());
+    expect(controls(act)).toMatchObject({ span: 2, action: 'card', body: { k: 'actions', label: 'System Controls' } });
+    const body = controls(act)!.body;
+    expect(body.k === 'actions' && body.buttons.map((b) => b.action)).toEqual(['screenshot', 'record']);
+
+    await act.action!('screenshot', null);
+    expect(calls.close).toBe(1);
+    // Not yet: the card gets out of the picture first.
+    expect(h.native.screenCapture).not.toHaveBeenCalled();
+    await tick(CAPTURE_DELAY_MS);
+    expect(h.native.screenCapture).toHaveBeenLastCalledWith('image');
+
+    await act.action!('record', null);
+    await tick(CAPTURE_DELAY_MS);
+    expect(h.native.screenCapture).toHaveBeenLastCalledWith('video');
+    expect(h.native.screenCapture).toHaveBeenCalledTimes(2);
+
+    await act.action!('card', null);
+    expect(calls.openCard).toBe(1);
+    // Buttons off: nothing to press, so no cell for them.
+    expect(controls(act, { ...tileEnv, interactive: false })).toBeUndefined();
+  });
+
+  it('battery saver: shows how it is, as Windows says, and opens Settings › Battery saver to switch it', async () => {
+    h.native.powerState = vi.fn(async () => power());
+    h.native.open = vi.fn(async () => true);
+    const { act, calls } = await boot(new SystemControlsActivity());
+    const saver = (e = tileEnv) => {
+      const b = controls(act, e)!.body;
+      return b.k === 'actions' ? b.buttons.find((x) => x.key === 'saver') : undefined;
+    };
+    expect(saver()).toMatchObject({ icon: 'leaf', action: 'saver', style: 'secondary', tip: 'Battery saver is off. Click to switch it in Windows Settings.' });
+    expect(saver()!.disabled).toBeUndefined();
+    expect(controls(act)!.body).toMatchObject({ sub: 'Battery saver off' });
+
+    const updates = calls.update;
+    emit('power', power({ saver: true }));
+    expect(calls.update).toBe(updates + 1);
+    expect(saver()).toMatchObject({ style: 'primary', tip: 'Battery saver is on. Click to switch it in Windows Settings.' });
+    // Buttons off: it only says how it is.
+    expect(controls(act, { ...tileEnv, interactive: false })!.body).toMatchObject({ sub: 'Battery saver on', buttons: [{ key: 'saver', disabled: true, tip: 'Battery saver is on.' }] });
+
+    await act.action!('saver', null);
+    expect(h.native.open).toHaveBeenCalledTimes(1);
+    expect(h.native.open).toHaveBeenCalledWith('ms-settings:batterysaver');
+    expect(SAVER_SETTINGS).toBe('ms-settings:batterysaver');
+    expect(calls.close).toBe(1);
+    expect(h.native.screenCapture).not.toHaveBeenCalled();
+
+    // A desktop: no battery, so no saver button, and nothing to open.
+    emit('power', power({ hasBattery: false, percent: null }));
+    expect(saver()).toBeUndefined();
+    await act.action!('saver', null);
+    expect(h.native.open).toHaveBeenCalledTimes(1);
+  });
+
+  it('a card when pointed at or opened, none for a flash', async () => {
+    h.native.audioState = vi.fn(async () => ({ volume: 0.42, muted: false, device: 'Speakers', deviceId: 'a', micMuted: false, micDevice: 'Mic' }));
+    h.native.brightnessGet = vi.fn(async () => 62);
+    h.native.powerState = vi.fn(async () => power({ saver: true }));
+    const { act } = await boot(new SystemControlsActivity());
+    expect(act.sheet!({ ...tileEnv, reason: 'surfaced' })).toBeNull();
+    const view = act.sheet!({ ...tileEnv, reason: 'hover' })!;
+    expect(view.blocks.map((b) => b.key)).toEqual(['head', 'levels', 'volume', 'controls']);
+    expect(view.blocks[1]).toMatchObject({ items: [{ key: 'sound', meter: { value: 0.42, text: '42%' } }, { key: 'brightness', meter: { value: 0.62, text: '62%' } }] });
+    expect(view.blocks[3]).toMatchObject({ items: [{ label: 'Screenshot' }, { label: 'Record' }, { label: 'Battery saver on', action: 'saver', style: 'primary' }] });
+    for (const b of view.blocks) if ('icon' in b && b.icon) expect(hasIcon(b.icon)).toBe(true);
   });
 });
 
@@ -713,36 +898,78 @@ describe('system', () => {
     expect(act.status()).toMatchObject({ active: true, weight: 'background' });
     expect(act.render(env('compact')).find((s) => s.t === 'text')).toMatchObject({ text: 'CPU 42%' });
     const expanded = act.render(env('expanded')).map((s) => (s.t === 'text' ? s.text : ''));
-    expect(expanded).toEqual(expect.arrayContaining(['CPU 42%', 'RAM 14.0 GB', 'GPU 12%']));
+    expect(expanded).toEqual(expect.arrayContaining(['CPU 42%', 'RAM 94%', 'GPU 12%']));
     expect(act.render(env('maximum')).filter((s) => s.t === 'meter').map((s) => s.key)).toEqual(['cpu', 'mem', 'gpu']);
+    expect(act.chip()).toMatchObject({ icon: 'cpu', label: '42%', keepLabel: true });
     smoke(act, 'system always');
   });
 
-  it('"On the pill": the resting pill, the tile and the chip show the picked stats', async () => {
+  it('shows the chosen stats in the chosen order', async () => {
+    h.native.sysSample = vi.fn(async () => sample(42, { memUsed: 8e9 }));
+    const { act } = await boot(new SystemActivity(), {
+      always: true, order: 'mem,gpu,cpu', expandedCpu: false, expandedRam: true, expandedGpu: true,
+    });
+    await tick(1000);
+    const texts = (level: Parameters<typeof env>[0]) => act.render(env(level)).flatMap((s) => (s.t === 'text' ? [s.text] : []));
+    expect(texts('compact')).toEqual(['RAM 50%']);
+    expect(texts('expanded')).toEqual(['RAM 50%', 'GPU 12%']);
+    expect(act.render(env('maximum')).filter((s) => s.t === 'meter').map((s) => s.key)).toEqual(['mem', 'gpu']);
+    expect(act.chip()).toMatchObject({ icon: 'memory', label: '50%' });
+    expect(act.status().summary).toBe('RAM 50%');
+    // A normal card here (cards that grow out of the pill come with the hover cards).
+    const card = act.sheet({ reason: 'hover', now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null });
+    expect(card).toMatchObject({ key: 'system' });
+    expect(card!.blocks.filter((b) => b.t === 'meter').map((b) => b.key)).toEqual(['mem', 'gpu']);
+    // Hover card off: no card.
+    const { act: off } = await boot(new SystemActivity(), { always: true, hoverCard: false });
+    await tick(1000);
+    expect(off.sheet({ reason: 'hover', now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null })).toBe(null);
+  });
+
+  it('"On the pill": several stats side by side on the resting pill, in priority order', async () => {
     h.native.sysSample = vi.fn(async () => sample(42, { memUsed: 6e9 }));
     const { act } = await boot(new SystemActivity(), { show: ['gpu', 'ram'], always: true, cpuSpike: 90, memSpike: 92 });
     await tick(1000);
-    const texts = (level: Level) => act.render(env(level)).flatMap((s) => (s.t === 'text' ? [s.text] : []));
-    // CPU, RAM, GPU order whatever order they were picked in; CPU stays off the resting pill.
+    const texts = (level: Level, vertical = false) => act.render(env(level, { vertical })).flatMap((s) => (s.t === 'text' ? [s.text] : []));
+    // CPU, RAM, GPU (the default priority) whatever order they were picked in; CPU stays off the resting pill.
     expect(texts('compact')).toEqual(['RAM 38%', 'GPU 12%']);
     expect(act.render(env('compact'))[0]).toMatchObject({ t: 'icon', icon: 'memory' });
-    // Pointed at: the picked ones first, then the rest.
-    expect(texts('expanded')).toEqual(['RAM 5.6 GB', 'GPU 12%', 'CPU 42%']);
-    expect(act.tile()?.body).toMatchObject({ k: 'stat', label: 'RAM', value: '38%', sub: 'GPU 12%' });
-    expect(act.chip()).toMatchObject({ icon: 'memory', label: '38%' });
+    // Vertical has room for one number only.
+    expect(texts('compact', true)).toEqual(['38%']);
+    // Pointed at (expanded) and the tile are the priority's, whatever the pill shows.
+    expect(texts('expanded')).toEqual(['CPU 42%', 'RAM 38%', 'GPU 12%']);
+    expect(act.tile()?.body).toMatchObject({ k: 'stat', label: 'CPU', value: '42%', sub: 'RAM 38%' });
+    // Beside other activities: the pill's leading stat.
+    expect(act.chip()).toMatchObject({ icon: 'memory', label: '38%', keepLabel: true });
     expect(act.status().summary).toBe('RAM 38% · GPU 12%');
     smoke(act, 'system picked');
   });
 
-  it('"On the pill": no GPU counter drops GPU, and nothing valid picked means CPU', async () => {
+  it('"On the pill" follows a changed priority', async () => {
+    h.native.sysSample = vi.fn(async () => sample(42, { memUsed: 6e9 }));
+    const { act } = await boot(new SystemActivity(), { show: ['cpu', 'ram'], order: 'gpu,mem,cpu', always: true });
+    await tick(1000);
+    expect(act.render(env('compact')).flatMap((s) => (s.t === 'text' ? [s.text] : []))).toEqual(['RAM 38%', 'CPU 42%']);
+    expect(act.chip()).toMatchObject({ icon: 'memory', label: '38%' });
+  });
+
+  it('"On the pill": no GPU counter drops GPU, and nothing valid picked means the top of the priority', async () => {
     h.native.sysSample = vi.fn(async () => sample(42, { gpu: null }));
     const { act } = await boot(new SystemActivity(), { show: ['gpu'], always: true, cpuSpike: 90, memSpike: 92 });
     await tick(1000);
     expect(act.render(env('compact')).flatMap((s) => (s.t === 'text' ? [s.text] : []))).toEqual(['CPU 42%']);
     expect(act.tile()?.body).toMatchObject({ label: 'CPU', sub: 'RAM 50%' });
-    expect(pickedStats(['nope', 3])).toEqual(['cpu']);
-    expect(pickedStats('cpu')).toEqual(['cpu']);
+    // GPU first in the priority but not measured here: the next one leads.
+    const { act: next } = await boot(new SystemActivity(), { order: 'gpu,mem,cpu', always: true });
+    await tick(1000);
+    expect(next.render(env('compact')).flatMap((s) => (s.t === 'text' ? [s.text] : []))).toEqual(['RAM 50%']);
+    expect(pickedStats(['nope', 3])).toEqual([]);
+    expect(pickedStats('cpu')).toEqual([]);
     expect(pickedStats(['gpu', 'cpu'])).toEqual(['cpu', 'gpu']);
+    // 'ram' (On the pill) and 'mem' (the priority) are the same stat.
+    expect(pickedStats(['gpu', 'ram'], parseOrder('mem,gpu,cpu'))).toEqual(['mem', 'gpu']);
+    expect(pickedStats(['mem'])).toEqual(['mem']);
+    expect(parseOrder('gpu,nope')).toEqual(['gpu', 'cpu', 'mem']);
   });
 });
 
@@ -1070,7 +1297,7 @@ describe('what the bot hears', () => {
 
   it('volume: up and down on one key, a bigger step stronger; muted, unmuted, a new device', async () => {
     h.native.audioState = vi.fn(async () => audio());
-    const { act } = await boot(new SoundActivity());
+    const { act } = await boot(new SystemControlsActivity());
     emit('audio', audio());
     emit('audio', audio({ volume: 0.52 }));
     const up = heard(act)!.moment!;

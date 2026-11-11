@@ -1,0 +1,410 @@
+{
+  "version": 5,
+  "island": {
+    "anchor": "top",
+    "display": "primary",
+    "displayId": null,
+    "displayIds": [],
+    "widths": {
+      "compact": 0.12,
+      "expanded": 0.26,
+      "maximum": 0.45
+    },
+    "edge": 8,
+    "size": "medium",
+    "idle": "pill",
+    "hoverExpand": true,
+    "hideInFullscreen": false,
+    "showSecondary": true,
+    "accent": "sky",
+    "color": "glass",
+    "glass": 40,
+    "reduceMotion": "system",
+    "glow": "medium",
+    "hoverCard": "pointer",
+    "defaultGrows": "wide",
+    "peekThrough": true,
+    "bot": true,
+    "grid": {
+      "order": [],
+      "sizes": {
+        "sound/sound": "2x1"
+      },
+      "hidden": [],
+      "pages": [
+        [
+          "music/music",
+          "sound/sound",
+          null,
+          "battery/battery",
+          "timer/timer"
+        ]
+      ]
+    }
+  },
+  "activities": {
+    "order": [
+      "claude",
+      "music",
+      "game",
+      "downloads",
+      "timer",
+      "battery",
+      "sound",
+      "screenshots",
+      "calls",
+      "devices",
+      "external",
+      "system",
+      "claudeStatus",
+      "weather",
+      "calendar",
+      "clipboard",
+      "network",
+      "servers",
+      "quick",
+      "ask",
+      "local",
+      "github",
+      "vercel",
+      "n8n",
+      "stripe",
+      "calcom",
+      "resend",
+      "notion"
+    ],
+    "config": {
+      "claude": {
+        "enabled": true,
+        "priority": "high",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": true,
+        "options": {
+          "resetAlerts": true,
+          "sessionHotkeys": true,
+          "notifications": true,
+          "showLimits": true,
+          "showDesktop": true,
+          "finishedSeconds": 8,
+          "onlyOtherChats": false,
+          "replyWindowSeconds": 45,
+          "requireHello": false
+        },
+        "grows": "wide"
+      },
+      "music": {
+        "enabled": true,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "showArt": true,
+          "pausedMinutes": 5
+        },
+        "grows": "card"
+      },
+      "game": {
+        "enabled": true,
+        "priority": "high",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "showPing": true,
+          "overGames": true
+        }
+      },
+      "downloads": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "folder": ""
+        }
+      },
+      "timer": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": true,
+        "options": {
+          "focusMinutes": 25,
+          "breakMinutes": 5,
+          "timerSeconds": 5430
+        }
+      },
+      "battery": {
+        "enabled": true,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": false,
+        "interrupt": true,
+        "options": {
+          "lowAt": 20,
+          "showCharging": false
+        }
+      },
+      "sound": {
+        "enabled": true,
+        "priority": "high",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": false,
+        "interrupt": false,
+        "options": {},
+        "grows": "card"
+      },
+      "screenshots": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "preview": true
+        }
+      },
+      "calls": {
+        "enabled": true,
+        "priority": "high",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "devices": {
+        "enabled": true,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "external": {
+        "enabled": false,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "system": {
+        "enabled": true,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": false,
+        "interrupt": false,
+        "options": {
+          "always": false,
+          "hoverCard": false,
+          "order": "gpu,cpu,mem",
+          "expandedCpu": true,
+          "expandedRam": true,
+          "expandedGpu": false,
+          "cpuSpike": 90,
+          "memSpike": 92
+        }
+      },
+      "claudeStatus": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": true,
+        "options": {
+          "showDone": true,
+          "showAutoModel": true,
+          "glowInFront": true
+        }
+      },
+      "weather": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": false,
+        "interrupt": false,
+        "options": {
+          "city": "",
+          "units": "celsius"
+        }
+      },
+      "calendar": {
+        "enabled": false,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": true,
+        "options": {
+          "source": "windows",
+          "ics": "",
+          "leadMinutes": 15
+        }
+      },
+      "clipboard": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "network": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": false,
+        "interrupt": false,
+        "options": {
+          "always": false
+        }
+      },
+      "servers": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "quick": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": false,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "ask": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": true,
+        "options": {
+          "backend": "claude-code"
+        }
+      },
+      "local": {
+        "enabled": true,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": true,
+        "options": {
+          "model": ""
+        }
+      },
+      "github": {
+        "enabled": false,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "repos": ""
+        }
+      },
+      "vercel": {
+        "enabled": false,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "team": ""
+        }
+      },
+      "n8n": {
+        "enabled": false,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "url": "",
+          "showSuccess": false
+        }
+      },
+      "stripe": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "calcom": {
+        "enabled": false,
+        "priority": "medium",
+        "autoShow": true,
+        "persistent": true,
+        "interactive": true,
+        "interrupt": false,
+        "options": {
+          "leadMinutes": 15
+        }
+      },
+      "resend": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      },
+      "notion": {
+        "enabled": false,
+        "priority": "low",
+        "autoShow": true,
+        "persistent": false,
+        "interactive": true,
+        "interrupt": false,
+        "options": {}
+      }
+    }
+  },
+  "general": {
+    "startWithWindows": false,
+    "notifications": true,
+    "sounds": false,
+    "dnd": false,
+    "toggleHotkey": "Alt+Shift+Space",
+    "activitiesHotkey": "Alt+Shift+A",
+    "onboarded": true,
+    "autoUpdate": true
+  },
+  "privacy": {
+    "clipboardContent": true,
+    "screenshotPreview": true
+  }
+}

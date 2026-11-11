@@ -18,7 +18,16 @@ interface Base {
 }
 
 export type Seg =
-  | (Base & { t: 'icon'; icon: IconName; tone?: Tone; anim?: 'pulse' | 'spin' | 'bob'; size?: 'sm' | 'md' | 'lg' })
+  | (Base & {
+      t: 'icon';
+      icon: IconName;
+      tone?: Tone;
+      anim?: 'pulse' | 'spin' | 'bob';
+      size?: 'sm' | 'md' | 'lg';
+      /** Clicking it does this (Quiet's moon turns Quiet off); without one it only shows. */
+      action?: string;
+      arg?: unknown;
+    })
   | (Base & { t: 'dot'; tone: Tone; pulse?: boolean })
   | (Base & {
       t: 'text';

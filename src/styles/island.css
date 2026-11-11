@@ -74,14 +74,21 @@ html[data-pill='matte-black'] :is(.pill-bg, .sheet-bg, .bubble-bg, .chat-bar, .c
 html[data-pill='matte-black'] :is(.pill, .sheet) { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
 /* glass, as on iOS: nearly clear, its rim catching the light at the top left and throwing
    it back at the bottom right. No lens bend at the edges: this page cannot see the desktop. */
+/* Settings › Appearance › Glass, from Clear to Tinted (glassStyle in settings.ts): a smoke that
+   stays faint, then a frosted grey that fills in, so less of the desktop shows through without
+   the glass going black (this page cannot blur what is behind it). The defaults are the slider's. */
 html[data-pill='glass'] {
+  --glass-smoke: 0.18;
+  --glass-frost: 0;
   --pill:
     linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03) 50%, rgba(255, 255, 255, 0.07)),
-    rgba(10, 12, 16, 0.18);
+    /* a colour can only be the last layer, so the frost is a flat gradient */
+    linear-gradient(rgba(60, 62, 68, var(--glass-frost)), rgba(60, 62, 68, var(--glass-frost))),
+    rgba(10, 12, 16, var(--glass-smoke));
 }
 html[data-pill='glass'] .pill { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.14); }
 html[data-pill='glass'] .sheet { box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.14); }
-html[data-pill='glass'] .sheet.morph { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.14); }
+html[data-pill='glass'] .sheet-shadow { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.14); }
 html[data-pill='glass'] :is(.pill-bg, .sheet-bg, .bubble-bg, .chat-bar, .chat-card) {
   box-shadow:
     inset 0 0 14px rgba(255, 255, 255, 0.1),
@@ -481,10 +488,12 @@ html.reduce .bubble-costume * { animation: none !important; }
 .pill.covered,
 html[data-pill='glass'] .pill.covered { box-shadow: none; }
 .pill.covered { z-index: 1; }
-/* the player takes the clicks while it is out; on its way back the pill (the menu) takes them again */
+/* the grown card takes the clicks while it is out; on its way back the pill (the menu) takes them again */
 .pill.cover-out { pointer-events: none; }
 .pill.covered > :is(.pill-bg, .pill-glow) { visibility: hidden; }
-.pill.covered > .pill-content { transition: opacity 0.2s ease-out 0.06s, filter 0.2s ease-out 0.06s; }
+/* On the card's way back the pill's content fades in as the shape lands, locked to how far it got
+   (sheet.ts placeGrown sets --pill-in), so it and the card's fading content barely overlap. */
+.pill.covered:not(.cover-out) > .pill-content { opacity: var(--pill-in, 1); filter: none; transition: none; }
 .pill.cover-out > .pill-content {
   opacity: 0;
   filter: blur(4px);
@@ -524,6 +533,8 @@ html.reduce .pill.covered > .pill-content { transition: none; }
 .seg-icon.sz-sm { width: 15px; height: 15px; }
 .seg-icon.sz-lg { width: 22px; height: 22px; }
 .seg-icon .ico { width: 100%; height: 100%; display: block; }
+/* An icon that does something when clicked (Quiet's moon turns Quiet off). */
+.seg-icon[data-action] { cursor: pointer; }
 .anim-pulse .ico { animation: soft-pulse 1.6s ease-in-out infinite; }
 .anim-spin .ico { animation: spin 1.1s linear infinite; }
 .anim-bob .ico { animation: bob 1.4s ease-in-out infinite; }
@@ -893,11 +904,21 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 .sheet[data-anchor='bottom'] { transform-origin: 50% 100%; }
 .sheet[data-anchor='left'] { transform-origin: 0 50%; }
 .sheet[data-anchor='right'] { transform-origin: 100% 50%; }
-/* grown out of the pill, the card casts the pill's shadow, so the two swap unseen */
-.sheet.morph {
+/* Grown out of the pill (sheet.ts placeGrown), the card's box stays still and is clipped to the
+   growing shape: the background and the shadow follow the shape instead of the box. The shadow is
+   the pill's, so the two swap unseen. */
+.sheet.morph { border-radius: 34px; box-shadow: none; overflow: visible; }
+.sheet.morph .sheet-bg { inset: auto; }
+.sheet-shadow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  border-radius: 34px;
   box-shadow:
     0 14px 34px -10px rgba(0, 0, 0, 0.62),
     0 3px 10px rgba(0, 0, 0, 0.32);
+  will-change: transform, width, height, opacity;
 }
 
 .sheet-bg {
@@ -939,6 +960,12 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 .sb-head .h1 { font: 600 14px/1.2 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-head .h2 { font: 500 12px/1.2 var(--font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-head .hb { display: flex; gap: 6px; flex: none; }
+/* the pill's chips, carried onto a card grown over them (sheet.ts chips) */
+.sb-head .pk { flex: none; display: flex; gap: 5px; }
+.sb-player .pk { flex: none; align-self: flex-start; display: flex; gap: 5px; margin-top: 1px; }
+.pk .seg-chip.icon-only { padding: 0 8px; }
+.pk .ci { width: 14px; height: 14px; flex: none; opacity: 0.9; }
+.pk .ci .ico { width: 100%; height: 100%; display: block; }
 
 /* text: selectable, wraps, keeps the line breaks of the message */
 .sb-text { font: 400 13px/1.45 var(--font); }
@@ -1079,6 +1106,9 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 .sb-meter.tone-bad { color: var(--bad); }
 .sb-meter.tone-warn { color: var(--warn); }
 .sb-meter.tone-good { color: var(--good); }
+/* A meter that opens something: the same hover as a row, padded out without moving its content. */
+.sb-meter[data-action] { cursor: pointer; margin: -5px -8px; padding: 5px 8px; border-radius: 12px; transition: background-color 0.16s ease; }
+.sb-meter[data-action]:hover { background: rgba(var(--ink), 0.07); }
 
 /* rows (sessions, lists) */
 .sb-rows { display: flex; flex-direction: column; gap: 2px; }
@@ -1106,6 +1136,15 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 .sb-rows .rt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .sb-rows .r1 { font: 500 13px/1.25 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-rows .r2 { font: 500 11.5px/1.25 var(--font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A row's own progress: a thin bar after its detail, running to the end of the row */
+.sb-rows .r2.with-bar { display: flex; align-items: center; gap: 7px; }
+.sb-rows .rbd { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sb-rows .rbd:empty { display: none; }
+.sb-rows .rbar { position: relative; flex: 1 1 40px; min-width: 28px; height: 3px; border-radius: 2px; background: rgba(var(--ink), 0.13); overflow: hidden; }
+.sb-rows .rbar .fill { position: absolute; inset: 0; transform-origin: 0 50%; transform: scaleX(0); background: currentColor; border-radius: 2px; transition: transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.sb-rows .rbs { flex: none; font-size: 10.5px; color: var(--dim); }
+.sb-rows .rbs:empty { display: none; }
+.sb-rows .rbt { flex: none; color: var(--fg); font-variant-numeric: tabular-nums; }
 .sb-rows .rbtn { flex: none; width: 24px; height: 24px; opacity: 0; transition: opacity 0.15s ease; }
 .sb-rows .rbtn .bi { width: 13px; height: 13px; }
 .sb-rows .row:hover .rbtn { opacity: 1; }
@@ -1433,8 +1472,29 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 
 /* buttons and lists inside tiles */
 .tile .ah { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Small buttons: − and + beside a stat's number (the Speakers tile's volume), and at a dial's heading's end (focus, stopwatch). */
+.sbtn.sm { height: 24px; border-radius: 12px; }
+.sbtn.sm.icon-only { width: 24px; }
+.sbtn.sm .bi { width: 13px; height: 13px; }
+.tile .tvr { display: flex; align-items: center; gap: 5px; margin-top: auto; min-width: 0; }
+.tile .tvr .tv { margin-top: 0; flex: 1 1 auto; min-width: 0; }
+/* A filled circle with a ring, so they read as buttons at a glance. */
+.tile .tvr .sbtn { background: rgba(var(--ink), 0.16); box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.22); color: var(--fg); }
+.tile .tvr .sbtn:hover { background: rgba(var(--ink), 0.26); }
+.tile .tvr .sbtn .bi { stroke-width: 2.4; }
 .tile .at { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .tile .ab { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.tile .step { display: flex; align-items: center; gap: 4px; margin-left: auto; flex: none; }
+/* The timer's dial: h / m / s like the iPhone's; scroll one to turn it, click to type. */
+.tile .dial { display: flex; align-items: center; gap: 4px; margin-top: auto; min-width: 0; }
+.tile .dc { flex: 1 1 0; min-width: 0; height: 34px; display: flex; align-items: baseline; justify-content: center; gap: 1px; padding-top: 9px; box-sizing: border-box; border-radius: 10px; background: rgba(var(--ink), 0.08); cursor: text; font: 600 17px/1 var(--font); font-variant-numeric: tabular-nums; transition: background-color 0.16s ease, box-shadow 0.16s ease; }
+.tile .dc:hover { background: rgba(var(--ink), 0.15); }
+.tile .dc:focus-within { background: rgba(var(--ink), 0.18); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.tile .du { font: 500 10.5px/1 var(--font); color: var(--muted); }
+.tile .di { width: 2.3ch; padding: 0; border: 0; outline: none; background: transparent; color: inherit; font: inherit; text-align: center; caret-color: var(--accent); cursor: text; }
+.tile .di::placeholder { color: var(--muted); }
+.tile .dial .sbtn { flex: none; }
+.tile .dial .sbtn:disabled { opacity: 0.4; cursor: default; }
 .tile.k-list .sb-rows { gap: 0; overflow: hidden; }
 .tile.k-list .sb-rows .row { padding: 4px 6px; }
 

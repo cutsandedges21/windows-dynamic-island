@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ISLAND_CLASSES, textClass, wheelTurn, type WheelGesture } from '../src/core/sheet';
+import { ISLAND_CLASSES, mapActions, textClass, wheelTurn, type WheelGesture } from '../src/core/sheet';
 
 describe('card blocks', () => {
   it("a boxed message (a chat's last words, an answer) never takes a class of the island's own elements", () => {
@@ -14,6 +14,20 @@ describe('card blocks', () => {
     expect(textClass({ t: 'text', key: 'm', text: 'x', bubble: true }).split(' ')).toContain('boxed');
     // The boxed look is styled under the name the renderer gives it.
     expect(readFileSync(resolve(__dirname, '../src/styles/island.css'), 'utf8')).toContain('.sb-text.boxed .tx');
+  });
+});
+
+describe('tile buttons', () => {
+  it("a stat tile's small buttons get the activity's name like any other (the Speakers tile's − and +)", () => {
+    const [grid] = mapActions(
+      [{ t: 'tiles', key: 'g', cols: 1, rows: 1, pages: 1, cell: 0, items: [{ key: 'sound', action: 'mute', body: { k: 'stat', icon: 'speaker', label: 'Speakers', value: '40%', buttons: [{ key: 'up', icon: 'plus', action: 'vol-up' }] } }] }],
+      (a) => `act:system-controls:${a}`,
+    );
+    const tile = grid.t === 'tiles' ? grid.items[0] : null;
+    expect(tile?.action).toBe('act:system-controls:mute');
+    expect(tile?.body.k === 'stat' && tile.body.buttons?.[0].action).toBe('act:system-controls:vol-up');
+    // The small round look is styled under the class the renderer gives them.
+    expect(readFileSync(resolve(__dirname, '../src/styles/island.css'), 'utf8')).toContain('.tile .tvr .sbtn');
   });
 });
 

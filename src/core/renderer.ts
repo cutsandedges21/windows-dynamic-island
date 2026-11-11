@@ -73,6 +73,12 @@ export function springAnimate(target: Element, keyframes: Keyframe[], cfg: Sprin
   return run({ duration, easing: springBezier(cfg), ...extra });
 }
 
+/** How far a wheel event scrolls, in px (a line-based wheel counts 40 px a line). */
+export function wheelDelta(e: WheelEvent): number {
+  const d = e.deltaY || e.deltaX;
+  return e.deltaMode === 1 ? d * 40 : e.deltaMode === 2 ? d * 400 : d;
+}
+
 export class PillRenderer {
   readonly pill: HTMLElement;
   private readonly content: HTMLElement;
@@ -111,7 +117,7 @@ export class PillRenderer {
       e.preventDefault();
       this.onAction('island:menu', null, this.pill);
     });
-    this.pill.addEventListener('wheel', (e) => this.onAction('island:wheel', Math.sign(e.deltaY || e.deltaX), this.pill), { passive: true });
+    this.pill.addEventListener('wheel', (e) => this.onAction('island:wheel', wheelDelta(e), this.pill), { passive: true });
     this.pill.addEventListener('pointerenter', () => this.onAction('island:hover', true, this.pill));
     this.pill.addEventListener('pointerleave', () => this.onAction('island:hover', false, this.pill));
     // Which segment the pointer rests on: hovering a chip asks that activity for its card.
@@ -383,6 +389,9 @@ export class PillRenderer {
     switch (seg.t) {
       case 'icon': {
         e.className = `seg seg-icon sz-${seg.size ?? 'md'} tone-${tone}${seg.anim ? ` anim-${seg.anim}` : ''}`;
+        if (seg.action) e.dataset.action = seg.action;
+        else delete e.dataset.action;
+        args.set(e, seg.arg);
         if (!prev || (prev.t === 'icon' && prev.icon !== seg.icon)) {
           e.innerHTML = icon(seg.icon);
           if (prev) springAnimate(e.firstElementChild!, [{ transform: 'scale(0.5) rotate(-30deg)', opacity: 0 }, { transform: 'none', opacity: 1 }], springs.bouncy);
@@ -400,7 +409,7 @@ export class PillRenderer {
         const current = e.querySelector<HTMLElement>('.t:not(.out)')!;
         if (current.textContent !== seg.text) {
           // Clocks, timers and counters just tick in place; only wording changes roll.
-          if (!prev || prev.t !== 'text' || (timeLike(current.textContent ?? '') && timeLike(seg.text))) current.textContent = seg.text;
+          if (!prev || prev.t !== 'text' || ticksInPlace(current.textContent ?? '', seg.text)) current.textContent = seg.text;
           else this.rollText(e, current, seg.text);
         }
         break;
@@ -532,6 +541,11 @@ export class PillRenderer {
 /** Times, counts and percentages: "0:52", "12m 43s", "84%", "4.1M", "9:41 PM". */
 export function timeLike(text: string): boolean {
   return /\d/.test(text) && /^[\d\s:./%,+\-–hmsdkKMBGTAP]+$/.test(text);
+}
+
+/** A text change that ticks instead of rolling: a time or count, or a label whose only change is its digits ("CPU 17%" to "CPU 18%"). */
+export function ticksInPlace(old: string, next: string): boolean {
+  return (timeLike(old) && timeLike(next)) || old.replace(/\d/g, '') === next.replace(/\d/g, '');
 }
 
 /** The element's own translate with a different scale, for a press pulse. */

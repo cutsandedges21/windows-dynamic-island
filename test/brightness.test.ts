@@ -1,4 +1,4 @@
-// The brightness flyout against a fake native layer and context.
+// System Controls' brightness flyout and tile against a fake native layer and context.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,7 +15,8 @@ vi.mock('../src/core/native', () => ({
   emitLocal: () => {},
 }));
 
-import { BrightnessActivity, FLASH_MS } from '../src/activities/brightness';
+import { FLASH_MS } from '../src/activities/brightness';
+import { SystemControlsActivity } from '../src/activities/system-controls';
 import type { ActivityContext, RenderEnv, SheetEnv } from '../src/core/activity';
 import { hasIcon } from '../src/core/icons';
 import type { Level } from '../src/core/layout';
@@ -29,14 +30,14 @@ const emit = (event: string, payload: unknown) => {
 const env = (level: Level, over: Partial<RenderEnv> = {}): RenderEnv => ({ level, width: 400, height: 40, now: Date.now(), open: false, hover: false, surfaced: null, interactive: true, vertical: false, ...over });
 const sheet = { interactive: true } as unknown as SheetEnv;
 
-async function boot() {
+async function boot(options: Record<string, unknown> = {}) {
   const settings = defaultSettings();
   const surface: Array<{ key?: string; ms?: number; level?: string }> = [];
-  const act = new BrightnessActivity();
+  const act = new SystemControlsActivity();
   const ctx = {
-    id: 'brightness',
-    config: () => settings.activities.config.brightness,
-    options: () => ({}),
+    id: 'system-controls',
+    config: () => settings.activities.config['system-controls'],
+    options: () => options,
     settings: () => settings,
     update: () => {},
     surface: (o?: { key?: string; ms?: number; level?: string }) => void surface.push(o ?? {}),
@@ -53,14 +54,20 @@ async function boot() {
   return { act, surface };
 }
 
-const texts = (act: BrightnessActivity, e: RenderEnv) => act.render(e).flatMap((s) => (s.t === 'text' ? [s.text] : []));
-const icon = (act: BrightnessActivity, e: RenderEnv) => act.render(e).find((s) => s.t === 'icon');
+const texts = (act: SystemControlsActivity, e: RenderEnv) => act.render(e).flatMap((s) => (s.t === 'text' ? [s.text] : []));
+const icon = (act: SystemControlsActivity, e: RenderEnv) => act.render(e).find((s) => s.t === 'icon');
+/** The Brightness tile among System Controls' tiles, or null. */
+const tile = (act: SystemControlsActivity) => act.tiles(sheet).find((t) => t.key === 'brightness') ?? null;
 
 beforeEach(() => {
   vi.useFakeTimers();
   h.bus.clear();
   for (const k of Object.keys(h.native)) delete h.native[k];
   h.native.brightnessGet = vi.fn(async () => 62);
+  // The other parts of System Controls, with nothing to say.
+  h.native.audioState = vi.fn(async () => null);
+  h.native.lockKeys = vi.fn(async () => null);
+  h.native.powerState = vi.fn(async () => null);
 });
 afterEach(() => vi.useRealTimers());
 
@@ -99,7 +106,7 @@ describe('brightness', () => {
     expect(surface).toEqual([]);
     release(55);
     await vi.advanceTimersByTimeAsync(0);
-    expect(act.tile(sheet)).toMatchObject({ body: { value: '40%' } });
+    expect(tile(act)).toMatchObject({ body: { value: '40%' } });
 
     emit('brightness', 30);
     expect(surface.at(-1)).toMatchObject({ key: 'brightness' });
@@ -122,10 +129,10 @@ describe('brightness', () => {
   it('has a tile only once a value is known, and it does nothing on tap', async () => {
     h.native.brightnessGet = vi.fn(async () => null);
     const { act, surface } = await boot();
-    expect(act.tile(sheet)).toBeNull();
+    expect(tile(act)).toBeNull();
     emit('brightness', 62);
     expect(surface).toEqual([]);
-    const t = act.tile(sheet);
+    const t = tile(act);
     expect(t).toMatchObject({ key: 'brightness', body: { k: 'stat', icon: 'sun', label: 'Brightness', value: '62%', progress: 0.62 } });
     expect(t?.action).toBeUndefined();
   });
@@ -153,7 +160,7 @@ describe('brightness edge cases', () => {
     const { act, surface } = await boot();
     for (const bad of [NaN, null, undefined, 'x', Infinity]) emit('brightness', bad);
     expect(surface).toEqual([]);
-    expect(act.tile(sheet)).toMatchObject({ body: { value: '62%' } });
+    expect(tile(act)).toMatchObject({ body: { value: '62%' } });
     emit('brightness', 70);
     expect(texts(act, env('compact'))).toEqual(['70%']);
   });
@@ -161,7 +168,7 @@ describe('brightness edge cases', () => {
   it('keeps the startup value between 0 and 100', async () => {
     h.native.brightnessGet = vi.fn(async () => 150);
     const { act, surface } = await boot();
-    expect(act.tile(sheet)).toMatchObject({ body: { value: '100%', progress: 1 } });
+    expect(tile(act)).toMatchObject({ body: { value: '100%', progress: 1 } });
     emit('brightness', 100);
     expect(surface).toEqual([]);
   });
@@ -169,9 +176,17 @@ describe('brightness edge cases', () => {
   it('a malformed startup read leaves the first event as the baseline', async () => {
     h.native.brightnessGet = vi.fn(async () => NaN);
     const { act, surface } = await boot();
-    expect(act.tile(sheet)).toBeNull();
+    expect(tile(act)).toBeNull();
     emit('brightness', 40);
     expect(surface).toEqual([]);
+  });
+
+  it('with Brightness switched off: no flyout, but the tile follows', async () => {
+    const { act, surface } = await boot({ brightness: false });
+    emit('brightness', 30);
+    expect(surface).toEqual([]);
+    expect(act.status().active).toBe(false);
+    expect(tile(act)).toMatchObject({ body: { value: '30%' } });
   });
 
   it('stays quiet once stopped', async () => {

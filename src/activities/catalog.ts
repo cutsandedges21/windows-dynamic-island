@@ -24,7 +24,7 @@ export type OptionSpec = (
   | { key: string; type: 'text'; label: string; help?: string; default: string; placeholder?: string; secret?: boolean }
   /** With a `group` on each choice, the Activities page shows every value as a short code, one line per group (Hockey's teams). */
   | { key: string; type: 'choice'; label: string; help?: string; default: string; choices: Array<{ value: string; label: string; group?: string }> }
-  /** Any mix of the choices, at least one (System Stats: CPU, RAM and GPU on the pill). */
+  /** Any mix of the choices (System Stats: CPU, RAM and GPU on the pill, where none means the top of its priority). */
   | { key: string; type: 'multi'; label: string; help?: string; default: string[]; choices: Array<{ value: string; label: string }> }
   /**
    * An API key or token. It lives in the Windows Credential Manager under `secret` (such as
@@ -110,7 +110,7 @@ export const CATALOG: ActivityMeta[] = [
         key: 'hoverPlayer',
         type: 'toggle',
         label: 'Player on hover',
-        help: "Point at the music on the pill and it grows into a player, like an iPhone's Dynamic Island: the track, a scrubber, and play, skip and sound output. Even when the hover card is set to Claude stats.",
+        help: "Point at the music on the pill and it grows into a player, like an iPhone's Dynamic Island: the track, a scrubber, and play, skip and sound output. Even when the hover card is set to Claude stats. Off, the pill widens instead.",
         default: true,
       },
       { key: 'showArt', type: 'toggle', label: 'Album art', default: true },
@@ -199,13 +199,6 @@ export const CATALOG: ActivityMeta[] = [
     options: [
       { key: 'focusMinutes', type: 'number', label: 'Focus length', default: 25, min: 5, max: 120, unit: 'min' },
       { key: 'breakMinutes', type: 'number', label: 'Break length', default: 5, min: 1, max: 60, unit: 'min' },
-      {
-        key: 'quietFocus',
-        type: 'toggle',
-        label: 'Quiet while focusing',
-        help: "A focus round turns Quiet on: nothing pops up and notifications wait, in Island and in Windows. The break, or stopping, turns it off again. Quiet you turned on yourself is left alone.",
-        default: true,
-      },
     ],
   },  {
     id: 'reminders',
@@ -235,42 +228,25 @@ export const CATALOG: ActivityMeta[] = [
     ],
   },
   {
-    id: 'sound',
-    mac: 'soon',
-    name: 'Sound',
-    description: 'Volume changes and audio devices, like headphones connecting.',
-    icon: 'speaker',
-    category: 'media',
+    // Justin's Sound and Moss's Brightness and Caps Lock, one activity since the forks merged
+    // (settings.ts turns the old three into this). Volume and brightness don't run on a Mac yet,
+    // so their switches are Windows only; Caps Lock does.
+    id: 'system-controls',
+    name: 'System Controls',
+    description:
+      "The pill shows the volume, the screen's brightness and Caps Lock or Num Lock as you change them, and when headphones connect. In Control Center: the volume with − and +, the brightness, Screenshot and Record (Snipping Tool: drag an area), and whether battery saver is on.",
+    icon: 'sliders',
+    category: 'system',
     enabled: true,
     priority: 'low',
     behavior: B(true, false, true, false),
-    options: [],
-  },
-  {
-    id: 'keys',
-    name: 'Caps Lock',
-    description: 'The pill flashes when you turn Caps Lock or Num Lock on or off, so you know before you type.',
-    icon: 'capslock',
-    category: 'system',
-    enabled: true,
-    priority: 'low',
-    behavior: B(true, false, false, false),
     options: [
+      { key: 'volume', type: 'toggle', label: 'Volume', help: 'The volume and mute as you change them.', default: true, mac: 'never' },
+      { key: 'device', type: 'toggle', label: 'Audio device', help: 'Which speakers or headphones play, when that changes.', default: true, mac: 'never' },
+      { key: 'brightness', type: 'toggle', label: 'Brightness', help: "A laptop's own screen; external monitors don't report it.", default: true, mac: 'never' },
       { key: 'caps', type: 'toggle', label: 'Caps Lock', default: true },
       { key: 'num', type: 'toggle', label: 'Num Lock', default: true, mac: 'never' },
     ],
-  },
-  {
-    id: 'brightness',
-    mac: 'soon',
-    name: 'Brightness',
-    description: "The pill shows the screen's brightness when you change it (a laptop's own screen; external monitors don't report it).",
-    icon: 'sun',
-    category: 'system',
-    enabled: true,
-    priority: 'low',
-    behavior: B(true, false, false, false),
-    options: [],
   },
   {
     id: 'screenshots',
@@ -344,19 +320,38 @@ export const CATALOG: ActivityMeta[] = [
     priority: 'low',
     behavior: B(true, false, false, false),
     options: [
+      { key: 'always', type: 'toggle', label: 'Always show', help: 'Keep the numbers on the island instead of only on spikes.', default: false },
+      { key: 'hoverCard', type: 'toggle', label: 'Hover card', help: 'Pointing at the stats shows a card with a bar for each. Click a bar to see the apps using the most.', default: true },
+      {
+        key: 'order',
+        type: 'choice',
+        label: 'Priority',
+        help: 'Which stat comes first. The first one leads and stays when space runs out, and it is the one shown beside other activities.',
+        default: 'cpu,mem,gpu',
+        choices: [
+          { value: 'cpu,mem,gpu', label: 'CPU, RAM, GPU' },
+          { value: 'cpu,gpu,mem', label: 'CPU, GPU, RAM' },
+          { value: 'mem,cpu,gpu', label: 'RAM, CPU, GPU' },
+          { value: 'mem,gpu,cpu', label: 'RAM, GPU, CPU' },
+          { value: 'gpu,cpu,mem', label: 'GPU, CPU, RAM' },
+          { value: 'gpu,mem,cpu', label: 'GPU, RAM, CPU' },
+        ],
+      },
       {
         key: 'show',
         type: 'multi',
         label: 'On the pill',
-        help: 'What the resting pill shows, side by side. Pointing at the pill or opening the island shows all three.',
-        default: ['cpu'],
+        help: 'What the resting pill shows, side by side, in priority order. None picked: the top one alone.',
+        default: [],
         choices: [
           { value: 'cpu', label: 'CPU' },
           { value: 'ram', label: 'RAM' },
           { value: 'gpu', label: 'GPU' },
         ],
       },
-      { key: 'always', type: 'toggle', label: 'Always show', help: 'Keep the numbers on the island instead of only on spikes.', default: false },
+      { key: 'expandedCpu', type: 'toggle', label: 'CPU when expanded', help: 'What the bigger island shows. Pick any mix of CPU, RAM and GPU.', default: true },
+      { key: 'expandedRam', type: 'toggle', label: 'RAM when expanded', default: true },
+      { key: 'expandedGpu', type: 'toggle', label: 'GPU when expanded', default: true },
       { key: 'cpuSpike', type: 'number', label: 'CPU spike at', default: 90, min: 50, max: 100, unit: '%' },
       { key: 'memSpike', type: 'number', label: 'Memory warning at', default: 92, min: 50, max: 100, unit: '%' },
     ],

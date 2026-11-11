@@ -54,6 +54,14 @@ export const CELLS: Record<TileSize, { w: number; h: number }> = {
   '2x2': { w: 2, h: 2 },
 };
 
+/**
+ * The cells a tile asks for: the size the user gave it (Control Center's arranging, saved in
+ * `island.grid.sizes`), else the tile's own default (`span` x `rows`, 1x1 unless it says).
+ */
+export function cellsOf(tile: { span?: number; rows?: number }, saved: TileSize | undefined): [w: number, h: number] {
+  return saved && CELLS[saved] ? [CELLS[saved].w, CELLS[saved].h] : [tile.span ?? 1, tile.rows ?? 1];
+}
+
 export function sizeOf(w: number, h: number): TileSize {
   return `${Math.min(2, Math.max(1, w))}x${Math.min(2, Math.max(1, h))}` as TileSize;
 }

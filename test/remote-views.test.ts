@@ -5,7 +5,7 @@ import type { ActivityStatus } from '../src/core/activity';
 import type { MirrorFrame } from '../src/core/mirror';
 import type { Placed } from '../src/core/segments';
 import type { SheetView } from '../src/core/sheet';
-import { HELLO_GUARDED, mayPress, pressables, stripActions, stripPill, urgentIds } from '../src/remote/views';
+import { HELLO_GUARDED, mayPress, PC_ONLY, pressables, stripActions, stripPill, urgentIds } from '../src/remote/views';
 
 const card: SheetView = {
   key: 'mixed',
@@ -44,6 +44,23 @@ describe('what a phone may press', () => {
     expect(mayPress(shown, 'act:music:toggle', 'C:\\x')).toBe(false);
   });
 
+  it("takes any length from a timer's dial and its Start", () => {
+    const grid: SheetView = {
+      key: 'grid',
+      blocks: [
+        {
+          t: 'tiles', key: 'tiles', cols: 4, rows: 4, pages: 1, cell: 80,
+          items: [{ key: 'timer/timer', body: { k: 'actions', label: 'Timer', buttons: [{ key: 'focus', action: 'act:timer:focus' }], dial: { seconds: 300, action: 'act:timer:length', start: { key: 'start', action: 'act:timer:start-secs' } } } }],
+        },
+      ],
+    };
+    const p = pressables(grid);
+    expect(mayPress(p, 'act:timer:length', 5430)).toBe(true);
+    expect(mayPress(p, 'act:timer:start-secs', 90)).toBe(true);
+    expect(mayPress(p, 'act:timer:focus', undefined)).toBe(true);
+    expect(mayPress(p, 'act:timer:focus', 3)).toBe(false);
+  });
+
   it("reads a pill's segments too, an input's cancel included", () => {
     const placed = [
       { seg: { t: 'chip', key: 'chip/land', label: '', action: 'act:land:card' }, x: 0, w: 20 },
@@ -78,6 +95,17 @@ describe('Allow held back from phones', () => {
     const tile = out.blocks[0].t === 'tiles' ? out.blocks[0].items[0] : null;
     expect(tile?.action).toBeUndefined();
     expect(tile?.body.k === 'actions' ? tile.body.buttons.map((b) => b.action) : []).toEqual(['act:claude:deny']);
+  });
+
+  it("takes them off a stat tile's small buttons too (the Speakers tile's − and +)", () => {
+    const grid: SheetView = {
+      key: 'g',
+      blocks: [{ t: 'tiles', key: 't', cols: 4, rows: 1, pages: 1, cell: 80, items: [{ key: 'x/s', body: { k: 'stat', icon: 'speaker', label: 'S', value: '1', buttons: [{ key: 'a', action: 'act:claude:allow' }, { key: 'u', action: 'act:x:vol-up' }] } }] }],
+    };
+    const out = stripActions(grid, blocked);
+    const tile = out.blocks[0].t === 'tiles' ? out.blocks[0].items[0] : null;
+    expect(tile?.body.k === 'stat' ? tile.body.buttons?.map((b) => b.action) : []).toEqual(['act:x:vol-up']);
+    expect(PC_ONLY).toEqual(['act:system-controls:screenshot', 'act:system-controls:record', 'act:system-controls:saver']);
   });
 
   it('takes such a segment off the pill', () => {

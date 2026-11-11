@@ -13,7 +13,7 @@ const answers = (over: Partial<Answers>): Answers => ({ uses: [], glance: [], ci
 describe('suggestGlance', () => {
   it('ticks what the uses call for, in the order the screen lists them', () => {
     expect(suggestGlance(['school'], desktop)).toEqual(['calendar', 'timer', 'reminders', 'clipboard']);
-    expect(suggestGlance(['gaming', 'media'], desktop)).toEqual(['music', 'system', 'network', 'sound']);
+    expect(suggestGlance(['gaming', 'media'], desktop)).toEqual(['music', 'system', 'network', 'system-controls']);
   });
 
   it('adds Battery on a laptop and never offers it on a desktop', () => {
@@ -28,10 +28,10 @@ describe('suggestGlance', () => {
 
 describe('planActivities', () => {
   it('puts the picks on the grid and keeps the helpers on but off the grid', () => {
-    const plan = planActivities(answers({ uses: ['gaming'], glance: ['system', 'network', 'sound'], ai: true }), desktop);
-    expect(plan.picked).toEqual(['game', 'system', 'network', 'sound']);
+    const plan = planActivities(answers({ uses: ['gaming'], glance: ['system', 'network', 'system-controls'], ai: true }), desktop);
+    expect(plan.picked).toEqual(['game', 'system', 'network', 'system-controls']);
     // The bot's brain is on with the AI step, but has no tile: the bot is the way in.
-    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'phone', 'workspaces', 'keys', 'brightness', 'local']);
+    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'phone', 'workspaces', 'local']);
     expect(plan.enabled).toEqual([...plan.picked, ...plan.hidden]);
   });
 
@@ -48,6 +48,8 @@ describe('planActivities', () => {
     expect(plan.enabled).not.toContain('battery');
     expect(plan.picked).toContain('timer');
     expect(glanceChoices(mac).map((g) => g.id)).not.toContain('music');
+    // Volume and brightness have nothing to show on a Mac yet.
+    expect(glanceChoices(mac).map((g) => g.id)).not.toContain('system-controls');
   });
 
   it('a glance tick the PC cannot have is ignored, and Battery runs on laptops only', () => {

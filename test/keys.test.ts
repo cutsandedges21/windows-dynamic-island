@@ -1,4 +1,4 @@
-// Caps Lock and Num Lock flashes against a fake native layer and context.
+// System Controls' Caps Lock and Num Lock flashes against a fake native layer and context.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,7 +15,8 @@ vi.mock('../src/core/native', () => ({
   emitLocal: () => {},
 }));
 
-import { FLASH_MS, KeysActivity } from '../src/activities/keys';
+import { FLASH_MS } from '../src/activities/keys';
+import { SystemControlsActivity } from '../src/activities/system-controls';
 import type { ActivityContext, RenderEnv } from '../src/core/activity';
 import { hasIcon } from '../src/core/icons';
 import type { Level } from '../src/core/layout';
@@ -31,10 +32,10 @@ const env = (level: Level, over: Partial<RenderEnv> = {}): RenderEnv => ({ level
 async function boot(options: Record<string, unknown> = {}) {
   const settings = defaultSettings();
   const surface: Array<{ key?: string; ms?: number; level?: string }> = [];
-  const act = new KeysActivity();
+  const act = new SystemControlsActivity();
   const ctx = {
-    id: 'keys',
-    config: () => settings.activities.config.keys,
+    id: 'system-controls',
+    config: () => settings.activities.config['system-controls'],
     options: () => options,
     settings: () => settings,
     update: () => {},
@@ -52,13 +53,17 @@ async function boot(options: Record<string, unknown> = {}) {
   return { act, surface };
 }
 
-const texts = (act: KeysActivity, e: RenderEnv) => act.render(e).flatMap((s) => (s.t === 'text' ? [s.text] : []));
+const texts = (act: SystemControlsActivity, e: RenderEnv) => act.render(e).flatMap((s) => (s.t === 'text' ? [s.text] : []));
 
 beforeEach(() => {
   vi.useFakeTimers();
   h.bus.clear();
   for (const k of Object.keys(h.native)) delete h.native[k];
   h.native.lockKeys = vi.fn(async () => ({ caps: false, num: true }));
+  // The other parts of System Controls, with nothing to say.
+  h.native.audioState = vi.fn(async () => null);
+  h.native.brightnessGet = vi.fn(async () => null);
+  h.native.powerState = vi.fn(async () => null);
 });
 afterEach(() => vi.useRealTimers());
 

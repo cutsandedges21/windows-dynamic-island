@@ -64,6 +64,8 @@ button { cursor: pointer; }
 .row-help { color: var(--muted); font-size: 12.5px; }
 /* Long help text wraps; it never squeezes the control beside it into two rows. */
 .row-text { flex: 1 1 0; min-width: 0; }
+.glass-slider { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+.glass-slider input { width: 200px; }
 .row > .segmented { flex-wrap: nowrap; }
 @media (max-width: 720px) { .row > .segmented { flex-wrap: wrap; } }
 .row.stack { flex-direction: column; align-items: flex-start; gap: 8px; }
@@ -112,6 +114,14 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 .size-readout { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); }
 .size-readout b { color: var(--fg); font-weight: 600; margin-right: 2px; }
 
+/* ------------------------------------------------------------------ controls page: how to do what, one line each */
+
+.ctl-row { display: grid; grid-template-columns: minmax(150px, 220px) 1fr; gap: 16px; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--line); }
+.section h2 + .ctl-row { border-top: 0; }
+.ctl-how { justify-self: start; padding: 3px 10px; border-radius: 8px; background: rgba(255, 255, 255, 0.07); font-weight: 500; font-size: 12.5px; }
+.ctl-what { color: var(--muted); font-size: 13px; }
+@media (max-width: 720px) { .ctl-row { grid-template-columns: 1fr; gap: 4px; } }
+
 /* ------------------------------------------------------------------ activity list */
 
 .act-list { display: flex; flex-direction: column; gap: 6px; }
@@ -143,6 +153,21 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 .chip.on { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: color-mix(in srgb, var(--accent) 60%, transparent); color: var(--fg); }
 .act-body .row { padding: 9px 0; }
 
+/* System Stats: priority rows with an on-the-pill and an expanded switch each */
+.stat-table { padding: 10px 0; border-top: 1px solid var(--line); }
+.stat-head, .stat-row { display: grid; grid-template-columns: 20px 26px 1fr 88px 88px; align-items: center; gap: 8px; }
+.stat-head { grid-template-columns: 1fr 88px 88px; color: var(--muted); font-size: 12.5px; padding-bottom: 6px; }
+.stat-title { font-weight: 500; color: var(--fg); font-size: 14px; }
+.stat-cell { display: flex; justify-content: center; }
+.stat-rows { display: flex; flex-direction: column; gap: 4px; padding-bottom: 6px; }
+.stat-row { height: 40px; padding: 0 4px; border-radius: 8px; background: rgba(255, 255, 255, 0.03); }
+.stat-row .grip { cursor: grab; touch-action: none; }
+.stat-row.dragging { background: rgba(255, 255, 255, 0.09); }
+.stat-row.dragging .grip { cursor: grabbing; }
+.stat-icon { display: grid; place-items: center; color: var(--accent); }
+.stat-icon .ico { width: 17px; height: 17px; }
+.stat-name { font-weight: 500; }
+
 /* ------------------------------------------------------------------ Claude panel */
 
 .claude-panel { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--line); }
@@ -161,16 +186,17 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 .sess { display: grid; grid-template-columns: 22px 12px 1fr auto; grid-template-rows: auto auto; column-gap: 8px; align-items: center; text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid transparent; background: rgba(255, 255, 255, 0.035); }
 .sess:hover { border-color: var(--line); background: rgba(255, 255, 255, 0.07); }
 .sess .slot { grid-row: span 2; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
-.sess .dot { grid-row: span 2; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
-.sess.tone-needs .dot { background: var(--claude); }
-.sess.tone-working .dot { background: var(--good); }
-.sess.tone-turn .dot { background: var(--info); }
-.sess.tone-error .dot { background: var(--bad); }
+/* A chat's status colours, the island's (chatTone in src/activities/claude). */
+.sess .dot { grid-row: span 2; width: 9px; height: 9px; border-radius: 50%; background: var(--dim); }
+.sess.tone-needs .dot { background: var(--warn); }
+.sess.tone-working .dot { background: var(--info); }
+.sess.tone-turn .dot { background: var(--good); }
+.sess.tone-error .dot, .sess.tone-stopped .dot { background: var(--bad); }
 .dot.pulse { animation: pulse 1.4s ease-in-out infinite; }
 .sess-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sess-meta { grid-column: 3; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sess-label { grid-column: 4; grid-row: 1 / span 2; font-size: 12.5px; color: var(--muted); }
-.sess.tone-needs .sess-label { color: var(--claude); font-weight: 600; }
+.sess.tone-needs .sess-label { color: var(--warn); font-weight: 600; }
 .mini { display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; border-radius: 7px; border: 0; background: rgba(255, 255, 255, 0.03); text-align: left; }
 .mini:hover { background: rgba(255, 255, 255, 0.07); }
 .mini span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

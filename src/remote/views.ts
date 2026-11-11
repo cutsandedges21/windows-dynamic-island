@@ -10,6 +10,13 @@ import type { Block, SheetButton, SheetRow, SheetView, TileBody } from '../core/
 /** Claude's Allow: with Windows Hello asked before Allow, phones never get it or press it. */
 export const HELLO_GUARDED: readonly string[] = ['act:claude:allow'];
 
+/**
+ * Buttons that only make sense at the PC: System Controls' Screenshot and Record open Snipping
+ * Tool's overlay there, to drag an area with the PC's mouse, and Battery saver opens Windows
+ * Settings there. Phones never get them or press them.
+ */
+export const PC_ONLY: readonly string[] = ['act:system-controls:screenshot', 'act:system-controls:record', 'act:system-controls:saver'];
+
 /** Every action shown, with the arguments it was shown with (as JSON); ANY for typed text and seeking. */
 export type Pressables = Map<string, Set<string>>;
 
@@ -26,7 +33,8 @@ function argKey(arg: unknown): string {
 
 /**
  * What a view or pill offers to press. Buttons, rows, tiles, choices and avatars carry their
- * argument; an input sends what is typed and a player's seek a time, so those take any.
+ * argument; an input sends what is typed, a player's seek a time and a timer's dial (and its
+ * Start) the length it was turned to, so those take any.
  */
 export function pressables(value: unknown, out: Pressables = new Map()): Pressables {
   const add = (action: unknown, arg: string) => {
@@ -49,6 +57,10 @@ export function pressables(value: unknown, out: Pressables = new Map()): Pressab
       add(o.cancel, argKey(null));
     } else if (o.t === 'player' && typeof o.actions === 'object' && o.actions !== null) {
       for (const [k, a] of Object.entries(o.actions)) add(a, k === 'seek' ? ANY : argKey(null));
+    } else if (o.k === 'actions' && typeof o.dial === 'object' && o.dial !== null) {
+      const dial = o.dial as { action?: unknown; start?: { action?: unknown } };
+      add(dial.action, ANY);
+      add(dial.start?.action, ANY);
     } else if ('action' in o) add(o.action, argKey(o.arg));
     for (const x of Object.values(o)) if (typeof x === 'object' && x !== null) walk(x);
   };
@@ -68,7 +80,8 @@ export function stripActions(view: SheetView, blocked: ReadonlySet<string>): She
   const ok = (a: string | undefined) => !a || !blocked.has(a);
   const buttons = (list: SheetButton[]) => list.filter((b) => ok(b.action));
   const row = (r: SheetRow): SheetRow => ({ ...r, action: ok(r.action) ? r.action : undefined, button: r.button && ok(r.button.action) ? r.button : undefined });
-  const body = (b: TileBody): TileBody => (b.k === 'media' || b.k === 'actions' ? { ...b, buttons: buttons(b.buttons) } : b.k === 'list' ? { ...b, rows: b.rows.map(row) } : b);
+  const body = (b: TileBody): TileBody =>
+    b.k === 'media' || b.k === 'actions' ? { ...b, buttons: buttons(b.buttons) } : b.k === 'stat' && b.buttons ? { ...b, buttons: buttons(b.buttons) } : b.k === 'list' ? { ...b, rows: b.rows.map(row) } : b;
   const blocks = view.blocks.flatMap((b): Block[] => {
     switch (b.t) {
       case 'head':

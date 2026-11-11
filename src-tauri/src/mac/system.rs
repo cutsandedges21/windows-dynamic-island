@@ -13,3 +13,8 @@ pub fn power_state() -> Result<(), String> {
 pub async fn sys_sample() -> Result<(), String> {
     Err(crate::mac::NOT_YET.into())
 }
+
+#[tauri::command]
+pub async fn sys_top() -> Result<(), String> {
+    Err(crate::mac::NOT_YET.into())
+}
