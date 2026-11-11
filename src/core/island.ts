@@ -726,7 +726,7 @@ export class Island {
         if (s.showSecondary && level !== 'idle') segs = segs.concat(this.secondarySegments(choice.visible.filter((id) => id !== primary), statuses, level, now, vertical));
       }
       // Quiet on: a small moon at the end of the pill, like the iPhone's Focus icon, so it is never on unnoticed.
-      segs = segs.concat(quietMoon(this.settings.general.dnd, viewKey, s.menu.quiet));
+      segs = segs.concat(quietMoon(this.settings.general.dnd, viewKey));
       return { size, inner, crossMax, segs, viewKey };
     };
     let orient: Orientation = orientationFor(anchor);

@@ -389,6 +389,9 @@ export class PillRenderer {
     switch (seg.t) {
       case 'icon': {
         e.className = `seg seg-icon sz-${seg.size ?? 'md'} tone-${tone}${seg.anim ? ` anim-${seg.anim}` : ''}`;
+        if (seg.action) e.dataset.action = seg.action;
+        else delete e.dataset.action;
+        args.set(e, seg.arg);
         if (!prev || (prev.t === 'icon' && prev.icon !== seg.icon)) {
           e.innerHTML = icon(seg.icon);
           if (prev) springAnimate(e.firstElementChild!, [{ transform: 'scale(0.5) rotate(-30deg)', opacity: 0 }, { transform: 'none', opacity: 1 }], springs.bouncy);

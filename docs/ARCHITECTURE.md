@@ -52,7 +52,7 @@ The island only takes keyboard focus while an inline input is open (Continue Ses
 | `tilecard.ts` | A hover card made from an activity's Control Center tile, for one with no card of its own. |
 | `grid.ts` | The Control Center's layout as data: pages of tile keys and empty cells, packed first-fit per page, overflow to the next page. `moveTile` (drag and resize), `settle` (tidy and place), `withNew` (new tiles next to their neighbour in the activities order). |
 | `island.ts` | The island engine: picks the primary activity, the level (idle, compact, expanded, maximum), secondary chips and overflow, hover, open/closed, transient surfacing, interrupts, quick menu, inline input focus. |
-| `quiet.ts` | Quiet's moon: while Quiet (do not disturb) is on, a small violet moon at the far end of an activity's pill, the idle pill, lone chips and the open island (not the menu, "+N", Hide, a file drop or a note). It is part of the pill, so Duplicate copies and phones show it too. |
+| `quiet.ts` | Quiet's moon: while Quiet (do not disturb) is on, a small violet moon at the far end of an activity's pill, the idle pill, lone chips and the open island (not the menu, "+N", Hide, a file drop or a note). Clicking it turns Quiet off (`island:dnd`, as the menu's Quiet button). It is part of the pill, so Duplicate copies and phones show it too. |
 | `priority.ts` | Ranking: band (high, medium, low) and manual order, plus foreground or background weight and interrupts. |
 | `activity.ts` | The Activity contract and registry. Built-in and external activities use the same contract. |
 | `bus.ts` | Typed event bus inside a window. |

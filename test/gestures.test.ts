@@ -59,4 +59,9 @@ describe('the Controls page', () => {
   it("doesn't promise the album art's jump to the player app before the music merge brings it", () => {
     expect(how(gestureGroups(defaultSettings(), 'windows'))).not.toContain('Click the album art');
   });
+
+  it('says the moon turns Quiet off', () => {
+    expect(what(gestureGroups(defaultSettings(), 'windows'), 'Click the moon')).toBe('Turns Quiet off. The moon sits at the end of the pill while Quiet is on.');
+    expect(how(gestureGroups(defaultSettings(), 'macos'))).toContain('Click the moon');
+  });
 });

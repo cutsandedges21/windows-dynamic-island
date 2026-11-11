@@ -33,6 +33,7 @@ export function gestureGroups(s: Settings, on: Platform): GestureGroup[] {
         ['Scroll', 'Switches to the next or previous activity. One flick on a touchpad is one switch.'],
         [`Tap ${ctrl} over it`, 'Peek: it fades and your clicks go through to what is behind, until the pointer moves away (Settings › Behavior › Peek behind).'],
         ['Click a chip', 'Brings that activity to the front (the small icons beside the main one). +N lists the rest.'],
+        ['Click the moon', 'Turns Quiet off. The moon sits at the end of the pill while Quiet is on.'],
         ['Click outside, or Esc', 'Closes whatever is open and shrinks it back.'],
         ['Drop files on it', 'Land opens with them, to send to a computer nearby.'],
         [`Point at Land's icon, press ${paste}`, 'Land opens with what you copied, ready to send.'],
