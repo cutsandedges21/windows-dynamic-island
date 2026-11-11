@@ -45,6 +45,15 @@ export function hoverView(grows: Grows, own: SheetView | null, tile: () => Sheet
 }
 
 /**
+ * How `id` grows when pointed at, from its Grows (`grows`) and its options. Music with "Player on
+ * hover" off has no player to grow into, so the pill widens (Sideways) rather than growing its
+ * tile's card; with it on, its Grows stands.
+ */
+export function hoverGrows(id: string, grows: Grows, options: Record<string, unknown> | undefined): Grows {
+  return id === 'music' && options?.hoverPlayer === false ? 'wide' : grows;
+}
+
+/**
  * Claude Code's finished and needs-you cards (keys `claude/done:…`, `claude/note:…`, a held reply
  * `claude/reply:…`) grow out of the pill like its hover card when it grows into a card; its
  * permission and question cards always hang below.

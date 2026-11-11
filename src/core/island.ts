@@ -26,7 +26,7 @@ import { applyGlass } from './glass';
 import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type Block, type SheetChip, type SheetView, type Tile } from './sheet';
-import { chatView, flatView, hoverView } from './grow';
+import { chatView, flatView, hoverGrows, hoverView } from './grow';
 import { tileCard } from './tilecard';
 import { springs } from './spring';
 import { WheelGesture } from './wheel';
@@ -1036,9 +1036,13 @@ export class Island {
     return null;
   }
 
-  /** How `id` grows when pointed at: its own choice (Activities › Grows), else Settings › When pointed at. */
+  /**
+   * How `id` grows when pointed at: its own choice (Activities › Grows), else Settings › When
+   * pointed at; Music without its player on hover widens the pill (grow.ts hoverGrows).
+   */
   private grows(id: string): Grows {
-    return growsOf(this.settings.activities.config[id], this.settings.island.defaultGrows, id);
+    const c = this.settings.activities.config[id];
+    return hoverGrows(id, growsOf(c, this.settings.island.defaultGrows, id), c?.options);
   }
 
   /**

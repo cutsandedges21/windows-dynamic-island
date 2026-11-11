@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { CATALOG } from '../src/activities/catalog';
 import { parseOrder, pickedStats } from '../src/activities/system';
 import { GLASS_DEFAULT } from '../src/core/glass';
+import { hoverGrows } from '../src/core/grow';
 import { growsOf, migrate, SETTINGS_VERSION, type Settings } from '../src/core/settings';
 
 const load = (name: string): Record<string, unknown> => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
@@ -58,7 +59,9 @@ describe("Moss's 0.4.2 settings file", () => {
     expect(grows(s, 'claude')).toBe('below');
     expect(grows(s, 'weather')).toBe('card');
     expect(grows(s, 'system-controls')).toBe('card');
+    // This music had "Player on hover" off: pointing at it widens the pill.
     expect(s.activities.config.music.options.hoverPlayer).toBe(false);
+    expect(hoverGrows('music', grows(s, 'music'), s.activities.config.music.options)).toBe('wide');
   });
 
   it('loading it again changes nothing', () => {
@@ -99,6 +102,7 @@ describe("Justin's 0.2.11 settings file", () => {
 
   it('keeps how each activity grows; anything else follows his Sideways', () => {
     expect(grows(s, 'music')).toBe('card');
+    expect(hoverGrows('music', grows(s, 'music'), s.activities.config.music.options)).toBe('card');
     expect(grows(s, 'claude')).toBe('wide');
     expect(grows(s, 'system-controls')).toBe('card');
     expect(grows(s, 'weather')).toBe('wide');

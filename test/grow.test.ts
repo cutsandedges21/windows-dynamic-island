@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatView, closeCurve, flatView, growCurve, handOff, hoverView } from '../src/core/grow';
+import { chatView, closeCurve, flatView, growCurve, handOff, hoverGrows, hoverView } from '../src/core/grow';
 import { defaultSettings, growsChoices, growsOf, migrate } from '../src/core/settings';
 import type { SheetView } from '../src/core/sheet';
 import { tileCard } from '../src/core/tilecard';
@@ -38,6 +38,25 @@ describe('growing out of the pill', () => {
     expect(hoverView('wide', stats, weatherTile)).toBe(stats);
     expect(hoverView('wide', null, weatherTile)).toBeNull();
     expect(asked).toBe(false);
+  });
+
+  it("Music with Player on hover off widens the pill instead of growing its tile's card; with it on, its Grows stands", () => {
+    const musicTile = (): SheetView => ({ key: 'music/tile-card', blocks: [] });
+    for (const grows of ['card', 'wide'] as const) {
+      expect(hoverGrows('music', grows, { hoverPlayer: false })).toBe('wide');
+      expect(hoverGrows('music', grows, { hoverPlayer: true })).toBe(grows);
+      expect(hoverGrows('music', grows, {})).toBe(grows);
+      expect(hoverGrows('music', grows, undefined)).toBe(grows);
+    }
+    // Player off: Music has no card of its own, and Sideways never asks for the tile's.
+    let asked = false;
+    expect(hoverView(hoverGrows('music', 'card', { hoverPlayer: false }), null, () => ((asked = true), musicTile()))).toBeNull();
+    expect(asked).toBe(false);
+    // Player on: it grows into the player as before.
+    expect(hoverView(hoverGrows('music', 'card', { hoverPlayer: true }), player, musicTile)).toMatchObject({ key: 'music/player', morph: true });
+    // Only Music: another activity's options don't change how it grows.
+    expect(hoverGrows('weather', 'card', { hoverPlayer: false })).toBe('card');
+    expect(hoverGrows('claude', 'below', { hoverPlayer: false })).toBe('below');
   });
 
   it('Below hangs the card under the pill (Claude Code)', () => {

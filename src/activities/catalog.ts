@@ -110,7 +110,7 @@ export const CATALOG: ActivityMeta[] = [
         key: 'hoverPlayer',
         type: 'toggle',
         label: 'Player on hover',
-        help: "Point at the music on the pill and it grows into a player, like an iPhone's Dynamic Island: the track, a scrubber, and play, skip and sound output. Even when the hover card is set to Claude stats.",
+        help: "Point at the music on the pill and it grows into a player, like an iPhone's Dynamic Island: the track, a scrubber, and play, skip and sound output. Even when the hover card is set to Claude stats. Off, the pill widens instead.",
         default: true,
       },
       { key: 'showArt', type: 'toggle', label: 'Album art', default: true },
