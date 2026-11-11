@@ -13,7 +13,7 @@ import { ChatBar, type ChatAction, type ChatView } from './chat';
 import { lookFor } from './looks';
 import { PetBrain, type PetSignal } from './pet';
 import { BorderGlow, type GlowSpec } from './glow';
-import { CELLS, hiddenTest, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
+import { cellsOf, CELLS, hiddenTest, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
 import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
 import { native, on, onFileDrop, onTermOpened, sendTo, type FileDrop, type MenuItem, type TermOpened } from './native';
 import { choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
@@ -1211,8 +1211,7 @@ export class Island {
     const editing = live && this.gridEditing;
     const sized = natural.map((t) => {
       const narrow = NARROW_OK.has(t.body.k);
-      const saved = layout.sizes[t.key];
-      const [sw, sh] = saved ? (saved.split('x').map(Number) as [number, number]) : [t.span ?? 1, t.rows ?? 1];
+      const [sw, sh] = cellsOf(t, layout.sizes[t.key]);
       // Lists, cards and players need two columns whatever was asked for.
       let w = Math.min(geo.cols, narrow ? sw : Math.max(2, sw));
       let h = Math.max(1, Math.min(geo.rows, sh));

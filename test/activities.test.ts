@@ -21,7 +21,8 @@ import type { Level } from '../src/core/layout';
 import { fitSegments, fitVertical } from '../src/core/segments';
 import { defaultSettings } from '../src/core/settings';
 import { BatteryActivity, batteryTime } from '../src/activities/battery';
-import { TimerActivity } from '../src/activities/timer';
+import { TILE_SPAN, TimerActivity } from '../src/activities/timer';
+import { cellsOf } from '../src/core/grid';
 import { tileCard } from '../src/core/tilecard';
 import { CalendarActivity } from '../src/activities/calendar';
 import { CallsActivity } from '../src/activities/calls';
@@ -249,6 +250,20 @@ describe('timer', () => {
     expect(act.status().active).toBe(false);
     act.action('start-secs', 90);
     expect(act.status()).toMatchObject({ active: true, summary: '1m 30s timer 1:30' });
+  });
+
+  it('the tile is 2x1 in Control Center by default, whatever it shows; a size the user set stays', async () => {
+    const { act } = await boot(new TimerActivity());
+    const tileEnv = { reason: 'open' as const, now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null };
+    expect(TILE_SPAN).toBe(2);
+    const idle = act.tile(tileEnv)!;
+    expect(idle).toMatchObject({ key: 'timer', span: 2 });
+    expect(idle.rows).toBeUndefined();
+    act.action('start-secs', 90);
+    expect(act.tile(tileEnv)).toMatchObject({ key: 'timer', span: 2 });
+    expect(cellsOf(idle, undefined)).toEqual([2, 1]);
+    expect(cellsOf(idle, '1x1')).toEqual([1, 1]);
+    expect(cellsOf(idle, '2x2')).toEqual([2, 2]);
   });
 
   it("the dial's tile card shows the length, and its Start starts that length", async () => {

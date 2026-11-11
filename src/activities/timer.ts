@@ -33,6 +33,8 @@ const DONE_SHOW_MS = 60000;
 const MAX_SECONDS = 86399;
 /** Laps a stopwatch's card lists (the newest). */
 const SHOWN_LAPS = 5;
+/** Two cells wide in Control Center unless the user sized it: the dial's three boxes and Start need the room. */
+export const TILE_SPAN = 2;
 
 /** 0:12.34: a lap to the hundredth. */
 function lapClock(ms: number): string {
@@ -211,7 +213,7 @@ export class TimerActivity extends BaseActivity {
       // The dial and its Start replace the quick-timer button; focus and stopwatch sit small up top.
       const buttons = starters.filter((b) => b.key !== 'start5').map((b) => ({ ...b, style: 'ghost' as const }));
       const dial = { seconds: this.timerSeconds(), action: 'length', start: { key: 'start', icon: 'play', action: 'start-secs', style: 'primary' as const, tip: 'Start' } };
-      return { key: 'timer', tone: 'accent', body: { k: 'actions', icon: 'timer', label: 'Timer', buttons, dial } };
+      return { key: 'timer', span: TILE_SPAN, tone: 'accent', body: { k: 'actions', icon: 'timer', label: 'Timer', buttons, dial } };
     }
 
     if (t.doneAt) {
@@ -233,7 +235,7 @@ export class TimerActivity extends BaseActivity {
         }
       }
       const label = focus ? (t.phase === 'focus' ? 'Focus done' : 'Break over') : `${t.label} done`;
-      return { key: 'timer', tone: 'warn', body: { k: 'actions', icon: 'bell', label, sub: 'Time is up', buttons } };
+      return { key: 'timer', span: TILE_SPAN, tone: 'warn', body: { k: 'actions', icon: 'bell', label, sub: 'Time is up', buttons } };
     }
 
     const name = t.mode === 'focus' ? t.label : t.mode === 'stopwatch' ? 'Stopwatch' : 'Timer';
@@ -251,6 +253,7 @@ export class TimerActivity extends BaseActivity {
       : [];
     return {
       key: 'timer',
+      span: TILE_SPAN,
       tone: t.running ? 'accent' : undefined,
       body: { k: 'actions', icon: this.iconName(), label: `${name} ${this.timeText(env.now)}`, sub: t.running ? what : 'Paused', buttons },
     };
