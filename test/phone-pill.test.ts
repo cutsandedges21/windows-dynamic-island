@@ -4,6 +4,7 @@ import { actionsIn, readIslandMsg } from '../src/remote/protocol';
 import { demoHello, demoPill, demoView, initialDemo } from '../phone/web/src/dev/demo-data';
 import { fileSize, lastSeenText, linkIn, retryText } from '../phone/web/src/format';
 import { BOT_GAP, PILL_MARGIN, lyingHeight, maxPillWidth, phonePill, placePill } from '../phone/web/src/pill-fit';
+import { claudeUrgentTone } from '../phone/web/src/screens/island';
 
 const measure = (t: string) => t.length * 7;
 
@@ -59,6 +60,18 @@ describe('the demo island speaks the protocol', () => {
     expect(acts).toContain('act:music:toggle');
     expect(acts.every((a) => a.startsWith('act:'))).toBe(true);
     expect(demoView(asking, { open: 'grid' }, 374, now).urgent).toBe('claude');
+  });
+
+  it("lights Claude's urgent card in its status colours: amber when it needs you, green for a reply", () => {
+    const d = initialDemo(Date.UTC(2026, 9, 22, 18));
+    const asking = { ...d, ask: { id: 'r1', at: d.posAt } };
+    const card = demoView(asking, { open: 'grid' }, 374, d.posAt).view;
+    expect(claudeUrgentTone(card)).toBe('warn');
+    expect(claudeUrgentTone({ key: 'claude/reply:r2', blocks: [] })).toBe('good');
+    expect(claudeUrgentTone(null)).toBe('warn');
+    // The demo PC's pill glows the way the real one does: amber asking, blue working.
+    expect(demoPill(asking, d.posAt).frame.glow).toEqual({ tone: 'warn', motion: 'pulse' });
+    expect(demoPill({ ...d, working: true }, d.posAt).frame.glow).toEqual({ tone: 'info', motion: 'orbit' });
   });
 });
 

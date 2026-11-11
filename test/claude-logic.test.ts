@@ -13,7 +13,7 @@ vi.mock('../src/core/native', async () => await import('./fake-native'));
 import * as F from '../src/core/format';
 import { chatStatus, chatUrl, conversationsFromCache, decodeBlob, DesktopChats, deserialize, snappyDecompress } from '../src/activities/claude/desktop';
 import { classifyAncestry, ProcessProbe, ticksMatch } from '../src/activities/claude/procinfo';
-import { classify, deriveStatus, formatModel, pendingBlockReason, refineWithNative, statusLabel, type RawStatus } from '../src/activities/claude/status';
+import { classify, deriveStatus, formatModel, pendingBlockReason, refineWithNative, statusLabel, statusTone, type RawStatus } from '../src/activities/claude/status';
 import { parseLines, promptDisplay, TranscriptReader } from '../src/activities/claude/transcript';
 import { parseStatusLine, parseUsage, UsageClient, WeeklyTokens, weekWindowStart } from '../src/activities/claude/usage';
 import { fake, native as fakeNative } from './fake-native';
@@ -67,6 +67,16 @@ describe('status (status.test.js)', () => {
   it('deriveStatus: reopened session and permission prompt end to end', () => {
     expect(deriveStatus({ ...base, ageSeconds: 7200, processAgeSeconds: 60, pendingTool: true, lastToolName: 'Bash', permissionMode: 'default' })).toBe('awaiting_input');
     expect(deriveStatus({ ...base, pendingTool: true, lastToolName: 'Bash', permissionMode: 'default', nativeStatus: 'busy' })).toBe('awaiting_permission');
+  });
+
+  it('tone names: Esc mid-turn has its own (red on the island), idle ones are muted', () => {
+    expect(statusTone('awaiting_permission')).toBe('needs');
+    expect(statusTone('working')).toBe('working');
+    expect(statusTone('awaiting_input')).toBe('turn');
+    expect(statusTone('errored')).toBe('error');
+    expect(statusTone('interrupted')).toBe('stopped');
+    expect(statusTone('completed')).toBe('muted');
+    expect(statusTone('unknown')).toBe('muted');
   });
 
   it('labels and model names', () => {

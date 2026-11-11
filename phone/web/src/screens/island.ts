@@ -29,6 +29,14 @@ export interface IslandHooks {
 /** Room under a card for the Back button. */
 const BACK_ROOM = 56;
 
+/**
+ * The light round Claude's urgent card, in the colours its pill glows on the PC: green for a
+ * finished chat waiting for a reply (its card is `claude/reply:…`), amber for one that needs you.
+ */
+export function claudeUrgentTone(view: ViewMsg['view']): Tone {
+  return view?.key.startsWith('claude/reply:') ? 'good' : 'warn';
+}
+
 export class IslandScreen {
   readonly el: HTMLElement;
   readonly inbox: HTMLElement;
@@ -112,7 +120,7 @@ export class IslandScreen {
 
   /** A view to draw; `back` shows the Back button under it. */
   draw(m: ViewMsg, back: boolean): void {
-    const tone: Tone | null = m.urgent ? (m.urgent === 'claude' ? 'claude' : (this.glowTone ?? 'accent')) : null;
+    const tone: Tone | null = m.urgent ? (m.urgent === 'claude' ? claudeUrgentTone(m.view) : (this.glowTone ?? 'accent')) : null;
     this.back = back && m.view !== null && !m.urgent;
     this.view.drawView(m.view, tone);
     this.hint.classList.toggle('on', m.view === null && this.hasPill);
