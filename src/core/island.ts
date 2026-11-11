@@ -1167,16 +1167,18 @@ export class Island {
     ];
     for (const id of this.settings.activities.order) {
       const act = this.running.get(id);
-      if (!act?.tile) continue;
+      if (!act?.tile && !act?.tiles) continue;
       const interactive = this.settings.activities.config[id]?.interactive ?? true;
       const env: SheetEnv = { reason: 'open', now, width: width - 28, vertical, interactive, surfaced: null };
       try {
-        const tile = act.tile(env);
-        if (!tile) continue;
-        // Wrapped in a throwaway grid only so the tile's actions get the activity's name.
-        const [mapped] = mapActions([{ t: 'tiles', key: 'one', items: [tile], cols: 1, rows: 1, pages: 1, cell: 0 }], (a) => this.nsAction(id, a));
-        if (mapped.t === 'tiles') tiles.push({ ...mapped.items[0], key: `${id}/${tile.key}` });
-        this.lastTiles.set(`${id}/${tile.key}`, tile.body.k);
+        const own = act.tiles ? act.tiles(env) : [act.tile?.(env) ?? null];
+        for (const tile of own) {
+          if (!tile) continue;
+          // Wrapped in a throwaway grid only so the tile's actions get the activity's name.
+          const [mapped] = mapActions([{ t: 'tiles', key: 'one', items: [tile], cols: 1, rows: 1, pages: 1, cell: 0 }], (a) => this.nsAction(id, a));
+          if (mapped.t === 'tiles') tiles.push({ ...mapped.items[0], key: `${id}/${tile.key}` });
+          this.lastTiles.set(`${id}/${tile.key}`, tile.body.k);
+        }
       } catch (err) {
         console.error(`tile ${id}`, err);
       }

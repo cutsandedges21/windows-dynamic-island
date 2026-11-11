@@ -1463,6 +1463,16 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 
 /* buttons and lists inside tiles */
 .tile .ah { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Small − and + beside a stat's number (the Speakers tile's volume). */
+.sbtn.sm { height: 24px; border-radius: 12px; }
+.sbtn.sm.icon-only { width: 24px; }
+.sbtn.sm .bi { width: 13px; height: 13px; }
+.tile .tvr { display: flex; align-items: center; gap: 5px; margin-top: auto; min-width: 0; }
+.tile .tvr .tv { margin-top: 0; flex: 1 1 auto; min-width: 0; }
+/* A filled circle with a ring, so they read as buttons at a glance. */
+.tile .tvr .sbtn { background: rgba(var(--ink), 0.16); box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.22); color: var(--fg); }
+.tile .tvr .sbtn:hover { background: rgba(var(--ink), 0.26); }
+.tile .tvr .sbtn .bi { stroke-width: 2.4; }
 .tile .at { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .tile .ab { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
 .tile.k-list .sb-rows { gap: 0; overflow: hidden; }

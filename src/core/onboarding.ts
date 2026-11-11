@@ -68,6 +68,8 @@ const USE_EXTRAS: Record<Use, string[]> = {
 export interface Glance extends Option {
   /** Only offered on a PC with a battery. */
   laptop?: boolean;
+  /** Only offered on Windows: its tile has nothing to show on a Mac yet (System Controls' volume and brightness). */
+  windows?: boolean;
 }
 
 export const GLANCE: Glance[] = [
@@ -83,7 +85,7 @@ export const GLANCE: Glance[] = [
   { id: 'land', label: 'Sending files nearby', icon: 'land' },
   { id: 'screenshots', label: 'Screenshots', icon: 'screenshot' },
   { id: 'clipboard', label: 'Clipboard', icon: 'clipboard' },
-  { id: 'sound', label: 'Volume', icon: 'speaker' },
+  { id: 'system-controls', label: 'Volume and brightness', icon: 'speaker', windows: true },
 ];
 
 /** What each use ticks in the second question before the user changes anything. */
@@ -91,9 +93,9 @@ const USE_GLANCE: Record<Use, string[]> = {
   school: ['calendar', 'timer', 'reminders', 'clipboard'],
   work: ['calendar', 'timer', 'reminders', 'clipboard', 'downloads'],
   coding: ['system', 'clipboard'],
-  gaming: ['system', 'network', 'sound'],
-  media: ['music', 'sound'],
-  calls: ['calendar', 'sound'],
+  gaming: ['system', 'network', 'system-controls'],
+  media: ['music', 'system-controls'],
+  calls: ['calendar', 'system-controls'],
   creative: ['screenshots', 'clipboard', 'downloads'],
 };
 
@@ -109,7 +111,8 @@ export interface Facts {
 
 /** The glance choices that make sense on this PC. */
 export function glanceChoices(facts: Facts): Glance[] {
-  return GLANCE.filter((g) => (!g.laptop || facts.laptop) && availableHere(g.id, facts.platform ?? 'windows'));
+  const on = facts.platform ?? 'windows';
+  return GLANCE.filter((g) => (!g.laptop || facts.laptop) && (!g.windows || on === 'windows') && availableHere(g.id, on));
 }
 
 /** The second question's ticks to start with: what the uses call for, plus Battery on a laptop. */
@@ -135,10 +138,10 @@ export interface Answers {
  * finished download, low battery, files sent from a computer nearby, a workspace opening,
  * Caps Lock, the brightness) but only get a tile when picked.
  */
-export const HELPERS = ['sound', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'phone', 'workspaces', 'keys', 'brightness'];
+export const HELPERS = ['system-controls', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'phone', 'workspaces'];
 
 /** Grid order: what you act on first, then what you glance at, then occasional helpers. */
-const GRID_ORDER = ['claude', 'music', 'calendar', 'weather', 'timer', 'reminders', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'sound', 'downloads', 'land', 'screenshots', 'clipboard'];
+const GRID_ORDER = ['claude', 'music', 'calendar', 'weather', 'timer', 'reminders', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'system-controls', 'downloads', 'land', 'screenshots', 'clipboard'];
 
 /** The bot's brain: switched on by the AI step, never a tile (the bot is the way in). */
 const BRAIN = 'local';

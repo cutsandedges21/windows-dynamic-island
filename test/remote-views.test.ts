@@ -5,7 +5,7 @@ import type { ActivityStatus } from '../src/core/activity';
 import type { MirrorFrame } from '../src/core/mirror';
 import type { Placed } from '../src/core/segments';
 import type { SheetView } from '../src/core/sheet';
-import { HELLO_GUARDED, mayPress, pressables, stripActions, stripPill, urgentIds } from '../src/remote/views';
+import { HELLO_GUARDED, mayPress, PC_ONLY, pressables, stripActions, stripPill, urgentIds } from '../src/remote/views';
 
 const card: SheetView = {
   key: 'mixed',
@@ -78,6 +78,17 @@ describe('Allow held back from phones', () => {
     const tile = out.blocks[0].t === 'tiles' ? out.blocks[0].items[0] : null;
     expect(tile?.action).toBeUndefined();
     expect(tile?.body.k === 'actions' ? tile.body.buttons.map((b) => b.action) : []).toEqual(['act:claude:deny']);
+  });
+
+  it("takes them off a stat tile's small buttons too (the Speakers tile's − and +)", () => {
+    const grid: SheetView = {
+      key: 'g',
+      blocks: [{ t: 'tiles', key: 't', cols: 4, rows: 1, pages: 1, cell: 80, items: [{ key: 'x/s', body: { k: 'stat', icon: 'speaker', label: 'S', value: '1', buttons: [{ key: 'a', action: 'act:claude:allow' }, { key: 'u', action: 'act:x:vol-up' }] } }] }],
+    };
+    const out = stripActions(grid, blocked);
+    const tile = out.blocks[0].t === 'tiles' ? out.blocks[0].items[0] : null;
+    expect(tile?.body.k === 'stat' ? tile.body.buttons?.map((b) => b.action) : []).toEqual(['act:x:vol-up']);
+    expect(PC_ONLY).toEqual(['act:system-controls:screenshot', 'act:system-controls:record']);
   });
 
   it('takes such a segment off the pill', () => {

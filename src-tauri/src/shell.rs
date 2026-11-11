@@ -1,5 +1,6 @@
 // Small OS actions: open URLs (allow-listed schemes) and files, reveal in
-// Explorer, edit an image, lock, screen snip, clipboard writes, Win+V, HTTP GET.
+// Explorer, edit an image, lock, screen snip, Snipping Tool's capture keys, clipboard writes, Win+V,
+// HTTP GET.
 
 use std::path::Path;
 
@@ -11,7 +12,7 @@ use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM
 use windows::Win32::System::Ole::{CF_DIB, CF_UNICODETEXT};
 use windows::Win32::System::Shutdown::LockWorkStation;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_LWIN,
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_SHIFT,
 };
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -224,6 +225,25 @@ pub fn sound_output() {
     }
 }
 
+/// The letter that goes with Win+Shift for Snipping Tool's overlay: S drags out a screenshot, R a screen
+/// recording (Microsoft's own shortcuts, "Use Snipping Tool to capture screenshots"). Its
+/// `ms-screenclip://capture/image|video` links answer only packaged (MSIX) apps, which Island is not,
+/// and the bare `ms-screenclip:` that shell_snip opens is retired.
+fn capture_key(video: bool) -> VIRTUAL_KEY {
+    VIRTUAL_KEY(if video { 0x52 } else { 0x53 })
+}
+
+/// Opens Snipping Tool's overlay to drag an area: a screenshot, or with `video` a screen recording
+/// (the desktop too). True when Windows took all six key presses.
+#[tauri::command]
+pub fn screen_capture(video: bool) -> bool {
+    let k = capture_key(video);
+    let inputs = [key(VK_LWIN, false), key(VK_SHIFT, false), key(k, false), key(k, true), key(VK_SHIFT, true), key(VK_LWIN, true)];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    crate::log::line(format!("screen capture video={video} sent={sent}"));
+    sent as usize == inputs.len()
+}
+
 // ------------------------------------------------------------------ http
 
 #[derive(Serialize)]
@@ -242,7 +262,7 @@ pub async fn http_get(url: String, max_bytes: Option<usize>) -> Option<HttpRespo
 
 #[cfg(test)]
 mod tests {
-    use super::scheme_ok;
+    use super::{capture_key, scheme_ok};
 
     #[test]
     fn only_known_schemes_open() {
@@ -254,5 +274,11 @@ mod tests {
         assert!(!scheme_ok("javascript:alert(1)"));
         assert!(!scheme_ok("https://a\nb"));
         assert!(!scheme_ok("nocolon"));
+    }
+
+    #[test]
+    fn a_screenshot_is_win_shift_s_and_a_recording_win_shift_r() {
+        assert_eq!(capture_key(false).0, b'S' as u16);
+        assert_eq!(capture_key(true).0, b'R' as u16);
     }
 }

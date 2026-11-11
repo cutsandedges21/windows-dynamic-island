@@ -63,6 +63,12 @@ pub fn shell_lock() {}
 #[tauri::command]
 pub fn shell_snip() {}
 
+/// Snipping Tool's screenshot and recording keys: Windows only (a Mac has Cmd+Shift+5 of its own).
+#[tauri::command]
+pub fn screen_capture() -> bool {
+    false
+}
+
 #[tauri::command]
 pub fn clipboard_set_text() -> bool {
     false

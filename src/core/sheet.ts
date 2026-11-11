@@ -159,7 +159,8 @@ export interface Tile {
 }
 
 export type TileBody =
-  | { k: 'stat'; icon: string; label: string; value: string; sub?: string; progress?: number | null }
+  /** `buttons`: small ones beside the number (volume − and +). */
+  | { k: 'stat'; icon: string; label: string; value: string; sub?: string; progress?: number | null; buttons?: SheetButton[] }
   | { k: 'battery'; pct: number; charging: boolean; head: string; sub: string }
   | { k: 'media'; art?: string | null; title: string; artist: string; playing: boolean; progress?: number | null; buttons: SheetButton[] }
   | { k: 'week'; title: string; sub: string; days: Array<{ label: string; num: number; today: boolean; busy: number }> }
@@ -235,6 +236,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
   const row = (r: SheetRow): SheetRow => ({ ...r, action: r.action ? fn(r.action) : undefined, button: r.button ? btn(r.button) : undefined });
   const body = (b: TileBody): TileBody => {
     if (b.k === 'media' || b.k === 'actions') return { ...b, buttons: b.buttons.map(btn) };
+    if (b.k === 'stat' && b.buttons) return { ...b, buttons: b.buttons.map(btn) };
     if (b.k === 'list') return { ...b, rows: b.rows.map(row) };
     return b;
   };
@@ -1019,8 +1021,8 @@ export class SheetRenderer {
     args.set(e, arg);
   }
 
-  private button(b: SheetButton): HTMLButtonElement {
-    const e = make('button', `sbtn style-${b.style ?? 'secondary'}${b.label ? '' : ' icon-only'}`);
+  private button(b: SheetButton, size?: 'sm'): HTMLButtonElement {
+    const e = make('button', `sbtn style-${b.style ?? 'secondary'}${b.label ? '' : ' icon-only'}${size ? ` ${size}` : ''}`);
     e.type = 'button';
     if (b.icon) e.append(iconEl(b.icon, 'bi'));
     if (b.label) e.append(make('span', 'bl', b.label));
@@ -1995,7 +1997,12 @@ export class SheetRenderer {
         const top = make('div', 'sh');
         top.append(iconEl(b.icon, 'ti'), make('span', 'tl', b.label));
         if (b.sub && b.progress != null) top.append(make('span', 'ts aside', b.sub));
-        e.append(top, make('div', 'tv', b.value));
+        if (b.buttons?.length) {
+          const line = make('div', 'tvr');
+          line.append(make('div', 'tv', b.value));
+          for (const x of b.buttons) line.append(this.button(x, 'sm'));
+          e.append(top, line);
+        } else e.append(top, make('div', 'tv', b.value));
         if (b.progress != null) {
           const bar = make('div', 'tp');
           const f = make('i', '');

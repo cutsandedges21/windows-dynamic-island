@@ -32,8 +32,8 @@ import { NetworkActivity } from '../src/activities/network';
 import { QuickActivity } from '../src/activities/quick';
 import { ScreenshotsActivity } from '../src/activities/screenshots';
 import { ServersActivity } from '../src/activities/servers';
-import { SoundActivity } from '../src/activities/sound';
 import { parseOrder, pickedStats, SystemActivity } from '../src/activities/system';
+import { CAPTURE_DELAY_MS, SystemControlsActivity } from '../src/activities/system-controls';
 import { headphonesLike, MusicActivity } from '../src/activities/music';
 import { PhoneActivity } from '../src/activities/phone';
 import { WeatherActivity } from '../src/activities/weather';
@@ -69,6 +69,9 @@ function resetNative() {
     snip: vi.fn(async () => undefined),
     clipboardCopyImage: vi.fn(async () => true),
     clipboardHistory: vi.fn(async () => undefined),
+    lockKeys: vi.fn(async () => null),
+    brightnessGet: vi.fn(async () => null),
+    screenCapture: vi.fn(async () => true),
   });
 }
 
@@ -77,14 +80,15 @@ const emit = (event: string, payload: unknown) => {
 };
 const tick = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
 
-type Calls = { surface: Array<{ key?: string; ms?: number; level?: string }>; update: number; alert: unknown[][]; close: number; notify: unknown[][]; log: unknown[][] };
+type Calls = { surface: Array<{ key?: string; ms?: number; level?: string }>; update: number; alert: unknown[][]; close: number; notify: unknown[][]; log: unknown[][]; openCard: number };
 
 async function boot<T extends Activity>(act: T, options: Record<string, unknown> = {}, tweak: (s: ReturnType<typeof defaultSettings>) => void = () => {}) {
   const settings = defaultSettings();
   tweak(settings);
-  const calls: Calls = { surface: [], update: 0, alert: [], close: 0, notify: [], log: [] };
+  const calls: Calls = { surface: [], update: 0, alert: [], close: 0, notify: [], log: [], openCard: 0 };
   const ctx: ActivityContext = {
     id: act.meta.id,
+    openCard: () => void calls.openCard++,
     config: () => settings.activities.config[act.meta.id],
     options: () => options as never,
     settings: () => settings,
@@ -297,12 +301,14 @@ describe('focus and Quiet', () => {
   });
 });
 
-describe('sound', () => {
+describe('system controls: sound', () => {
   const audio = (over: Record<string, unknown> = {}) => ({ volume: 0.5, muted: false, device: 'Speakers (Realtek)', deviceId: 'a', micMuted: false, micDevice: 'Mic', ...over });
+  const tileEnv = { reason: 'open' as const, now: T0, width: 300, vertical: false, interactive: true, surfaced: null };
+  const speakers = (act: SystemControlsActivity, e = tileEnv) => act.tiles(e).find((t) => t.key === 'sound');
 
   it('skips startup, shows volume changes and device changes', async () => {
     h.native.audioState = vi.fn(async () => audio());
-    const { act, calls } = await boot(new SoundActivity());
+    const { act, calls } = await boot(new SystemControlsActivity());
     emit('audio', audio()); // the startup event
     expect(calls.surface).toEqual([]);
 
@@ -318,6 +324,11 @@ describe('sound', () => {
     expect(calls.surface.at(-1)).toMatchObject({ key: 'volume' });
     expect(act.render(env('compact')).find((s) => s.t === 'icon')).toMatchObject({ icon: 'speaker-mute' });
     expect(act.render(env('maximum')).filter((s) => s.t === 'button').map((s) => s.key)).toEqual(['down', 'mute', 'up']);
+    // Justin's Speakers tile: − and + in circles beside the number, only with buttons on.
+    const body = speakers(act)!.body;
+    expect(body.k === 'stat' && body.buttons?.map((b) => b.action)).toEqual(['vol-down', 'vol-up']);
+    const quiet = speakers(act, { ...tileEnv, interactive: false })!.body;
+    expect(quiet.k === 'stat' && quiet.buttons).toBeUndefined();
 
     emit('audio', audio({ volume: 0.4, deviceId: 'b', device: 'AirPods Pro' }));
     expect(calls.surface.at(-1)).toMatchObject({ key: 'device', ms: 3500 });
@@ -332,13 +343,107 @@ describe('sound', () => {
 
   it('buttons change the volume through the native layer', async () => {
     h.native.audioState = vi.fn(async () => audio({ volume: 0.5 }));
-    const { act } = await boot(new SoundActivity());
+    const { act } = await boot(new SystemControlsActivity());
     await act.action!('vol-up', null);
     expect(h.native.audioSet).toHaveBeenLastCalledWith(0.55, null);
     await act.action!('vol-down', null);
     expect(h.native.audioSet).toHaveBeenLastCalledWith(0.45, null);
     await act.action!('mute', null);
     expect(h.native.audioSet).toHaveBeenLastCalledWith(null, true);
+  });
+
+  it('Volume and Audio device switched off: no flyouts, the tile still follows', async () => {
+    h.native.audioState = vi.fn(async () => audio());
+    const { act, calls } = await boot(new SystemControlsActivity(), { volume: false, device: false });
+    emit('audio', audio({ volume: 0.7 }));
+    emit('audio', audio({ volume: 0.7, deviceId: 'b', device: 'AirPods' }));
+    expect(calls.surface).toEqual([]);
+    expect(act.status().active).toBe(false);
+    expect(act.pet!(Date.now())).toBeNull();
+    expect(speakers(act)!.body).toMatchObject({ label: 'AirPods', value: '70%' });
+  });
+});
+
+describe('system controls: the parts together', () => {
+  const tileEnv = { reason: 'open' as const, now: T0, width: 300, vertical: false, interactive: true, surfaced: null };
+  const power = (over: Record<string, unknown> = {}) => ({ hasBattery: true, percent: 80, ac: false, charging: false, saver: false, secondsLeft: 7200, ...over });
+  const controls = (act: SystemControlsActivity, e = tileEnv) => act.tiles(e).find((t) => t.key === 'controls');
+
+  it('the pill shows whichever part changed last', async () => {
+    h.native.audioState = vi.fn(async () => ({ volume: 0.5, muted: false, device: 'Speakers', deviceId: 'a', micMuted: false, micDevice: 'Mic' }));
+    h.native.lockKeys = vi.fn(async () => ({ caps: false, num: true }));
+    h.native.brightnessGet = vi.fn(async () => 40);
+    const { act } = await boot(new SystemControlsActivity());
+    emit('lock-keys', { caps: true, num: true });
+    expect(act.status()).toMatchObject({ active: true, summary: 'Caps Lock on' });
+    await tick(10);
+    emit('brightness', 60);
+    expect(act.status()).toMatchObject({ summary: 'Brightness 60%' });
+    await tick(10);
+    emit('audio', { volume: 0.3, muted: false, device: 'Speakers', deviceId: 'a', micMuted: false, micDevice: 'Mic' });
+    expect(act.status()).toMatchObject({ summary: 'Volume 30%' });
+    expect(act.tiles(tileEnv).map((t) => t.key)).toEqual(['sound', 'brightness', 'controls']);
+  });
+
+  it('Screenshot and Record close the card, then open Snipping Tool', async () => {
+    const { act, calls } = await boot(new SystemControlsActivity());
+    expect(controls(act)).toMatchObject({ span: 2, action: 'card', body: { k: 'actions', label: 'System Controls' } });
+    const body = controls(act)!.body;
+    expect(body.k === 'actions' && body.buttons.map((b) => b.action)).toEqual(['screenshot', 'record']);
+
+    await act.action!('screenshot', null);
+    expect(calls.close).toBe(1);
+    // Not yet: the card gets out of the picture first.
+    expect(h.native.screenCapture).not.toHaveBeenCalled();
+    await tick(CAPTURE_DELAY_MS);
+    expect(h.native.screenCapture).toHaveBeenLastCalledWith('image');
+
+    await act.action!('record', null);
+    await tick(CAPTURE_DELAY_MS);
+    expect(h.native.screenCapture).toHaveBeenLastCalledWith('video');
+    expect(h.native.screenCapture).toHaveBeenCalledTimes(2);
+
+    await act.action!('card', null);
+    expect(calls.openCard).toBe(1);
+    // Buttons off: nothing to press, so no cell for them.
+    expect(controls(act, { ...tileEnv, interactive: false })).toBeUndefined();
+  });
+
+  it('battery saver: shows how it is, as Windows says, and switches nothing', async () => {
+    h.native.powerState = vi.fn(async () => power());
+    const { act, calls } = await boot(new SystemControlsActivity());
+    const saver = () => {
+      const b = controls(act)!.body;
+      return b.k === 'actions' ? b.buttons.find((x) => x.key === 'saver') : undefined;
+    };
+    expect(saver()).toMatchObject({ icon: 'leaf', disabled: true, style: 'secondary', tip: "Battery saver is off. Island can't switch it yet." });
+    expect(controls(act)!.body).toMatchObject({ sub: 'Battery saver off' });
+
+    const updates = calls.update;
+    emit('power', power({ saver: true }));
+    expect(calls.update).toBe(updates + 1);
+    expect(saver()).toMatchObject({ disabled: true, style: 'primary', tip: "Battery saver is on. Island can't switch it yet." });
+    expect(controls(act, { ...tileEnv, interactive: false })!.body).toMatchObject({ sub: 'Battery saver on', buttons: [{ key: 'saver' }] });
+    await act.action!('saver', null);
+    expect(h.native.screenCapture).not.toHaveBeenCalled();
+    expect(calls.close).toBe(0);
+
+    // A desktop: no battery, so no saver button.
+    emit('power', power({ hasBattery: false, percent: null }));
+    expect(saver()).toBeUndefined();
+  });
+
+  it('a card when pointed at or opened, none for a flash', async () => {
+    h.native.audioState = vi.fn(async () => ({ volume: 0.42, muted: false, device: 'Speakers', deviceId: 'a', micMuted: false, micDevice: 'Mic' }));
+    h.native.brightnessGet = vi.fn(async () => 62);
+    h.native.powerState = vi.fn(async () => power({ saver: true }));
+    const { act } = await boot(new SystemControlsActivity());
+    expect(act.sheet!({ ...tileEnv, reason: 'surfaced' })).toBeNull();
+    const view = act.sheet!({ ...tileEnv, reason: 'hover' })!;
+    expect(view.blocks.map((b) => b.key)).toEqual(['head', 'levels', 'volume', 'controls']);
+    expect(view.blocks[1]).toMatchObject({ items: [{ key: 'sound', meter: { value: 0.42, text: '42%' } }, { key: 'brightness', meter: { value: 0.62, text: '62%' } }] });
+    expect(view.blocks[3]).toMatchObject({ items: [{ label: 'Screenshot' }, { label: 'Record' }, { label: 'Battery saver on', disabled: true }] });
+    for (const b of view.blocks) if ('icon' in b && b.icon) expect(hasIcon(b.icon)).toBe(true);
   });
 });
 
@@ -1112,7 +1217,7 @@ describe('what the bot hears', () => {
 
   it('volume: up and down on one key, a bigger step stronger; muted, unmuted, a new device', async () => {
     h.native.audioState = vi.fn(async () => audio());
-    const { act } = await boot(new SoundActivity());
+    const { act } = await boot(new SystemControlsActivity());
     emit('audio', audio());
     emit('audio', audio({ volume: 0.52 }));
     const up = heard(act)!.moment!;

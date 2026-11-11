@@ -1,0 +1,215 @@
+// System Controls: the volume, the screen's brightness and Caps Lock / Num Lock flash on the pill
+// as they change, each part with its own switch (Volume, Audio device, Brightness, Caps Lock,
+// Num Lock). Its card and Control Center add Screenshot and Record through Snipping Tool, and
+// whether battery saver is on. Sound came from Justin's fork, Brightness and the lock keys from
+// Moss's; they were three activities until the forks merged (settings.ts carries their settings
+// over). Each part lives in its own file: sound.ts, brightness.ts, keys.ts.
+
+import type { ActivityStatus, RenderEnv, SheetEnv } from '../core/activity';
+import { clip } from '../core/format';
+import { native, type PowerState } from '../core/native';
+import type { MomentId } from '../core/pet';
+import { platform } from '../core/platform';
+import type { Seg } from '../core/segments';
+import type { Block, SheetButton, SheetRow, SheetView, Tile } from '../core/sheet';
+import { BaseActivity } from './base';
+import { Brightness } from './brightness';
+import { Keys } from './keys';
+import { Sound } from './sound';
+
+/** When a part's flash began, and how long it shows. */
+export type Flash = { at: number; ms: number };
+
+/** What a part gets from the activity. */
+export interface Host {
+  listen<T>(event: string, cb: (payload: T) => void): void;
+  /** Its switch in Options is on (they all are unless turned off). */
+  on(option: string): boolean;
+  /** Flash on the pill for `ms`; a newer flash with the same key replaces it. */
+  show(key: string, ms: number): void;
+  saw(id: MomentId, key: string, strength?: number): void;
+  /** Something the tiles show changed, with nothing to flash. */
+  update(): void;
+  alive(): boolean;
+}
+
+export interface Part {
+  start(): void;
+  /** Its latest flash, or null before the first. */
+  flash(): Flash | null;
+  /** The pill's one line while its flash shows. */
+  summary(): string;
+  render(env: RenderEnv): Seg[];
+}
+
+type Options = { volume: boolean; device: boolean; brightness: boolean; caps: boolean; num: boolean };
+
+/**
+ * The card closes first and Snipping Tool's overlay comes this much later: a screenshot freezes
+ * the screen as it is, and the island's card shouldn't be in the picture.
+ */
+export const CAPTURE_DELAY_MS = 350;
+
+/** Snipping Tool is Windows'; a Mac has its own (Cmd+Shift+5). */
+const CAPTURE_HERE = platform !== 'macos';
+
+export class SystemControlsActivity extends BaseActivity {
+  private readonly host: Host = {
+    listen: <T>(event: string, cb: (payload: T) => void) => this.listen<T>(event, cb),
+    on: (option) => this.ctx.options<Partial<Options>>()[option as keyof Options] !== false,
+    show: (key, ms) => {
+      this.ctx.surface({ key, ms, level: 'expanded' });
+      this.ctx.update();
+    },
+    saw: (id, key, strength) => this.saw(id, key, strength),
+    update: () => this.ctx.update(),
+    alive: () => this.alive,
+  };
+  private readonly sound = new Sound(this.host);
+  private readonly brightness = new Brightness(this.host);
+  private readonly keys = new Keys(this.host);
+  private power: PowerState | null = null;
+
+  constructor() {
+    super('system-controls');
+  }
+
+  protected init(): void {
+    for (const p of this.parts()) p.start();
+    this.listen<PowerState>('power', (p) => {
+      const was = this.power?.saver;
+      this.power = p;
+      if (was !== p.saver) this.ctx.update();
+    });
+    void native.powerState().then((p) => {
+      if (p && !this.power) this.power = p;
+    });
+  }
+
+  private parts(): Part[] {
+    return [this.sound, this.brightness, this.keys];
+  }
+
+  /** The part that flashed last: the pill shows it (a volume key right after Caps Lock takes over). */
+  private latest(): { part: Part; flash: Flash } | null {
+    let best: { part: Part; flash: Flash } | null = null;
+    for (const part of this.parts()) {
+      const flash = part.flash();
+      if (flash && (!best || flash.at >= best.flash.at)) best = { part, flash };
+    }
+    return best;
+  }
+
+  status(): ActivityStatus {
+    const l = this.latest();
+    if (!l || Date.now() - l.flash.at >= l.flash.ms) return { active: false };
+    return { active: true, weight: 'foreground', summary: l.part.summary() };
+  }
+
+  render(env: RenderEnv): Seg[] {
+    return this.latest()?.part.render(env) ?? [];
+  }
+
+  /** Battery saver as Windows says it is; null on a computer without a battery (or a Mac). */
+  private saver(): boolean | null {
+    const p = this.power;
+    return p?.hasBattery ? p.saver : null;
+  }
+
+  /**
+   * Screenshot and Record (with buttons on), and battery saver's state. `labels`: worded, for the
+   * card; the tile has room for icons only.
+   */
+  private buttons(interactive: boolean, labels: boolean): SheetButton[] {
+    const out: SheetButton[] = [];
+    if (CAPTURE_HERE && interactive) {
+      out.push(
+        { key: 'shot', icon: 'screenshot', label: labels ? 'Screenshot' : undefined, action: 'screenshot', style: 'secondary', tip: 'Drag an area to capture it (Snipping Tool)' },
+        { key: 'record', icon: 'record', label: labels ? 'Record' : undefined, action: 'record', style: 'secondary', tip: 'Drag an area to record it, the desktop too (Snipping Tool)' },
+      );
+    }
+    const saver = this.saver();
+    if (saver != null) {
+      // TODO(Justin, Moss): switching it. Windows gives apps no supported way to turn battery saver
+      // on or off: PowerManager.EnergySaverStatus and GetSystemPowerStatus only read it, and raising
+      // powercfg's ESBATTTHRESHOLD to 100 did not turn it on (tried 2026-11-09, put back). Until one
+      // of you picks what the button should do, it only says how it is.
+      out.push({
+        key: 'saver',
+        icon: 'leaf',
+        label: labels ? `Battery saver ${saver ? 'on' : 'off'}` : undefined,
+        action: 'saver',
+        style: saver ? 'primary' : 'secondary',
+        disabled: true,
+        tip: `Battery saver is ${saver ? 'on' : 'off'}. Island can't switch it yet.`,
+      });
+    }
+    return out;
+  }
+
+  /** Speakers (volume with − and +), Brightness, and a cell with the buttons; each only once it has something. */
+  tiles(env: SheetEnv): Tile[] {
+    const out: Tile[] = [];
+    const sound = this.sound.tile(env);
+    if (sound) out.push(sound);
+    const brightness = this.brightness.tile();
+    if (brightness) out.push(brightness);
+    const buttons = this.buttons(env.interactive, false);
+    if (buttons.length) {
+      const saver = this.saver();
+      out.push({
+        key: 'controls',
+        span: 2,
+        action: env.interactive ? 'card' : undefined,
+        tip: env.interactive ? 'System Controls' : undefined,
+        body: { k: 'actions', icon: 'sliders', label: 'System Controls', sub: saver == null ? undefined : `Battery saver ${saver ? 'on' : 'off'}`, buttons },
+      });
+    }
+    return out;
+  }
+
+  /** Pointed at or opened: the volume and brightness with their bars, and every button. A flash itself has no card. */
+  sheet(env: SheetEnv): SheetView | null {
+    if (env.reason !== 'hover' && env.reason !== 'open') return null;
+    const a = this.sound.state();
+    const level = this.brightness.state();
+    const rows: SheetRow[] = [];
+    if (a) {
+      const pct = Math.round(a.volume * 100);
+      rows.push({
+        key: 'sound',
+        icon: a.muted || pct === 0 ? 'speaker-mute' : 'speaker',
+        title: clip(a.device ?? 'Audio output', 40),
+        meter: { value: a.muted ? 0 : a.volume, text: a.muted ? 'Muted' : `${pct}%`, tone: 'accent' },
+        button: env.interactive ? { key: 'mute', icon: a.muted ? 'speaker' : 'speaker-mute', action: 'mute', style: 'ghost', tip: a.muted ? 'Unmute' : 'Mute' } : undefined,
+      });
+    }
+    if (level != null) rows.push({ key: 'brightness', icon: level < 50 ? 'sun-low' : 'sun', title: 'Brightness', meter: { value: level / 100, text: `${level}%`, tone: 'accent' } });
+    const buttons = this.buttons(env.interactive, true);
+    if (!rows.length && !buttons.length) return null;
+    const blocks: Block[] = [{ t: 'head', key: 'head', icon: 'sliders', title: 'System Controls' }];
+    if (rows.length) blocks.push({ t: 'rows', key: 'levels', items: rows });
+    if (a && env.interactive) {
+      blocks.push({
+        t: 'buttons',
+        key: 'volume',
+        align: 'start',
+        items: [
+          { key: 'down', icon: 'minus', label: 'Volume', action: 'vol-down', style: 'secondary', tip: 'Volume down' },
+          { key: 'up', icon: 'plus', label: 'Volume', action: 'vol-up', style: 'secondary', tip: 'Volume up' },
+        ],
+      });
+    }
+    if (buttons.length) blocks.push({ t: 'buttons', key: 'controls', align: 'start', items: buttons });
+    return { key: 'system-controls', blocks };
+  }
+
+  async action(name: string): Promise<void> {
+    if (await this.sound.action(name)) return;
+    if (name === 'card') this.ctx.openCard?.();
+    else if ((name === 'screenshot' || name === 'record') && CAPTURE_HERE) {
+      this.ctx.close();
+      this.later(CAPTURE_DELAY_MS, () => void native.screenCapture(name === 'record' ? 'video' : 'image'));
+    }
+  }
+}

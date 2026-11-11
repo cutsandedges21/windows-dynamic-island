@@ -730,6 +730,8 @@ export const native = {
   edit: (path: string) => call<boolean>('shell_edit_image', { path }, false),
   lock: () => call('shell_lock', {}, undefined),
   snip: () => call('shell_snip', {}, undefined),
+  /** Snipping Tool's overlay to drag an area: a screenshot (Win+Shift+S) or a screen recording (Win+Shift+R). Windows only. */
+  screenCapture: (what: 'image' | 'video') => call<boolean>('screen_capture', { video: what === 'video' }, false),
 
   trayUpdate: (tooltip: string, alert: boolean, menu: MenuItem[]) => call('tray_update', { tooltip, alert, menu }, undefined),
   hotkeysSet: (keys: Array<{ id: string; accel: string }>) => call<string[]>('hotkeys_set', { keys }, []),
