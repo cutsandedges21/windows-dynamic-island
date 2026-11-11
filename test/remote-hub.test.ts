@@ -385,7 +385,7 @@ describe('what a phone may press', () => {
     expect(JSON.stringify(r.last('view'))).toContain('act:claude:allow');
   });
 
-  it("System Controls' Screenshot and Record stay on the PC: never shown on a phone, never pressed from one", async () => {
+  it("System Controls' Screenshot, Record and Battery saver stay on the PC: never shown on a phone, never pressed from one", async () => {
     const { r, f } = await setup();
     const controls: SheetView = {
       key: 'system-controls',
@@ -395,6 +395,7 @@ describe('what a phone may press', () => {
           items: [
             { key: 'shot', label: 'Screenshot', action: 'act:system-controls:screenshot' },
             { key: 'record', label: 'Record', action: 'act:system-controls:record' },
+            { key: 'saver', label: 'Battery saver on', action: 'act:system-controls:saver' },
             { key: 'up', label: 'Volume', action: 'act:system-controls:vol-up' },
           ],
         },
@@ -407,10 +408,13 @@ describe('what a phone may press', () => {
     expect(sent).toContain('act:system-controls:vol-up');
     expect(sent).not.toContain('act:system-controls:screenshot');
     expect(sent).not.toContain('act:system-controls:record');
-    r.line({ t: 'act', action: 'act:system-controls:record', arg: null });
-    await flush();
-    expect(f.acts).toEqual([]);
-    expect(r.last('toast')?.text).toBe('Only on the PC');
+    expect(sent).not.toContain('act:system-controls:saver');
+    for (const action of ['act:system-controls:record', 'act:system-controls:saver']) {
+      r.line({ t: 'act', action, arg: null });
+      await flush();
+      expect(f.acts).toEqual([]);
+      expect(r.last('toast')?.text).toBe('Only on the PC');
+    }
     r.line({ t: 'act', action: 'act:system-controls:vol-up', arg: null });
     await flush();
     expect(f.acts).toEqual([[IPHONE, 'act:system-controls:vol-up', null]]);

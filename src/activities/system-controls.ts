@@ -1,9 +1,10 @@
-// System Controls: the volume, the screen's brightness and Caps Lock / Num Lock flash on the pill
-// as they change, each part with its own switch (Volume, Audio device, Brightness, Caps Lock,
-// Num Lock). Its card and Control Center add Screenshot and Record through Snipping Tool, and
-// whether battery saver is on. Sound came from Justin's fork, Brightness and the lock keys from
-// Moss's; they were three activities until the forks merged (settings.ts carries their settings
-// over). Each part lives in its own file: sound.ts, brightness.ts, keys.ts.
+// System Controls: the volume, the screen's brightness and Caps Lock / Num Lock flash on the pill as
+// they change, each part with its own switch (Volume, Audio device, Brightness, Caps Lock, Num
+// Lock). Its card and Control Center add Screenshot and Record through Snipping Tool, and whether
+// battery saver is on, with a button to its page in Windows Settings. Sound came from Justin's fork,
+// Brightness and the lock keys from Moss's; they were three activities until the forks merged
+// (settings.ts carries their settings over). Each part lives in its own file: sound.ts,
+// brightness.ts, keys.ts.
 
 import type { ActivityStatus, RenderEnv, SheetEnv } from '../core/activity';
 import { clip } from '../core/format';
@@ -49,6 +50,9 @@ type Options = { volume: boolean; device: boolean; brightness: boolean; caps: bo
  * the screen as it is, and the island's card shouldn't be in the picture.
  */
 export const CAPTURE_DELAY_MS = 350;
+
+/** Windows Settings › Battery saver, where battery saver is switched (Island can't switch it itself). */
+export const SAVER_SETTINGS = 'ms-settings:batterysaver';
 
 /** Snipping Tool is Windows'; a Mac has its own (Cmd+Shift+5). */
 const CAPTURE_HERE = platform !== 'macos';
@@ -130,18 +134,18 @@ export class SystemControlsActivity extends BaseActivity {
     }
     const saver = this.saver();
     if (saver != null) {
-      // TODO(Justin, Moss): switching it. Windows gives apps no supported way to turn battery saver
-      // on or off: PowerManager.EnergySaverStatus and GetSystemPowerStatus only read it, and raising
-      // powercfg's ESBATTTHRESHOLD to 100 did not turn it on (tried 2026-11-09, put back). Until one
-      // of you picks what the button should do, it only says how it is.
+      // Windows gives apps no supported way to switch battery saver (PowerManager.EnergySaverStatus and
+      // GetSystemPowerStatus only read it; raising powercfg's ESBATTTHRESHOLD to 100 did not turn it on,
+      // tried 2026-11-09). So the button says how it is and opens Settings › Battery saver to switch it
+      // (Justin and Moss, 2026-11-11). With buttons off it only says how it is.
       out.push({
         key: 'saver',
         icon: 'leaf',
         label: labels ? `Battery saver ${saver ? 'on' : 'off'}` : undefined,
         action: 'saver',
         style: saver ? 'primary' : 'secondary',
-        disabled: true,
-        tip: `Battery saver is ${saver ? 'on' : 'off'}. Island can't switch it yet.`,
+        disabled: interactive ? undefined : true,
+        tip: `Battery saver is ${saver ? 'on' : 'off'}.${interactive ? ' Click to switch it in Windows Settings.' : ''}`,
       });
     }
     return out;
@@ -210,6 +214,10 @@ export class SystemControlsActivity extends BaseActivity {
     else if ((name === 'screenshot' || name === 'record') && CAPTURE_HERE) {
       this.ctx.close();
       this.later(CAPTURE_DELAY_MS, () => void native.screenCapture(name === 'record' ? 'video' : 'image'));
+    } else if (name === 'saver' && this.saver() != null) {
+      // Settings › Battery saver opens in front; the island gets out of its way.
+      this.ctx.close();
+      await native.open(SAVER_SETTINGS);
     }
   }
 }

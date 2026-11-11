@@ -62,7 +62,8 @@ export function gestureGroups(s: Settings, on: Platform): GestureGroup[] {
         // Top apps and Snipping Tool are Windows' (not on a Mac yet).
         ...windowsOnly([
           ['System Stats: click a bar', 'Lists the five apps using the most of it.'],
-          ['System Controls: Screenshot, Record', 'Drag over an area for Snipping Tool to capture or record it. Battery saver, beside them, shows whether it is on.'],
+          ['System Controls: Screenshot, Record', 'Drag over an area for Snipping Tool to capture or record it.'],
+          ['System Controls: Battery saver', 'Shows whether it is on; click it to switch it in Windows Settings (on a laptop).'],
         ]),
       ],
     },

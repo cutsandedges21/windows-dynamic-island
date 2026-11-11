@@ -34,7 +34,7 @@ import { QuickActivity } from '../src/activities/quick';
 import { ScreenshotsActivity } from '../src/activities/screenshots';
 import { ServersActivity } from '../src/activities/servers';
 import { parseOrder, pickedStats, SystemActivity } from '../src/activities/system';
-import { CAPTURE_DELAY_MS, SystemControlsActivity } from '../src/activities/system-controls';
+import { CAPTURE_DELAY_MS, SAVER_SETTINGS, SystemControlsActivity } from '../src/activities/system-controls';
 import { headphonesLike, MusicActivity } from '../src/activities/music';
 import { PhoneActivity } from '../src/activities/phone';
 import { WeatherActivity } from '../src/activities/weather';
@@ -465,28 +465,37 @@ describe('system controls: the parts together', () => {
     expect(controls(act, { ...tileEnv, interactive: false })).toBeUndefined();
   });
 
-  it('battery saver: shows how it is, as Windows says, and switches nothing', async () => {
+  it('battery saver: shows how it is, as Windows says, and opens Settings › Battery saver to switch it', async () => {
     h.native.powerState = vi.fn(async () => power());
+    h.native.open = vi.fn(async () => true);
     const { act, calls } = await boot(new SystemControlsActivity());
-    const saver = () => {
-      const b = controls(act)!.body;
+    const saver = (e = tileEnv) => {
+      const b = controls(act, e)!.body;
       return b.k === 'actions' ? b.buttons.find((x) => x.key === 'saver') : undefined;
     };
-    expect(saver()).toMatchObject({ icon: 'leaf', disabled: true, style: 'secondary', tip: "Battery saver is off. Island can't switch it yet." });
+    expect(saver()).toMatchObject({ icon: 'leaf', action: 'saver', style: 'secondary', tip: 'Battery saver is off. Click to switch it in Windows Settings.' });
+    expect(saver()!.disabled).toBeUndefined();
     expect(controls(act)!.body).toMatchObject({ sub: 'Battery saver off' });
 
     const updates = calls.update;
     emit('power', power({ saver: true }));
     expect(calls.update).toBe(updates + 1);
-    expect(saver()).toMatchObject({ disabled: true, style: 'primary', tip: "Battery saver is on. Island can't switch it yet." });
-    expect(controls(act, { ...tileEnv, interactive: false })!.body).toMatchObject({ sub: 'Battery saver on', buttons: [{ key: 'saver' }] });
-    await act.action!('saver', null);
-    expect(h.native.screenCapture).not.toHaveBeenCalled();
-    expect(calls.close).toBe(0);
+    expect(saver()).toMatchObject({ style: 'primary', tip: 'Battery saver is on. Click to switch it in Windows Settings.' });
+    // Buttons off: it only says how it is.
+    expect(controls(act, { ...tileEnv, interactive: false })!.body).toMatchObject({ sub: 'Battery saver on', buttons: [{ key: 'saver', disabled: true, tip: 'Battery saver is on.' }] });
 
-    // A desktop: no battery, so no saver button.
+    await act.action!('saver', null);
+    expect(h.native.open).toHaveBeenCalledTimes(1);
+    expect(h.native.open).toHaveBeenCalledWith('ms-settings:batterysaver');
+    expect(SAVER_SETTINGS).toBe('ms-settings:batterysaver');
+    expect(calls.close).toBe(1);
+    expect(h.native.screenCapture).not.toHaveBeenCalled();
+
+    // A desktop: no battery, so no saver button, and nothing to open.
     emit('power', power({ hasBattery: false, percent: null }));
     expect(saver()).toBeUndefined();
+    await act.action!('saver', null);
+    expect(h.native.open).toHaveBeenCalledTimes(1);
   });
 
   it('a card when pointed at or opened, none for a flash', async () => {
@@ -498,7 +507,7 @@ describe('system controls: the parts together', () => {
     const view = act.sheet!({ ...tileEnv, reason: 'hover' })!;
     expect(view.blocks.map((b) => b.key)).toEqual(['head', 'levels', 'volume', 'controls']);
     expect(view.blocks[1]).toMatchObject({ items: [{ key: 'sound', meter: { value: 0.42, text: '42%' } }, { key: 'brightness', meter: { value: 0.62, text: '62%' } }] });
-    expect(view.blocks[3]).toMatchObject({ items: [{ label: 'Screenshot' }, { label: 'Record' }, { label: 'Battery saver on', disabled: true }] });
+    expect(view.blocks[3]).toMatchObject({ items: [{ label: 'Screenshot' }, { label: 'Record' }, { label: 'Battery saver on', action: 'saver', style: 'primary' }] });
     for (const b of view.blocks) if ('icon' in b && b.icon) expect(hasIcon(b.icon)).toBe(true);
   });
 });
