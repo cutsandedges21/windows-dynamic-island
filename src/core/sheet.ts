@@ -59,6 +59,8 @@ export interface SheetRow {
   pulse?: boolean;
   title: string;
   detail?: string;
+  /** A thin progress bar after the detail, to the end of the row: what it is (label) and the time left (text). */
+  bar?: RowBar;
   badge?: string;
   tone?: Tone;
   action?: string;
@@ -68,6 +70,13 @@ export interface SheetRow {
   button?: SheetButton;
   /** A thin bar under the title, 0..1, with a figure beside it (a chat's context). */
   meter?: { value: number; text?: string; tone?: Tone; tip?: string };
+}
+
+export interface RowBar {
+  value: number;
+  text: string;
+  label?: string;
+  tone?: Tone;
 }
 
 export interface Choice {
@@ -92,7 +101,8 @@ export type Block =
    * what was typed is kept even if the card closes.
    */
   | { t: 'input'; key: string; placeholder: string; action: string; engage?: string; hint?: string; lines?: number; value?: string; change?: string }
-  | { t: 'meter'; key: string; label: string; value: number; pace?: number | null; text: string; sub?: string; tone?: Tone; tip?: string }
+  /** `action`: the whole meter can be clicked. */
+  | { t: 'meter'; key: string; label: string; value: number; pace?: number | null; text: string; sub?: string; tone?: Tone; tip?: string; action?: string; arg?: unknown }
   | { t: 'rows'; key: string; items: SheetRow[] }
   | { t: 'choices'; key: string; items: Choice[] }
   | { t: 'stats'; key: string; items: Array<{ key: string; label: string; value: string; tone?: Tone; tip?: string }> }
@@ -221,6 +231,8 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
         return { ...b, items: b.items.map(btn) };
       case 'input':
         return { ...b, action: fn(b.action), engage: b.engage ? fn(b.engage) : undefined, change: b.change ? fn(b.change) : undefined };
+      case 'meter':
+        return b.action ? { ...b, action: fn(b.action) } : b;
       case 'rows':
         return { ...b, items: b.items.map(row) };
       case 'choices':
@@ -752,6 +764,16 @@ export class SheetRenderer {
         this.fillMeter(e, b);
         return true;
       }
+      case 'rows': {
+        // Only the bars moved: fill them where they are, so a row being clicked stays put.
+        const shape = (items: SheetRow[]) => JSON.stringify(items.map((r) => ({ ...r, bar: r.bar && { label: r.bar.label, tone: r.bar.tone } })));
+        if (node.spec.t !== 'rows' || shape(node.spec.items) !== shape(b.items)) return false;
+        b.items.forEach((r, i) => {
+          const line = e.children[i]?.querySelector<HTMLElement>('.r2.with-bar');
+          if (line && r.bar) this.fillRowBar(line, r.bar);
+        });
+        return true;
+      }
       case 'countdown': {
         const prev = node.spec.t === 'countdown' ? node.spec : null;
         e.className = `sb sb-countdown tone-${b.tone ?? 'claude'}`;
@@ -802,7 +824,14 @@ export class SheetRenderer {
     const tx = make('span', 'rt');
     tx.append(make('span', 'r1', r.title));
     if (r.meter) tx.append(this.rowMeter(r.meter));
-    if (r.detail) tx.append(make('span', 'r2', r.detail));
+    if (r.bar) {
+      const line = make('span', 'r2 with-bar');
+      const bar = make('span', 'rbar');
+      bar.append(make('i', 'fill'));
+      line.append(make('span', 'rbd', r.detail ?? ''), bar, make('span', 'rbs'), make('span', 'rbt'));
+      this.fillRowBar(line, r.bar);
+      tx.append(line);
+    } else if (r.detail) tx.append(make('span', 'r2', r.detail));
     e.append(tx);
     if (r.badge) e.append(make('span', 'rb', r.badge));
     if (r.button) {
@@ -1081,6 +1110,13 @@ export class SheetRenderer {
     return true;
   }
 
+  private fillRowBar(line: HTMLElement, b: RowBar): void {
+    line.querySelector('.rbar')!.className = `rbar tone-${b.tone ?? 'claude'}`;
+    line.querySelector<HTMLElement>('.fill')!.style.transform = `scaleX(${clamp01(b.value)})`;
+    line.querySelector('.rbs')!.textContent = b.label ?? '';
+    line.querySelector('.rbt')!.textContent = b.text;
+  }
+
   private fillMeter(e: HTMLElement, b: Extract<Block, { t: 'meter' }>): void {
     e.className = `sb sb-meter tone-${b.tone ?? 'claude'}`;
     e.querySelector('.ml')!.textContent = b.label;
@@ -1094,6 +1130,8 @@ export class SheetRenderer {
     if (b.pace != null) pace.style.left = `${clamp01(b.pace) * 100}%`;
     if (b.tip) e.title = b.tip;
     else e.removeAttribute('title');
+    if (b.action) this.bind(e, b.action, b.arg);
+    else delete e.dataset.action;
   }
 
   private runCountdown(fill: HTMLElement, b: Extract<Block, { t: 'countdown' }>): void {

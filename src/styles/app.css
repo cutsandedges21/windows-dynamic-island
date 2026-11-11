@@ -143,6 +143,21 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 .chip.on { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: color-mix(in srgb, var(--accent) 60%, transparent); color: var(--fg); }
 .act-body .row { padding: 9px 0; }
 
+/* System Stats: priority rows with an on-the-pill and an expanded switch each */
+.stat-table { padding: 10px 0; border-top: 1px solid var(--line); }
+.stat-head, .stat-row { display: grid; grid-template-columns: 20px 26px 1fr 88px 88px; align-items: center; gap: 8px; }
+.stat-head { grid-template-columns: 1fr 88px 88px; color: var(--muted); font-size: 12.5px; padding-bottom: 6px; }
+.stat-title { font-weight: 500; color: var(--fg); font-size: 14px; }
+.stat-cell { display: flex; justify-content: center; }
+.stat-rows { display: flex; flex-direction: column; gap: 4px; padding-bottom: 6px; }
+.stat-row { height: 40px; padding: 0 4px; border-radius: 8px; background: rgba(255, 255, 255, 0.03); }
+.stat-row .grip { cursor: grab; touch-action: none; }
+.stat-row.dragging { background: rgba(255, 255, 255, 0.09); }
+.stat-row.dragging .grip { cursor: grabbing; }
+.stat-icon { display: grid; place-items: center; color: var(--accent); }
+.stat-icon .ico { width: 17px; height: 17px; }
+.stat-name { font-weight: 500; }
+
 /* ------------------------------------------------------------------ Claude panel */
 
 .claude-panel { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--line); }

@@ -1,6 +1,8 @@
 // Power (battery, AC, saver) and load: CPU from GetSystemTimes deltas, memory
 // from GlobalMemoryStatusEx, GPU from the "GPU Engine" performance counters,
-// and the busiest process when asked (only on spikes, it costs a scan).
+// and the busiest process when asked (only on spikes, it costs a scan). The
+// apps using the most of one of them (sys_top) are read only while that list
+// is open on the card.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -8,15 +10,19 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
-use windows::core::w;
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, FILETIME};
+use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
 use windows::Win32::System::Performance::{
     PdhAddEnglishCounterW, PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhOpenQueryW, PDH_FMT_COUNTERVALUE_ITEM_W,
     PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY,
 };
 use windows::Win32::System::Power::{CallNtPowerInformation, GetSystemPowerStatus, SystemBatteryState, SYSTEM_BATTERY_STATE, SYSTEM_POWER_STATUS};
+use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX2};
 use windows::Win32::System::SystemInformation::{GetSystemInfo, GlobalMemoryStatusEx, MEMORYSTATUSEX, SYSTEM_INFO};
 use windows::Win32::System::Threading::{GetProcessTimes, GetSystemTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
+use crate::procs::ProcRow;
 
 use crate::overlay::LABEL as ISLAND;
 
@@ -133,6 +139,8 @@ struct Load {
     cpu: Option<(u64, u64, u64)>,
     gpu: Option<Gpu>,
     gpu_failed: bool,
+    /// The last GPU reading split per process (the counter's instances name their pid).
+    gpu_pids: HashMap<u32, f64>,
     procs: HashMap<u32, u64>,
     procs_at: Option<Instant>,
 }
@@ -196,25 +204,51 @@ fn gpu_now(load: &mut Load) -> Option<f64> {
         return None;
     }
     let g = load.gpu.as_ref()?;
-    unsafe {
-        if PdhCollectQueryData(g.query) != 0 {
-            return None;
+    if unsafe { PdhCollectQueryData(g.query) } != 0 {
+        return None;
+    }
+    let items = counter_items(g.counter)?;
+    // Instances read "pid_1234_luid_..._engtype_3D": the same numbers per process, for the list of what uses the most.
+    let mut per: HashMap<u32, f64> = HashMap::new();
+    for (name, v) in &items {
+        if let Some(pid) = instance_pid(name) {
+            *per.entry(pid).or_default() += v;
         }
+    }
+    load.gpu_pids = per;
+    Some(items.iter().map(|(_, v)| v).sum::<f64>().clamp(0.0, 100.0))
+}
+
+/// Every instance of a wildcard counter: its name and value.
+fn counter_items(counter: PDH_HCOUNTER) -> Option<Vec<(String, f64)>> {
+    unsafe {
         let mut size = 0u32;
         let mut count = 0u32;
-        let _ = PdhGetFormattedCounterArrayW(g.counter, PDH_FMT_DOUBLE, &mut size, &mut count, None);
+        let _ = PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &mut size, &mut count, None);
         if size == 0 {
-            return Some(0.0);
+            return Some(Vec::new());
         }
-        let mut buf = vec![0u8; size as usize];
+        // u64s so the items (which hold pointers and doubles) are aligned.
+        let mut buf = vec![0u64; (size as usize).div_ceil(8)];
         let items = buf.as_mut_ptr() as *mut PDH_FMT_COUNTERVALUE_ITEM_W;
-        if PdhGetFormattedCounterArrayW(g.counter, PDH_FMT_DOUBLE, &mut size, &mut count, Some(items)) != 0 {
+        if PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &mut size, &mut count, Some(items)) != 0 {
             return None;
         }
         let slice = std::slice::from_raw_parts(items, count as usize);
-        let total: f64 = slice.iter().map(|it| it.FmtValue.Anonymous.doubleValue).filter(|v| v.is_finite()).sum();
-        Some(total.clamp(0.0, 100.0))
+        Some(
+            slice
+                .iter()
+                .filter_map(|it| {
+                    let v = it.FmtValue.Anonymous.doubleValue;
+                    v.is_finite().then(|| (it.szName.to_string().unwrap_or_default(), v))
+                })
+                .collect(),
+        )
     }
+}
+
+fn instance_pid(name: &str) -> Option<u32> {
+    name.strip_prefix("pid_")?.split('_').next()?.parse().ok()
 }
 
 fn cores() -> f64 {
@@ -223,11 +257,10 @@ fn cores() -> f64 {
     si.dwNumberOfProcessors.max(1) as f64
 }
 
-fn top_process(load: &mut Load) -> Option<TopProcess> {
-    let rows = crate::procs::snapshot(false);
-    let now = Instant::now();
+/// CPU time used so far (kernel + user, 100 ns ticks) by every process we may read.
+fn proc_times(rows: &[ProcRow]) -> HashMap<u32, u64> {
     let mut times: HashMap<u32, u64> = HashMap::with_capacity(rows.len());
-    for r in &rows {
+    for r in rows {
         let pid = r.0;
         if pid <= 4 {
             continue;
@@ -241,6 +274,13 @@ fn top_process(load: &mut Load) -> Option<TopProcess> {
             let _ = CloseHandle(h);
         }
     }
+    times
+}
+
+fn top_process(load: &mut Load) -> Option<TopProcess> {
+    let rows = crate::procs::snapshot(false);
+    let now = Instant::now();
+    let times = proc_times(&rows);
     let prev = std::mem::replace(&mut load.procs, times);
     let elapsed = load.procs_at.replace(now).map(|t| now.duration_since(t).as_secs_f64())?;
     if elapsed <= 0.05 {
@@ -278,9 +318,172 @@ pub async fn sys_sample(with_top: bool) -> SysSample {
     .unwrap_or(SysSample { cpu: 0.0, mem_used: 0.0, mem_total: 0.0, gpu: None, top: None })
 }
 
+// ------------------------------------------------------------------ what uses the most
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUse {
+    /// The app's own name (its file description, as Task Manager shows it), else its exe name.
+    name: String,
+    exe: String,
+    /// Percent of the whole CPU or GPU, or bytes of RAM.
+    value: f64,
+    /// Processes added up under this app.
+    count: u32,
+}
+
+#[derive(Default)]
+struct Top {
+    cpu: HashMap<u32, u64>,
+    cpu_at: Option<Instant>,
+    /// exe name -> app name, read once per exe.
+    names: HashMap<String, String>,
+}
+
+static TOP: Mutex<Option<Top>> = Mutex::new(None);
+
+/// A CPU reading older than this is too stale to compare with: take two readings a moment apart.
+const CPU_STALE: Duration = Duration::from_secs(6);
+const CPU_GAP: Duration = Duration::from_millis(500);
+
+/// Each process's share of the whole CPU since the last look.
+fn cpu_by_pid(top: &mut Top, rows: &[ProcRow]) -> HashMap<u32, f64> {
+    if !top.cpu_at.is_some_and(|t| t.elapsed() < CPU_STALE) {
+        top.cpu = proc_times(rows);
+        top.cpu_at = Some(Instant::now());
+        std::thread::sleep(CPU_GAP);
+    }
+    let now = Instant::now();
+    let times = proc_times(rows);
+    let elapsed = top.cpu_at.replace(now).map(|t| now.duration_since(t).as_secs_f64()).unwrap_or(0.0);
+    let prev = std::mem::replace(&mut top.cpu, times);
+    if elapsed <= 0.05 {
+        return HashMap::new();
+    }
+    let budget = elapsed * 10_000_000.0 * cores();
+    top.cpu
+        .iter()
+        .filter_map(|(pid, t)| prev.get(pid).map(|p0| (*pid, (t.saturating_sub(*p0) as f64 / budget * 100.0).clamp(0.0, 100.0))))
+        .collect()
+}
+
+/// RAM a process holds for itself (private working set: Task Manager's Memory column).
+fn private_bytes(pid: u32) -> Option<f64> {
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut c = PROCESS_MEMORY_COUNTERS_EX2 { cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX2>() as u32, ..Default::default() };
+        let ok = GetProcessMemoryInfo(h, &mut c as *mut _ as *mut PROCESS_MEMORY_COUNTERS, c.cb).is_ok();
+        let _ = CloseHandle(h);
+        ok.then_some(c.PrivateWorkingSetSize as f64)
+    }
+}
+
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// The FileDescription in an exe's version info ("Google Chrome" for chrome.exe).
+fn file_description(path: &str) -> Option<String> {
+    unsafe {
+        let p = wide(path);
+        let size = GetFileVersionInfoSizeW(PCWSTR(p.as_ptr()), None);
+        if size == 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; size as usize];
+        GetFileVersionInfoW(PCWSTR(p.as_ptr()), None, size, buf.as_mut_ptr() as *mut _).ok()?;
+        let block = buf.as_ptr() as *const std::ffi::c_void;
+        let mut ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+        let mut len = 0u32;
+        // The languages the file says it has, then the usual English ones.
+        let mut langs: Vec<String> = Vec::new();
+        if VerQueryValueW(block, w!("\\VarFileInfo\\Translation"), &mut ptr, &mut len).as_bool() && !ptr.is_null() {
+            let pairs = std::slice::from_raw_parts(ptr as *const u16, (len / 2) as usize);
+            langs.extend(pairs.as_chunks::<2>().0.iter().map(|p| format!("{:04x}{:04x}", p[0], p[1])));
+        }
+        langs.extend(["040904b0", "040904e4", "000004b0"].map(String::from));
+        for lang in langs {
+            let key = wide(&format!("\\StringFileInfo\\{lang}\\FileDescription"));
+            if VerQueryValueW(block, PCWSTR(key.as_ptr()), &mut ptr, &mut len).as_bool() && !ptr.is_null() && len > 1 {
+                let text = std::slice::from_raw_parts(ptr as *const u16, len as usize);
+                let end = text.iter().position(|c| *c == 0).unwrap_or(text.len());
+                let name = String::from_utf16_lossy(&text[..end]).trim().to_string();
+                if !name.is_empty() {
+                    return Some(name);
+                }
+            }
+        }
+        None
+    }
+}
+
+/// "chrome.exe" -> "Chrome", "memory compression" -> "Memory Compression".
+fn plain_name(exe: &str) -> String {
+    exe.trim_end_matches(".exe")
+        .split(' ')
+        .map(|word| {
+            let mut c = word.chars();
+            c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+fn app_name(top: &mut Top, pid: u32, exe: &str) -> String {
+    if let Some(n) = top.names.get(exe) {
+        return n.clone();
+    }
+    // A process we may not look into keeps its exe name (and may be read next time).
+    let Some(path) = crate::game::exe_path(pid) else { return plain_name(exe) };
+    let name = file_description(&path).unwrap_or_else(|| plain_name(exe));
+    top.names.insert(exe.to_string(), name.clone());
+    name
+}
+
+/// Adds processes up per exe (Chrome's many processes are one app), biggest first.
+fn by_app(top: &mut Top, rows: &[ProcRow], per_pid: HashMap<u32, f64>, limit: usize) -> Vec<AppUse> {
+    let exe: HashMap<u32, &str> = rows.iter().map(|r| (r.0, r.2.as_str())).collect();
+    // exe -> (total, processes, one of its pids)
+    let mut apps: HashMap<&str, (f64, u32, u32)> = HashMap::new();
+    for (pid, v) in per_pid {
+        let Some(name) = exe.get(&pid) else { continue };
+        let e = apps.entry(*name).or_insert((0.0, 0, pid));
+        e.0 += v;
+        e.1 += 1;
+    }
+    let mut list: Vec<(&str, (f64, u32, u32))> = apps.into_iter().filter(|(_, a)| a.0 > 0.0).collect();
+    list.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0));
+    list.truncate(limit);
+    list.into_iter()
+        .map(|(exe, (value, count, pid))| AppUse { name: app_name(top, pid, exe), exe: exe.to_string(), value, count })
+        .collect()
+}
+
+/// The apps using the most CPU, RAM ("mem") or GPU right now.
+#[tauri::command]
+pub async fn sys_top(kind: String, limit: usize) -> Vec<AppUse> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let rows = crate::procs::snapshot(false);
+        let mut guard = TOP.lock().unwrap();
+        let top = guard.get_or_insert_with(Top::default);
+        let per_pid: HashMap<u32, f64> = match kind.as_str() {
+            "cpu" => cpu_by_pid(top, &rows),
+            "mem" => rows.iter().filter(|r| r.0 > 4).filter_map(|r| private_bytes(r.0).map(|b| (r.0, b))).collect(),
+            // sys_sample keeps the GPU counter going; its last reading is the freshest there is.
+            "gpu" => LOAD.lock().unwrap().as_ref().map(|l| l.gpu_pids.clone()).unwrap_or_default(),
+            _ => HashMap::new(),
+        };
+        by_app(top, &rows, per_pid, limit)
+    })
+    .await
+    .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::time_to_full;
+    use super::{by_app, instance_pid, plain_name, time_to_full, Top};
+    use crate::procs::ProcRow;
+    use std::collections::HashMap;
 
     #[test]
     fn full_in_is_what_is_missing_over_the_rate() {
@@ -293,5 +496,36 @@ mod tests {
         assert_eq!(time_to_full(0.0, 0.0, 20_000.0), None);
         assert_eq!(time_to_full(50.0, 25_000.0, 0.0), None);
         assert_eq!(time_to_full(1.0, 500.0, 1.0), None);
+    }
+
+    #[test]
+    fn gpu_counter_instances_name_their_process() {
+        assert_eq!(instance_pid("pid_1234_luid_0x00000000_0x0000D1E8_phys_0_eng_0_engtype_3D"), Some(1234));
+        assert_eq!(instance_pid("_Total"), None);
+        assert_eq!(instance_pid("pid_x_luid"), None);
+    }
+
+    #[test]
+    fn an_exe_without_a_description_reads_as_words() {
+        assert_eq!(plain_name("chrome.exe"), "Chrome");
+        assert_eq!(plain_name("memory compression"), "Memory Compression");
+    }
+
+    #[test]
+    fn processes_add_up_per_app_biggest_first() {
+        // Pids that can't exist, so the names come from the exe (nothing to look into).
+        let rows = vec![
+            ProcRow(4_000_001, 0, "chrome.exe".into(), None),
+            ProcRow(4_000_002, 0, "chrome.exe".into(), None),
+            ProcRow(4_000_003, 0, "code.exe".into(), None),
+            ProcRow(4_000_004, 0, "idle.exe".into(), None),
+        ];
+        let per_pid: HashMap<u32, f64> = [(4_000_001, 10.0), (4_000_002, 5.0), (4_000_003, 12.0), (4_000_004, 0.0), (4_000_099, 50.0)].into();
+        let mut top = Top::default();
+        let list = by_app(&mut top, &rows, per_pid.clone(), 5);
+        let got: Vec<(&str, &str, f64, u32)> = list.iter().map(|a| (a.name.as_str(), a.exe.as_str(), a.value, a.count)).collect();
+        // A pid no longer in the snapshot and an app using nothing are left out.
+        assert_eq!(got, vec![("Chrome", "chrome.exe", 15.0, 2), ("Code", "code.exe", 12.0, 1)]);
+        assert_eq!(by_app(&mut top, &rows, per_pid, 1).len(), 1);
     }
 }

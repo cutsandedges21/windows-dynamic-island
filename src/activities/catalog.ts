@@ -24,7 +24,7 @@ export type OptionSpec = (
   | { key: string; type: 'text'; label: string; help?: string; default: string; placeholder?: string; secret?: boolean }
   /** With a `group` on each choice, the Activities page shows every value as a short code, one line per group (Hockey's teams). */
   | { key: string; type: 'choice'; label: string; help?: string; default: string; choices: Array<{ value: string; label: string; group?: string }> }
-  /** Any mix of the choices, at least one (System Stats: CPU, RAM and GPU on the pill). */
+  /** Any mix of the choices (System Stats: CPU, RAM and GPU on the pill, where none means the top of its priority). */
   | { key: string; type: 'multi'; label: string; help?: string; default: string[]; choices: Array<{ value: string; label: string }> }
   /**
    * An API key or token. It lives in the Windows Credential Manager under `secret` (such as
@@ -344,19 +344,38 @@ export const CATALOG: ActivityMeta[] = [
     priority: 'low',
     behavior: B(true, false, false, false),
     options: [
+      { key: 'always', type: 'toggle', label: 'Always show', help: 'Keep the numbers on the island instead of only on spikes.', default: false },
+      { key: 'hoverCard', type: 'toggle', label: 'Hover card', help: 'Pointing at the stats shows a card with a bar for each. Click a bar to see the apps using the most.', default: true },
+      {
+        key: 'order',
+        type: 'choice',
+        label: 'Priority',
+        help: 'Which stat comes first. The first one leads and stays when space runs out, and it is the one shown beside other activities.',
+        default: 'cpu,mem,gpu',
+        choices: [
+          { value: 'cpu,mem,gpu', label: 'CPU, RAM, GPU' },
+          { value: 'cpu,gpu,mem', label: 'CPU, GPU, RAM' },
+          { value: 'mem,cpu,gpu', label: 'RAM, CPU, GPU' },
+          { value: 'mem,gpu,cpu', label: 'RAM, GPU, CPU' },
+          { value: 'gpu,cpu,mem', label: 'GPU, CPU, RAM' },
+          { value: 'gpu,mem,cpu', label: 'GPU, RAM, CPU' },
+        ],
+      },
       {
         key: 'show',
         type: 'multi',
         label: 'On the pill',
-        help: 'What the resting pill shows, side by side. Pointing at the pill or opening the island shows all three.',
-        default: ['cpu'],
+        help: 'What the resting pill shows, side by side, in priority order. None picked: the top one alone.',
+        default: [],
         choices: [
           { value: 'cpu', label: 'CPU' },
           { value: 'ram', label: 'RAM' },
           { value: 'gpu', label: 'GPU' },
         ],
       },
-      { key: 'always', type: 'toggle', label: 'Always show', help: 'Keep the numbers on the island instead of only on spikes.', default: false },
+      { key: 'expandedCpu', type: 'toggle', label: 'CPU when expanded', help: 'What the bigger island shows. Pick any mix of CPU, RAM and GPU.', default: true },
+      { key: 'expandedRam', type: 'toggle', label: 'RAM when expanded', default: true },
+      { key: 'expandedGpu', type: 'toggle', label: 'GPU when expanded', default: true },
       { key: 'cpuSpike', type: 'number', label: 'CPU spike at', default: 90, min: 50, max: 100, unit: '%' },
       { key: 'memSpike', type: 'number', label: 'Memory warning at', default: 92, min: 50, max: 100, unit: '%' },
     ],

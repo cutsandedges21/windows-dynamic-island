@@ -232,6 +232,7 @@ pub fn run() {
             spectrum::spectrum_watch,
             system::power_state,
             system::sys_sample,
+            system::sys_top,
             net::net_sample,
             net::ports_listening,
             shell::open_url,

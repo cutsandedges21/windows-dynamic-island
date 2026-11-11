@@ -400,7 +400,7 @@ export class PillRenderer {
         const current = e.querySelector<HTMLElement>('.t:not(.out)')!;
         if (current.textContent !== seg.text) {
           // Clocks, timers and counters just tick in place; only wording changes roll.
-          if (!prev || prev.t !== 'text' || (timeLike(current.textContent ?? '') && timeLike(seg.text))) current.textContent = seg.text;
+          if (!prev || prev.t !== 'text' || ticksInPlace(current.textContent ?? '', seg.text)) current.textContent = seg.text;
           else this.rollText(e, current, seg.text);
         }
         break;
@@ -532,6 +532,11 @@ export class PillRenderer {
 /** Times, counts and percentages: "0:52", "12m 43s", "84%", "4.1M", "9:41 PM". */
 export function timeLike(text: string): boolean {
   return /\d/.test(text) && /^[\d\s:./%,+\-–hmsdkKMBGTAP]+$/.test(text);
+}
+
+/** A text change that ticks instead of rolling: a time or count, or a label whose only change is its digits ("CPU 17%" to "CPU 18%"). */
+export function ticksInPlace(old: string, next: string): boolean {
+  return (timeLike(old) && timeLike(next)) || old.replace(/\d/g, '') === next.replace(/\d/g, '');
 }
 
 /** The element's own translate with a different scale, for a press pulse. */

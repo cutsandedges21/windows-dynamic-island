@@ -829,7 +829,10 @@ export class Island {
       const label = compact || vertical ? '' : view?.label ?? clip(statuses.get(id)?.summary ?? meta.name, 18);
       const prio = only(id) ? 5 : (compact ? 8 : 6) + i;
       if (compact) {
-        out.push({ t: 'icon', key: `chip/${id}`, icon: view?.icon ?? meta.icon, tone: view?.tone ?? 'muted', size: 'sm', side: 'end', prio, tip: statuses.get(id)?.summary ?? meta.name });
+        const tip = statuses.get(id)?.summary ?? meta.name;
+        // A chip that keeps its label (a number) shows just that, in place of the icon.
+        if (view?.keepLabel && view.label) out.push({ t: 'text', key: `chip/${id}`, text: view.label, tone: view.tone ?? 'muted', size: 'sm', weight: 'semibold', side: 'end', prio, tip });
+        else out.push({ t: 'icon', key: `chip/${id}`, icon: view?.icon ?? meta.icon, tone: view?.tone ?? 'muted', size: 'sm', side: 'end', prio, tip });
       } else {
         out.push({
           t: 'chip',
