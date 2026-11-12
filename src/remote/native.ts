@@ -12,6 +12,7 @@ export const phoneNative: PhoneNative = {
   copy: (text) => native.clipboardSetText(text),
   clipboard: () => native.clipboardPaste(),
   lock: () => native.lock(),
+  sleep: () => native.sleep(),
   log: (text) => void native.log(text),
   on: (event, cb) => on(event, cb),
 };

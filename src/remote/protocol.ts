@@ -9,6 +9,7 @@
 import type { PetLook } from '../core/looks';
 import type { MirrorFrame } from '../core/mirror';
 import type { SheetView } from '../core/sheet';
+import { MAX_GRID_KEYS } from './grid-edit';
 
 /** Where the phone website lives; the pairing QR code points here. */
 export const PHONE_SITE = 'https://islandphone.vercel.app';
@@ -96,7 +97,10 @@ export type PhoneMsg =
   | { t: 'act'; action: string; arg?: unknown }
   | { t: 'text'; text: string }
   | { t: 'clip-get' }
-  | { t: 'lock' };
+  | { t: 'lock' }
+  | { t: 'sleep' }
+  /** Control Center arranged on the phone: tiles on the grid in order, and the ones taken off. */
+  | { t: 'grid-set'; order: string[]; hidden: string[] };
 
 /** Phone → island lines Rust handles itself (never passed on). */
 export type PhoneControl =
@@ -288,7 +292,12 @@ export function readPhoneMsg(v: unknown): PhoneMsg | null {
       return short(v.text, 20_000) && v.text.trim() ? { t: 'text', text: v.text } : null;
     case 'clip-get':
     case 'lock':
+    case 'sleep':
       return { t: v.t };
+    case 'grid-set': {
+      const keys = (x: unknown): x is string[] => Array.isArray(x) && x.length <= MAX_GRID_KEYS && x.every((k) => short(k, 128) && k !== '');
+      return keys(v.order) && keys(v.hidden) ? { t: 'grid-set', order: [...v.order], hidden: [...v.hidden] } : null;
+    }
     default:
       return null;
   }

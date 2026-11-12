@@ -802,3 +802,14 @@ body {
 .ph-stage .tile.k-week .ws { gap: 0; }
 .ph-stage .tile.k-week .wn { width: 20px; height: 20px; border-radius: 10px; font-size: 11.5px; }
 
+
+/* Edit Control Center (screens/grid-edit.ts): rows jiggle like the PC's tiles in edit mode. */
+.ph-ge { display: flex; flex-direction: column; gap: 6px; }
+.ph-ge-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 255, 255, 0.07); }
+.ph-ge-row.jiggle { animation: ph-jiggle 0.3s ease-in-out infinite alternate; }
+.ph-ge-row.off { opacity: 0.7; }
+.ph-ge-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-ge-btn { width: 34px; height: 34px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.12); color: inherit; display: grid; place-items: center; }
+.ph-ge-btn:disabled { opacity: 0.3; }
+@keyframes ph-jiggle { from { transform: rotate(-0.6deg); } to { transform: rotate(0.6deg); } }
+@media (prefers-reduced-motion: reduce) { .ph-ge-row.jiggle { animation: none; } }

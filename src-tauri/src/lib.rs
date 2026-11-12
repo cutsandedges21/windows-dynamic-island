@@ -255,6 +255,7 @@ pub fn run() {
             shell::shell_reveal,
             shell::shell_edit_image,
             shell::shell_lock,
+            shell::shell_sleep,
             shell::shell_snip,
             shell::screen_capture,
             shell::clipboard_set_text,

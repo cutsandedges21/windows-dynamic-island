@@ -61,6 +61,11 @@ pub fn shell_edit_image(path: String) -> bool {
 pub fn shell_lock() {}
 
 #[tauri::command]
+pub fn shell_sleep() {
+    let _ = Command::new("pmset").arg("sleepnow").status();
+}
+
+#[tauri::command]
 pub fn shell_snip() {}
 
 /// Snipping Tool's screenshot and recording keys: Windows only (a Mac has Cmd+Shift+5 of its own).
