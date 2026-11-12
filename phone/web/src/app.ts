@@ -15,6 +15,7 @@ import { inboxFile, inboxText } from './screens/inbox';
 import { installScreen, platformOf } from './screens/install';
 import { IslandScreen } from './screens/island';
 import { openMenu } from './screens/menu';
+import { PrefsSheet, type PrefsKind } from './screens/prefs';
 import { PairScreen } from './screens/pair';
 import { openScreen } from './screens/pc-screen';
 import { openSend } from './screens/send';
@@ -57,6 +58,8 @@ export class App {
   private readonly nav = new NavKeeper();
   private pairing = false;
   private clip: ClipSheet | null = null;
+  /** The PC's Activities or Settings, while that sheet is open. */
+  private prefs: PrefsSheet | null = null;
   private seenTimer: ReturnType<typeof setInterval> | undefined;
   private width = 0;
   private openId: string | null;
@@ -268,6 +271,9 @@ export class App {
       case 'clip':
         if (this.clip?.alive) this.clip.show(m.text);
         return;
+      case 'prefs':
+        if (this.prefs?.alive) this.prefs.show(m.rows, m.acts);
+        return;
       case 'text':
         if (s) inboxText(s.inbox, m.text, m.from);
         return;
@@ -404,6 +410,9 @@ export class App {
         if (this.island) this.clip = new ClipSheet(this.link, this.island.name);
       },
       lock: () => void this.lock(),
+      prefs: (kind: PrefsKind) => {
+        if (this.island) this.prefs = new PrefsSheet(kind, this.island.name, (m) => this.link.send(m));
+      },
       switchTo: (id) => {
         const it = this.store.get(id);
         if (!it) return;

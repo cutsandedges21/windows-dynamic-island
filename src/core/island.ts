@@ -34,6 +34,7 @@ import { WheelGesture } from './wheel';
 import { workspaceEngine } from '../workspaces/engine';
 import { clip, timeOfDay } from './format';
 import { PhoneActs, PhoneError, PhoneHub, termAllowed, type PhoneDelivery, type PhoneIslandHooks } from '../remote/hub';
+import { applyPref, prefsOf } from '../remote/prefs';
 import { phoneNative } from '../remote/native';
 import { HELLO_FOLDERS, PHONE_ISLAND_ACTIONS, type BotState, type Nav, type ScreenState } from '../remote/protocol';
 import { urgentIds } from '../remote/views';
@@ -1669,6 +1670,16 @@ export class Island {
         folders: this.recentFolders(),
       }),
       fromPhone: (item) => this.fromPhone(item),
+      prefs: () => (this.settings ? prefsOf(this.settings) : null),
+      // The phone's Activities and Settings screens: only the allow-list in src/remote/prefs.ts.
+      setPref: (key, value) => {
+        if (!this.settings) return false;
+        const next = structuredClone(this.settings);
+        if (!applyPref(next, key, value)) return false;
+        this.applySettings(next);
+        this.saveSettings();
+        return true;
+      },
     };
   }
 
