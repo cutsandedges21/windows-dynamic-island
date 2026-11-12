@@ -1151,14 +1151,19 @@ export class LandActivity extends BaseActivity {
     let started = 0;
     let error = '';
     for (const f of files) {
+      // The row first: the call returns only once the phone has the file, and Rust's
+      // remote-file-sent comes before that, so a row made after it would say Sending for ever.
+      const id = `phone-out-${++this.phoneSeq}`;
+      this.onTransfer({ id, dir: 'out', peer: p, state: 'waiting', done: 0, total: f.size, count: 1, items: [{ name: f.name, size: f.size, files: 1, dir: false }], error: null, saved: [], folder: null, expires: null });
       const r = await native.remoteSendFile(p.id.slice(PHONE.length), f.path);
       if (!this.alive) break;
+      const t = this.transfers.get(id);
+      if (t && ACTIVE.has(t.state)) this.onTransfer(r.ok ? { ...t, state: 'done', done: t.total } : { ...t, state: 'failed', error: r.error });
       if (!r.ok) {
         error = r.error;
         continue;
       }
       started++;
-      this.onTransfer({ id: `phone-out-${++this.phoneSeq}`, dir: 'out', peer: p, state: 'waiting', done: 0, total: f.size, count: 1, items: [{ name: f.name, size: f.size, files: 1, dir: false }], error: null, saved: [], folder: null, expires: null });
     }
     if (started && files.length < all.length) this.note = { text: 'Folders stayed here: a phone takes files only.', at: Date.now() };
     return started ? { ok: true, value: null } : { ok: false, error: error || `${p.name} didn't take it.` };
