@@ -287,6 +287,8 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 .w-city > span { display: flex; align-items: center; gap: 8px; color: var(--muted); white-space: nowrap; }
 .w-city input { flex: 1; height: 34px; padding: 0 10px; border-radius: 7px; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.05); outline: none; }
 .w-city input:focus { border-color: var(--accent); }
+/* setup › the glance question: Claude Code and Claude Status, under the tiles */
+.w-claude { margin-top: 14px; }
 
 .w-preview { padding: 16px; border-radius: 18px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--line); max-width: 560px; }
 .w-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }

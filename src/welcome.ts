@@ -11,7 +11,7 @@ import { packGrid } from './core/grid';
 import { icon } from './core/icons';
 import { activeValue } from './core/models';
 import { native, type LandFirewall } from './core/native';
-import { applyPlan, glanceChoices, planActivities, previewCells, suggestGlance, USES, welcomeSteps, withLook, type Facts, type Look, type Plan, type Step, type Use } from './core/onboarding';
+import { applyPlan, claudeChoices, glanceChoices, planActivities, previewCells, suggestGlance, USES, welcomeSteps, withLook, type Facts, type Look, type Plan, type Step, type Use } from './core/onboarding';
 import { ctrlKey, platform, thisComputer } from './core/platform';
 import { springAnimate } from './core/renderer';
 import { accentColor, ACCENTS, cloneSettings, newPhoneTopic, type PillColor, type Settings } from './core/settings';
@@ -152,7 +152,8 @@ async function checkModel(): Promise<void> {
 function suggest(): void {
   const key = [...flow.uses].sort().join(',');
   if (flow.glance && flow.suggestedFor === key) return;
-  flow.glance = new Set(suggestGlance([...flow.uses], facts()));
+  const on = current ? Object.entries(current.host.settings().activities.config).filter(([, c]) => c.enabled).map(([id]) => id) : [];
+  flow.glance = new Set(suggestGlance([...flow.uses], facts(), on));
   flow.suggestedFor = key;
 }
 
@@ -208,6 +209,7 @@ function content(step: Step, host: WelcomeHost): Node[] {
           }),
         )),
         ticks.has('weather') ? cityField() : null,
+        claudeCard(ticks),
       ].filter((n): n is HTMLElement => n != null);
     }
     case 'ai':
@@ -266,6 +268,18 @@ function option(ic: string, label: string, sub: string | undefined, on: boolean,
   return el;
 }
 
+/** Claude Code and Claude Status, a line each on what sets them apart; nothing when neither is offered. */
+function claudeCard(ticks: Set<string>): HTMLElement | null {
+  const choices = claudeChoices(facts(), [...flow.uses]);
+  if (!choices.length) return null;
+  const status = choices.some((c) => c.id === 'claudeStatus');
+  return h('section', { class: 'w-card w-claude' }, [
+    cardHead('claude', 'Claude', 'Pick either, both or neither. Each one is a tile too.'),
+    h('div', { class: 'w-options' }, choices.map((c) => option(c.icon, c.label, c.sub, ticks.has(c.id), (on) => (on ? ticks.add(c.id) : ticks.delete(c.id))))),
+    status ? h('p', { class: 'w-fine', text: 'Claude Status can also pick the model for each prompt (Auto model). That is in Activities › Claude Status, whenever you want it.' }) : null,
+  ]);
+}
+
 function cityField(): HTMLElement {
   const input = h('input', { type: 'text', value: flow.city ?? '', placeholder: 'Your city, such as Montreal', spellcheck: 'false', 'aria-label': 'City for the weather' });
   input.addEventListener('input', () => (flow.city = input.value));
@@ -297,6 +311,8 @@ function look(host: WelcomeHost): Node[] {
   ));
   const where = segmented(i.anchor, [['top', 'Top'], ['bottom', 'Bottom'], ['left', 'Left'], ['right', 'Right']], (v) => set({ anchor: v }));
   const size = segmented(i.size, [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], (v) => set({ size: v }));
+  // The same choice as Settings › Appearance › When pointed at; each activity can still have its own.
+  const grows = segmented(i.defaultGrows, [['wide', 'Sideways'], ['card', 'Into a card']], (v) => set({ defaultGrows: v }));
   const row = (title: string, help: string | null, control: Node) =>
     h('div', { class: 'w-look-row' }, [h('div', { class: 'w-look-text' }, [h('b', { text: title }), help ? h('span', { class: 'muted', text: help }) : null]), control]);
   const mac = platform === 'macos';
@@ -310,6 +326,7 @@ function look(host: WelcomeHost): Node[] {
         row('Colour', null, colors),
         row('Accent', 'Its light, the bot and the highlights.', accents),
         row('Size', null, size),
+        row('When pointed at', mac ? 'Point at it for more: the pill widens, or a card grows out of it.' : "Point at it for more: the pill widens, or a card grows out of it. Claude Code's card hangs below either way.", grows),
         row('The bot', 'A little bot beside the island. Click it to ask anything, set reminders and take notes.', toggle(i.bot, (v) => set({ bot: v }))),
         row(mac ? 'Open at login' : 'Start with Windows', 'So the island and your reminders are there whenever you are.', toggle(flow.startup ?? true, (v) => (flow.startup = v))),
       ]),
@@ -590,19 +607,26 @@ function workspaces(host: WelcomeHost): Node[] {
 
 function tour(host: WelcomeHost): Node[] {
   const hotkey = host.settings().general.toggleHotkey;
+  const card = host.settings().island.defaultGrows === 'card';
   const gesture = (ic: string, title: string, text: string) => h('li', {}, [h('span', { class: 'w-point-icon', html: icon(ic) }), h('div', {}, [h('b', { text: title }), h('span', { class: 'muted', text })])]);
   return [
     h('h1', { text: 'How to use your island' }),
-    h('p', { class: 'lead', text: 'Try these on your island now.' }),
+    h('p', { class: 'lead', text: 'Try these on your island now. Every gesture and keyboard shortcut is in Controls too, beside Settings.' }),
     h('ul', { class: 'w-moves' }, [
       gesture('grid', 'Click it', 'Opens Control Center, your tiles. Hold a tile to move it or change its size.'),
-      gesture('eye', 'Point at it', "Shows more about what it says: your chats, your phone's notifications. With music playing, the pill grows into a player."),
+      gesture(
+        'eye',
+        'Point at it',
+        card
+          ? "A card grows out of it with more about what it says: your chats, your phone's notifications. With music playing, it grows into a player."
+          : "It widens and shows more about what it says: your chats, your phone's notifications.",
+      ),
       gesture('more', 'Right-click it', 'Your menu: where it sits, Quiet, Hide, Reminders, Workspaces. Pick what it holds in Settings › Behavior.'),
       gesture('land', 'Drop files on it', 'Land sends them to a computer nearby, a friend anywhere or your phone.'),
       gesture('chat', 'Click the bot', 'Ask anything, or say “remind me tomorrow 9am to…” or “note: …”.'),
       gesture('keyboard', `Tap ${ctrlKey()} while pointing at it`, 'It fades, and your clicks go to whatever is behind it.'),
       gesture('arrow-down', 'Scroll on it', 'Goes through what is going on, when there is more than one thing.'),
-      hotkey ? gesture('keyboard', hotkey, 'Opens the island from anywhere.') : null,
+      hotkey ? gesture('keyboard', hotkey, 'Opens the island from anywhere. Change it in Controls.') : null,
     ]),
   ];
 }
