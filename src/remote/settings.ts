@@ -54,7 +54,7 @@ export function codeLeft(expires: number, now: number): string {
 /** Under Terminal from your phone: what it allows, and why phones get none while Windows Hello guards Allow. */
 export function termHelp(s: Pick<Settings, 'general' | 'activities'>): string {
   const what = 'A paired phone can open a terminal on this PC and run any command.';
-  return s.general.phoneTerminal && !termAllowed(s) ? `${what} Off for phones while Windows Hello is asked before Allow (Activities › Claude Code).` : what;
+  return s.general.phoneTerminal && !termAllowed(s) ? `${what} Off for phones while Windows Hello is asked before Allow (Activities › Claude Status › Claude Code).` : what;
 }
 
 /** Under a terminal's title: who started it, whether it runs, and where. */
@@ -152,7 +152,7 @@ function build(): HTMLElement {
     termBox,
     screenBox,
   ];
-  if (platform === 'windows') kids.push(h('p', { class: 'muted', text: "Claude's Allow works from a phone too, unless Windows Hello is asked before Allow (Activities › Claude Code): then a phone can only Deny." }));
+  if (platform === 'windows') kids.push(h('p', { class: 'muted', text: "Claude's Allow works from a phone too, unless Windows Hello is asked before Allow (Activities › Claude Status › Claude Code): then a phone can only Deny." }));
   void on<RemotePhone[]>('remote-phones', (l) => show(l));
   void on<{ phone: string; name: string }>('remote-paired', (p) => paired(p.name));
   void on<TermInfo[]>('term-changed', (l) => showTerms(l));

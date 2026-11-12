@@ -438,12 +438,17 @@ export class StatusEngine {
   /** The last rows built, by id, for jumping. */
   private items = new Map<string, Item>();
 
+  /**
+   * `tracker`: the Claude activity's own session list, so one scan of Claude Code's registry,
+   * processes and transcripts serves both its prompts and these rows.
+   */
   constructor(
     configDir: string,
     private readonly log: (...p: unknown[]) => void = () => {},
+    tracker?: SessionTracker,
   ) {
     this.projectsDir = joinPath(configDir, 'projects');
-    this.tracker = new SessionTracker(joinPath(configDir, 'sessions'), this.projectsDir);
+    this.tracker = tracker ?? new SessionTracker(joinPath(configDir, 'sessions'), this.projectsDir);
     this.chats = new ChatWatcher((secs) => this.addRun('chatHistory', secs));
     // Notification finishes count only from now on.
     this.notifAfter = Date.now();
@@ -482,9 +487,9 @@ export class StatusEngine {
 
   // ---------------------------------------------------------------- sources
 
-  /** Claude Code sessions, in the widget's words. */
-  private async codeItems(now: number): Promise<Item[]> {
-    const { sessions } = await this.tracker.poll();
+  /** Claude Code sessions, in the widget's words. `listed`: the sessions the activity just polled (hidden ones left out). */
+  private async codeItems(now: number, listed?: SessionView[]): Promise<Item[]> {
+    const sessions = listed ?? (await this.tracker.poll()).sessions;
     const out: Item[] = [];
     const files = new Set<string>();
     let changed = false;
@@ -718,6 +723,12 @@ export class StatusEngine {
 
   // ---------------------------------------------------------------- dismissing
 
+  /** The user went to this session another way (the Claude activity's Open): its answer is read. */
+  markRead(id: string): void {
+    const x = this.items.get(id);
+    if (x?.unread && x.source !== 'app') this.markSeen(x, Date.now() / 1000);
+  }
+
   dismiss(id: string): void {
     const x = this.items.get(id);
     if (!x) return;
@@ -730,9 +741,10 @@ export class StatusEngine {
 
   // ---------------------------------------------------------------- the rows
 
-  async poll(): Promise<StatusRow[]> {
+  /** `sessions`: Claude Code's sessions as the activity's tracker just listed them; without, the engine polls its tracker itself. */
+  async poll(sessions?: SessionView[]): Promise<StatusRow[]> {
     const now = Date.now() / 1000;
-    const [code, chats] = await Promise.all([this.codeItems(now), this.chatItems(now)]);
+    const [code, chats] = await Promise.all([this.codeItems(now, sessions), this.chatItems(now)]);
     const all = [...code, ...chats];
 
     // A dismissal lasts until the session changes state.

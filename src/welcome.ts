@@ -268,15 +268,14 @@ function option(ic: string, label: string, sub: string | undefined, on: boolean,
   return el;
 }
 
-/** Claude Code and Claude Status, a line each on what sets them apart; nothing when neither is offered. */
+/** Claude Status, with what it does for Claude Code; nothing when it is not offered. */
 function claudeCard(ticks: Set<string>): HTMLElement | null {
   const choices = claudeChoices(facts(), [...flow.uses]);
   if (!choices.length) return null;
-  const status = choices.some((c) => c.id === 'claudeStatus');
   return h('section', { class: 'w-card w-claude' }, [
-    cardHead('claude', 'Claude', 'Pick either, both or neither. Each one is a tile too.'),
+    cardHead('claude', 'Claude', 'A tile too. What it does for Claude Code (Allow and Deny, questions, replies, limits, hotkeys) can each be turned off in Activities › Claude Status.'),
     h('div', { class: 'w-options' }, choices.map((c) => option(c.icon, c.label, c.sub, ticks.has(c.id), (on) => (on ? ticks.add(c.id) : ticks.delete(c.id))))),
-    status ? h('p', { class: 'w-fine', text: 'Claude Status can also pick the model for each prompt (Auto model). That is in Activities › Claude Status, whenever you want it.' }) : null,
+    h('p', { class: 'w-fine', text: 'It can also pick the model for each prompt (Auto model). That is in Activities › Claude Status, whenever you want it.' }),
   ]);
 }
 
@@ -492,7 +491,7 @@ function ntfySteps(topic: string): HTMLElement {
       stepItem('Allow notifications', 'when ntfy asks, or the pushes stay silent.'),
       stepItem('Check that it works.', 'A push should arrive on your phone.', h('div', { class: 'w-test' }, [test, status])),
     ]),
-    h('p', { class: 'w-fine', text: 'Pushes go through ntfy.sh, a free notification service. Anyone who knows the topic can read them, so keep it to yourself. Claude Code\'s can be turned off in Activities › Claude Code.' }),
+    h('p', { class: 'w-fine', text: 'Pushes go through ntfy.sh, a free notification service. Anyone who knows the topic can read them, so keep it to yourself. Claude\'s can be turned off in Activities › Claude Status › Claude Code › Send to my phone.' }),
   ]);
 }
 

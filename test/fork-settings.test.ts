@@ -55,8 +55,8 @@ describe("Moss's 0.4.2 settings file", () => {
     expect(s.activities.config.timer.options).toMatchObject({ focusMinutes: 50, breakMinutes: 5, quietByFocus: true });
   });
 
-  it('nothing saved how it grows: Claude Code hangs below, the rest grow into a card', () => {
-    expect(grows(s, 'claude')).toBe('below');
+  it("nothing saved how it grows: Claude's card with more, the rest grow into a card", () => {
+    expect(grows(s, 'claude')).toBe('more');
     expect(grows(s, 'weather')).toBe('card');
     expect(grows(s, 'system-controls')).toBe('card');
     // This music had "Player on hover" off: pointing at it widens the pill.
@@ -64,11 +64,17 @@ describe("Moss's 0.4.2 settings file", () => {
     expect(hoverGrows('music', grows(s, 'music'), s.activities.config.music.options)).toBe('wide');
   });
 
-  it("Claude Status, which Moss never had, comes in off with Justin's defaults, after System Stats", () => {
-    expect(s.activities.config.claudeStatus).toMatchObject({ enabled: false, priority: 'medium', persistent: true, interrupt: true, options: { showDone: true, showAutoModel: true, glowInFront: true } });
-    expect(s.activities.config.claudeStatus.grows).toBeUndefined();
-    expect(grows(s, 'claudeStatus')).toBe('card');
-    expect(s.activities.order).toContain('claudeStatus');
+  it("Claude Code is Claude now (shown as Claude Status): still on, his options as he had them, Claude Status's switches at their defaults", () => {
+    expect(s.activities.config.claudeStatus).toBeUndefined();
+    expect(s.activities.order).not.toContain('claudeStatus');
+    expect(s.activities.order[0]).toBe('claude');
+    expect(s.activities.config.claude).toMatchObject({
+      enabled: true, priority: 'high', persistent: true, interrupt: true,
+      options: { resetAlerts: true, sessionHotkeys: true, notifications: true, phone: true, showLimits: true, showDesktop: true, finishedSeconds: 8, onlyOtherChats: false, replyWindowSeconds: 45, requireHello: false },
+    });
+    expect(s.activities.config.claude.options).toMatchObject({ showDone: true, showAutoModel: true, glowInFront: true, permissions: true, questions: true, replyBox: true });
+    // The heading over Claude Code's options holds no value.
+    expect('code' in s.activities.config.claude.options).toBe(false);
   });
 
   it('loading it again changes nothing', () => {
@@ -115,23 +121,61 @@ describe("Justin's 0.2.11 settings file", () => {
     expect(grows(s, 'weather')).toBe('wide');
   });
 
-  it('keeps Claude Status on, where he had it, with its pop-ups, Auto model button and running glow', () => {
-    expect(s.activities.config.claudeStatus).toMatchObject({
-      enabled: true, priority: 'medium', autoShow: true, persistent: true, interactive: true, interrupt: true,
-      options: { showDone: true, showAutoModel: true, glowInFront: true },
+  it("his Claude Code and Claude Status are one Claude, on, in Claude Code's place, with both one's options", () => {
+    expect(s.activities.config.claudeStatus).toBeUndefined();
+    expect(s.activities.order).not.toContain('claudeStatus');
+    expect(s.activities.order[0]).toBe('claude');
+    expect(s.activities.config.claude).toMatchObject({
+      enabled: true, priority: 'high', autoShow: true, persistent: true, interactive: true, interrupt: true, grows: 'wide',
+      options: { showDone: true, showAutoModel: true, glowInFront: true, finishedSeconds: 8, replyWindowSeconds: 45, requireHello: false, sessionHotkeys: true },
     });
-    expect(s.activities.order.indexOf('claudeStatus')).toBe(s.activities.order.indexOf('system') + 1);
-    // Nothing saved how it grows: his Sideways, like the rest.
-    expect(grows(s, 'claudeStatus')).toBe('wide');
   });
 
   it("Claude Status's switches he turned off stay off", () => {
     const saved = load('settings-justin-0.2.11.json') as { activities: { config: Record<string, { options: Record<string, unknown> }> } };
     saved.activities.config.claudeStatus.options = { showDone: false, showAutoModel: false, glowInFront: false };
-    expect(migrate(saved).activities.config.claudeStatus.options).toMatchObject({ showDone: false, showAutoModel: false, glowInFront: false });
+    expect(migrate(saved).activities.config.claude.options).toMatchObject({ showDone: false, showAutoModel: false, glowInFront: false });
   });
 
   it('loading it again changes nothing', () => {
     expect(migrate(JSON.parse(JSON.stringify(s)))).toEqual(s);
+  });
+});
+
+describe('Claude Code and Claude Status become one activity', () => {
+  type Saved = { activities: { order: string[]; config: Record<string, Record<string, unknown>> }; island: { grid: Record<string, unknown> } };
+  const justin = () => load('settings-justin-0.2.11.json') as Saved;
+
+  it("only Claude Status on: Claude is on with its priority, behaviour, Grows, place and tile, and keeps Claude Code's options", () => {
+    const saved = justin();
+    saved.activities.config.claude.enabled = false;
+    saved.activities.config.claudeStatus = { ...saved.activities.config.claudeStatus, priority: 'low', persistent: true, autoShow: false, grows: 'card' };
+    saved.island.grid = { order: [], sizes: { 'claudeStatus/claudeStatus': '2x2', 'claude/claude': '2x1' }, hidden: [], pages: [['music/music', 'claude/claude', 'claudeStatus/claudeStatus']] };
+    const s = migrate(saved);
+    expect(s.activities.config.claude).toMatchObject({ enabled: true, priority: 'low', persistent: true, autoShow: false, grows: 'card', options: { finishedSeconds: 8, showDone: true } });
+    expect(s.activities.order.indexOf('claude')).toBe(s.activities.order.indexOf('system') + 1);
+    expect(s.activities.order.filter((id) => id === 'claude')).toHaveLength(1);
+    expect(s.island.grid.pages).toEqual([['music/music', 'claude/claude']]);
+    expect(s.island.grid.sizes).toEqual({ 'claude/claude': '2x2' });
+    expect(migrate(JSON.parse(JSON.stringify(s)))).toEqual(s);
+  });
+
+  it("both on, or Claude Code alone: Claude Code's behaviour, place and tile; Claude Status's tile goes", () => {
+    const saved = justin();
+    saved.island.grid = { order: [], sizes: { 'claudeStatus/claudeStatus': '2x2', 'claude/claude': '2x1' }, hidden: ['claudeStatus'], pages: [['claudeStatus/claudeStatus', 'claude/claude']] };
+    const s = migrate(saved);
+    expect(s.activities.config.claude).toMatchObject({ enabled: true, priority: 'high', grows: 'wide' });
+    expect(s.island.grid.pages).toEqual([['claude/claude']]);
+    expect(s.island.grid.sizes).toEqual({ 'claude/claude': '2x1' });
+    expect(s.island.grid.hidden).toEqual([]);
+    saved.activities.config.claudeStatus.enabled = false;
+    expect(migrate(saved).activities.config.claude).toMatchObject({ enabled: true, priority: 'high' });
+  });
+
+  it('both off: off', () => {
+    const saved = justin();
+    saved.activities.config.claude.enabled = false;
+    saved.activities.config.claudeStatus.enabled = false;
+    expect(migrate(saved).activities.config.claude.enabled).toBe(false);
   });
 });

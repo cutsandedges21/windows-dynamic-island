@@ -17,27 +17,28 @@ export interface ActivityConfig extends Behavior {
 }
 
 /**
- * How an activity grows when pointed at. 'below' is the card hanging under the pill, Claude Code's
- * own look (its stats and chats): only it offers that, and it is its default.
+ * How an activity grows when pointed at. Two are Claude's alone: 'below' is the card hanging under
+ * the pill (Claude Code's look: its limits, tokens and chats), and 'more', its default, is Claude
+ * Status's small card grown out of the pill, whose ⌄ opens the rest of that card under the rows.
  */
-export type Grows = 'wide' | 'card' | 'below';
+export type Grows = 'wide' | 'card' | 'below' | 'more';
 
-/** Only Claude Code's card can hang below the pill (Activities › Grows). */
+/** Only Claude's card can hang below the pill or open for more (Activities › Grows). */
 export const GROWS_BELOW = 'claude';
 
-/** The choices an activity offers: Sideways and Into a card, and Below for Claude Code. */
+/** The choices an activity offers: Sideways and Into a card, and for Claude also Below and Card with more. */
 export function growsChoices(id: string): Grows[] {
-  return id === GROWS_BELOW ? ['wide', 'card', 'below'] : ['wide', 'card'];
+  return id === GROWS_BELOW ? ['wide', 'card', 'below', 'more'] : ['wide', 'card'];
 }
 
 /**
  * An activity's own choice, else the island's default (Settings › When pointed at). With `id`, a
- * choice that activity doesn't offer is ignored, and Claude Code falls back to hanging below.
+ * choice that activity doesn't offer is ignored, and Claude falls back to its card with more.
  */
 export function growsOf(c: Pick<ActivityConfig, 'grows'> | undefined, fallback: Grows, id?: string): Grows {
   if (id === undefined) return c?.grows ?? fallback;
   if (c?.grows && growsChoices(id).includes(c.grows)) return c.grows;
-  return id === GROWS_BELOW ? 'below' : fallback;
+  return id === GROWS_BELOW ? 'more' : fallback;
 }
 
 /** Cell sizes in the open island's grid: columns x rows. */
@@ -90,7 +91,7 @@ export interface Settings {
     /** What hovering the island shows: the card of whatever is pointed at, or always Claude's stats. */
     hoverCard: 'pointer' | 'claude';
     /** How a persistent activity grows when pointed at, unless it has its own choice (Activities › Grows). */
-    defaultGrows: Exclude<Grows, 'below'>;
+    defaultGrows: Exclude<Grows, 'below' | 'more'>;
     /** Tapping Ctrl over the pill fades it and lets clicks through to what is behind. */
     peekThrough: boolean;
     /** The bot in its bubble beside the pill (src/core/bubble.ts). */
@@ -161,7 +162,7 @@ export function defaultActivityConfig(id: string): ActivityConfig {
   const meta = CATALOG.find((m) => m.id === id);
   const options: Record<string, unknown> = {};
   // A secret option has no value here: the key lives in the Credential Manager, not in settings.
-  for (const o of meta?.options ?? []) if (o.type !== 'secret') options[o.key] = o.default;
+  for (const o of meta?.options ?? []) if (o.type !== 'secret' && o.type !== 'heading') options[o.key] = o.default;
   return {
     enabled: meta?.enabled ?? false,
     priority: meta?.priority ?? 'low',
@@ -301,10 +302,13 @@ export function migrate(saved: unknown): Settings {
     out.activities.config.system.options.show = [];
   }
   intoControls(savedCfg, out);
+  const statusLeads = intoClaude(savedCfg, out);
   // Order: saved order of known ids, then any new activities in catalog order. System Controls
-  // takes the place of the first of the three it took in.
+  // takes the place of the first of the three it took in; Claude takes Claude Status's when only that was on.
   const known = new Set(CATALOG.map((m) => m.id));
-  const savedOrder = Array.isArray(savedActs.order) ? (savedActs.order as unknown[]).map((id) => (typeof id === 'string' && INTO_CONTROLS.includes(id) ? 'system-controls' : id)) : [];
+  const orderId = (id: unknown) =>
+    typeof id !== 'string' ? id : INTO_CONTROLS.includes(id) ? 'system-controls' : id === 'claudeStatus' ? (statusLeads ? 'claude' : null) : id === 'claude' && statusLeads ? null : id;
+  const savedOrder = Array.isArray(savedActs.order) ? (savedActs.order as unknown[]).map(orderId) : [];
   const order = savedOrder.filter((id): id is string => typeof id === 'string' && known.has(id));
   for (const m of CATALOG) if (!order.includes(m.id)) order.push(m.id);
   out.activities.order = [...new Set(order)];
@@ -312,9 +316,12 @@ export function migrate(saved: unknown): Settings {
   // The grid layout is free-form (tile keys come from activities), so it is checked by hand.
   const savedGrid = isObj(saved.island) && isObj(saved.island.grid) ? saved.island.grid : {};
   const strings = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length < 120))] : []);
-  const tiles = (v: unknown) => [...new Set(strings(v).map(controlsTile).filter(Boolean))];
+  // Claude Status's tile is Claude's now: the one that leads keeps its place and size, the other goes.
+  const claudeTile = (key: string) => (CLAUDE_TILES[key] === undefined ? key : statusLeads ? CLAUDE_TILES[key] : key.startsWith('claudeStatus') ? '' : key);
+  const tileKey = (key: string) => claudeTile(controlsTile(key));
+  const tiles = (v: unknown) => [...new Set(strings(v).map(tileKey).filter(Boolean))];
   const sizes: Record<string, TileSize> = {};
-  if (isObj(savedGrid.sizes)) for (const [k, v] of Object.entries(savedGrid.sizes)) if (TILE_SIZES.includes(v as TileSize) && controlsTile(k)) sizes[controlsTile(k)] = v as TileSize;
+  if (isObj(savedGrid.sizes)) for (const [k, v] of Object.entries(savedGrid.sizes)) if (TILE_SIZES.includes(v as TileSize) && tileKey(k)) sizes[tileKey(k)] = v as TileSize;
   // Pages: tile keys (each on one page at most) and nulls for the empty cells the user left.
   const seen = new Set<string>();
   const pages: Array<Array<string | null>> = [];
@@ -323,9 +330,9 @@ export function migrate(saved: unknown): Settings {
     const list: Array<string | null> = [];
     for (const e of p.slice(0, 96)) {
       if (e === null) list.push(null);
-      else if (typeof e === 'string' && e.length > 0 && e.length < 120 && controlsTile(e) && !seen.has(controlsTile(e))) {
-        seen.add(controlsTile(e));
-        list.push(controlsTile(e));
+      else if (typeof e === 'string' && e.length > 0 && e.length < 120 && tileKey(e) && !seen.has(tileKey(e))) {
+        seen.add(tileKey(e));
+        list.push(tileKey(e));
       }
     }
     pages.push(list);
@@ -379,6 +386,47 @@ function intoControls(savedCfg: Json, out: Settings): void {
   if (sound.priority === 'high' || sound.priority === 'medium' || sound.priority === 'low') sc.priority = sound.priority;
   // Justin's 0.2.11 saved how Sound grows when pointed at (hover-cards' Grows).
   if (growsChoices('system-controls').includes(sound.grows as Grows)) sc.grows = sound.grows as Grows;
+}
+
+/**
+ * Claude Status's tile under Claude's key, for a saved grid (when Claude takes Claude Status's
+ * place; otherwise Claude's own tile stays and Claude Status's goes). A whole-activity entry (setup
+ * hides by activity) the same way.
+ */
+const CLAUDE_TILES: Record<string, string> = {
+  'claudeStatus/claudeStatus': 'claude/claude',
+  claudeStatus: 'claude',
+  'claude/claude': '',
+  claude: '',
+};
+
+/** Claude Status's own switches, which Claude carries now. */
+const STATUS_OPTIONS = ['showDone', 'showAutoModel', 'glowInFront'];
+
+/**
+ * Claude Code and Claude Status became one activity, Claude (shown as Claude Status). On if either
+ * was: Claude Code's saved options carry over as they are, and so do Claude Status's switches. When
+ * only Claude Status was on, its behaviour (priority, auto-show, persistent, buttons, interrupt,
+ * Grows) and its place in the order and the grid carry over too: returns true then. Settings that
+ * never had Claude Status (Moss's 0.4.x) are left as they are.
+ */
+function intoClaude(savedCfg: Json, out: Settings): boolean {
+  const claude = out.activities.config.claude;
+  const status = savedCfg.claudeStatus;
+  if (!claude || !isObj(status)) return false;
+  const code = isObj(savedCfg.claude) ? savedCfg.claude : null;
+  const codeOn = code ? code.enabled !== false : (CATALOG.find((m) => m.id === 'claude')?.enabled ?? true);
+  const statusOn = status.enabled === true;
+  claude.enabled = codeOn || statusOn;
+  const opts = isObj(status.options) ? status.options : {};
+  for (const key of STATUS_OPTIONS) if (typeof opts[key] === 'boolean') claude.options[key] = opts[key];
+  const leads = statusOn && !codeOn;
+  if (!leads) return false;
+  for (const key of ['autoShow', 'persistent', 'interactive', 'interrupt'] as const) if (typeof status[key] === 'boolean') claude[key] = status[key] as boolean;
+  if (status.priority === 'high' || status.priority === 'medium' || status.priority === 'low') claude.priority = status.priority;
+  if (growsChoices('claude').includes(status.grows as Grows)) claude.grows = status.grows as Grows;
+  else delete claude.grows;
+  return true;
 }
 
 // ------------------------------------------------------------------ hiding the island

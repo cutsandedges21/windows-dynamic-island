@@ -59,7 +59,7 @@ const GRID_ROWS = 4;
 const GRID_MIN_W = GRID_COLS * 90 + GRID_GAP * (GRID_COLS - 1) + GRID_PAD * 2;
 const atLeast = (a: Level, b: Level): Level => (levelIdx(a) >= levelIdx(b) ? a : b);
 /** Activities that stay in front once they pop up (a chat finished, a song started), until the user picks another. */
-const STAYS_IN_FRONT = new Set(['claudeStatus', 'music']);
+const STAYS_IN_FRONT = new Set(['claude', 'music']);
 /** How long opening or closing keeps the pill's shape from overshooting: longer than the motion. */
 const CALM_MS = 1200;
 /** Chrome Remote Desktop's state is asked this often, for phones' Screen button. */
@@ -1019,7 +1019,7 @@ export class Island {
     const ask = (id: string, reason: SheetEnv['reason']) => this.askSheet(id, reason, now, this.sheetWidth(null, orient, pillW) - 28, vertical, id === choice.primary ? choice.surfaced : null);
     const primary = choice.primary;
     const pStatus = primary ? statuses.get(primary) : undefined;
-    // Claude Code's finished and needs-you cards grow out of the pill like its hover card, when it grows into one.
+    // Claude's finished and needs-you cards grow out of the pill like its hover card, when it grows into one.
     const chat = (card: { owner: string; view: SheetView } | null) => card && { ...card, view: chatView(card.owner, this.grows(card.owner), card.view) };
     if (primary && choice.urgent && pStatus?.urgent && !this.dismissedUrgent.has(`${primary}:${pStatus.urgent.key}`)) {
       const card = chat(ask(primary, 'urgent'));
@@ -1057,7 +1057,8 @@ export class Island {
    * or its Control Center tile's). Asked before the card is picked, so the pill under it can rest.
    */
   private growsCard(id: string | null): boolean {
-    if (!id || id === this.hoverBare || this.grows(id) !== 'card') return false;
+    const grows = id ? this.grows(id) : null;
+    if (!id || id === this.hoverBare || (grows !== 'card' && grows !== 'more')) return false;
     const act = this.running.get(id);
     return Boolean(act?.sheet || act?.tile);
   }

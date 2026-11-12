@@ -1,25 +1,30 @@
-// The Claude Code activity. The logic is Usage Clip's (main.js orchestration:
-// polling cadence, switching, reopening, alerts, hotkeys, tray), plus hooks for
-// answering from the island: permission prompts, Claude's questions, and the
-// reply window (a finished chat waits briefly for a reply typed here, which
-// then lands in that same chat). On a phone, its card is a chat with Claude
-// (phonechat.ts). The views are the island's own.
+// The Claude activity, shown as Claude Status: every Claude session at a glance (Claude Code,
+// the Claude app and claude.ai in Chrome, Justin's Claude Sessions widget, worked out by
+// ../claude-status) and Claude Code answered from the island (Moss's: the logic is Usage
+// Clip's main.js orchestration, plus hooks for permission prompts, Claude's questions and the
+// reply window, where a finished chat waits briefly for a reply typed here, which then lands in
+// that same chat). Claude Code and Claude Status were two activities until 2026-11; Claude
+// Code's own features are now options of this one (Activities › Claude Status › Claude Code).
+// Every moment pops the island once, however many ways it is reported (moments.ts). On a
+// phone, its card is a chat with Claude (phonechat.ts). The views are the island's own.
 
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../../core/activity';
-import { agoText, baseName, clip, elapsed, pace, plainText, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from '../../core/format';
+import { agoText, baseName, clip, pace, plainText, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from '../../core/format';
 import { requireHello } from '../../core/hello';
 import { native, type ClaudeEnv, type MenuItem } from '../../core/native';
 import type { PetSignal } from '../../core/pet';
 import type { Seg, Tone } from '../../core/segments';
-import { hiddenNow } from '../../core/settings';
+import { growsOf, hiddenNow, type Grows } from '../../core/settings';
 import type { Block, SheetButton, SheetRow, SheetView, Tile } from '../../core/sheet';
 import { PhoneError } from '../../remote/hub';
 import type { TermInfo } from '../../remote/protocol';
 import { BaseActivity, chime } from '../base';
+import { sessionCount, SHOW_MS, statusRows, statusSegments, statusSub, toneOf, waitingRows } from '../claude-status';
+import { StatusEngine, type StatusRow, type StatusState } from '../claude-status/engine';
 import { chatUrl, DesktopChats, type DesktopChat } from './desktop';
-import { about, turnLeft } from './estimate';
 import { afterModifiersReleased, deepLink, focusSession, selectWindow } from './focus';
 import { HookState, questionsOf, type HookEvent, type PermissionCard, type ReplyHold } from './hooks';
+import { MomentGate } from './moments';
 import { claudeArgs, oneLine, recentFolders, routeFor, routeHint, sameText, terminalFor, type ChatPane, type ChatRoute } from './phonechat';
 import { EDITOR_HOSTS } from './procinfo';
 import { askText, permissionText, PushGate, pushFor, type PushKind } from './pushes';
@@ -29,6 +34,18 @@ import { readChat, type ChatMessage } from './transcript';
 import { UsageClient, WeeklyTokens, weekWindowStart, type UsageData, type UsageState } from './usage';
 
 interface Options {
+  /** A session that finishes or fails pops the island up for a moment (Claude Status's). */
+  showDone: boolean;
+  /** Once Auto model is on, the card's header has a button that pauses it. */
+  showAutoModel: boolean;
+  /** While a session runs, its blue glow stays on round the island whatever is in front. */
+  glowInFront: boolean;
+  /** Claude Code's permission prompts wait in the island with Allow and Deny. */
+  permissions: boolean;
+  /** Claude's questions wait in the island to be answered there. */
+  questions: boolean;
+  /** A finished Claude Code chat's pop-up has a box to reply to it. */
+  replyBox: boolean;
   sessionHotkeys: boolean;
   notifications: boolean;
   /** Its moments also go to the phone (Settings › Notifications › Send to my phone). */
@@ -91,6 +108,17 @@ const MOVE_GAP_MS = 400;
 /** Back to the list of chats, from one chat or a new one. */
 const CHATS_BACK: SheetButton = { key: 'back', icon: 'chevron-left', action: 'chat-back', style: 'ghost', tip: 'All chats' };
 
+/** How often the sessions are looked at: Claude Status's pace (its rows, colours and bars), which also serves Claude Code's list. */
+const POLL_MS = 1000;
+/** Auto model's state is read from Claude Code's settings.json: no need to every second. */
+const AUTO_POLL_MS = 5000;
+/** Pointing at a finished chat's reply box keeps its pop-up this long at most… */
+const POINT_MS = 120_000;
+/** …and it goes this long after the pointer leaves the box untouched. */
+const POINT_LEAVE_MS = 1500;
+/** The hover card folds back up once it has not been asked for this long (the pointer left). */
+const UNFOLD_FORGET_MS = 1500;
+
 /** The Claude mark that leads the pill. */
 const MARK: Seg = { t: 'icon', key: 'mark', icon: 'claude', tone: 'claude', prio: 0 };
 
@@ -120,6 +148,22 @@ export class ClaudeActivity extends BaseActivity {
   private usage: UsageClient | null = null;
   private desktop: DesktopChats | null = null;
   private readonly hooks = new HookState();
+  /** Claude Status's rows: every Claude session (Claude Code, the app, Chrome) and background shells. */
+  private engine: StatusEngine | null = null;
+  rows: StatusRow[] = [];
+  private rowsBusy = false;
+  /** Each row's state at the last look, to see it change. */
+  private lastState = new Map<string, StatusState>();
+  /** A session just finished (green), failed or was stopped (red): the island glows that colour for a moment. */
+  private glowing: { tone: Tone; until: number } | null = null;
+  /** Auto model (src-tauri/src/auto_model.rs): installed from Activities, paused from the card's button. */
+  private auto = { installed: false, on: true };
+  /** Each moment pops the island once, however many ways it is reported. */
+  private readonly moments = new MomentGate();
+  /** Pointed at with Grows › "Card with more": whether its ⌄ opened the rest, and when the card was last asked for. */
+  private unfold = { on: false, asked: 0 };
+  /** Finished chats whose reply box the user clicked into: pointing away from it no longer lets the pop-up go. */
+  private readonly typing = new Set<string>();
 
   sessions: SessionView[] = [];
   closed: ClosedView[] = [];
@@ -127,7 +171,6 @@ export class ClaudeActivity extends BaseActivity {
   usageState: UsageState | null = null;
   tokenTotals: { fresh: number; cached: number; output: number } | null = null;
 
-  private selected: string | null = null;
   private inputFor: string | null = null;
   private readonly finished = new Map<string, number>();
   /** Each moment goes to the phone once. */
@@ -166,9 +209,20 @@ export class ClaudeActivity extends BaseActivity {
     super('claude');
   }
 
+  /** How it grows when pointed at (Activities › Grows): Claude's default is the card with more. */
+  private growsNow(): Grows {
+    return growsOf(this.ctx.config(), this.ctx.settings().island.defaultGrows, 'claude');
+  }
+
   private opts(): Options {
     const o = this.ctx.options<Partial<Options>>();
     return {
+      showDone: o.showDone !== false,
+      showAutoModel: o.showAutoModel !== false,
+      glowInFront: o.glowInFront !== false,
+      permissions: o.permissions !== false,
+      questions: o.questions !== false,
+      replyBox: o.replyBox !== false,
       sessionHotkeys: o.sessionHotkeys !== false,
       notifications: o.notifications !== false,
       phone: o.phone !== false,
@@ -176,7 +230,7 @@ export class ClaudeActivity extends BaseActivity {
       showDesktop: o.showDesktop !== false,
       finishedSeconds: Number(o.finishedSeconds) || 8,
       onlyOtherChats: o.onlyOtherChats === true,
-      replyWindowSeconds: Math.max(0, Math.min(240, Number(o.replyWindowSeconds ?? 45) || 0)),
+      replyWindowSeconds: Math.max(0, Math.min(240, Number(o.replyWindowSeconds ?? 0) || 0)),
       requireHello: o.requireHello === true,
       resetAlerts: o.resetAlerts !== false,
       hiddenSessions: Array.isArray(o.hiddenSessions) ? o.hiddenSessions.filter((x): x is string => typeof x === 'string') : [],
@@ -195,6 +249,7 @@ export class ClaudeActivity extends BaseActivity {
       const card = this.hooks.take(request_id);
       const hold = this.hooks.takeHold(request_id);
       this.picks.delete(request_id);
+      if (card) this.answeredFor(card.sessionId);
       if (card || hold) this.ctx.update();
     });
     // Switching to a chat's own window means the user will answer it there: let it go at once.
@@ -224,6 +279,10 @@ export class ClaudeActivity extends BaseActivity {
     });
     if (this.usage.state.data) this.usageState = this.usage.state; // last reading, shown at once
     this.desktop = new DesktopChats(this.env.desktopBlobDirs);
+    // Claude Status's rows come from the same tracker: one scan serves both.
+    this.engine = new StatusEngine(root, (...p) => this.ctx.log(...p), this.tracker);
+    await this.engine.importWidget(root);
+    if (!this.alive) return;
 
     // A chat opening or closing rewrites/removes its registry file: react at once.
     void native.watch('claude-sessions', sessionsDir, false);
@@ -232,9 +291,10 @@ export class ClaudeActivity extends BaseActivity {
       if (c.id === 'claude-sessions') this.pollSoon(120);
     });
 
-    // Hooks report what matters the moment it happens, so the scan is a safety net,
-    // not the source of truth: every 3 s costs half as much and misses nothing.
-    this.every(3000, () => void this.pollSessions(), true);
+    // Hooks report Claude Code's moments the instant they happen; the scan keeps the rows,
+    // their colours and bars, and the Claude app and Chrome, which have no hooks, up to date.
+    this.every(POLL_MS, () => void this.pollSessions(), true);
+    this.every(AUTO_POLL_MS, () => void this.pollAuto(), true);
     this.later(1500, () => void this.pollHistory()); // after the window is up; the first pass reads whole transcripts
     this.every(10000, () => {
       void this.pollTokens();
@@ -283,17 +343,83 @@ export class ClaudeActivity extends BaseActivity {
     for (const ev of result.events) this.onTrackerEvent(ev);
     const keepMs = this.opts().finishedSeconds * 1000 + 2000;
     for (const [id, at] of this.finished) if (Date.now() - at > keepMs) this.finished.delete(id);
-    if (this.selected && !this.sessions.some((s) => s.id === this.selected)) this.selected = null;
     this.followChats();
     // A phone showing a chat sees it move: its transcript is read again once it grew.
     if (this.pane.kind === 'chat' && this.ctx.cardOpen?.()) void this.loadChat();
+    await this.pollRows();
     this.ctx.update();
   }
 
   private onTrackerEvent(ev: TrackerEvent): void {
-    if (ev.type === 'needs-you') this.announceNeedsYou(ev.session);
+    if (ev.type === 'needs-you') this.needsYou(ev.session.id, undefined, true);
     else if (ev.type === 'finished') this.markFinished(ev.session.id);
     else if (ev.type === 'closed') this.ctx.log('closed', { session: ev.session.id, title: ev.session.displayTitle });
+  }
+
+  /** Claude Status's rows from the sessions just polled, plus the Claude app and Chrome; one look at a time. */
+  private async pollRows(): Promise<void> {
+    if (!this.engine || this.rowsBusy) return;
+    this.rowsBusy = true;
+    let rows: StatusRow[];
+    try {
+      rows = await this.engine.poll(this.sessions);
+    } catch (err) {
+      this.ctx.log('poll error', String(err));
+      return;
+    } finally {
+      this.rowsBusy = false;
+    }
+    if (!this.alive) return;
+    this.onRows(rows);
+  }
+
+  /**
+   * A row changing colour is a moment: green or red, the turn ended; orange, it needs you; blue
+   * again, a new run began. Claude Code's are usually told already by their hooks or the
+   * tracker (moments.ts keeps it to one pop-up); the Claude app's and Chrome's only come this way.
+   */
+  onRows(rows: StatusRow[]): void {
+    for (const r of rows) {
+      const st = r.state;
+      const before = this.lastState.get(r.id);
+      // No longer waiting: the next time it waits is news.
+      if (st !== 'input' && !r.parent) this.moments.stopped(r.id);
+      if (!before || before === st || r.parent) continue;
+      if (st === 'running') this.moments.ran(r.id, r.since * 1000);
+      // Stopping one yourself (Esc) is no news: it only turns red, and glows red a moment.
+      if (r.stopped) {
+        this.glow('bad');
+        continue;
+      }
+      if (st === 'done' || st === 'failed') {
+        if (this.isCode(r.id)) this.markFinished(r.id, undefined, st === 'failed');
+        else this.endOfTurn(r.id, st === 'failed');
+      } else if (st === 'input') this.needsYou(r.id, undefined, true);
+    }
+    this.lastState = new Map(rows.map((r) => [r.id, r.state]));
+    if (JSON.stringify(rows) !== JSON.stringify(this.rows)) {
+      this.rows = rows;
+      this.ctx.update();
+    }
+  }
+
+  /** A Claude Code session (Island can answer and type into it), not the Claude app's or Chrome's. */
+  private isCode(id: string): boolean {
+    return this.sessions.some((s) => s.id === id);
+  }
+
+  /** Whether Auto model is installed (Activities) and paused (the card's button). */
+  private async pollAuto(): Promise<void> {
+    const s = await native.autoModel();
+    if (!this.alive || (s.installed === this.auto.installed && s.on === this.auto.on)) return;
+    this.auto = { installed: s.installed, on: s.on };
+    this.ctx.update();
+  }
+
+  /** The island glows this colour all round for a moment (Claude Status's still glow). */
+  private glow(tone: Tone): void {
+    this.glowing = { tone, until: Date.now() + SHOW_MS };
+    this.later(SHOW_MS + 50, () => this.ctx.update());
   }
 
   /** Chats that closed before we saw them (or while the app was off), from transcripts. */
@@ -417,18 +543,24 @@ export class ClaudeActivity extends BaseActivity {
   // ---------------------------------------------------------------- hooks
 
   private onHook(ev: HookEvent): void {
+    // Prompts this event takes away (answered in the chat, the turn ended): their moment is over.
+    const waitingBefore = new Set(this.hooks.cards.map((c) => c.sessionId));
     const kind = this.hooks.apply(ev);
     const sid = ev.session_id ?? '';
+    for (const id of waitingBefore) if (!this.hooks.cards.some((c) => c.sessionId === id)) this.answeredFor(id);
     if (kind === 'permission' && ev.request_id) {
       const question = ev.tool_name === 'AskUserQuestion';
       const early = ev.hook_event_name === 'PreToolUse';
+      const o = this.opts();
       if (question && !early && this.hooks.askedEarly(sid)) {
         // The island held this question before Claude Code asked it and let it go to the chat: it is asked there now.
         this.hooks.take(ev.request_id);
         void native.hookReply(ev.request_id, 'decline');
       } else {
         const cfg = this.ctx.config();
-        const canShow = cfg.enabled && cfg.interactive && cfg.interrupt && !this.ctx.settings().general.dnd && !hiddenNow(this.ctx.settings().island, Date.now());
+        // Activities › Claude Status › Claude Code: Allow and Deny, and answering questions, each can be off.
+        const wanted = question ? o.questions : o.permissions;
+        const canShow = wanted && cfg.enabled && cfg.interactive && cfg.interrupt && !this.ctx.settings().general.dnd && !hiddenNow(this.ctx.settings().island, Date.now());
         if (question) this.askToPhone(sid, ev);
         // Only a request that waits for an answer gets buttons on the phone.
         else this.toPhone(sid, 'permission', permissionText(ev.tool_name, ev.tool_input), `${ev.tool_name}:${JSON.stringify(ev.tool_input ?? null).slice(0, 300)}`, ev.cwd, canShow ? ev.request_id : undefined);
@@ -440,9 +572,7 @@ export class ClaudeActivity extends BaseActivity {
           void this.holdQuestion(ev.request_id, sid, ev);
         } else {
           void native.hookReply(ev.request_id, 'ack');
-          this.ctx.alert('glow', 'warn');
-          this.saw('claude-asks', `claude:ask:${ev.request_id}`);
-          if (this.ctx.settings().general.sounds) chime('attention');
+          this.needsYou(sid, ev);
         }
       }
     }
@@ -454,18 +584,22 @@ export class ClaudeActivity extends BaseActivity {
     if (kind === 'prompt' && sid) {
       this.finished.delete(sid);
       this.looking.delete(sid);
+      this.typing.delete(sid);
+      // A new turn: its end and anything it asks are news again.
+      this.moments.ran(sid, Date.now());
     }
     // A question or a notification is the chat asking for the user: say so, with what it asks.
     if (sid && ((kind === 'tool' && ev.tool_name === 'AskUserQuestion' && ev.hook_event_name === 'PreToolUse') || kind === 'note')) {
-      if (kind === 'note' && ev.notification_type === 'idle_prompt') {
-        this.ctx.surface({ key: `note:${sid}`, ms: 6000, level: 'expanded', bump: false });
-        this.toPhone(sid, 'waiting', ev.message ?? '', '', ev.cwd);
+      // "Waiting for your input" a minute after a turn ended is no new moment: the phone hears it after a quiet spell, the island stays put.
+      if (kind === 'note' && ev.notification_type === 'idle_prompt') this.toPhone(sid, 'waiting', ev.message ?? '', '', ev.cwd);
+      else if (kind === 'note' && ev.notification_type === 'auth_success') {
+        // Signed in: nothing waits on the user.
       } else {
-        this.ctx.surface({ key: `note:${sid}`, ms: 15000, level: 'expanded' });
-        this.ctx.alert('glow', 'warn');
-        this.saw('claude-asks', `claude:note:${sid}`);
+        // What it asks goes to the phone first (the moment's own push says less).
         if (kind === 'note') this.toPhone(sid, 'needs', ev.message ?? '', '', ev.cwd);
         else this.askToPhone(sid, ev);
+        // The card shows as long as it waits (status().urgent); this is its one pop-up.
+        this.needsYou(sid, ev);
       }
     }
     this.pollSoon(150);
@@ -488,7 +622,7 @@ export class ClaudeActivity extends BaseActivity {
       void native.hookReply(requestId, 'pass');
       this.ctx.log('stop', { session: sid.slice(0, 8), held: false, why });
     };
-    if (o.replyWindowSeconds <= 0 || !cfg.enabled || !cfg.interactive || this.ctx.settings().general.dnd) return pass('off');
+    if (o.replyWindowSeconds <= 0 || !o.replyBox || !cfg.enabled || !cfg.interactive || this.ctx.settings().general.dnd) return pass('off');
     if (hiddenNow(this.ctx.settings().island, Date.now())) return pass('hidden');
     let looking = false;
     try {
@@ -540,9 +674,7 @@ export class ClaudeActivity extends BaseActivity {
     }
     void native.hookReply(requestId, 'ack');
     this.ctx.log('question', { session: sid.slice(0, 8), held: true });
-    this.ctx.alert('glow', 'warn');
-    this.saw('claude-asks', `claude:ask:${requestId}`);
-    if (this.ctx.settings().general.sounds) chime('attention');
+    this.needsYou(sid, ev);
     this.ctx.update();
   }
 
@@ -587,6 +719,7 @@ export class ClaudeActivity extends BaseActivity {
       if (!s || !this.chainOf(s.pid).includes(pid)) continue;
       this.hooks.take(c.requestId);
       this.picks.delete(c.requestId);
+      this.answeredFor(c.sessionId);
       void native.hookReply(c.requestId, 'decline');
       this.ctx.log('question released', { session: c.sessionId.slice(0, 8), why: 'switched to the chat' });
       this.ctx.update();
@@ -647,6 +780,7 @@ export class ClaudeActivity extends BaseActivity {
     const card = this.hooks.take(requestId);
     if (!card) return;
     this.picks.delete(requestId);
+    this.answeredFor(card.sessionId);
     const reply = decision === 'deny' && message ? JSON.stringify({ kind: 'deny', message }) : decision;
     void native.hookReply(requestId, reply);
     if (decision === 'allow') this.hooks.current.set(card.sessionId, { tool: card.tool, input: card.input, at: Date.now() });
@@ -695,6 +829,7 @@ export class ClaudeActivity extends BaseActivity {
     const input = card.input && typeof card.input === 'object' ? (card.input as Record<string, unknown>) : {};
     this.hooks.take(requestId);
     this.picks.delete(requestId);
+    this.answeredFor(card.sessionId);
     void native.hookReply(requestId, JSON.stringify({ kind: 'answer', updatedInput: { ...input, answers } }));
     this.hooks.asks.delete(card.sessionId);
     this.ctx.log('question answered', { session: card.sessionId.slice(0, 8), questions: qs.length });
@@ -706,6 +841,7 @@ export class ClaudeActivity extends BaseActivity {
     const card = this.hooks.take(requestId);
     this.picks.delete(requestId);
     if (!card) return;
+    this.answeredFor(card.sessionId);
     void native.hookReply(requestId, 'decline');
     await this.switchTo(card.sessionId, 'answer-in-chat');
   }
@@ -715,33 +851,40 @@ export class ClaudeActivity extends BaseActivity {
     const [kind, ref] = splitOnce(key, ':');
     if (kind === 'perm') {
       // Hand the question back to the terminal instead of leaving Claude Code waiting.
-      if (this.hooks.take(ref)) void native.hookReply(ref, 'decline');
+      const card = this.hooks.take(ref);
+      if (card) {
+        this.answeredFor(card.sessionId);
+        void native.hookReply(ref, 'decline');
+      }
       this.picks.delete(ref);
     } else if (kind === 'reply') {
       const h = this.hooks.hold(ref);
       if (h) this.release(h, 'dismissed');
-    } else if (kind === 'note') {
-      this.hooks.notes.delete(ref);
-      this.hooks.asks.delete(ref);
+    } else if (kind === 'note' || kind === 'needs') {
+      // Tapped away: the session list may say it waits a while longer, which is the same moment.
+      this.answeredFor(ref);
+    } else if (kind === 'ask') {
+      for (const id of ref.split(',')) this.answeredFor(id);
     } else if (kind === 'input') {
       this.inputFor = null;
     }
-    this.selected = null;
     this.ctx.update();
   }
 
   // ---------------------------------------------------------------- moments
 
-  private markFinished(id: string, ev?: HookEvent): void {
-    const prev = this.finished.get(id);
-    if (prev && Date.now() - prev < 5000) return;
-    this.finished.set(id, Date.now());
-    if (this.opts().onlyOtherChats) void this.announceUnlessLooking(id, ev);
-    else this.announceFinished(id, ev);
+  /**
+   * A Claude Code turn ended (its Stop hook, the tracker, or its row turning green or red).
+   * "Only pop up for other chats" keeps a chat the user is looking at from popping up.
+   */
+  private markFinished(id: string, ev?: HookEvent, failed = false): void {
+    if (this.moments.has(id, 'end')) return;
+    if (this.opts().onlyOtherChats) void this.endUnlessLooking(id, ev, failed);
+    else this.endOfTurn(id, failed, ev);
   }
 
   /** "Only pop up for other chats": a chat the user is looking at finishes quietly. */
-  private async announceUnlessLooking(id: string, ev?: HookEvent): Promise<void> {
+  private async endUnlessLooking(id: string, ev: HookEvent | undefined, failed: boolean): Promise<void> {
     let looking = this.looking.has(id);
     if (!looking) {
       try {
@@ -750,31 +893,57 @@ export class ClaudeActivity extends BaseActivity {
         this.ctx.log('finish: foreground check failed', String(err));
       }
     }
-    if (!looking) return this.announceFinished(id, ev);
+    if (!looking) return this.endOfTurn(id, failed, ev);
+    // Told, quietly: a later report of the same finish pops nothing either.
+    if (!this.moments.allow(id, 'end', Date.now())) return;
     this.looking.add(id);
     this.ctx.log('finished quietly', { session: id.slice(0, 8) });
     this.ctx.update();
   }
 
-  private announceFinished(id: string, ev?: HookEvent): void {
-    this.ctx.surface({ key: `done:${id}`, ms: this.opts().finishedSeconds * 1000, level: 'expanded' });
+  /**
+   * A session's turn ended, well or on an error: its one pop-up. It shows for a moment (Claude
+   * Status's rule; Show "finished" for, for a Claude Code chat, whose card has the reply box),
+   * not at all with "Pop up when a session finishes" off, and not over a reply window, which
+   * already holds the island open for that chat.
+   */
+  private endOfTurn(id: string, failed: boolean, ev?: HookEvent): void {
+    const now = Date.now();
+    if (!this.moments.allow(id, 'end', now)) return;
     const s = this.sessions.find((x) => x.id === id);
-    const errored = s?.status === 'errored';
+    const errored = failed || s?.status === 'errored';
+    this.finished.set(id, now);
+    this.glow(errored ? 'bad' : 'good');
     this.saw(errored ? 'claude-error' : 'claude-done', `claude:done:${id}`);
-    if (this.ctx.settings().general.sounds) chime('done');
-    const said = ev?.last_assistant_message?.trim() || s?.lastAssistantText || '';
-    this.toPhone(id, errored ? 'error' : 'done', errored ? [s?.label, said].filter(Boolean).join('\n') : said, '', ev?.cwd);
+    if (s || ev) {
+      if (this.ctx.settings().general.sounds) chime('done');
+      const said = ev?.last_assistant_message?.trim() || s?.lastAssistantText || '';
+      this.toPhone(id, errored ? 'error' : 'done', errored ? [s?.label, said].filter(Boolean).join('\n') : said, '', ev?.cwd);
+    }
+    const o = this.opts();
+    if (o.showDone && !this.hooks.holds.some((h) => h.sessionId === id)) {
+      this.ctx.surface({ key: `done:${id}`, ms: s || ev ? o.finishedSeconds * 1000 : SHOW_MS, level: 'expanded' });
+    }
     this.ctx.update();
   }
 
-  private announceNeedsYou(session: SessionView): void {
-    this.ctx.surface({ key: `needs:${session.id}`, ms: 7000, level: 'expanded' });
-    this.ctx.alert('shake');
-    this.saw('claude-asks', `claude:needs:${session.id}`);
+  /**
+   * A session waits on the user (a permission prompt, a question, a notification, or its row
+   * turning orange): told once. The island stays open on it while it waits (status().urgent);
+   * this glows, tells the bot, and for a Claude Code chat sounds, shows a Windows notification
+   * and goes to the phone.
+   */
+  private needsYou(id: string, ev?: HookEvent, polled = false): void {
+    if (!this.moments.allow(id, 'needs', Date.now(), polled)) return;
     this.ctx.alert('glow', 'warn');
+    this.saw('claude-asks', `claude:needs:${id}`);
+    const s = this.sessions.find((x) => x.id === id);
+    if (!s && !ev) return;
+    if (this.ctx.settings().general.sounds) chime('attention');
+    const title = s?.displayTitle || (ev?.cwd ? projectName(ev.cwd) : '') || 'Claude Code';
     // The phone gets this from toPhone, once, however many ways the moment is reported.
-    if (this.opts().notifications) this.ctx.notify(session.displayTitle, `Needs you in ${session.project}. Alt+Shift+0 to switch.`, false);
-    this.toPhone(session.id, 'needs', `${session.label} · ${session.project}`, '', session.cwd);
+    if (this.opts().notifications) this.ctx.notify(title, `Needs you${s ? ` in ${s.project}` : ''}. Alt+Shift+0 to switch.`, false);
+    this.toPhone(id, 'needs', s ? `${s.label} · ${s.project}` : '', '', s?.cwd ?? ev?.cwd);
   }
 
   /**
@@ -857,6 +1026,20 @@ export class ClaudeActivity extends BaseActivity {
       this.ctx.alert('shake');
     }
     return ok;
+  }
+
+  /**
+   * A row clicked: a Claude Code chat goes where Open takes it (its window, its editor, or out
+   * of an Island terminal); the Claude app's, Chrome's and a shell's where the widget took them.
+   */
+  private async jump(id: string): Promise<void> {
+    if (!this.engine || !id) return;
+    if (this.isCode(id)) {
+      this.engine.markRead(id);
+      await this.switchTo(id, 'row');
+      return;
+    }
+    if (!(await this.engine.jump(id))) this.ctx.alert('shake');
   }
 
   /** Reopen a closed chat where it lived: editor chats by deep link, CLI chats with claude --resume. */
@@ -975,6 +1158,7 @@ export class ClaudeActivity extends BaseActivity {
     }
     this.ctx.log('continue', { session: id, how, ok });
     this.finished.delete(id);
+    this.typing.delete(id);
     if (ok && how === 'editor') {
       this.flash('Chat opened. Press Enter there to send (also copied)', 'warn', 'enter', 7000);
     } else if (ok) {
@@ -985,17 +1169,6 @@ export class ClaudeActivity extends BaseActivity {
   }
 
   // ---------------------------------------------------------------- what the island asks
-
-  private featured(): SessionView | null {
-    if (this.selected) return this.sessions.find((s) => s.id === this.selected) ?? null;
-    const card = this.hooks.cards[0];
-    if (card) {
-      const s = this.sessions.find((x) => x.id === card.sessionId);
-      if (s) return s;
-    }
-    const byRecent = [...this.sessions].sort((a, b) => b.lastActivityMs - a.lastActivityMs);
-    return this.sessions.find((s) => s.needsYou) ?? byRecent.find((s) => s.status === 'working') ?? byRecent[0] ?? null;
-  }
 
   /** A question or a notification that still waits on the user, newest first. */
   private waitingNote(): { sessionId: string; at: number } | null {
@@ -1011,60 +1184,107 @@ export class ClaudeActivity extends BaseActivity {
     return best;
   }
 
+  /** Claude Code chats that wait on the user (polled, so without a hook card), not one just answered. */
+  private needing(): SessionView[] {
+    return this.sessions.filter((s) => s.needsYou && !this.moments.settling(s.id));
+  }
+
+  /** Rows waiting on you that Island can't answer (the Claude app, Chrome): Claude Code's wait in their own cards. */
+  private askingRows(): StatusRow[] {
+    return this.rows.filter((r) => !r.grey && r.state === 'input' && !r.parent && !this.isCode(r.id) && !this.moments.settling(r.id));
+  }
+
+  /**
+   * A session's prompt was answered (in the island, on the phone, in the chat) or handed back to
+   * the chat: what it said it waited for is over, and the session list saying it still waits is
+   * the same moment, not a new pop-up.
+   */
+  private answeredFor(sid: string): void {
+    this.moments.answered(sid);
+    this.hooks.notes.delete(sid);
+    this.hooks.asks.delete(sid);
+  }
+
+  /** A session that just finished, failed or was stopped glows that colour, still, for a moment. */
+  private glowNow(now: number): Tone | null {
+    return this.glowing && now < this.glowing.until ? this.glowing.tone : null;
+  }
+
   status(): ActivityStatus {
+    const now = Date.now();
     const card = this.hooks.cards[0];
     const hold = this.hooks.holds[0];
     const note = this.waitingNote();
-    const needs = this.sessions.filter((s) => s.needsYou);
-    const working = this.sessions.filter((s) => s.status === 'working');
-    const active =
-      this.sessions.length > 0 || !!card || !!hold || !!note || this.inputFor !== null || this.finished.size > 0 || (this.notice !== null && this.notice.until > Date.now());
+    const needs = this.needing();
+    const asking = this.askingRows();
+    const rows = this.rows.filter((r) => !r.grey);
+    const running = rows.some((r) => r.state === 'running') || this.sessions.some((s) => s.status === 'working');
+    const shell = rows.some((r) => r.state === 'shell');
+    const waiting = waitingRows(this.rows).length;
+    const red = rows.some((r) => r.state === 'failed');
+    const noticing = this.notice !== null && this.notice.until > now;
+    const active = this.rows.length > 0 || this.sessions.length > 0 || !!card || !!hold || !!note || this.inputFor !== null || this.finished.size > 0 || noticing;
     if (!active) return { active: false };
+    // Whatever waits on the user holds the island open, Quiet or not, until it is answered or
+    // tapped away: Claude Code's prompts with their answers, then a row the island can only point at.
     let urgent: ActivityStatus['urgent'] = null;
     if (this.inputFor) urgent = { key: `input:${this.inputFor}`, level: 'maximum' };
     else if (card) urgent = { key: `perm:${card.requestId}`, level: 'expanded' };
     else if (hold) urgent = { key: `reply:${hold.requestId}`, level: 'expanded' };
     else if (note) urgent = { key: `note:${note.sessionId}`, level: 'expanded' };
     else if (needs.length) urgent = { key: `needs:${needs[0].id}`, level: 'expanded' };
-    const weight = card || hold || note || needs.length || working.length || this.inputFor ? 'foreground' : 'background';
-    // Border light: an amber pulse when a chat needs you, a still green glow while a finished
-    // chat holds for your reply (Justin's Claude Status "done"), a slow blue comet while Claude works.
+    else if (asking.length) urgent = { key: `ask:${asking.map((r) => r.id).join(',')}`, level: 'expanded' };
+    const weight = urgent || running || shell || waiting || red ? 'foreground' : 'background';
+    const barRow = this.rows.find((r) => r.progress);
+    const flash = this.glowNow(now);
+    // Border light: an amber pulse when something needs you, a still green glow while a finished
+    // chat holds for your reply, a finish's or failure's still glow for a moment, a progress bar,
+    // a blue comet while Claude works.
     const beam: ActivityStatus['beam'] =
       card || note || needs.length
         ? { tone: 'warn', urgent: true }
         : hold
           ? { tone: 'good', motion: 'still', urgent: true }
-          : working.length
-            ? { tone: 'info' }
-            : null;
-    const n = this.sessions.length;
-    const summary =
-      n > 1
-        ? `Claude ×${n}${needs.length ? `, ${needs.length} need${needs.length > 1 ? '' : 's'} you` : working.length ? `, ${working.length} working` : ''}`
-        : n === 1
-          ? `Claude · ${this.sessions[0].label}`
-          : 'Claude';
-    return { active: true, weight, urgent, summary, beam };
+          : flash
+            ? { tone: flash, motion: 'still' }
+            : waiting
+              ? { tone: 'warn', motion: 'pulse' }
+              : barRow?.progress
+                ? { tone: barRow.state === 'shell' ? 'purple' : 'info', motion: 'progress', value: barRow.progress.value }
+                : running
+                  ? { tone: 'info', motion: 'orbit' }
+                  : null;
+    const n = sessionCount(this.rows) || this.sessions.length;
+    // A prompt from a hook can come before its row turns orange.
+    const awaiting = Math.max(waiting, card || hold || note || needs.length ? 1 : 0);
+    return {
+      active: true,
+      weight,
+      urgent,
+      summary: awaiting ? `${awaiting} awaiting you` : `${n} Claude session${n === 1 ? '' : 's'}`,
+      beam,
+      // Running, the blue light stays on round the pill whatever is in front (unless switched off).
+      beamBehind: running && this.opts().glowInFront ? { tone: 'info', motion: 'orbit' } : null,
+    };
   }
 
-  /** Claude working: the bot thinks along; a chat waiting on the user needs you. */
+  /** Claude working: the bot thinks along; a session waiting on the user needs you. */
   override pet(): PetSignal {
-    const needs = this.hooks.cards.length > 0 || this.waitingNote() !== null || this.sessions.some((s) => s.needsYou);
-    const working = this.sessions.some((s) => s.status === 'working');
+    const needs = this.hooks.cards.length > 0 || this.waitingNote() !== null || this.needing().length > 0 || this.askingRows().length > 0;
+    const working = this.sessions.some((s) => s.status === 'working') || this.rows.some((r) => !r.grey && r.state === 'running');
     return { mood: needs ? 'needs-you' : working ? 'thinking' : null, moment: this.petMoment };
   }
 
   chip(): ChipView | null {
-    const n = this.sessions.length;
-    if (!n) return null;
-    const needs = this.sessions.some((s) => s.needsYou) || this.hooks.cards.length > 0 || this.hooks.holds.length > 0 || this.waitingNote() !== null;
-    const working = this.sessions.some((s) => s.status === 'working');
+    const t = this.rows[0];
+    const waits = this.hooks.cards.length > 0 || this.hooks.holds.length > 0 || this.waitingNote() !== null;
+    if (!t && !waits) return null;
+    const n = sessionCount(this.rows) || this.sessions.length;
     return {
       icon: 'claude',
-      label: needs ? 'Needs you' : n > 1 ? `×${n}` : this.sessions[0].label,
-      dot: needs ? 'warn' : working ? 'info' : 'good',
-      pulse: needs,
-      tone: 'claude',
+      label: String(n || 1),
+      dot: waits ? 'warn' : t ? toneOf(t) : 'warn',
+      pulse: waits || (t?.state === 'running' && !t.grey),
     };
   }
 
@@ -1083,29 +1303,16 @@ export class ClaudeActivity extends BaseActivity {
         { t: 'text', key: 'notice', text: this.notice.text, weight: 'semibold', prio: 0 },
       ];
     }
-    if (env.surfaced?.startsWith('done:')) {
-      const s = this.sessions.find((x) => x.id === env.surfaced!.slice(5));
-      if (s) return this.finishedView(s, env);
-    }
     const note = this.waitingNote();
     if (note && (env.level === 'maximum' || env.level === 'expanded')) return this.noteView(note.sessionId, env);
-    if (this.sessions.length > 1 && !this.selected) return this.multiView(env);
-    const s = this.featured();
-    if (!s) return [MARK, { t: 'text', key: 'none', text: 'Claude', weight: 'semibold', prio: 0 }];
-    return this.sessionView(s, env);
-  }
-
-  private dot(s: SessionView): Seg {
-    return { t: 'dot', key: `dot`, tone: chatTone(s.tone), pulse: s.needsYou, prio: 0 };
-  }
-
-
-  private timing(s: SessionView, now: number): string {
-    if (s.status === 'working') {
-      const start = this.hooks.turnStart.get(s.id) ?? s.turnStartMs ?? s.lastActivityMs;
-      return elapsed(now - start);
-    }
-    return agoText(now - s.lastActivityMs);
+    // Claude Status's pill: a dot per session; a session that just finished (or was picked by its hotkey) leads it.
+    const surfaced = env.surfaced ?? '';
+    const focus = surfaced.startsWith('done:') ? surfaced.slice(5) : surfaced.startsWith('slot:') ? surfaced.slice(5) : null;
+    const segs = statusSegments(this.rows, env, focus);
+    if (!segs.length) return [MARK, { t: 'text', key: 'none', text: 'Claude', weight: 'semibold', prio: 0 }];
+    // Limits in the island: the session and weekly bars when it opens all the way.
+    if (env.level === 'maximum' && !env.vertical) segs.push(...this.meters(now, 7));
+    return segs;
   }
 
   private operation(s: SessionView): string | null {
@@ -1137,69 +1344,6 @@ export class ClaudeActivity extends BaseActivity {
       });
     }
     return out;
-  }
-
-  private sessionView(s: SessionView, env: RenderEnv): Seg[] {
-    const now = env.now;
-    const dot = this.dot(s);
-    const label: Seg = { t: 'text', key: 'label', text: s.status === 'working' ? 'Working…' : s.label, tone: s.needsYou ? 'warn' : 'muted', prio: 1 };
-    if (env.level === 'compact' || env.level === 'idle') {
-      if (env.vertical) return [MARK, dot];
-      return [dot, { t: 'text', key: 'name', text: 'Claude', weight: 'semibold', prio: 0 }, { ...label, side: 'end' }];
-    }
-    const segs: Seg[] = [
-      dot,
-      { t: 'text', key: 'title', text: s.displayTitle, weight: 'semibold', prio: 3, max: env.level === 'expanded' ? 170 : 240 },
-      { t: 'sep', key: 'sep1', prio: 6 },
-      label,
-    ];
-    const op = this.operation(s);
-    if (env.level === 'maximum' && op) segs.push({ t: 'text', key: 'op', text: op, tone: 'muted', prio: 5, max: 220 });
-    segs.push({ t: 'sep', key: 'sep2', prio: 6 }, { t: 'text', key: 'time', text: this.timing(s, now), tone: 'muted', prio: 4 });
-    if (env.level !== 'maximum') return segs;
-
-    if (this.selected || this.sessions.length > 1) segs.unshift({ t: 'button', key: 'back', icon: 'chevron-left', action: 'back', style: 'ghost', prio: 2, tip: 'All sessions' });
-    segs.push(...this.meters(now, 7));
-    if (s.status === 'awaiting_input' || s.status === 'interrupted' || s.status === 'errored') {
-      segs.push({ t: 'button', key: 'continue', icon: 'enter', label: 'Continue', action: 'continue', arg: s.id, style: 'primary', side: 'end', prio: 1 });
-    }
-    segs.push({ t: 'button', key: 'open', icon: 'external', action: 'switch', arg: s.id, style: s.needsYou ? 'primary' : 'ghost', side: 'end', prio: 2, tip: `${this.openText(s)}${s.slot ? ` (Alt+Shift+${s.slot})` : ''}` });
-    return segs;
-  }
-
-  private multiView(env: RenderEnv): Seg[] {
-    const n = this.sessions.length;
-    const needs = this.sessions.filter((s) => s.needsYou).length;
-    const working = this.sessions.filter((s) => s.status === 'working').length;
-    const tone: Tone = needs ? 'warn' : working ? 'info' : 'good';
-    if (env.level === 'compact' || env.level === 'idle') {
-      if (env.vertical) return [MARK, { t: 'text', key: 'count', text: `×${n}`, weight: 'semibold', prio: 0 }];
-      return [
-        { t: 'dot', key: 'dot', tone, pulse: needs > 0, prio: 0 },
-        { t: 'text', key: 'name', text: `Claude ×${n}`, weight: 'semibold', prio: 0 },
-        { t: 'text', key: 'label', text: needs ? `${needs} need${needs > 1 ? '' : 's'} you` : working ? `${working} working` : 'Your turn', tone: needs ? 'warn' : 'muted', side: 'end', prio: 3 },
-      ];
-    }
-    const segs: Seg[] = [MARK];
-    this.sessions.forEach((s, i) => {
-      segs.push({
-        t: 'chip',
-        key: `s-${s.id}`,
-        label: env.level === 'maximum' ? `${clip(s.displayTitle, 26)} · ${s.status === 'working' ? 'Working' : s.label}` : clip(s.displayTitle, 18),
-        dot: chatTone(s.tone),
-        pulse: s.needsYou,
-        badge: s.slot ? String(s.slot) : undefined,
-        action: 'select',
-        arg: s.id,
-        prio: 2 + i,
-        max: env.level === 'maximum' ? 230 : 150,
-        tip: `${s.displayTitle}\n${s.label} · ${s.project}${s.slot ? `\nAlt+Shift+${s.slot}` : ''}`,
-      });
-    });
-    if (env.level === 'maximum') {
-      segs.push(...this.meters(env.now, 12));
-    }
-    return segs;
   }
 
   /** What a permission card asks, in a few words. */
@@ -1234,22 +1378,6 @@ export class ClaudeActivity extends BaseActivity {
     ];
   }
 
-  private finishedView(s: SessionView, env: RenderEnv): Seg[] {
-    const segs: Seg[] = [
-      { t: 'icon', key: 'done-icon', icon: 'check', tone: 'good', prio: 0 },
-      { t: 'text', key: 'done', text: 'Claude finished', weight: 'semibold', prio: 0 },
-      { t: 'text', key: 'done-title', text: s.displayTitle, tone: 'muted', prio: 4, max: 200 },
-    ];
-    if (env.level === 'maximum' && s.lastAssistantText) segs.push({ t: 'text', key: 'done-text', text: s.lastAssistantText, tone: 'dim', size: 'sm', prio: 7, max: 320, tip: s.lastAssistantText });
-    if (env.level !== 'compact') {
-      segs.push(
-        { t: 'button', key: 'continue', icon: 'enter', label: 'Continue', action: 'continue', arg: s.id, style: 'primary', side: 'end', prio: 1 },
-        { t: 'button', key: 'open', icon: 'external', action: 'switch', arg: s.id, style: 'ghost', side: 'end', prio: 3, tip: this.openText(s) },
-      );
-    }
-    return segs;
-  }
-
   private inputView(env: RenderEnv): Seg[] {
     const id = this.inputFor!;
     const s = this.tracker?.get(id) ?? this.tracker?.getClosed(id) ?? this.sessions.find((x) => x.id === id) ?? null;
@@ -1274,25 +1402,71 @@ export class ClaudeActivity extends BaseActivity {
   // ---------------------------------------------------------------- the card under the pill
 
   sheet(env: SheetEnv): SheetView | null {
+    // Claude Code's prompt, question or reply window, with every session's row under it: Claude Status's pop-up with Claude Code's answers in it.
     if (env.reason === 'urgent') {
       const card = this.hooks.cards[0];
-      if (card) return card.tool === 'AskUserQuestion' ? this.questionSheet(card) : this.permissionSheet(card);
+      if (card) return this.withRows(card.tool === 'AskUserQuestion' ? this.questionSheet(card) : this.permissionSheet(card), env.now);
       const hold = this.hooks.holds[0];
-      if (hold) return this.replySheet(hold);
+      if (hold) return this.withRows(this.replySheet(hold), env.now);
       const note = this.waitingNote();
-      if (note) return this.noteSheet(note.sessionId);
-      const needs = this.sessions.find((s) => s.needsYou);
-      return needs ? this.noteSheet(needs.id) : null;
+      if (note) return this.withRows(this.noteSheet(note.sessionId), env.now);
+      const needs = this.needing()[0];
+      if (needs) return this.withRows(this.noteSheet(needs.id), env.now);
+      return this.askingRows().length ? this.statusCard('status', env.now) : null;
     }
     if (env.reason === 'surfaced') {
       const key = env.surfaced ?? '';
-      if (key.startsWith('done:')) return this.looking.has(key.slice(5)) ? null : this.finishedSheet(key.slice(5));
-      if (key.startsWith('note:')) return this.noteSheet(key.slice(5));
+      if (key.startsWith('done:')) {
+        const id = key.slice(5);
+        // Finished in the window the user is in: they saw it (the pill only says so).
+        if (this.looking.has(id)) return null;
+        // A Claude Code chat's has its last message and the reply box; the Claude app's and Chrome's, the rows.
+        const done = this.isCode(id) ? this.finishedSheet(id) : null;
+        return done ? this.withRows(done, env.now) : this.statusCard('status', env.now);
+      }
+      if (key.startsWith('slot:')) return this.statusCard('status', env.now);
       return null;
     }
     if (env.reason === 'hover') return this.hoverSheet(env);
     // Only a phone opens Claude's own card (its Claude button): a chat with Claude.
     return this.phoneSheet(env.now);
+  }
+
+  /** Claude Status's header: how many sessions or how many wait, the Auto model button, and `extra` buttons. */
+  private statusHead(extra: SheetButton[] = []): Block {
+    const o = this.opts();
+    const buttons: SheetButton[] = [];
+    // Only once Auto model is installed (Activities › Claude Status); "Show Auto model button" there hides it.
+    if (this.auto.installed && o.showAutoModel) {
+      buttons.push({
+        key: 'router',
+        label: this.auto.on ? 'Auto model: on' : 'Auto model: off',
+        action: 'router',
+        style: this.auto.on ? 'secondary' : 'ghost',
+        tip: this.auto.on
+          ? 'Warns you before a prompt runs on a far too strong or too weak Claude model, and checks a chat when it compacts, passes 500k tokens or ends: was it on the right model. Click to pause.'
+          : 'Paused: Claude runs every prompt on the model you picked, with no checks. Click to turn back on.',
+      });
+    }
+    return { t: 'head', key: 'head', icon: 'claude', tone: 'claude', title: 'Claude', sub: this.rows.length ? statusSub(this.rows) : 'No Claude sessions right now', buttons: [...buttons, ...extra] };
+  }
+
+  /** Every session's row, each with its progress bar on its second line; Claude Code's carry their Alt+Shift number. */
+  private rowsBlock(now: number): Block {
+    return { t: 'rows', key: 'rows', items: statusRows(this.rows, now, true, (id) => this.sessions.find((s) => s.id === id)?.slot ?? null) };
+  }
+
+  /** Claude Status's own card: the header and the rows. */
+  private statusCard(key: string, now: number, extra: SheetButton[] = []): SheetView {
+    const blocks: Block[] = [this.statusHead(extra)];
+    if (this.rows.length) blocks.push(this.rowsBlock(now));
+    return { key, blocks };
+  }
+
+  /** A moment's card (Claude Code's answers) with the session rows under it. */
+  private withRows(view: SheetView | null, now: number): SheetView | null {
+    if (!view || !this.rows.length) return view;
+    return { ...view, blocks: [...view.blocks, this.rowsBlock(now)] };
   }
 
   private where(s: SessionView | null | undefined, ...extra: Array<string | null | undefined>): string {
@@ -1400,22 +1574,24 @@ export class ClaudeActivity extends BaseActivity {
     if (!s || !text) return null;
     // Already going again (a reply from the island, or a prompt typed in the chat): nothing to answer.
     if (s.status === 'working' || (this.hooks.turnStart.get(sid) ?? 0) > (last?.at ?? 0)) return null;
-    return {
-      key: `done:${sid}`,
-      blocks: [
-        {
-          t: 'head',
-          key: 'h',
-          icon: 'check',
-          tone: 'good',
-          title: s.displayTitle,
-          sub: this.where(s, 'Finished'),
-          buttons: [{ key: 'open', icon: 'external', action: 'switch', arg: sid, style: 'ghost', tip: this.openText(s) }],
-        },
-        { t: 'text', key: 'msg', text, bubble: true, lines: 7 },
-        { t: 'input', key: 'reply', placeholder: 'Reply to this chat…', action: `continue:${sid}`, engage: `keep:${sid}`, hint: this.lateHint(s) },
-      ],
-    };
+    const failed = s.status === 'errored';
+    const blocks: Block[] = [
+      {
+        t: 'head',
+        key: 'h',
+        icon: failed ? 'alert' : 'check',
+        tone: failed ? 'bad' : 'good',
+        title: s.displayTitle,
+        sub: this.where(s, failed ? 'Failed' : 'Finished'),
+        buttons: [{ key: 'open', icon: 'external', action: 'switch', arg: sid, style: 'ghost', tip: this.openText(s) }],
+      },
+      { t: 'text', key: 'msg', text, bubble: true, lines: 7 },
+    ];
+    // Pointing at the box, or clicking into it, keeps the pop-up up while you write.
+    if (this.opts().replyBox) {
+      blocks.push({ t: 'input', key: 'reply', placeholder: 'Reply to this chat…', action: `continue:${sid}`, engage: `keep:${sid}`, point: `point:${sid}`, hint: this.lateHint(s) });
+    }
+    return { key: `done:${sid}`, blocks };
   }
 
   private lateHint(s: SessionView): string {
@@ -1472,9 +1648,29 @@ export class ClaudeActivity extends BaseActivity {
     return blocks;
   }
 
-  /** Hovering Claude: limits with pace, this week's tokens, every chat, recent closed ones. */
+  /**
+   * Pointing at Claude: Claude Status's card. With Grows › "Card with more" (the default) its
+   * header has a ⌄ that opens the rest under the rows: the limits with their pace, this week's
+   * tokens, chats closed recently and the Claude app's recent chats (⌃ folds it again, and so
+   * does pointing away). Below and Sideways show it all at once; Into a card, the small card.
+   */
   private hoverSheet(env: SheetEnv): SheetView {
     const now = env.now;
+    const grows = this.growsNow();
+    if (now - this.unfold.asked > UNFOLD_FORGET_MS) this.unfold.on = false;
+    this.unfold.asked = now;
+    const more = grows === 'more';
+    const full = grows === 'below' || grows === 'wide' || (more && this.unfold.on);
+    const chevron: SheetButton[] = more
+      ? [{ key: 'more', icon: this.unfold.on ? 'chevron-up' : 'chevron-down', action: 'unfold', style: 'ghost', tip: this.unfold.on ? 'Less' : 'Limits, tokens and closed chats' }]
+      : [];
+    const view = this.statusCard('hover', now, chevron);
+    if (full) view.blocks.push(...this.moreBlocks(now));
+    return view;
+  }
+
+  /** What Claude Code's card under the pill had besides the chats: limits, tokens, closed chats, the Claude app's, hidden chats. */
+  private moreBlocks(now: number): Block[] {
     const blocks: Block[] = this.limitBlocks(now);
     const t = this.tokenTotals;
     if (t) {
@@ -1488,25 +1684,6 @@ export class ClaudeActivity extends BaseActivity {
         ],
       });
     }
-    if (this.sessions.length) {
-      blocks.push({
-        t: 'rows',
-        key: 'sessions',
-        items: this.sessions.map((s): SheetRow => ({
-          key: s.id,
-          dot: chatTone(s.tone),
-          pulse: s.needsYou,
-          title: s.displayTitle,
-          detail: this.rowDetail(s, now),
-          meter: this.contextMeter(s),
-          badge: s.slot ? String(s.slot) : undefined,
-          action: 'switch',
-          arg: s.id,
-          tip: `${this.openText(s)}${s.slot ? ` (Alt+Shift+${s.slot})` : ''}`,
-          button: { key: 'hide', icon: 'x', action: 'hide-session', arg: s.sessionId, style: 'ghost', tip: 'Hide this chat from Island' },
-        })),
-      });
-    } else blocks.push({ t: 'text', key: 'sessions-none', text: 'No Claude Code chats open', tone: 'muted', size: 'sm' });
     const closed = this.closed.slice(0, 3);
     if (closed.length) {
       blocks.push(
@@ -1535,63 +1712,20 @@ export class ClaudeActivity extends BaseActivity {
     if (hiddenCount) {
       blocks.push({ t: 'buttons', key: 'hidden', align: 'start', items: [{ key: 'unhide', label: `Show hidden (${hiddenCount})`, icon: 'eye', action: 'unhide-all', style: 'ghost' }] });
     }
-    return { key: 'hover', blocks };
+    return blocks;
   }
 
-  /**
-   * A chat's line under its title in the hover card: "Working · 2m 10s · done in ~3 min · project"
-   * (a guess from its recent turns, estimate.ts), or "Your turn · project · 4m ago".
-   */
-  private rowDetail(s: SessionView, now: number): string {
-    if (s.status !== 'working') return [s.label, s.project, this.timing(s, now)].filter(Boolean).join(' · ');
-    const start = this.hooks.turnStart.get(s.id) ?? s.turnStartMs ?? s.lastActivityMs;
-    const left = turnLeft(s.turns ?? [], now - start);
-    const guess = left === null ? null : left === Infinity ? 'longer than usual' : about(left);
-    return ['Working', this.timing(s, now), guess && guess !== 'longer than usual' ? `done in ${guess}` : guess, s.project].filter(Boolean).join(' · ');
-  }
-
-  /** How full the chat's context is: the thin bar under its title, with about when it fills up. */
-  private contextMeter(s: SessionView): SheetRow['meter'] {
-    const c = s.context;
-    if (!c) return undefined;
-    const pct = Math.round(c.share * 100);
-    const full = c.fullIn != null ? about(c.fullIn) : null;
-    return {
-      value: c.share,
-      text: full ? `${pct}% · full in ${full}` : `${pct}%`,
-      tone: c.share >= 0.9 ? 'bad' : c.share >= 0.75 ? 'warn' : 'claude',
-      tip: `Context: ${fmtTokens(c.used)} of ${fmtTokens(c.window)} tokens${full ? `. Full in ${full} at the pace this chat fills while Claude works.` : ''}`,
-    };
-  }
-
-  /** Claude's cell in the open island: limits in the label, the chats as rows. */
+  /** Claude's cell in the open island: every session's row, with the limits in its label. */
   tile(env: SheetEnv): Tile | null {
-    // Without Claude Code on this PC there is nothing to show: no empty Claude cell for people who don't use it.
-    if (!this.env && !native.demo) return null;
-    const now = env.now;
-    const d = this.limitsNow(now);
+    if (!this.rows.length) return null;
+    const d = this.opts().showLimits ? this.limitsNow(env.now) : null;
     const limits = [d?.fiveHour ? `S ${Math.round(d.fiveHour.pct)}%` : null, d?.sevenDay ? `W ${Math.round(d.sevenDay.pct)}%` : null].filter(Boolean).join(' · ');
-    const rows: SheetRow[] = this.sessions.slice(0, 3).map((s) => ({
-      key: s.id,
-      dot: chatTone(s.tone),
-      pulse: s.needsYou,
-      title: s.displayTitle,
-      detail: `${s.status === 'working' ? 'Working' : s.label} · ${this.timing(s, now)}`,
-      action: 'switch',
-      arg: s.id,
-    }));
     return {
       key: 'claude',
       span: 2,
-      rows: this.sessions.length > 1 ? 2 : 1,
+      rows: 2,
       tone: 'claude',
-      body: {
-        k: 'list',
-        icon: 'claude',
-        label: limits ? `Claude Code · ${limits}` : 'Claude Code',
-        rows,
-        empty: this.tokenTotals ? `No chats open · ${fmtTokens(this.tokenTotals.fresh)} tokens this week` : 'No chats open',
-      },
+      body: { k: 'list', icon: 'claude', label: limits ? `Claude sessions · ${limits}` : 'Claude sessions', rows: statusRows(this.rows, env.now), empty: 'All quiet' },
     };
   }
 
@@ -1867,12 +2001,25 @@ export class ClaudeActivity extends BaseActivity {
     // Card inputs name their target after a colon ("reply:<request id>"); the typed text is the arg.
     const [verb, ref] = splitOnce(name, ':');
     switch (verb) {
-      case 'select':
-        this.selected = id;
-        this.ctx.open();
+      case 'jump':
+        // A row of Claude Status's: Claude Code's go where Claude Code would (Open), the rest where the widget did.
+        await this.jump(id);
         break;
-      case 'back':
-        this.selected = null;
+      case 'dismiss':
+        if (!this.engine || !id) break;
+        this.engine.dismiss(id);
+        this.rows = this.rows.filter((r) => r.id !== id);
+        break;
+      case 'router':
+        this.auto = { ...this.auto, on: await native.setRouter(!this.auto.on) };
+        break;
+      case 'unfold':
+        this.unfold = { on: !this.unfold.on, asked: Date.now() };
+        break;
+      case 'point':
+        // The pointer on a finished chat's reply box holds its pop-up; off it, untouched, the pop-up goes soon after.
+        if (arg === true) this.ctx.surface({ key: `done:${ref}`, ms: POINT_MS, level: 'expanded', bump: false });
+        else if (!this.typing.has(ref)) this.ctx.surface({ key: `done:${ref}`, ms: POINT_LEAVE_MS, level: 'expanded', bump: false });
         break;
       case 'switch':
         await this.switchTo(id);
@@ -1889,6 +2036,7 @@ export class ClaudeActivity extends BaseActivity {
         break;
       case 'keep':
         // The user is typing on a finished chat's card: keep it up.
+        this.typing.add(ref);
         this.ctx.surface({ key: `done:${ref}`, ms: 120_000, level: 'expanded', bump: false });
         break;
       case 'reply':
@@ -2017,7 +2165,6 @@ export class ClaudeActivity extends BaseActivity {
     const s = this.tracker.bySlot(n);
     this.ctx.log('hotkey', `Alt+Shift+${n}`, s ? s.id : 'no session in that slot');
     if (!s) return;
-    this.selected = s.id;
     this.ctx.surface({ key: `slot:${s.id}`, ms: 2200, level: 'expanded' });
     await afterModifiersReleased();
     await this.switchTo(s.id, 'hotkey');
@@ -2074,12 +2221,11 @@ export class ClaudeActivity extends BaseActivity {
         return true;
       case 'test-alert': {
         const s = this.sessions[0];
-        if (s) this.announceNeedsYou({ ...s, displayTitle: `${s.displayTitle} (test)` });
-        else {
-          this.ctx.alert('shake');
-          this.ctx.alert('glow', 'warn');
-          this.flash('Test alert: a session that needs you looks like this', 'warn', 'bell', 4000);
-        }
+        // Not a moment of its own, so it shows every time it is pressed.
+        this.ctx.alert('shake');
+        this.ctx.alert('glow', 'warn');
+        if (s && this.opts().notifications) this.ctx.notify(`${s.displayTitle} (test)`, `Needs you in ${s.project}. Alt+Shift+0 to switch.`, false);
+        this.flash('Test alert: a session that needs you looks like this', 'warn', 'bell', 4000);
         return true;
       }
       case 'switch':
@@ -2111,6 +2257,12 @@ export class ClaudeActivity extends BaseActivity {
       ];
       this.usageState = { data: { fiveHour: { pct: 41, resetsAt: now + 3 * 3600000 }, sevenDay: { pct: 60, resetsAt: now + 5 * 86400000 }, models: [] }, error: null, source: 'api', fetchedAt: now };
       this.tokenTotals = { fresh: 4100000, cached: 182000000, output: 900000 };
+      // Claude Status's rows for them, and a Claude app chat beside them.
+      this.rows = [
+        { id: 'a1', label: 'Implement the island UI', where: 'Terminal', tag: 'TERMINAL', state: 'running', word: 'running', since: (now - 754000) / 1000, grey: false, unread: false, hidden: false, progress: { value: 0.62, text: '~4 min left', method: 'history est.' } },
+        { id: 'b2', label: 'Schedule Matcher export', where: 'Terminal', tag: 'TERMINAL', state: 'done', word: 'done', since: (now - 180000) / 1000, grey: false, unread: true, hidden: false, progress: null },
+        { id: 'app:1', label: 'Trip ideas', where: 'Claude app', tag: 'APP CHAT', state: 'idle', word: 'idle', since: (now - 3600000) / 1000, grey: true, unread: false, hidden: false, progress: null },
+      ];
       this.ctx.update();
     });
   }

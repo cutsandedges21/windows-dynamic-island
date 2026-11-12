@@ -32,6 +32,8 @@ export type OptionSpec = (
    * `default` is always empty.
    */
   | { key: string; type: 'secret'; label: string; help?: string; placeholder?: string; secret: string; default: '' }
+  /** A heading over the options after it, to set a group apart (Claude Status's Claude Code part). Holds no value. */
+  | { key: string; type: 'heading'; label: string; help?: string }
 ) & {
   /** 'never': Windows only, not offered on a Mac (its default must then make sense there too). */
   mac?: 'never';
@@ -57,24 +59,41 @@ const B = (autoShow: boolean, persistent: boolean, interactive: boolean, interru
 
 export const CATALOG: ActivityMeta[] = [
   {
+    // Claude Code (Moss's: answering prompts, questions and replies from the island, limits, hotkeys)
+    // and Claude Status (Justin's Claude Sessions widget: every Claude session at a glance) are one
+    // activity since 2026-11. Its id stays Claude Code's, which phones and the hook pipe know it by;
+    // what only Claude Code did are the options under the "Claude Code" heading.
     id: 'claude',
     mac: 'soon',
-    name: 'Claude Code',
-    description: 'Shows up when a chat finishes or needs you: permission prompts, questions and replies right in the island, plus your plan limits. Turn on Persistent to keep it on the island all the time.',
+    name: 'Claude Status',
+    description:
+      'Every Claude session at a glance: Claude Code, the Claude app and Chrome, with purple background shells, unread dots and progress bars for long runs. Claude Code chats are answered right in the island: permission prompts, questions and replies, plus your plan limits.',
     icon: 'claude',
     category: 'developer',
     enabled: true,
     priority: 'high',
     // Not persistent: the island is for everything, so Claude only takes it for its own moments.
+    // Interrupt on: a session waiting on you holds the island open.
     behavior: B(true, false, true, true),
     options: [
-      { key: 'resetAlerts', type: 'toggle', label: 'Limit reset alerts', help: 'Tell me when the session or weekly limit resets.', default: true },
-      { key: 'sessionHotkeys', type: 'toggle', label: 'Session hotkeys', help: 'Alt+Shift+1–9 switch to a session, Alt+Shift+0 jumps to the one that needs you.', default: true },
-      { key: 'notifications', type: 'toggle', label: 'Windows notification', help: 'Also show a toast when a session needs you.', default: true },
-      { key: 'phone', type: 'toggle', label: 'Send to my phone', help: 'Finished turns, errors, questions and permission requests go to your phone too, when Settings › Notifications › Send to my phone is on.', default: true },
-      { key: 'showLimits', type: 'toggle', label: 'Limits in the island', help: 'Session and weekly limit bars in the expanded island.', default: true },
-      { key: 'showDesktop', type: 'toggle', label: 'Claude app chats', help: 'Recent chats from the Claude desktop app, read from its local cache.', default: true },
-      { key: 'finishedSeconds', type: 'number', label: 'Show "finished" for', default: 8, min: 3, max: 60, unit: 's' },
+      { key: 'showDone', type: 'toggle', label: 'Pop up when a session finishes', help: 'Shows the island for a moment when a session is done or fails. One that needs you (orange) always opens it, until you answer or tap away.', default: true },
+      { key: 'showAutoModel', type: 'toggle', label: 'Show Auto model button', help: 'Once Auto model (above) is on, a button in the expanded island pauses it and turns it back on, without removing it.', default: true },
+      { key: 'glowInFront', type: 'toggle', label: 'Running glow in front of everything', help: 'While a session runs (blue), the blue glow stays on round the island even when music or another activity is in front, over that activity’s own glow. Something that needs you, like a low battery, still shows over it. Off: the blue glow shows only when Claude is in front, or when nothing in front has a glow.', default: true },
+      { key: 'code', type: 'heading', label: 'Claude Code', help: 'What Island does for Claude Code chats: it can answer them, and type into them.' },
+      { key: 'permissions', type: 'toggle', label: 'Allow and Deny', help: "Permission prompts wait in the island with Allow and Deny, the full command, and a box to tell Claude what to do instead. Off: they go straight to the chat. Needs Claude Code's hooks (below).", default: true },
+      { key: 'requireHello', type: 'toggle', label: 'Windows Hello to Allow', help: 'Ask for your fingerprint, face or PIN before an Allow goes through.', default: false },
+      { key: 'questions', type: 'toggle', label: "Answer Claude's questions", help: 'Questions Claude asks wait in the island: tap an option or type your own answer. Off: they are asked in the chat.', default: true },
+      { key: 'replyBox', type: 'toggle', label: 'Reply box', help: "A finished chat's pop-up has its last message and a box to reply; the reply lands in that same chat. Pointing at the box or clicking into it keeps the pop-up up while you type.", default: true },
+      {
+        key: 'replyWindowSeconds',
+        type: 'number',
+        label: 'Reply window',
+        help: 'When a chat finishes while you are elsewhere, it waits this long for a reply typed in the island (the pop-up stays open meanwhile), so the reply goes into that same turn. Clicking the reply box holds it open. 0 turns it off: replies still land in the chat, as a new message. Never applies to the chat you are looking at.',
+        default: 0,
+        min: 0,
+        max: 240,
+        unit: 's',
+      },
       {
         key: 'onlyOtherChats',
         type: 'toggle',
@@ -82,17 +101,13 @@ export const CATALOG: ActivityMeta[] = [
         help: "When a chat finishes in the window you're in, the island stays small. It opens with Claude's answer only for chats you're not looking at.",
         default: false,
       },
-      {
-        key: 'replyWindowSeconds',
-        type: 'number',
-        label: 'Reply window',
-        help: 'When a chat finishes while you are elsewhere, it waits this long for a reply typed in the island, so the reply lands in that same chat. Clicking the reply box holds it open. 0 turns it off. Never applies to the chat you are looking at.',
-        default: 45,
-        min: 0,
-        max: 240,
-        unit: 's',
-      },
-      { key: 'requireHello', type: 'toggle', label: 'Windows Hello to Allow', help: 'Ask for your fingerprint, face or PIN before an Allow goes through.', default: false },
+      { key: 'showLimits', type: 'toggle', label: 'Limits in the island', help: 'Session and weekly limit bars in the expanded island, and in its Control Center tile.', default: true },
+      { key: 'resetAlerts', type: 'toggle', label: 'Limit reset alerts', help: 'Tell me when the session or weekly limit resets.', default: true },
+      { key: 'sessionHotkeys', type: 'toggle', label: 'Session hotkeys', help: 'Alt+Shift+1–9 switch to a session, Alt+Shift+0 jumps to the one that needs you.', default: true },
+      { key: 'notifications', type: 'toggle', label: 'Windows notification', help: 'Also show a toast when a session needs you.', default: true },
+      { key: 'phone', type: 'toggle', label: 'Send to my phone', help: 'Finished turns, errors, questions and permission requests go to your phone too, when Settings › Notifications › Send to my phone is on.', default: true },
+      { key: 'finishedSeconds', type: 'number', label: 'Show "finished" for', help: "How long a finished Claude Code chat's pop-up, with its reply box, stays.", default: 8, min: 3, max: 60, unit: 's' },
+      { key: 'showDesktop', type: 'toggle', label: 'Recent Claude app chats', help: "The Claude desktop app's recent chats, read from its local cache, under the limits in the card.", default: true },
     ],
   },
   {
@@ -354,26 +369,6 @@ export const CATALOG: ActivityMeta[] = [
       { key: 'expandedGpu', type: 'toggle', label: 'GPU when expanded', default: true },
       { key: 'cpuSpike', type: 'number', label: 'CPU spike at', default: 90, min: 50, max: 100, unit: '%' },
       { key: 'memSpike', type: 'number', label: 'Memory warning at', default: 92, min: 50, max: 100, unit: '%' },
-    ],
-  },
-  {
-    // Justin's Claude Sessions widget in the island, beside Claude Code (which answers prompts and
-    // shows limits): every Claude session at a glance, the Claude app and Chrome included.
-    id: 'claudeStatus',
-    mac: 'never',
-    name: 'Claude Status',
-    description:
-      'Every Claude session at a glance: Claude Code, the Claude app and Chrome, with purple background shells, unread dots and progress bars for long runs.',
-    icon: 'claude',
-    category: 'developer',
-    enabled: false,
-    priority: 'medium',
-    // Interrupt on: a session waiting on you (orange) holds the island open.
-    behavior: B(true, true, true, true),
-    options: [
-      { key: 'showDone', type: 'toggle', label: 'Pop up when a session finishes', help: 'Shows the island for a moment when a session is done or fails. One that needs you (orange) always opens it, until you answer or tap away.', default: true },
-      { key: 'showAutoModel', type: 'toggle', label: 'Show Auto model button', help: 'Once Auto model (above) is on, a button in the expanded island pauses it and turns it back on, without removing it.', default: true },
-      { key: 'glowInFront', type: 'toggle', label: 'Running glow in front of everything', help: 'While a session runs (blue), the blue glow stays on round the island even when music or another activity is in front, over that activity’s own glow. Something that needs you, like a low battery, still shows over it. Off: the blue glow shows only when Claude Status is in front, or when nothing in front has a glow.', default: true },
     ],
   },
   {

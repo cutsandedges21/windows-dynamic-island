@@ -41,7 +41,7 @@ describe('Settings › Your phone', () => {
     s.activities.config.claude.options.requireHello = true;
     expect(termHelp(s)).toBe('A paired phone can open a terminal on this PC and run any command.');
     s.general.phoneTerminal = true;
-    expect(termHelp(s)).toBe('A paired phone can open a terminal on this PC and run any command. Off for phones while Windows Hello is asked before Allow (Activities › Claude Code).');
+    expect(termHelp(s)).toBe('A paired phone can open a terminal on this PC and run any command. Off for phones while Windows Hello is asked before Allow (Activities › Claude Status › Claude Code).');
   });
 
   it('lists each terminal: who started it, whether it runs, where', () => {

@@ -191,10 +191,10 @@ function activitiesPage(): HTMLElement {
 
 /** What Priority means, under its switch on every activity. */
 /** The Grows choices in plain words (Settings › When pointed at, and each activity's Grows). */
-const GROWS_LABEL: Record<Grows, string> = { wide: 'Sideways', card: 'Into a card', below: 'Below' };
+const GROWS_LABEL: Record<Grows, string> = { wide: 'Sideways', card: 'Into a card', below: 'Below', more: 'Card with more' };
 const GROWS_HELP = [
   'When you point at it: Sideways widens the pill, Into a card grows a card out of it.',
-  'When you point at it: Below hangs its card under the pill, Into a card grows the card out of the pill, Sideways widens the pill too.',
+  'When you point at it: Card with more grows the sessions card out of the pill, and its ⌄ button opens the rest (limits, tokens, closed chats); Below hangs all of it under the pill; Into a card grows the sessions card alone; Sideways widens the pill and hangs the card under it.',
 ];
 
 const PRIORITY_HELP = 'When several things happen at once, the highest one gets the pill and the others wait beside it as small icons. A tie goes to the one higher on this page.';
@@ -255,11 +255,12 @@ function cardBody(meta: ActivityMeta): HTMLElement {
       .flatMap((o) =>
         meta.id === 'system' && o.key === 'always'
           ? [optionRow(meta.id, o), systemTable()]
-          : meta.id === 'claudeStatus' && o.key === 'showAutoModel'
+          : meta.id === 'claude' && o.key === 'showAutoModel'
             ? [autoModelRow(), optionRow(meta.id, o)]
             : [optionRow(meta.id, o)],
       ),
   ]);
+  // Claude Code's panel (its hooks, limits and chats) closes its part of the options.
   if (meta.id === 'claude') body.append(claudePanel());
   if (meta.id === 'local') body.append(localPanel());
   if (meta.id === 'land') body.append(landPanel());
@@ -329,6 +330,8 @@ function autoModelRow(): HTMLElement {
 }
 
 function optionRow(id: string, o: OptionSpec): HTMLElement {
+  // A heading sets the options after it apart (Claude Status › Claude Code).
+  if (o.type === 'heading') return h('div', { class: 'opt-head' }, [h('h3', { text: o.label }), o.help ? h('div', { class: 'row-help', text: o.help }) : null]);
   const opts = cfg(id).options;
   const set = (v: unknown) => {
     opts[o.key] = v;
@@ -369,7 +372,10 @@ const SYSTEM_TABLE_KEYS = new Set(['order', 'show', ...SYSTEM_STATS.map((s) => `
 function systemTable(): HTMLElement {
   const meta = CATALOG_BY_ID.get('system')!;
   const opts = cfg('system').options;
-  const value = (key: string) => Boolean(opts[key] ?? meta.options.find((o) => o.key === key)?.default);
+  const value = (key: string) => {
+    const o = meta.options.find((x) => x.key === key);
+    return Boolean(opts[key] ?? (o && 'default' in o ? o.default : false));
+  };
   const saved = String(opts.order ?? 'cpu,mem,gpu').split(',');
   const stats = [...SYSTEM_STATS].sort((a, b) => (saved.indexOf(a.key) + 4) % 4 - ((saved.indexOf(b.key) + 4) % 4));
   const shown = new Set<unknown>(Array.isArray(opts.show) ? opts.show : []);
@@ -952,7 +958,7 @@ function settingsPage(): HTMLElement {
         ? [
             row(
               'Answer Claude from my phone',
-              "Claude Code's permission pushes get Allow and Deny buttons. With Windows Hello asked before Allow (Activities › Claude Code), the phone can only Deny. Anyone who can read your topic could tap them too, so keep it to yourself.",
+              "Claude Code's permission pushes get Allow and Deny buttons. With Windows Hello asked before Allow (Activities › Claude Status › Claude Code), the phone can only Deny. Anyone who can read your topic could tap them too, so keep it to yourself.",
               toggle(g.phoneApprove, (v) => {
                 g.phoneApprove = v;
                 if (v && !g.phoneReplyTopic) g.phoneReplyTopic = newPhoneTopic();
@@ -1002,7 +1008,7 @@ function controlsPage(): HTMLElement {
       row('Open or close the island', null, hotkey('toggleHotkey', 'island.toggle')),
       row('Open Activities', null, hotkey('activitiesHotkey', 'island.activities')),
       // Claude Code comes to the Mac in part 2, its session keys with it.
-      ...(mac ? [] : [h('p', { class: 'muted', text: 'Claude Code sessions: Alt+Shift+1–9 switches, Alt+Shift+0 jumps to the one that needs you (Activities › Claude Code).' })]),
+      ...(mac ? [] : [h('p', { class: 'muted', text: 'Claude Code sessions: Alt+Shift+1–9 switches, Alt+Shift+0 jumps to the one that needs you (Activities › Claude Status › Claude Code › Session hotkeys).' })]),
     ]),
   ]);
 }

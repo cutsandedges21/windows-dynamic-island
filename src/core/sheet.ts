@@ -114,9 +114,10 @@ export type Block =
    * Never focused on its own: clicking it engages it (`engage` fires), Enter sends `action` with the text.
    * With `lines` it is a box of that many lines (a note): Enter starts a new line, Ctrl+Enter sends; it
    * starts out holding `value`, and `change` gets the text as it is typed (and when the box lets go), so
-   * what was typed is kept even if the card closes.
+   * what was typed is kept even if the card closes. `point` fires with true when the pointer comes onto
+   * the box and false when it leaves (Claude's finished card stays up while you are about to reply).
    */
-  | { t: 'input'; key: string; placeholder: string; action: string; engage?: string; hint?: string; lines?: number; value?: string; change?: string }
+  | { t: 'input'; key: string; placeholder: string; action: string; engage?: string; hint?: string; lines?: number; value?: string; change?: string; point?: string }
   /** `action`: the whole meter can be clicked. */
   | { t: 'meter'; key: string; label: string; value: number; pace?: number | null; text: string; sub?: string; tone?: Tone; tip?: string; action?: string; arg?: unknown }
   | { t: 'rows'; key: string; items: SheetRow[] }
@@ -263,7 +264,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
       case 'buttons':
         return { ...b, items: b.items.map(btn) };
       case 'input':
-        return { ...b, action: fn(b.action), engage: b.engage ? fn(b.engage) : undefined, change: b.change ? fn(b.change) : undefined };
+        return { ...b, action: fn(b.action), engage: b.engage ? fn(b.engage) : undefined, change: b.change ? fn(b.change) : undefined, point: b.point ? fn(b.point) : undefined };
       case 'meter':
         return b.action ? { ...b, action: fn(b.action) } : b;
       case 'rows':
@@ -1288,6 +1289,15 @@ export class SheetRenderer {
     input.addEventListener('focus', () => {
       const s = spec();
       if (s.engage) this.onAction(s.engage, null, e);
+    });
+    // Pointing at the box, and leaving it: a card that would go by itself can stay while the user is about to type.
+    input.addEventListener('pointerenter', () => {
+      const s = spec();
+      if (s.point) this.onAction(s.point, true, e);
+    });
+    input.addEventListener('pointerleave', () => {
+      const s = spec();
+      if (s.point) this.onAction(s.point, false, e);
     });
     input.addEventListener('keydown', (ev) => {
       const k = ev as KeyboardEvent;
