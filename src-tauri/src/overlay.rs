@@ -445,9 +445,10 @@ pub fn paste_restore(app: &AppHandle) {
 }
 
 /// Ctrl went down with a letter or a digit: a shortcut (Ctrl+V, Ctrl+C…), not a tap.
+/// Asks every key (no stop at the first), so each one's "pressed since last asked" bit is spent.
 #[cfg(windows)]
 fn shortcut_key_down() -> bool {
-    (0x30u16..=0x39).chain(0x41..=0x5A).any(|vk| unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8001 != 0)
+    (0x30u16..=0x39).chain(0x41..=0x5A).fold(false, |any, vk| (unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8001 != 0) | any)
 }
 
 #[cfg(not(windows))]
@@ -590,6 +591,10 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
             let peek_on = state.peek_enabled.load(Ordering::Relaxed) && !KEYBOARD.load(Ordering::Relaxed);
             if ctrl && !was_ctrl {
                 ctrl_since = Some(Instant::now());
+                // Letters typed since the last Ctrl (a chat, a document) still carry Windows' "pressed
+                // since last asked" bit: spend it now, or the first tap after typing reads as a
+                // shortcut and never peeks (Justin). A key held with this Ctrl is still down below.
+                let _ = shortcut_key_down();
                 ctrl_combo = false;
             }
             if ctrl && !ctrl_combo && shortcut_key_down() {
