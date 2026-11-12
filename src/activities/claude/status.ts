@@ -81,7 +81,8 @@ export function refineWithNative(status: Status, nativeStatus: string | null | u
   if (status === 'awaiting_permission' || status === 'interrupted' || status === 'errored' || nativeStatus == null) return status;
   if (nativeStatus === 'busy' && status !== 'new') return 'working';
   if (nativeStatus === 'waiting' && waitingFor && status !== 'new') return 'awaiting_permission';
-  if (nativeStatus === 'idle' && status !== 'new') return 'awaiting_input';
+  // "shell": Claude Code is idle with a background shell still running (its "1 shell").
+  if ((nativeStatus === 'idle' || nativeStatus === 'shell') && status !== 'new') return 'awaiting_input';
   return status;
 }
 

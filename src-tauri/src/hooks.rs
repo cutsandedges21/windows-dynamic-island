@@ -6,6 +6,11 @@
 //
 // The command is only the quoted exe path in forward slashes plus the event
 // name: on Windows Claude Code runs hook commands through Git Bash.
+//
+// Claude Status's Auto model (auto_model.rs) keeps its own hooks in the same
+// file, through read_settings_at / save_settings_at here. Each side only ever
+// touches its own hook commands: Island's are refreshed where they stand and
+// removed one by one, so the other's entries keep their place and order.
 
 use std::path::{Path, PathBuf};
 
@@ -61,9 +66,12 @@ pub fn settings_path() -> PathBuf {
 }
 
 /// The only error that means "start from nothing" is the file not being there.
-fn read_settings() -> Result<Value, String> {
-    let path = settings_path();
-    match std::fs::read(&path) {
+pub(crate) fn read_settings() -> Result<Value, String> {
+    read_settings_at(&settings_path())
+}
+
+pub(crate) fn read_settings_at(path: &Path) -> Result<Value, String> {
+    match std::fs::read(path) {
         Ok(bytes) => parse_settings(&bytes, &path.display().to_string()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
         Err(err) => Err(format!("Can't read {}: {err}", path.display())),
@@ -87,27 +95,61 @@ fn hook_command(event: &str) -> String {
     format!("\"{exe}\" {event}")
 }
 
-fn entry_is_ours(entry: &Value) -> bool {
-    entry
-        .get("hooks")
-        .and_then(Value::as_array)
-        .map(|hooks| hooks.iter().any(|h| h.get("command").and_then(Value::as_str).map(|c| c.contains(MARKER)).unwrap_or(false)))
-        .unwrap_or(false)
+fn hook_is_ours(hook: &Value) -> bool {
+    hook.get("command").and_then(Value::as_str).is_some_and(|c| c.contains(MARKER))
 }
 
+fn entry_is_ours(entry: &Value) -> bool {
+    entry.get("hooks").and_then(Value::as_array).is_some_and(|hooks| hooks.iter().any(hook_is_ours))
+}
+
+/// `entry` without Island's hooks: None when nothing else was in it, the entry unchanged when none was.
+fn others_in(entry: &Value) -> Option<Value> {
+    let Some(hooks) = entry.get("hooks").and_then(Value::as_array) else {
+        return Some(entry.clone());
+    };
+    if !hooks.iter().any(hook_is_ours) {
+        return Some(entry.clone());
+    }
+    let rest: Vec<Value> = hooks.iter().filter(|h| !hook_is_ours(h)).cloned().collect();
+    if rest.is_empty() {
+        return None;
+    }
+    let mut e = entry.clone();
+    e["hooks"] = Value::Array(rest);
+    Some(e)
+}
+
+/// Island's hooks, fresh, where they already stand (or added last): everybody else's, Auto
+/// model's included, keep their place, so an update changes nothing but Island's own lines.
 fn merged(existing: &Value) -> Value {
     let mut root = existing.as_object().cloned().unwrap_or_default();
     let mut hooks = root.get("hooks").and_then(Value::as_object).cloned().unwrap_or_else(Map::new);
     for (event, timeout) in HOOK_EVENTS {
-        let mut list = hooks.get(*event).and_then(Value::as_array).cloned().unwrap_or_default();
-        list.retain(|entry| !entry_is_ours(entry));
-        list.push(json!({ "hooks": [{ "type": "command", "command": hook_command(event), "timeout": timeout }] }));
+        let ours = json!({ "hooks": [{ "type": "command", "command": hook_command(event), "timeout": timeout }] });
+        let mut list = Vec::new();
+        let mut placed = false;
+        for entry in hooks.get(*event).and_then(Value::as_array).into_iter().flatten() {
+            match others_in(entry) {
+                // A group someone else shares with Island's hook keeps theirs; Island's gets its own group.
+                Some(kept) => list.push(kept),
+                None if !placed => {
+                    list.push(ours.clone());
+                    placed = true;
+                }
+                None => {}
+            }
+        }
+        if !placed {
+            list.push(ours);
+        }
         hooks.insert((*event).to_string(), Value::Array(list));
     }
     root.insert("hooks".into(), Value::Object(hooks));
     Value::Object(root)
 }
 
+/// Every Island hook gone, one by one: a group or event left empty goes too, the rest stays as it was.
 fn without_ours(existing: &Value) -> Value {
     let mut root = existing.as_object().cloned().unwrap_or_default();
     let Some(hooks) = root.get("hooks").and_then(Value::as_object).cloned() else {
@@ -117,7 +159,7 @@ fn without_ours(existing: &Value) -> Value {
     for (event, value) in hooks {
         match value.as_array() {
             Some(list) => {
-                let kept: Vec<Value> = list.iter().filter(|e| !entry_is_ours(e)).cloned().collect();
+                let kept: Vec<Value> = list.iter().filter_map(others_in).collect();
                 if !kept.is_empty() {
                     out.insert(event, Value::Array(kept));
                 }
@@ -151,7 +193,11 @@ fn stamp() -> String {
 }
 
 fn backup_path() -> PathBuf {
-    settings_path().with_file_name(format!("settings.json.bak-{}", stamp()))
+    backup_path_of(&settings_path())
+}
+
+fn backup_path_of(path: &Path) -> PathBuf {
+    path.with_file_name(format!("settings.json.bak-{}", stamp()))
 }
 
 /// FNV-1a: "is this still the file I showed the user?"
@@ -165,23 +211,33 @@ fn fingerprint(bytes: &[u8]) -> String {
 }
 
 fn current_fingerprint() -> String {
-    match std::fs::read(settings_path()) {
+    fingerprint_at(&settings_path())
+}
+
+pub(crate) fn fingerprint_at(path: &Path) -> String {
+    match std::fs::read(path) {
         Ok(bytes) => fingerprint(&bytes),
         Err(_) => fingerprint(b""),
     }
 }
 
-pub fn status() -> HookStatus {
-    let current = read_settings().unwrap_or_else(|_| json!({}));
-    let installed = current
+/// Whether Island's hooks are in `settings`, and whether installing again would change nothing.
+pub(crate) fn installed_in(settings: &Value) -> (bool, bool) {
+    let installed = settings
         .get("hooks")
         .and_then(Value::as_object)
         .map(|hooks| hooks.values().filter_map(Value::as_array).flatten().any(entry_is_ours))
         .unwrap_or(false);
+    (installed, installed && merged(settings) == *settings)
+}
+
+pub fn status() -> HookStatus {
+    let current = read_settings().unwrap_or_else(|_| json!({}));
+    let (installed, up_to_date) = installed_in(&current);
     let hook_path = hook_exe_path();
     HookStatus {
         installed,
-        up_to_date: installed && merged(&current) == current,
+        up_to_date,
         settings_path: settings_path().to_string_lossy().to_string(),
         hook_ready: hook_path.exists(),
         hook_path: hook_path.to_string_lossy().to_string(),
@@ -201,27 +257,43 @@ pub fn preview(install: bool) -> Result<HookPreview, String> {
 
 /// Writes after a dated backup, and only if the file is still the one previewed.
 pub fn write(install: bool, fp: &str) -> Result<String, String> {
-    let path = settings_path();
-    let dir = path.parent().unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let current = read_settings()?;
-    if current_fingerprint() != fp {
+    write_at(&settings_path(), install, fp)
+}
+
+pub(crate) fn write_at(path: &Path, install: bool, fp: &str) -> Result<String, String> {
+    let current = read_settings_at(path)?;
+    if fingerprint_at(path) != fp {
         return Err(format!("{} changed since the preview. Nothing was written; review the new diff.", path.display()));
     }
-    let backup = backup_path();
-    if path.exists() {
-        std::fs::copy(&path, &backup).map_err(|e| format!("backup failed: {e}"))?;
-    }
     let next = if install { merged(&current) } else { without_ours(&current) };
-    let mut text = pretty(&next);
+    save_settings_at(path, &next, if install { "hooks installed" } else { "hooks removed" })
+}
+
+/// Writes a Claude Code settings.json after a dated backup, through a temp file so a crash
+/// never leaves half a file. Returns the backup's path. `what` goes to the log.
+pub(crate) fn save_settings_at(path: &Path, next: &Value, what: &str) -> Result<String, String> {
+    std::fs::create_dir_all(path.parent().unwrap_or(Path::new("."))).map_err(|e| e.to_string())?;
+    // Two writes in the same second (Island's hooks, then Auto model's) each keep their backup.
+    let base = backup_path_of(path);
+    let mut backup = base.clone();
+    for n in 2..100 {
+        if !backup.exists() {
+            break;
+        }
+        backup = PathBuf::from(format!("{}-{n}", base.display()));
+    }
+    if path.exists() {
+        std::fs::copy(path, &backup).map_err(|e| format!("backup failed: {e}"))?;
+    }
+    let mut text = pretty(next);
     text.push('\n');
     let temp = path.with_extension(format!("json.island-{}", std::process::id()));
     std::fs::write(&temp, text.as_bytes()).map_err(|e| format!("write failed: {e}"))?;
-    if let Err(err) = std::fs::rename(&temp, &path) {
+    if let Err(err) = std::fs::rename(&temp, path) {
         let _ = std::fs::remove_file(&temp);
         return Err(format!("write failed: {err}"));
     }
-    crate::log::line(format!("hooks {} (backup {})", if install { "installed" } else { "removed" }, backup.display()));
+    crate::log::line(format!("{what} (backup {})", backup.display()));
     Ok(backup.to_string_lossy().to_string())
 }
 

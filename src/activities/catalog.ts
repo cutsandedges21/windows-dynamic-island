@@ -357,6 +357,26 @@ export const CATALOG: ActivityMeta[] = [
     ],
   },
   {
+    // Justin's Claude Sessions widget in the island, beside Claude Code (which answers prompts and
+    // shows limits): every Claude session at a glance, the Claude app and Chrome included.
+    id: 'claudeStatus',
+    mac: 'never',
+    name: 'Claude Status',
+    description:
+      'Every Claude session at a glance: Claude Code, the Claude app and Chrome, with purple background shells, unread dots and progress bars for long runs.',
+    icon: 'claude',
+    category: 'developer',
+    enabled: false,
+    priority: 'medium',
+    // Interrupt on: a session waiting on you (orange) holds the island open.
+    behavior: B(true, true, true, true),
+    options: [
+      { key: 'showDone', type: 'toggle', label: 'Pop up when a session finishes', help: 'Shows the island for a moment when a session is done or fails. One that needs you (orange) always opens it, until you answer or tap away.', default: true },
+      { key: 'showAutoModel', type: 'toggle', label: 'Show Auto model button', help: 'Once Auto model (above) is on, a button in the expanded island pauses it and turns it back on, without removing it.', default: true },
+      { key: 'glowInFront', type: 'toggle', label: 'Running glow in front of everything', help: 'While a session runs (blue), the blue glow stays on round the island even when music or another activity is in front, over that activity’s own glow. Something that needs you, like a low battery, still shows over it. Off: the blue glow shows only when Claude Status is in front, or when nothing in front has a glow.', default: true },
+    ],
+  },
+  {
     id: 'weather',
     name: 'Weather',
     description: 'Current conditions and rain coming soon, from Open-Meteo.',

@@ -58,6 +58,8 @@ export interface SheetRow {
   icon?: string;
   dot?: Tone;
   pulse?: boolean;
+  /** A small pink dot on the dot's corner: something new to read. */
+  unread?: boolean;
   title: string;
   detail?: string;
   /** A thin progress bar after the detail, to the end of the row: what it is (label) and the time left (text). */
@@ -1073,8 +1075,8 @@ export class SheetRenderer {
     const e = make(r.action && !r.button ? 'button' : 'div', `row${r.action ? ' act' : ''}`);
     if (e instanceof HTMLButtonElement) e.type = 'button';
     if (r.dot) {
-      const d = make('span', `rd tone-${r.dot}${r.pulse ? ' pulse' : ''}`);
-      d.append(make('i', 'ring'), make('i', 'core'));
+      const d = make('span', `rd tone-${r.dot}${r.pulse ? ' pulse' : ''}${r.unread ? ' unread' : ''}`);
+      d.append(make('i', 'ring'), make('i', 'core'), make('i', 'badge'));
       e.append(d);
     } else if (r.icon) e.append(iconEl(r.icon, `ri tone-${r.tone ?? 'muted'}`));
     const tx = make('span', 'rt');

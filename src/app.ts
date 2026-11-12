@@ -10,7 +10,7 @@ import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtToke
 import { icon, type IconName } from './core/icons';
 import { levelWidth, normalizeWidths, type Anchor, type Level } from './core/layout';
 import { MENU_ITEMS } from './core/menu';
-import { isTauri, native, on, sendTo, type MonitorInfo } from './core/native';
+import { isTauri, native, on, sendTo, type AutoModelState, type MonitorInfo } from './core/native';
 import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
 import { ACCENTS, backAt, cloneSettings, growsChoices, growsOf, GROWS_BELOW, HIDE_CHOICES, hideUntil, migrate, newPhoneTopic, type ActivityConfig, type Grows, type Settings } from './core/settings';
@@ -25,6 +25,7 @@ import { modelPicker } from './models-ui';
 import { phoneSection } from './remote/settings';
 import { welcomePage, type WelcomeHost } from './welcome';
 import { noticePanel } from './workspaces/notice/panel';
+import { confirmBox } from './workspaces/ui';
 import { workspacesPage, type WorkspacesPage } from './workspaces/page';
 
 /** 'welcome' is the first-run setup: the whole window, no sidebar. */
@@ -251,13 +252,80 @@ function cardBody(meta: ActivityMeta): HTMLElement {
     // Local AI's model is picked in its panel below, not typed; System Stats' picks live in its table.
     ...meta.options
       .filter((o) => optionHere(o) && !(meta.id === 'local' && o.key === 'model') && !(meta.id === 'system' && SYSTEM_TABLE_KEYS.has(o.key)))
-      .flatMap((o) => (meta.id === 'system' && o.key === 'always' ? [optionRow(meta.id, o), systemTable()] : [optionRow(meta.id, o)])),
+      .flatMap((o) =>
+        meta.id === 'system' && o.key === 'always'
+          ? [optionRow(meta.id, o), systemTable()]
+          : meta.id === 'claudeStatus' && o.key === 'showAutoModel'
+            ? [autoModelRow(), optionRow(meta.id, o)]
+            : [optionRow(meta.id, o)],
+      ),
   ]);
   if (meta.id === 'claude') body.append(claudePanel());
   if (meta.id === 'local') body.append(localPanel());
   if (meta.id === 'land') body.append(landPanel());
   if (meta.id === 'workspaces') body.append(noticePanel({ ask, openWorkspaces: () => { go('workspaces'); void sendTo('app', 'ws-seed', null); } }));
   return body;
+}
+
+/**
+ * Activities › Claude Status › Auto model: installs the model router and the model check in
+ * Claude Code (src-tauri/src/auto_model.rs), or removes them. The switch shows what is really in
+ * Claude Code's settings, not a saved option. Its hooks sit beside Island's own (Claude Code ›
+ * hooks) and never touch them.
+ */
+function autoModelRow(): HTMLElement {
+  const note = h('div', { class: 'row-help' });
+  const sw = toggle(false, (on) => void flip(on), 'Auto model');
+  const show = (installed: boolean, text: string, warn = false) => {
+    sw.classList.toggle('on', installed);
+    sw.setAttribute('aria-checked', String(installed));
+    note.className = warn ? 'row-help warn' : 'row-help';
+    note.textContent = text;
+  };
+  const busy = (yes: boolean) => {
+    if (yes) sw.setAttribute('disabled', '');
+    else sw.removeAttribute('disabled');
+  };
+  const done = (s: AutoModelState) => {
+    if (s.error) show(s.installed, s.error, true);
+    else show(s.installed, s.installed ? 'On for every Claude Code session. A backup of its settings.json was saved next to it.' : 'Off. Its hooks are gone from Claude Code; your own hooks stay.');
+  };
+  const flip = async (want: boolean) => {
+    busy(true);
+    show(want, want ? 'Adding the hooks to Claude Code…' : 'Removing the hooks…');
+    let s = await native.setAutoModel(want);
+    // No Node.js on this PC: say what is about to be downloaded, then do it all in one go.
+    if (want && s.needsNode) {
+      show(false, '');
+      const mb = Math.round(s.nodeDownloadBytes / 1e6);
+      const yes = await confirmBox({
+        title: 'Download Node.js?',
+        text: `Auto model runs on Node.js, which isn’t on this PC. Island will download it (${mb} MB) from nodejs.org into its own folder, then turn Auto model on. Nothing else on your PC changes.`,
+        yes: `Download ${mb} MB and turn on`,
+      });
+      if (!yes) {
+        busy(false);
+        show(false, 'Still off: Auto model needs Node.js.');
+        return;
+      }
+      show(true, 'Downloading Node.js…');
+      const stop = await on<{ done: number; total: number }>('auto-model-node', (p) => {
+        if (p.total) show(true, p.done < p.total ? `Downloading Node.js… ${Math.round((p.done / p.total) * 100)}% of ${mb} MB` : 'Setting up Auto model…');
+      });
+      s = await native.installAutoModelNode();
+      stop();
+    }
+    busy(false);
+    done(s);
+  };
+  void native.autoModel().then((s) => show(s.installed, s.installed ? (s.on ? 'On.' : 'Paused from the island’s button.') : ''));
+  const r = row(
+    'Auto model',
+    'Before a prompt runs on a far too strong or too weak Claude model, Claude Code stops and says which model to switch to. When a chat compacts, passes 500k tokens or ends, it tells you if you used the right one: what a cheaper model would have saved, or how much more often a stronger one would have got it right. Adds hooks to Claude Code. Each check asks Claude, so it uses a little of your Claude usage.',
+    sw,
+  );
+  r.querySelector('.row-text')?.append(note);
+  return r;
 }
 
 function optionRow(id: string, o: OptionSpec): HTMLElement {

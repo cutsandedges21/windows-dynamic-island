@@ -42,6 +42,7 @@ describe('status (status.test.js)', () => {
     expect(refineWithNative('working', 'waiting', 'permission')).toBe('awaiting_permission');
     expect(refineWithNative('working', 'waiting', null)).toBe('working');
     expect(refineWithNative('working', 'idle', null)).toBe('awaiting_input');
+    expect(refineWithNative('working', 'shell', null)).toBe('awaiting_input'); // idle, a background shell running
     expect(refineWithNative('awaiting_permission', 'busy', null)).toBe('awaiting_permission');
     expect(refineWithNative('interrupted', 'busy', null)).toBe('interrupted');
     expect(refineWithNative('errored', 'idle', null)).toBe('errored');
@@ -213,6 +214,13 @@ describe('transcript (transcript.test.js)', () => {
     const resolved = parseLines(lines([user('go', T), assistant(T + 1, { stop: 'tool_use', tools: [['t1', 'Bash']] }), toolResult('t1', T + 2)]));
     expect(resolved.pendingTool).toBe(false);
     expect(resolved.lastEntryKind).toBe('tool_result');
+  });
+
+  it('a compaction summary is no new turn', () => {
+    const st = parseLines(lines([user('hi', T), assistant(T + 1000), { ...user('This session is being continued…', T + 9000), isCompactSummary: true }]));
+    expect(st.lastEntryKind).toBe('assistant');
+    expect(st.lastStopReason).toBe('end_turn');
+    expect(st.turnStartMs).toBe(T);
   });
 
   it('interrupt marker, local command output and system local_command', () => {
