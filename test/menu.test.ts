@@ -75,6 +75,15 @@ describe('the right-click menu', () => {
     expect(by('menu/top').style).toBe('ghost');
     expect(by('menu/dnd')).toMatchObject({ label: 'Quiet on', style: 'primary' });
   });
+
+  it('shows Activities and Settings as icons alone, named by their tips', () => {
+    const segs = menuSegments(FULL_MENU, { anchor: 'top', dnd: false, mac: false, reminders: true });
+    for (const [key, tip] of [['menu/activities', 'Activities'], ['menu/settings', 'Settings']]) {
+      const b = segs.find((x) => x.key === key) as Extract<Seg, { t: 'button' }>;
+      expect(b.label).toBeUndefined();
+      expect(b).toMatchObject({ style: 'ghost', tip });
+    }
+  });
 });
 
 describe('saving the choice', () => {

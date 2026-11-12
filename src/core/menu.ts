@@ -73,7 +73,7 @@ export function menuSegments(shown: MenuShown, st: MenuState): Seg[] {
   if (shown.hide) segs.push({ t: 'button', key: 'menu/hide', icon: 'eye-off', label: 'Hide', action: 'island:hide-menu', style: 'ghost', tip: 'Hide the island for a while', prio: 2 });
   if (shown.reminders && st.reminders) segs.push({ t: 'button', key: 'menu/reminders', icon: 'bell', label: 'Reminders', action: 'island:reminders', side: 'end', style: 'secondary', tip: 'Reminders and notes', prio: 1 });
   if (shown.workspaces) segs.push({ t: 'button', key: 'menu/workspaces', icon: 'grid', label: 'Workspaces', action: 'island:app', arg: 'workspaces', side: 'end', style: 'secondary', prio: 1 });
-  if (shown.activities) segs.push({ t: 'button', key: 'menu/activities', icon: 'pulse', label: 'Activities', action: 'island:app', arg: 'activities', side: 'end', style: 'secondary', prio: 1 });
+  if (shown.activities) segs.push({ t: 'button', key: 'menu/activities', icon: 'pulse', action: 'island:app', arg: 'activities', side: 'end', style: 'ghost', tip: 'Activities', prio: 1 });
   segs.push({ t: 'button', key: 'menu/settings', icon: 'settings', action: 'island:app', arg: 'settings', side: 'end', style: 'ghost', tip: 'Settings', prio: 1 });
   return segs;
 }
