@@ -35,14 +35,14 @@ describe('planActivities', () => {
     expect(plan.enabled).toEqual([...plan.picked, ...plan.hidden]);
   });
 
-  it('only adds Claude Code when Claude Code is on this PC', () => {
+  it('Coding ticks Claude, with Claude Code on this PC or not (it shows the Claude app and Chrome too)', () => {
     const withClaude: Facts = { ...desktop, claudeCode: true };
     const coding = (f: Facts) => planActivities(answers({ uses: ['coding'], glance: suggestGlance(['coding'], f) }), f);
-    expect(coding(desktop).picked).toEqual(['system', 'servers', 'clipboard']);
+    expect(coding(desktop).picked).toEqual(['claude', 'system', 'servers', 'clipboard']);
     expect(coding(withClaude).picked).toEqual(['claude', 'system', 'servers', 'clipboard']);
-    // Ticked from Coding, and unticking it leaves it off.
+    // Unticking it leaves it off.
     expect(planActivities(answers({ uses: ['coding'], glance: ['system'] }), withClaude).picked).toEqual(['system', 'servers']);
-    expect(planActivities(answers({ uses: ['coding'], glance: ['claude'] }), desktop).picked).toEqual(['servers']);
+    expect(planActivities(answers({ uses: ['coding'], glance: ['system'] }), withClaude).enabled).not.toContain('claude');
   });
 
   it('on a Mac, plans only what a Mac can run', () => {
@@ -68,51 +68,37 @@ describe('planActivities', () => {
   });
 });
 
-describe('Claude Code and Claude Status', () => {
+describe('Claude (Claude Status, with Claude Code as its options)', () => {
   const withClaude: Facts = { ...desktop, claudeCode: true };
 
-  it('offers both when Claude Code is on this PC, and Claude Status alone for Coding without it', () => {
-    expect(claudeChoices(withClaude, []).map((c) => c.id)).toEqual(['claude', 'claudeStatus']);
-    expect(claudeChoices(desktop, ['coding']).map((c) => c.id)).toEqual(['claudeStatus']);
+  it('is offered once, when Claude Code is on this PC or Coding was picked, with a line on what it does for Claude Code', () => {
+    expect(claudeChoices(withClaude, []).map((c) => c.id)).toEqual(['claude']);
+    expect(claudeChoices(desktop, ['coding']).map((c) => c.id)).toEqual(['claude']);
     expect(claudeChoices(desktop, ['school'])).toEqual([]);
-    // A line each on what sets them apart.
-    for (const c of claudeChoices(withClaude, [])) expect(c.sub).toBeTruthy();
+    const [c] = claudeChoices(withClaude, []);
+    expect(c.label).toBe('Claude Status');
+    expect(c.sub).toMatch(/Claude Code chats are answered right in the island/);
   });
 
-  it('Claude Status is off unless picked, and a picked one gets its tile after Claude Code', () => {
-    expect(suggestGlance(['coding'], withClaude)).not.toContain('claudeStatus');
-    expect(planActivities(answers({ uses: ['coding'], glance: ['claude'] }), withClaude).enabled).not.toContain('claudeStatus');
-    const plan = planActivities(answers({ uses: ['coding'], glance: ['claude', 'claudeStatus', 'system'] }), withClaude);
-    expect(plan.picked).toEqual(['claude', 'claudeStatus', 'system', 'servers']);
-    expect(plan.asked).toEqual(['claudeStatus']);
-    expect(applyPlan(defaultSettings(), plan, '').activities.config.claudeStatus.enabled).toBe(true);
+  it('picked, it is on with its tile first; not picked, it is off', () => {
+    const plan = planActivities(answers({ uses: ['coding'], glance: ['claude', 'system'] }), withClaude);
+    expect(plan.picked).toEqual(['claude', 'system', 'servers']);
+    expect(applyPlan(defaultSettings(), plan, '').activities.config.claude.enabled).toBe(true);
+    const none = planActivities(answers({ uses: ['school'], glance: ['claude', 'timer'] }), desktop);
+    expect(none.picked).toEqual(['timer']);
+    expect(applyPlan(defaultSettings(), none, '').activities.config.claude.enabled).toBe(false);
   });
 
-  it('run again, one already on starts ticked, and unticking it switches it off', () => {
-    expect(suggestGlance(['coding'], withClaude, ['claude', 'claudeStatus'])).toContain('claudeStatus');
-    const s = defaultSettings();
-    s.activities.config.claudeStatus.enabled = true;
-    const out = applyPlan(s, planActivities(answers({ uses: ['coding'], glance: ['claude'] }), withClaude), '');
-    expect(out.activities.config.claudeStatus.enabled).toBe(false);
+  it('run again, one already on starts ticked', () => {
+    expect(suggestGlance(['school'], withClaude, ['claude'])).toContain('claude');
+    expect(suggestGlance(['school'], withClaude, [])).not.toContain('claude');
   });
 
-  it('run again where it is not asked about, Claude Status stays as it was', () => {
-    const s = defaultSettings();
-    s.activities.config.claudeStatus.enabled = true;
-    const plan = planActivities(answers({ uses: ['school'], glance: ['claudeStatus', 'timer'] }), desktop);
-    expect(plan.asked).toEqual([]);
-    expect(plan.picked).toEqual(['timer']);
-    expect(applyPlan(s, plan, '').activities.config.claudeStatus.enabled).toBe(true);
-    // Nor is it switched on by a tick the screen never showed.
-    expect(applyPlan(defaultSettings(), plan, '').activities.config.claudeStatus.enabled).toBe(false);
-  });
-
-  it('a Mac is offered neither, and its Claude Status is left alone', () => {
+  it('a Mac is offered none and gets none', () => {
     const mac: Facts = { laptop: true, claudeCode: true, platform: 'macos' };
     expect(claudeChoices(mac, ['coding'])).toEqual([]);
-    const plan = planActivities(answers({ uses: ['coding'], glance: suggestGlance(['coding'], mac, ['claudeStatus']) }), mac);
-    expect(plan.enabled).not.toContain('claudeStatus');
-    expect(plan.asked).toEqual([]);
+    const plan = planActivities(answers({ uses: ['coding'], glance: suggestGlance(['coding'], mac, ['claude']) }), mac);
+    expect(plan.enabled).not.toContain('claude');
   });
 });
 
@@ -140,10 +126,10 @@ describe('System Controls', () => {
 });
 
 describe('the preview', () => {
-  it('sizes the tiles as Control Center does: Timer 2×1, Music and Claude Status 2×2', () => {
+  it('sizes the tiles as Control Center does: Timer 2×1, Music and Claude 2×2', () => {
     expect(previewCells('timer')).toEqual({ w: 2, h: 1 });
     expect(previewCells('music')).toEqual({ w: 2, h: 2 });
-    expect(previewCells('claudeStatus')).toEqual({ w: 2, h: 2 });
+    expect(previewCells('claude')).toEqual({ w: 2, h: 2 });
     expect(previewCells('system')).toEqual({ w: 1, h: 1 });
   });
 });
@@ -229,8 +215,8 @@ describe('make it yours', () => {
     expect(out.island.defaultGrows).toBe('wide');
     expect({ ...out.island, defaultGrows: 'card' }).toEqual(s.island);
     expect(withLook(out, { defaultGrows: 'card' }).island.defaultGrows).toBe('card');
-    // Claude Code keeps its own Below whatever the island's default.
-    expect(growsOf(out.activities.config.claude, out.island.defaultGrows, 'claude')).toBe('below');
+    // Claude keeps its own card with more whatever the island's default.
+    expect(growsOf(out.activities.config.claude, out.island.defaultGrows, 'claude')).toBe('more');
   });
 
   it('a missing value changes nothing', () => {

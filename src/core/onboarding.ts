@@ -25,7 +25,7 @@ export interface Look {
   size: IslandSize;
   bot: boolean;
   /** When pointed at: Sideways (the pill widens) or Into a card, Settings › Appearance › When pointed at. */
-  defaultGrows: Exclude<Grows, 'below'>;
+  defaultGrows: Exclude<Grows, 'below' | 'more'>;
 }
 
 /** `s` with `patch` of the look applied (it saves at once, so the island changes as you pick). */
@@ -118,38 +118,34 @@ export function glanceChoices(facts: Facts): Glance[] {
 }
 
 /**
- * Claude's two activities, under the glance tiles with a line each on what sets them apart:
- * Claude Code (only when it is on this PC) and Claude Status (Windows only, off unless picked).
+ * Claude, under the glance tiles: one activity, shown as Claude Status (every Claude chat at a
+ * glance), with Claude Code's answers from the island as its options. Windows only for now.
  */
 export const CLAUDE: Glance[] = [
-  { id: 'claude', label: 'Claude Code', sub: 'Answer and approve Claude Code from the island.', icon: 'claude' },
-  { id: 'claudeStatus', label: 'Claude Status', sub: 'Every Claude chat at a glance: Claude Code, the desktop app, claude.ai in Chrome.', icon: 'claude', windows: true },
+  {
+    id: 'claude',
+    label: 'Claude Status',
+    sub: 'Every Claude chat at a glance: Claude Code, the desktop app, claude.ai in Chrome. Claude Code chats are answered right in the island: Allow or Deny, questions, replies.',
+    icon: 'claude',
+    windows: true,
+  },
 ];
 
-/**
- * The Claude choices this PC gets: shown when Claude Code is on it or Coding was picked. Claude
- * Code needs its program here; neither runs on a Mac yet, so a Mac gets none.
- */
+/** The Claude choice this PC gets: shown when Claude Code is on it or Coding was picked. It doesn't run on a Mac yet, so a Mac gets none. */
 export function claudeChoices(facts: Facts, uses: Use[]): Glance[] {
   const on = facts.platform ?? 'windows';
   if (!facts.claudeCode && !uses.includes('coding')) return [];
-  return CLAUDE.filter((c) => (c.id !== 'claude' || facts.claudeCode) && (!c.windows || on === 'windows') && availableHere(c.id, on));
+  return CLAUDE.filter((c) => (!c.windows || on === 'windows') && availableHere(c.id, on));
 }
 
 /**
- * Asked about only where the screen shows it (claudeChoices): where it is not shown, setup leaves
- * it as it was, so a run again never switches off a Claude Status nobody was asked about.
- */
-const ASKED_WHERE_SHOWN = ['claudeStatus'];
-
-/**
  * The second question's ticks to start with: what the uses call for, plus Battery on a laptop.
- * `on`: activities switched on now; Claude Status starts ticked when it already is (a run again).
+ * `on`: activities switched on now; Claude starts ticked when it already is (a run again).
  */
 export function suggestGlance(uses: Use[], facts: Facts, on: string[] = []): string[] {
   const ids = new Set(uses.length ? uses.flatMap((u) => USE_GLANCE[u]) : ['music', 'timer']);
   if (facts.laptop) ids.add('battery');
-  for (const id of ASKED_WHERE_SHOWN) if (on.includes(id)) ids.add(id);
+  for (const c of CLAUDE) if (on.includes(c.id)) ids.add(c.id);
   return [...glanceChoices(facts), ...claudeChoices(facts, uses)]
     .map((g) => g.id)
     .filter((id) => ids.has(id));
@@ -172,16 +168,13 @@ export interface Answers {
 export const HELPERS = ['system-controls', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'phone', 'workspaces'];
 
 /** Grid order: what you act on first, then what you glance at, then occasional helpers. */
-const GRID_ORDER = ['claude', 'claudeStatus', 'music', 'calendar', 'weather', 'timer', 'reminders', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'system-controls', 'downloads', 'land', 'screenshots', 'clipboard'];
+const GRID_ORDER = ['claude', 'music', 'calendar', 'weather', 'timer', 'reminders', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'system-controls', 'downloads', 'land', 'screenshots', 'clipboard'];
 
 /** The bot's brain: switched on by the AI step, never a tile (the bot is the way in). */
 const BRAIN = 'local';
 
-/**
- * Activities the setup switches on or off. The rest (integrations with keys, Quick Actions) keep
- * their state, and so does Claude Status unless the screen asked about it (Plan.asked).
- */
-const MANAGED = new Set([...GRID_ORDER, ...HELPERS, BRAIN].filter((id) => !ASKED_WHERE_SHOWN.includes(id)));
+/** Activities the setup switches on or off. The rest (integrations with keys, Quick Actions) keep their state. */
+const MANAGED = new Set([...GRID_ORDER, ...HELPERS, BRAIN]);
 
 export interface Plan {
   /** Tiles on the grid, in this order. */
@@ -190,21 +183,19 @@ export interface Plan {
   enabled: string[];
   /** Switched on but kept off the grid. */
   hidden: string[];
-  /** Activities beyond the managed ones that this run asked about (Claude Status when shown): set to the answer. */
-  asked: string[];
 }
 
 export function planActivities(a: Answers, facts: Facts): Plan {
   const shownClaude = claudeChoices(facts, a.uses).map((g) => g.id);
   const offered = new Set([...glanceChoices(facts).map((g) => g.id), ...shownClaude]);
+  // Claude shows the Claude app's and Chrome's chats too, so it is no less wanted without Claude Code here.
   const wanted = new Set([...a.glance.filter((id) => offered.has(id)), ...a.uses.flatMap((u) => USE_EXTRAS[u])]);
-  if (!facts.claudeCode) wanted.delete('claude');
   const picked = GRID_ORDER.filter((id) => wanted.has(id));
   const helpers = HELPERS.filter((id) => id !== 'battery' || facts.laptop);
   // A Mac switches on only what it can run yet.
   const here = (id: string) => availableHere(id, facts.platform ?? 'windows');
   const enabled = [...new Set([...picked, ...helpers, ...(a.ai ? [BRAIN] : [])])].filter(here);
-  return { picked: picked.filter(here), enabled, hidden: enabled.filter((id) => !picked.includes(id)), asked: shownClaude.filter((id) => ASKED_WHERE_SHOWN.includes(id)) };
+  return { picked: picked.filter(here), enabled, hidden: enabled.filter((id) => !picked.includes(id)) };
 }
 
 /**
@@ -214,7 +205,7 @@ export function planActivities(a: Answers, facts: Facts): Plan {
 export function applyPlan(s: Settings, plan: Plan, city: string): Settings {
   const out = cloneSettings(s);
   // A built-in one (Land) stays on whatever the plan says.
-  for (const [id, cfg] of Object.entries(out.activities.config)) if (MANAGED.has(id) || plan.asked.includes(id)) cfg.enabled = plan.enabled.includes(id) || CATALOG_BY_ID.get(id)?.builtIn === true;
+  for (const [id, cfg] of Object.entries(out.activities.config)) if (MANAGED.has(id)) cfg.enabled = plan.enabled.includes(id) || CATALOG_BY_ID.get(id)?.builtIn === true;
   out.activities.order = [...plan.picked, ...out.activities.order.filter((id) => !plan.picked.includes(id))];
   out.island.grid = { order: [], sizes: {}, hidden: [...plan.hidden], pages: [] };
   const place = city.trim();
@@ -226,8 +217,7 @@ export function applyPlan(s: Settings, plan: Plan, city: string): Settings {
 /** About how many cells each tile takes, for the grid preview on the last screen. */
 const PREVIEW_CELLS: Record<string, [number, number]> = {
   music: [2, 2],
-  claude: [2, 1],
-  claudeStatus: [2, 2],
+  claude: [2, 2],
   timer: [2, 1],
   calendar: [2, 1],
   weather: [2, 1],

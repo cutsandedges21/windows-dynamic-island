@@ -25,6 +25,7 @@ import { beamSpec } from '../src/core/glow';
 import { mapActions, type Block, type SheetView } from '../src/core/sheet';
 import { defaultSettings } from '../src/core/settings';
 import { ClaudeActivity, chatTone } from '../src/activities/claude';
+import { toneOf, type StatusRow } from '../src/activities/claude-status';
 import { HookState, questionsOf } from '../src/activities/claude/hooks';
 import type { SessionView } from '../src/activities/claude/tracker';
 
@@ -110,6 +111,12 @@ function stubTracker(act: ClaudeActivity, sessions: SessionView[], chains: Recor
   act.sessions = sessions;
 }
 
+/** A Claude Status row (src/activities/claude-status/engine.ts), running by default. */
+const row = (over: Partial<StatusRow>): StatusRow => ({
+  id: 'S1', label: 'Fix the parser', where: 'Terminal', tag: 'TERMINAL', state: 'running', word: 'running', since: T0 / 1000 - 120,
+  grey: false, unread: false, hidden: false, progress: null, ...over,
+});
+
 const senv = (reason: SheetEnv['reason'], over: Partial<SheetEnv> = {}): SheetEnv => ({
   reason, now: Date.now(), width: 480, vertical: false, interactive: true, surfaced: null, ...over,
 });
@@ -131,8 +138,25 @@ afterEach(() => {
 // ---------------------------------------------------------------- reply window
 
 describe('the reply window', () => {
+  // Off unless set (Activities › Claude Status › Claude Code › Reply window): these set Moss's 45 s.
+  const REPLY = { replyWindowSeconds: 45 };
+
+  it('is off by default: a finished chat passes at once and pops up for a moment with its reply box', async () => {
+    const { act, calls } = await boot();
+    stubTracker(act, [session({})], { 100: [50, 10] });
+    h.native.foregroundPid.mockResolvedValue(999);
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1', last_assistant_message: 'Parser fixed.' });
+    await tick(0);
+    expect(lastReply()).toEqual(['r1', 'pass']);
+    expect(act.status().urgent ?? null).toBeNull();
+    expect(calls.surface).toEqual([{ key: 'done:S1', ms: 8000, level: 'expanded' }]);
+    const card = act.sheet!(senv('surfaced', { surfaced: 'done:S1' }));
+    expect(block(card, 'text')?.text).toBe('Parser fixed.');
+    expect(block(card, 'input')).toMatchObject({ action: 'continue:S1', engage: 'keep:S1', point: 'point:S1' });
+  });
+
   it('holds a chat the user is not looking at, shows its message, and a reply goes through the hook', async () => {
-    const { act } = await boot();
+    const { act } = await boot(REPLY);
     stubTracker(act, [session({})], { 100: [50, 10] });
     h.native.foregroundPid.mockResolvedValue(999);
     emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1', last_assistant_message: '## Done\n**Parser fixed.** See `parse.ts`.' });
@@ -155,7 +179,7 @@ describe('the reply window', () => {
   });
 
   it('lets go at once when the chat is in front, and shows no card for it', async () => {
-    const { act } = await boot();
+    const { act } = await boot(REPLY);
     stubTracker(act, [session({})], { 100: [50, 10] });
     h.native.foregroundPid.mockResolvedValue(50);
     emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1', last_assistant_message: 'Done.' });
@@ -166,7 +190,7 @@ describe('the reply window', () => {
   });
 
   it('with two chats in one window, only the one last prompted counts as watched', async () => {
-    const { act } = await boot();
+    const { act } = await boot(REPLY);
     stubTracker(act, [session({ id: 'S1', sessionId: 'S1', pid: 100 }), session({ id: 'S2', sessionId: 'S2', pid: 200, displayTitle: 'Other' })], { 100: [50], 200: [50] });
     h.native.foregroundPid.mockResolvedValue(50);
     emit('hook', { hook_event_name: 'UserPromptSubmit', session_id: 'S1' });
@@ -189,7 +213,7 @@ describe('the reply window', () => {
     expect(lastReply()).toEqual(['r1', 'pass']);
 
     resetNative();
-    const quiet = await boot({}, (s) => (s.general.dnd = true));
+    const quiet = await boot(REPLY, (s) => (s.general.dnd = true));
     stubTracker(quiet.act, [session({})], { 100: [50] });
     emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r2' });
     await tick(0);
@@ -197,7 +221,7 @@ describe('the reply window', () => {
   });
 
   it('while the island is hidden, prompts go back to the terminal and chats do not wait', async () => {
-    const hidden = await boot({}, (s) => (s.island.hiddenUntil = Date.now() + 3_600_000));
+    const hidden = await boot(REPLY, (s) => (s.island.hiddenUntil = Date.now() + 3_600_000));
     stubTracker(hidden.act, [session({})], { 100: [50] });
     emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'p1', tool_name: 'Bash', tool_input: { command: 'ls' } });
     expect(lastReply()).toEqual(['p1', 'decline']);
@@ -207,7 +231,7 @@ describe('the reply window', () => {
   });
 
   it('switching to the chat window releases the chat', async () => {
-    const { act } = await boot();
+    const { act } = await boot(REPLY);
     stubTracker(act, [session({})], { 100: [50, 10] });
     h.native.foregroundPid.mockResolvedValue(999);
     emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1' });
@@ -220,7 +244,7 @@ describe('the reply window', () => {
   });
 
   it('tapping away releases the chat', async () => {
-    const { act } = await boot();
+    const { act } = await boot(REPLY);
     stubTracker(act, [session({})], { 100: [50] });
     h.native.foregroundPid.mockResolvedValue(999);
     emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1' });
@@ -230,7 +254,7 @@ describe('the reply window', () => {
   });
 
   it('clicking the reply box keeps the chat waiting, never past the ceiling', async () => {
-    const { act } = await boot();
+    const { act } = await boot(REPLY);
     stubTracker(act, [session({})], { 100: [50] });
     h.native.foregroundPid.mockResolvedValue(999);
     emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1' });
@@ -243,7 +267,7 @@ describe('the reply window', () => {
     expect(h.native.hookReply.mock.calls.filter((c: unknown[]) => String(c[1]).startsWith('hold:'))).toHaveLength(1);
 
     resetNative();
-    const late = await boot();
+    const late = await boot(REPLY);
     stubTracker(late.act, [session({})], { 100: [50] });
     h.native.foregroundPid.mockResolvedValue(999);
     emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r2' });
@@ -254,7 +278,7 @@ describe('the reply window', () => {
   });
 
   it('a reply after the window closed goes the next best way (typed into the terminal)', async () => {
-    const { act } = await boot();
+    const { act } = await boot(REPLY);
     stubTracker(act, [session({})], { 100: [50] });
     h.native.foregroundPid.mockResolvedValue(999);
     emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1' });
@@ -265,7 +289,7 @@ describe('the reply window', () => {
   });
 
   it('an editor chat gets the reply on the clipboard and the chat opened', async () => {
-    const { act } = await boot();
+    const { act } = await boot(REPLY);
     const id = '3e3f9b2f-847d-4b0f-a1f4-0884b78a7433';
     stubTracker(act, [session({ id, sessionId: id, entrypoint: 'claude-vscode', host: 'Cursor', editorHost: 'Cursor' })], { 100: [50] });
     (act as unknown as { tracker: { probe: Record<string, unknown> } }).tracker.probe.runningEditor = () => 'Cursor';
@@ -275,7 +299,7 @@ describe('the reply window', () => {
   });
 
   it('windows the pipe closed without telling us do not linger', async () => {
-    const { act } = await boot();
+    const { act } = await boot(REPLY);
     stubTracker(act, [session({})], { 100: [50] });
     h.native.foregroundPid.mockResolvedValue(999);
     emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1' });
@@ -285,7 +309,7 @@ describe('the reply window', () => {
   });
 
   it('hook-expired takes the card down', async () => {
-    const { act } = await boot();
+    const { act } = await boot(REPLY);
     stubTracker(act, [session({})], { 100: [50] });
     h.native.foregroundPid.mockResolvedValue(999);
     emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1' });
@@ -295,7 +319,7 @@ describe('the reply window', () => {
   });
 
   it('a new prompt in the chat ends its old reply window', async () => {
-    const { act } = await boot();
+    const { act } = await boot(REPLY);
     stubTracker(act, [session({})], { 100: [50] });
     h.native.foregroundPid.mockResolvedValue(999);
     emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1' });
@@ -422,11 +446,11 @@ describe('permission and question cards', () => {
 // ---------------------------------------------------------------- notifications and hover
 
 describe('notifications and the hover card', () => {
-  it('a notification surfaces the chat with what it says', async () => {
+  it('a notification holds the island open on what it says, without a pop-up of its own', async () => {
     const { act, calls } = await boot();
     stubTracker(act, [session({})], { 100: [50] });
     emit('hook', { hook_event_name: 'Notification', session_id: 'S1', message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' });
-    expect(calls.surface.some((s) => s.key === 'note:S1')).toBe(true);
+    expect(calls.surface).toEqual([]);
     expect(act.status().urgent?.key).toBe('note:S1');
     expect(block(act.sheet!(senv('urgent')), 'text')?.text).toBe('Claude needs your permission to use Bash');
     // The chat moved on: nothing waits any more.
@@ -444,32 +468,78 @@ describe('notifications and the hover card', () => {
     expect(block(card, 'buttons')?.items[0].action).toBe('switch');
   });
 
-  it('hovering shows both limits with pace, this week’s tokens and every chat', async () => {
-    const { act } = await boot();
-    stubTracker(act, [session({}), session({ id: 'S2', sessionId: 'S2', pid: 200, displayTitle: 'Docs', status: 'working', slot: 2 })], { 100: [50], 200: [60] });
+  const limits = (act: ClaudeActivity) => {
     act.usageState = { data: { fiveHour: { pct: 41, resetsAt: T0 + 3 * 3600_000 }, sevenDay: { pct: 79, resetsAt: T0 + 5 * 86400_000 }, models: [] }, error: null, source: 'api', fetchedAt: T0 } as never;
     act.tokenTotals = { fresh: 4_100_000, cached: 182_000_000, output: 900_000 };
-    const card = act.sheet!(senv('hover'))!;
+  };
+
+  it("pointed at (Card with more, the default): Claude Status's sessions card, whose ⌄ opens the limits, tokens and closed chats", async () => {
+    const { act } = await boot();
+    stubTracker(act, [session({}), session({ id: 'S2', sessionId: 'S2', pid: 200, displayTitle: 'Docs', status: 'working', slot: 2 })], { 100: [50], 200: [60] });
+    act.rows = [row({ id: 'S2', label: 'Docs', progress: { value: 0.4, text: '~3 min left', method: 'history est.' } }), row({ id: 'S1', state: 'done', word: 'done' }), row({ id: 'app1', label: 'Trip', where: 'Claude app', state: 'idle', word: 'idle', grey: true })];
+    limits(act);
+    let card = act.sheet!(senv('hover'))!;
+    expect(card.key).toBe('hover');
+    expect(block(card, 'head')).toMatchObject({ title: 'Claude', sub: '3 sessions' });
+    // The arrow sits right under the sessions' rows, not in the header: folded, that is the card's end.
+    expect(block(card, 'head')?.buttons ?? []).toEqual([]);
+    const at = (c: typeof card) => c.blocks.findIndex((b) => b.t === 'buttons' && b.key === 'more');
+    const arrow = (c: typeof card) => c.blocks[at(c)] as Extract<Block, { t: 'buttons' }>;
+    expect(at(card)).toBe(card.blocks.length - 1);
+    expect(card.blocks[at(card) - 1]).toMatchObject({ t: 'rows', key: 'rows' });
+    expect(arrow(card)).toMatchObject({ t: 'buttons', key: 'more', align: 'center' });
+    expect(arrow(card).items.map((b) => [b.action, b.icon])).toEqual([['unfold', 'chevron-down']]);
+    const rows = block(card, 'rows', 'rows')!.items;
+    // No number on the rows; a Claude Code session's Alt+Shift shortcut is in its tip.
+    expect(rows.map((r) => [r.title, r.dot, r.action, r.badge])).toEqual([['Docs', 'info', 'jump', undefined], ['Fix the parser', 'good', 'jump', undefined], ['Trip', 'dim', 'jump', undefined]]);
+    expect(rows.map((r) => r.tip?.match(/Alt\+Shift\+\d/)?.[0] ?? null)).toEqual(['Alt+Shift+2', 'Alt+Shift+1', null]);
+    expect(rows[0].bar).toMatchObject({ value: 0.4, text: '~3 min left' });
+    expect(card.blocks.some((b) => b.t === 'meter')).toBe(false);
+
+    await act.action!('unfold', null);
+    card = act.sheet!(senv('hover'))!;
+    // Unfolded, ⌃ is in the same place, under the rows and above the limits it opened.
+    expect(arrow(card).items.map((b) => [b.action, b.icon])).toEqual([['unfold', 'chevron-up']]);
+    expect(card.blocks[at(card) - 1]).toMatchObject({ t: 'rows', key: 'rows' });
+    expect(card.blocks[at(card) + 1]).toMatchObject({ t: 'meter' });
     const meters = card.blocks.filter((b) => b.t === 'meter') as Array<Extract<Block, { t: 'meter' }>>;
     expect(meters.map((m) => m.text)).toEqual(['41%', '79%']);
     expect(meters.every((m) => typeof m.pace === 'number')).toBe(true);
     expect(meters[1].tone).toBe('warn');
     expect(block(card, 'stats')?.items.find((s) => s.key === 'fresh')?.value).toBe('4.1M');
-    const rows = block(card, 'rows', 'sessions')!.items;
-    expect(rows.map((r) => r.title)).toEqual(['Fix the parser', 'Docs']);
-    expect(rows.every((r) => r.action === 'switch')).toBe(true);
+
+    // Pointing away and back: it starts small again.
+    await tick(2000);
+    card = act.sheet!(senv('hover'))!;
+    expect(arrow(card).items[0].icon).toBe('chevron-down');
+    expect(block(card, 'head')?.buttons ?? []).toEqual([]);
+    expect(card.blocks.some((b) => b.t === 'meter')).toBe(false);
   });
 
-  it('the grid tile lists the chats with both limits in its label, and is absent without Claude Code', async () => {
+  it('Below and Sideways show it all at once; Into a card, the sessions card alone', async () => {
+    for (const [grows, full] of [['below', true], ['wide', true], ['card', false]] as const) {
+      const { act } = await boot({}, (s) => (s.activities.config.claude.grows = grows));
+      stubTracker(act, [session({})], { 100: [50] });
+      act.rows = [row({})];
+      limits(act);
+      const card = act.sheet!(senv('hover'))!;
+      expect(block(card, 'head')?.buttons ?? []).toEqual([]);
+      expect(card.blocks.some((b) => b.t === 'meter')).toBe(full);
+    }
+  });
+
+  it('the grid tile lists every session, with both limits in its label, and is absent with no session', async () => {
     const { act } = await boot();
     stubTracker(act, [session({}), session({ id: 'S2', sessionId: 'S2', pid: 200 })], { 100: [50], 200: [60] });
     act.usageState = { data: { fiveHour: { pct: 12, resetsAt: T0 + 3600_000 }, sevenDay: { pct: 60, resetsAt: T0 + 86400_000 }, models: [] }, error: null, source: 'api', fetchedAt: T0 } as never;
     expect(act.tile!(senv('open'))).toBeNull();
-    (act as unknown as { env: unknown }).env = { configDir: 'C:\\Users\\t\\.claude' };
+    act.rows = [row({}), row({ id: 'S2', label: 'Docs', state: 'done', word: 'done' })];
     const tile = act.tile!(senv('open'))!;
-    expect(tile.span).toBe(2);
-    expect(tile.rows).toBe(2);
-    expect(tile.body.k === 'list' && tile.body.label).toBe('Claude Code · S 12% · W 60%');
+    expect(tile).toMatchObject({ key: 'claude', span: 2, rows: 2 });
+    expect(tile.body.k === 'list' && tile.body.label).toBe('Claude sessions · S 12% · W 60%');
+    expect(tile.body.k === 'list' && tile.body.rows.map((r) => r.title)).toEqual(['Fix the parser', 'Docs']);
+    (act as unknown as { ctx: { options: () => unknown } }).ctx.options = () => ({ showLimits: false });
+    expect(act.tile!(senv('open'))!.body).toMatchObject({ label: 'Claude sessions' });
   });
 });
 
@@ -484,7 +554,8 @@ describe('limits reset', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('a window past its reset time reads 0% at once, and the user is told once', async () => {
-    const { act, calls } = await boot();
+    // Below: the hover card shows the limits at once.
+    const { act, calls } = await boot({}, (s) => (s.activities.config.claude.grows = 'below'));
     const notes: unknown[][] = [];
     (act as unknown as { ctx: { notify: (...a: unknown[]) => void } }).ctx.notify = (...a) => void notes.push(a);
     stubTracker(act, [session({})], { 100: [50] });
@@ -573,7 +644,8 @@ describe('moments on the phone', () => {
 
   it('a chat that needs you shows a Windows toast that stays off the phone, and one push', async () => {
     const { act, pushes, notes } = await bootWithPhone();
-    (act as unknown as { announceNeedsYou(s: SessionView): void }).announceNeedsYou(session({ needsYou: true, label: 'Needs permission' }));
+    stubTracker(act, [session({ needsYou: true, label: 'Needs permission' })], { 100: [50, 10] });
+    (act as unknown as { onTrackerEvent(e: unknown): void }).onTrackerEvent({ type: 'needs-you', session: session({ needsYou: true }) });
     expect(notes).toEqual([['Fix the parser', 'Needs you in app. Alt+Shift+0 to switch.', false]]);
     expect(pushes).toEqual([{ title: 'Needs you · Fix the parser', body: 'Needs permission · app', look: { tag: 'bell', priority: 4 } }]);
   });
@@ -649,24 +721,52 @@ describe('helpers', () => {
 
 // ---------------------------------------------------------------- the pill
 
-describe('the pill', () => {
+describe("the pill (Claude Status's)", () => {
   const renv = (level: RenderEnv['level'], over: Partial<RenderEnv> = {}): RenderEnv => ({
     level, width: 420, height: 36, now: Date.now(), open: false, hover: false, surfaced: null, interactive: true, vertical: false, ...over,
   });
 
-  it('leads with the status dot, and the Claude mark beside it down a side', async () => {
+  it('at rest the Claude mark and a dot per session; growing, the name and the state; down a side, one dot', async () => {
     const { act } = await boot();
-    stubTracker(act, [session({ status: 'working', label: 'Working', tone: 'working' })], { 100: [50] });
-    expect(act.render(renv('compact'))[0]).toMatchObject({ t: 'dot', key: 'dot', tone: 'info' });
+    stubTracker(act, [session({ status: 'working' }), session({ id: 'S2', sessionId: 'S2', pid: 200, slot: 2 })], { 100: [50], 200: [60] });
+    act.rows = [row({}), row({ id: 'S2', label: 'Docs', state: 'done', word: 'done', unread: true })];
+    expect(act.render(renv('compact')).map((x) => x.key)).toEqual(['mark', 'd:S1', 'd:S2']);
+    expect(act.render(renv('compact'))[2]).toMatchObject({ t: 'dot', tone: 'good', badge: true });
+    expect(act.render(renv('expanded')).map((x) => x.key)).toEqual(['mark', 'd:S1', 'd:S2', 'label', 'state']);
     expect(act.render(renv('compact', { vertical: true })).map((x) => x.key)).toEqual(['mark', 'dot']);
-    expect(act.render(renv('expanded'))[0]).toMatchObject({ t: 'dot', key: 'dot' });
+    // A session that just finished leads the pill while it pops up.
+    expect(act.render(renv('expanded', { surfaced: 'done:S2' })).find((x) => x.key === 'label')).toMatchObject({ text: 'Docs' });
   });
 
-  it('several chats: the dot and "Claude ×n", the mark leading the chips when expanded', async () => {
+  it('opened all the way, the limit bars (Limits in the island), unless switched off', async () => {
     const { act } = await boot();
-    stubTracker(act, [session({ status: 'working', label: 'Working', tone: 'working' }), session({ id: 'S2', sessionId: 'S2', pid: 200, slot: 2 })], { 100: [50], 200: [60] });
-    expect(act.render(renv('compact')).map((x) => (x.t === 'text' ? x.text : x.t))).toEqual(['dot', 'Claude ×2', '1 working']);
-    expect(act.render(renv('expanded'))[0]).toMatchObject({ t: 'icon', key: 'mark' });
+    stubTracker(act, [session({})], { 100: [50] });
+    act.rows = [row({})];
+    act.usageState = { data: { fiveHour: { pct: 20, resetsAt: T0 + 3600_000 }, sevenDay: { pct: 30, resetsAt: T0 + 86400_000 }, models: [] }, error: null, source: 'api', fetchedAt: T0 } as never;
+    expect(act.render(renv('maximum')).filter((x) => x.t === 'meter').map((x) => x.key)).toEqual(['limit-s', 'limit-w']);
+    expect(act.render(renv('expanded')).some((x) => x.t === 'meter')).toBe(false);
+    (act as unknown as { ctx: { options: () => unknown } }).ctx.options = () => ({ showLimits: false });
+    expect(act.render(renv('maximum')).some((x) => x.t === 'meter')).toBe(false);
+  });
+
+  it('with no session at all, the mark and "Claude"', async () => {
+    const { act } = await boot();
+    expect(act.render(renv('compact')).map((x) => x.key)).toEqual(['mark', 'none']);
+  });
+
+  it("a chat whose row has gone (done a while ago, dismissed) leaves the pill, as in Justin's widget; a working one never does", async () => {
+    const { act } = await boot();
+    // The tracker still lists an old, finished chat, but Claude Status shows no row for it.
+    stubTracker(act, [session({ status: 'awaiting_input' })], { 100: [50] });
+    act.rows = [];
+    expect(act.status().active).toBe(false);
+    // Working, it stays (and counts) even before its row comes.
+    stubTracker(act, [session({ status: 'working' })], { 100: [50] });
+    expect(act.status()).toMatchObject({ active: true, summary: '1 Claude session' });
+    // With rows, the count is the rows' sessions, not the tracker's list.
+    stubTracker(act, [session({ status: 'working' }), session({ id: 'S2', sessionId: 'S2', pid: 200, status: 'awaiting_input' })], { 100: [50], 200: [60] });
+    act.rows = [row({})];
+    expect(act.status().summary).toBe('1 Claude session');
   });
 });
 
@@ -676,69 +776,75 @@ describe("status colours (Justin's Claude Status)", () => {
   const renv = (level: RenderEnv['level'], over: Partial<RenderEnv> = {}): RenderEnv => ({
     level, width: 420, height: 36, now: Date.now(), open: false, hover: false, surfaced: null, interactive: true, vertical: false, ...over,
   });
-  const stopped = { status: 'interrupted', label: 'Stopped', tone: 'stopped' } as const;
-  const needsYou = { status: 'awaiting_permission', label: 'Needs you', tone: 'needs', needsYou: true } as const;
-  const working = { status: 'working', label: 'Working', tone: 'working' } as const;
 
-  it('blue working, green your turn, amber needs you, red error or Esc, dim idle', () => {
+  it('blue running, purple shell, amber needs you, green done, red failed, dim idle; the phone’s chat list the same', () => {
+    expect(['running', 'shell', 'input', 'done', 'failed', 'idle'].map((state) => toneOf(row({ state: state as StatusRow['state'] })))).toEqual(['info', 'purple', 'warn', 'good', 'bad', 'dim']);
+    expect(toneOf(row({ state: 'done', grey: true }))).toBe('dim');
     expect(chatTone('working')).toBe('info');
     expect(chatTone('turn')).toBe('good');
     expect(chatTone('needs')).toBe('warn');
     expect(chatTone('error')).toBe('bad');
     expect(chatTone('stopped')).toBe('bad');
-    expect(chatTone('muted')).toBe('dim');
     expect(chatTone('something new')).toBe('dim');
   });
 
-  it("the pill: the dot and the label in the chat's colour, the mark stays orange", async () => {
+  it("the pill and the chip: each session's dot in its colour, the mark in the accent colour; a prompt waiting makes the chip amber", async () => {
     const { act } = await boot();
-    stubTracker(act, [session({ ...stopped })], { 100: [50] });
-    expect(act.render(renv('compact'))[0]).toMatchObject({ t: 'dot', tone: 'bad' });
-    stubTracker(act, [session({ ...needsYou })], { 100: [50] });
-    const segs = act.render(renv('compact'));
-    expect(segs[0]).toMatchObject({ t: 'dot', tone: 'warn', pulse: true });
-    expect(segs.find((x) => x.key === 'label')).toMatchObject({ tone: 'warn' });
-    expect(act.render(renv('compact', { vertical: true }))[0]).toMatchObject({ key: 'mark', tone: 'claude' });
+    stubTracker(act, [session({})], { 100: [50] });
+    act.rows = [row({ state: 'input', word: 'needs you' }), row({ id: 'S2', state: 'failed', word: 'failed' })];
+    const segs = act.render(renv('expanded'));
+    expect(segs[0]).toMatchObject({ key: 'mark', tone: 'accent' });
+    expect(segs.filter((x) => x.t === 'dot').map((x) => x.t === 'dot' && x.tone)).toEqual(['warn', 'bad']);
+    expect(segs.find((x) => x.key === 'state')).toMatchObject({ tone: 'warn' });
+    expect(act.chip()).toMatchObject({ icon: 'claude', label: '2', dot: 'warn' });
+    act.rows = [row({})];
+    expect(act.chip()).toMatchObject({ dot: 'info', pulse: true });
+    emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'p1', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    expect(act.chip()).toMatchObject({ dot: 'warn', pulse: true });
   });
 
-  it('several chats: one dot for all (amber, then blue, then green), and each chip its own', async () => {
+  it('the glow: a blue comet while a session runs (in front of everything, unless off), an amber pulse when one needs you', async () => {
     const { act } = await boot();
-    const two = (a: Partial<SessionView>, b: Partial<SessionView>) =>
-      stubTracker(act, [session(a), session({ id: 'S2', sessionId: 'S2', pid: 200, slot: 2, ...b })], { 100: [50], 200: [60] });
-    two({}, {});
-    expect(act.render(renv('compact'))[0]).toMatchObject({ t: 'dot', tone: 'good' });
-    expect(act.chip()?.dot).toBe('good');
-    two({ ...working }, {});
-    expect(act.render(renv('compact'))[0]).toMatchObject({ t: 'dot', tone: 'info' });
-    expect(act.chip()?.dot).toBe('info');
-    two({ ...working }, { ...needsYou });
-    expect(act.render(renv('compact'))[0]).toMatchObject({ t: 'dot', tone: 'warn' });
-    expect(act.chip()).toMatchObject({ dot: 'warn', tone: 'claude' });
-    two({ ...stopped }, { status: 'errored', label: 'Error', tone: 'error' });
-    const chips = act.render(renv('expanded')).filter((x) => x.t === 'chip');
-    expect(chips.map((c) => c.t === 'chip' && c.dot)).toEqual(['bad', 'bad']);
-  });
-
-  it('the glow: a blue comet while Claude works, an amber pulse when a chat needs you', async () => {
-    const { act } = await boot();
-    stubTracker(act, [session({ ...working })], { 100: [50] });
-    expect(act.status().beam).toEqual({ tone: 'info' });
-    expect(beamSpec(act.status().beam)).toMatchObject({ tone: 'info', motion: 'orbit' });
-    stubTracker(act, [session({ ...needsYou })], { 100: [50] });
+    stubTracker(act, [session({ status: 'working' })], { 100: [50] });
+    act.rows = [row({})];
+    expect(act.status().beam).toEqual({ tone: 'info', motion: 'orbit' });
+    expect(act.status().beamBehind).toEqual({ tone: 'info', motion: 'orbit' });
+    act.rows = [row({ progress: { value: 0.5, text: '~2 min left', method: 'history est.' } })];
+    expect(act.status().beam).toEqual({ tone: 'info', motion: 'progress', value: 0.5 });
+    stubTracker(act, [session({ status: 'awaiting_permission', needsYou: true })], { 100: [50] });
+    act.rows = [row({ state: 'input', word: 'needs you' })];
     expect(act.status().beam).toEqual({ tone: 'warn', urgent: true });
     expect(beamSpec(act.status().beam)).toMatchObject({ tone: 'warn', motion: 'pulse' });
     stubTracker(act, [session({})], { 100: [50] });
+    act.rows = [row({ state: 'done', word: 'done' })];
     expect(act.status().beam ?? null).toBeNull();
+    const off = await boot({ glowInFront: false });
+    stubTracker(off.act, [session({ status: 'working' })], { 100: [50] });
+    off.act.rows = [row({})];
+    expect(off.act.status().beamBehind ?? null).toBeNull();
+  });
+
+  it('"Claude icon always orange" keeps the mark orange on the pill, its cards and its tile', async () => {
+    const { act } = await boot({ orangeMark: true });
+    stubTracker(act, [session({})], { 100: [50] });
+    act.rows = [row({})];
+    expect(act.render(renv('expanded'))[0]).toMatchObject({ key: 'mark', tone: 'claude' });
+    expect(block(act.sheet!(senv('hover'))!, 'head')?.tone).toBe('claude');
+    expect(act.tile!(senv('open'))?.tone).toBe('claude');
+    const off = await boot();
+    stubTracker(off.act, [session({})], { 100: [50] });
+    off.act.rows = [row({})];
+    expect(off.act.tile!(senv('open'))?.tone).toBe('accent');
   });
 
   it('a permission card is amber; a finished chat holding for a reply glows a still green', async () => {
-    const { act, calls } = await boot();
+    const { act, calls } = await boot({ replyWindowSeconds: 45 });
     stubTracker(act, [session({})], { 100: [50, 10] });
     emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'p1', tool_name: 'Bash', tool_input: { command: 'ls' } });
     expect(act.status().beam).toEqual({ tone: 'warn', urgent: true });
     expect(block(act.sheet!(senv('urgent')), 'countdown')?.tone).toBe('warn');
-    // The Claude mark on the card stays orange.
-    expect(block(act.sheet!(senv('urgent')), 'head')?.tone).toBe('claude');
+    // The Claude mark on the card takes the accent colour.
+    expect(block(act.sheet!(senv('urgent')), 'head')?.tone).toBe('accent');
     await act.action!('deny', 'p1');
 
     h.native.foregroundPid.mockResolvedValue(999);
@@ -750,6 +856,18 @@ describe("status colours (Justin's Claude Status)", () => {
     expect(readFileSync(resolve(__dirname, '../src/styles/island.css'), 'utf8')).toContain(".glow[data-motion='still'] .ring i {");
     expect(calls.alerts.at(-1)).toEqual(['glow', 'good']);
     expect(block(act.sheet!(senv('urgent')), 'head')?.tone).toBe('good');
+  });
+
+  it('a finish glows a still green for a moment, a failure red', async () => {
+    const { act } = await boot();
+    act.onRows([row({ id: 'app1', where: 'Claude app' })]);
+    act.onRows([row({ id: 'app1', where: 'Claude app', state: 'done', word: 'done' })]);
+    expect(act.status().beam).toEqual({ tone: 'good', motion: 'still' });
+    await tick(4100);
+    expect(act.status().beam ?? null).toBeNull();
+    act.onRows([row({ id: 'app2', where: 'Chrome' })]);
+    act.onRows([row({ id: 'app2', where: 'Chrome', state: 'failed', word: 'failed' })]);
+    expect(act.status().beam).toEqual({ tone: 'bad', motion: 'still' });
   });
 
   it('a question and a notification that needs you flash amber, their cards and pill rows too', async () => {
@@ -769,16 +887,203 @@ describe("status colours (Justin's Claude Status)", () => {
     expect(act.render(renv('expanded')).find((x) => x.key === 'perm-icon')).toMatchObject({ icon: 'chat', tone: 'warn' });
   });
 
-  it("the hover card and the grid tile: each chat's dot in its colour, the limits stay orange", async () => {
+  it("a pop-up carries every session's row under Claude Code's answers", async () => {
     const { act } = await boot();
-    (act as unknown as { env: unknown }).env = { configDir: 'C:\\Users\\t\\.claude' };
-    stubTracker(act, [session({ ...working }), session({ id: 'S2', sessionId: 'S2', pid: 200, slot: 2, ...stopped })], { 100: [50], 200: [60] });
-    act.usageState = { data: { fiveHour: { pct: 20, resetsAt: T0 + 3600_000 }, sevenDay: { pct: 30, resetsAt: T0 + 86400_000 }, models: [] }, error: null, source: 'api', fetchedAt: T0 } as never;
-    const card = act.sheet!(senv('hover'))!;
-    expect(block(card, 'rows', 'sessions')!.items.map((r) => r.dot)).toEqual(['info', 'bad']);
-    expect(block(card, 'meter', 'limit-s')?.tone).toBe('claude');
-    const tile = act.tile!(senv('open'))!;
-    expect(tile.body.k === 'list' && tile.body.rows.map((r) => r.dot)).toEqual(['info', 'bad']);
+    stubTracker(act, [session({})], { 100: [50] });
+    act.rows = [row({ state: 'input', word: 'needs you' }), row({ id: 'app1', label: 'Trip', where: 'Claude app', state: 'done', word: 'done' })];
+    emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'p1', tool_name: 'Bash', tool_input: { command: 'npm test' } });
+    const card = act.sheet!(senv('urgent'))!;
+    expect(card.key).toBe('perm:p1');
+    expect(card.blocks.map((b) => b.t)).toEqual(['head', 'code', 'input', 'buttons', 'countdown', 'rows']);
+    expect(block(card, 'rows', 'rows')!.items.map((r) => [r.title, r.dot])).toEqual([['Fix the parser', 'warn'], ['Trip', 'good']]);
+  });
+});
+
+// ---------------------------------------------------------------- one scan
+
+describe('one scan for both', () => {
+  it("Claude Status's rows come from the sessions Claude Code's tracker just listed, hidden chats left out", async () => {
+    const { act } = await boot({ hiddenSessions: ['S2'] });
+    stubTracker(act, [session({}), session({ id: 'S2', sessionId: 'S2', pid: 200 })], { 100: [50], 200: [60] });
+    const poll = vi.fn(async (_sessions: SessionView[]) => [row({})]);
+    (act as unknown as { engine: unknown }).engine = { poll, dismiss: vi.fn(), markRead: vi.fn(), jump: vi.fn() };
+    await (act as unknown as { pollSessions(): Promise<void> }).pollSessions();
+    expect(poll).toHaveBeenCalledTimes(1);
+    expect(poll.mock.calls[0][0].map((s) => s.id)).toEqual(['S1']);
+    expect(act.rows.map((r) => r.id)).toEqual(['S1']);
+  });
+
+  it("a Claude Code row goes where Claude Code's Open goes; the Claude app's where the widget went; dismissing one hides it", async () => {
+    const { act } = await boot();
+    stubTracker(act, [session({ kind: 'bg' })], { 100: [50] });
+    const engine = { poll: vi.fn(), dismiss: vi.fn(), markRead: vi.fn(), jump: vi.fn(async () => true) };
+    (act as unknown as { engine: unknown }).engine = engine;
+    act.rows = [row({}), row({ id: 'app1', where: 'Claude app' })];
+    await act.action!('jump', 'S1');
+    expect(engine.markRead).toHaveBeenCalledWith('S1');
+    expect(engine.jump).not.toHaveBeenCalled();
+    await act.action!('jump', 'app1');
+    expect(engine.jump).toHaveBeenCalledWith('app1');
+    await act.action!('dismiss', 'app1');
+    expect(engine.dismiss).toHaveBeenCalledWith('app1');
+    expect(act.rows.map((r) => r.id)).toEqual(['S1']);
+  });
+});
+
+// ---------------------------------------------------------------- one pop-up per moment
+
+describe('one pop-up per moment', () => {
+  /** Everything the island would show or say for a moment. */
+  const told = (calls: Calls) => ({ surfaces: calls.surface.filter((s) => s.key !== 'notice'), glows: calls.alerts.filter((a) => a[0] === 'glow'), pushes: calls.push.length });
+
+  it('a finished Claude Code turn, told by its Stop hook, the tracker and its row turning green, pops up once', async () => {
+    const { act, calls } = await boot();
+    stubTracker(act, [session({})], { 100: [50, 10] });
+    (act as unknown as { ctx: ActivityContext }).ctx.push = (...a) => void calls.push.push(a);
+    act.onRows([row({})]);
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1', last_assistant_message: 'Done.' });
+    await tick(0);
+    (act as unknown as { onTrackerEvent(e: unknown): void }).onTrackerEvent({ type: 'finished', session: session({}) });
+    act.onRows([row({ state: 'done', word: 'done' })]);
+    await tick(0);
+    expect(told(calls).surfaces).toEqual([{ key: 'done:S1', ms: 8000, level: 'expanded' }]);
+    expect(calls.push).toHaveLength(1);
+    expect(act.status().beam).toEqual({ tone: 'good', motion: 'still' });
+  });
+
+  it('the next turn finishing is news again, and pops up again', async () => {
+    const { act, calls } = await boot();
+    stubTracker(act, [session({})], { 100: [50] });
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1' });
+    await tick(5000);
+    emit('hook', { hook_event_name: 'UserPromptSubmit', session_id: 'S1' });
+    await tick(5000);
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1' });
+    await tick(0);
+    expect(told(calls).surfaces.map((s) => s.key)).toEqual(['done:S1', 'done:S1']);
+  });
+
+  it('a row seen running late (its own turn, started before the finish) does not make the finish news again', async () => {
+    const { act, calls } = await boot();
+    stubTracker(act, [session({})], { 100: [50] });
+    act.onRows([row({ state: 'done', word: 'done' })]);
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1' });
+    await tick(0);
+    // The transcript catches up a beat late: the turn that already ended, then done.
+    act.onRows([row({ since: T0 / 1000 - 30 })]);
+    act.onRows([row({ state: 'done', word: 'done' })]);
+    expect(told(calls).surfaces).toHaveLength(1);
+  });
+
+  it('a permission prompt, told by its hook, its notification, the tracker and its row turning orange, glows and notifies once and holds the island open', async () => {
+    const { act, calls } = await boot();
+    const notes: unknown[][] = [];
+    (act as unknown as { ctx: ActivityContext }).ctx.notify = (...a) => void notes.push(a);
+    stubTracker(act, [session({})], { 100: [50] });
+    act.onRows([row({})]);
+    emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'p1', tool_name: 'Bash', tool_input: { command: 'npm test' } });
+    emit('hook', { hook_event_name: 'Notification', session_id: 'S1', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' });
+    stubTracker(act, [session({ status: 'awaiting_permission', needsYou: true })], { 100: [50] });
+    (act as unknown as { onTrackerEvent(e: unknown): void }).onTrackerEvent({ type: 'needs-you', session: session({ needsYou: true }) });
+    act.onRows([row({ state: 'input', word: 'needs you' })]);
+    expect(act.status().urgent?.key).toBe('perm:p1');
+    expect(told(calls)).toMatchObject({ surfaces: [], glows: [['glow', 'warn']] });
+    expect(notes).toHaveLength(1);
+
+    // Denied: the session list still says it waits for a moment, which is no new prompt.
+    await act.action!('deny', 'p1');
+    expect(act.status().urgent ?? null).toBeNull();
+    act.onRows([row({ state: 'input', word: 'needs you' })]);
+    expect(act.status().urgent ?? null).toBeNull();
+    // A new prompt in the same turn is news.
+    emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'p2', tool_name: 'Bash', tool_input: { command: 'npm run build' } });
+    expect(act.status().urgent?.key).toBe('perm:p2');
+    expect(told(calls).glows).toHaveLength(2);
+  });
+
+  it('with a reply window, the held reply is the pop-up: no second one for the finish', async () => {
+    const { act, calls } = await boot({ replyWindowSeconds: 45 });
+    stubTracker(act, [session({})], { 100: [50] });
+    h.native.foregroundPid.mockResolvedValue(999);
+    act.onRows([row({})]);
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1', last_assistant_message: 'Done.' });
+    await tick(0);
+    act.onRows([row({ state: 'done', word: 'done' })]);
+    expect(act.status().urgent?.key).toBe('reply:r1');
+    expect(told(calls).surfaces).toEqual([]);
+  });
+
+  it('the Claude app and Chrome pop up for a moment (no hooks: their rows tell), and stay open while one needs you', async () => {
+    const { act, calls } = await boot();
+    act.onRows([row({ id: 'app1', label: 'Trip', where: 'Claude app' })]);
+    act.onRows([row({ id: 'app1', label: 'Trip', where: 'Claude app', state: 'done', word: 'done' })]);
+    act.onRows([row({ id: 'app1', label: 'Trip', where: 'Claude app', state: 'done', word: 'done' })]);
+    expect(told(calls).surfaces).toEqual([{ key: 'done:app1', ms: 4000, level: 'expanded' }]);
+    expect(act.sheet!(senv('surfaced', { surfaced: 'done:app1' }))).toMatchObject({ key: 'status' });
+    act.onRows([row({ id: 'app1', label: 'Trip', where: 'Claude app', state: 'running', since: T0 / 1000 + 10 })]);
+    await tick(20_000);
+    act.onRows([row({ id: 'app1', label: 'Trip', where: 'Claude app', state: 'input', word: 'needs you' })]);
+    expect(act.status().urgent?.key).toBe('ask:app1');
+    expect(act.sheet!(senv('urgent'))?.key).toBe('status');
+    act.dismiss!('ask:app1');
+    act.onRows([row({ id: 'app1', label: 'Trip', where: 'Claude app', state: 'done', word: 'done', since: T0 / 1000 + 40 })]);
+    expect(told(calls).surfaces.map((s) => s.key)).toEqual(['done:app1', 'done:app1']);
+  });
+
+  it('stopped with Esc: only a red glow, no pop-up', async () => {
+    const { act, calls } = await boot();
+    stubTracker(act, [session({})], { 100: [50] });
+    act.onRows([row({})]);
+    act.onRows([row({ state: 'failed', word: 'stopped', stopped: true })]);
+    expect(told(calls).surfaces).toEqual([]);
+    expect(act.status().beam).toEqual({ tone: 'bad', motion: 'still' });
+  });
+
+  it('"Pop up when a session finishes" off: it glows, nothing pops up', async () => {
+    const { act, calls } = await boot({ showDone: false });
+    stubTracker(act, [session({})], { 100: [50] });
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1' });
+    await tick(0);
+    expect(told(calls).surfaces).toEqual([]);
+    expect(act.status().beam).toEqual({ tone: 'good', motion: 'still' });
+  });
+
+  it('"Only pop up for other chats": the chat in front finishes quietly, however many ways it is told', async () => {
+    const { act, calls } = await boot({ onlyOtherChats: true });
+    stubTracker(act, [session({})], { 100: [50] });
+    h.native.foregroundPid.mockResolvedValue(50);
+    act.onRows([row({})]);
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1' });
+    await tick(0);
+    act.onRows([row({ state: 'done', word: 'done' })]);
+    await tick(0);
+    expect(told(calls).surfaces).toEqual([]);
+  });
+
+  it("pointing at a finished chat's reply box holds its pop-up; leaving it untouched lets it go soon", async () => {
+    const { act, calls } = await boot();
+    stubTracker(act, [session({})], { 100: [50] });
+    await act.action!('point:S1', true);
+    expect(calls.surface.at(-1)).toEqual({ key: 'done:S1', ms: 120_000, level: 'expanded', bump: false });
+    await act.action!('point:S1', false);
+    expect(calls.surface.at(-1)).toEqual({ key: 'done:S1', ms: 1500, level: 'expanded', bump: false });
+    // Clicked into: it stays while you type, wherever the pointer goes.
+    await act.action!('keep:S1', null);
+    const n = calls.surface.length;
+    await act.action!('point:S1', false);
+    expect(calls.surface).toHaveLength(n);
+  });
+
+  it('the reply box and the answers can each be turned off', async () => {
+    const { act } = await boot({ replyBox: false, permissions: false, questions: false });
+    stubTracker(act, [session({ lastAssistantText: 'Done.' })], { 100: [50] });
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1', last_assistant_message: 'Done.' });
+    await tick(0);
+    expect(block(act.sheet!(senv('surfaced', { surfaced: 'done:S1' })), 'input')).toBeUndefined();
+    emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'p1', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    expect(lastReply()).toEqual(['p1', 'decline']);
+    emit('hook', { hook_event_name: 'PreToolUse', session_id: 'S1', request_id: 'q1', tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'Ship?', options: [{ label: 'Yes' }] }] } });
+    expect(lastReply()).toEqual(['q1', 'decline']);
   });
 });
 

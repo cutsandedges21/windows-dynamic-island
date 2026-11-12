@@ -64,19 +64,22 @@ describe('growing out of the pill', () => {
     expect(hoverView('below', player, weatherTile)!.morph).toBeUndefined();
   });
 
-  it("Claude Code's finished and needs-you cards grow out of the pill only when it grows into a card", () => {
-    for (const key of ['claude/done:s1', 'claude/note:s1:5', 'claude/reply:r1']) {
+  it("Claude's finished and needs-you cards, and its sessions card, grow out of the pill when it grows into a card (or a card with more)", () => {
+    for (const key of ['claude/done:s1', 'claude/note:s1:5', 'claude/reply:r1', 'claude/status']) {
       expect(chatView('claude', 'card', { key, blocks: [] }).morph).toBe(true);
+      expect(chatView('claude', 'more', { key, blocks: [] }).morph).toBe(true);
       expect(chatView('claude', 'below', { key, blocks: [] }).morph).toBeUndefined();
+      expect(chatView('claude', 'wide', { key, blocks: [] }).morph).toBeUndefined();
     }
     // A permission or a question always hangs below; other activities' cards are left as they are.
     expect(chatView('claude', 'card', { key: 'claude/perm:1', blocks: [] }).morph).toBeUndefined();
+    expect(chatView('claude', 'more', { key: 'claude/ask:1', blocks: [] }).morph).toBeUndefined();
     expect(chatView('land', 'card', { key: 'land/done:x', blocks: [] }).morph).toBeUndefined();
   });
 
-  it("Claude Status's finished and needs-you card grows out of the pill when it grows into a card", () => {
-    expect(chatView('claudeStatus', 'card', { key: 'claudeStatus/claudeStatus', blocks: [] }).morph).toBe(true);
-    expect(chatView('claudeStatus', 'wide', { key: 'claudeStatus/claudeStatus', blocks: [] }).morph).toBeUndefined();
+  it("Card with more grows Claude's own card out of the pill (its ⌄ is in the card); with no card, nothing", () => {
+    expect(hoverView('more', stats, weatherTile)).toMatchObject({ key: 'claude/hover', morph: true });
+    expect(hoverView('more', null, weatherTile)).toBeNull();
   });
 
   it('clicking any grown card opens the island in one motion, the same card carrying on', () => {
@@ -105,16 +108,18 @@ describe('growing out of the pill', () => {
 });
 
 describe('grows settings', () => {
-  it("'below' is offered only by Claude Code, and is its default", () => {
-    expect(growsChoices('claude')).toContain('below');
+  it("'below' and 'more' are offered only by Claude, and 'more' is its default", () => {
+    expect(growsChoices('claude')).toEqual(['wide', 'card', 'below', 'more']);
     for (const id of ['music', 'weather', 'battery', 'system']) expect(growsChoices(id)).toEqual(['wide', 'card']);
-    expect(growsOf(undefined, 'card', 'claude')).toBe('below');
-    expect(growsOf({}, 'wide', 'claude')).toBe('below');
+    expect(growsOf(undefined, 'card', 'claude')).toBe('more');
+    expect(growsOf({}, 'wide', 'claude')).toBe('more');
     expect(growsOf({ grows: 'card' }, 'wide', 'claude')).toBe('card');
+    expect(growsOf({ grows: 'below' }, 'wide', 'claude')).toBe('below');
     expect(growsOf(undefined, 'card', 'weather')).toBe('card');
     expect(growsOf({ grows: 'below' }, 'wide', 'weather')).toBe('wide');
+    expect(growsOf({ grows: 'more' }, 'wide', 'weather')).toBe('wide');
     const s = defaultSettings();
-    expect(growsOf(s.activities.config.claude, s.island.defaultGrows, 'claude')).toBe('below');
+    expect(growsOf(s.activities.config.claude, s.island.defaultGrows, 'claude')).toBe('more');
     expect(growsOf(s.activities.config.music, s.island.defaultGrows, 'music')).toBe('card');
   });
 
@@ -135,13 +140,15 @@ describe('grows settings', () => {
     const s = migrate({ island: { anchor: 'bottom', hoverCard: 'claude', hoverExpand: true }, activities: { config: { claude: { enabled: true }, music: { enabled: true } } } });
     expect(s.island.defaultGrows).toBe('card');
     expect(s.activities.config.claude.grows).toBeUndefined();
-    expect(growsOf(s.activities.config.claude, s.island.defaultGrows, 'claude')).toBe('below');
+    expect(growsOf(s.activities.config.claude, s.island.defaultGrows, 'claude')).toBe('more');
     expect(growsOf(s.activities.config.music, s.island.defaultGrows, 'music')).toBe('card');
   });
 
-  it("keeps Claude Code's Below, and drops it anywhere else", () => {
-    const s = migrate({ activities: { config: { claude: { grows: 'below' }, music: { grows: 'below' } } } });
+  it("keeps Claude's Below and Card with more, and drops them anywhere else", () => {
+    const s = migrate({ activities: { config: { claude: { grows: 'below' }, music: { grows: 'below' }, weather: { grows: 'more' } } } });
     expect(s.activities.config.claude.grows).toBe('below');
     expect(s.activities.config.music.grows).toBeUndefined();
+    expect(s.activities.config.weather.grows).toBeUndefined();
+    expect(migrate({ activities: { config: { claude: { grows: 'more' } } } }).activities.config.claude.grows).toBe('more');
   });
 });

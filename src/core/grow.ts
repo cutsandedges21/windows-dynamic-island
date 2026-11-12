@@ -32,13 +32,15 @@ export function closeCurve(u: number): number {
 
 /**
  * What pointing at an activity shows, by how it grows: 'card' grows its own card out of the pill,
- * or else one made from its Control Center tile (`tile`, asked only then); 'below' hangs its own
+ * or else one made from its Control Center tile (`tile`, asked only then); 'more' (Claude's) grows
+ * its own card too, the card itself carrying the button that opens the rest; 'below' hangs its own
  * card under the pill; 'wide' widens the pill and hangs its own card under it, unless that card
  * only makes sense grown out of the pill (Music's player), then nothing.
  */
 export function hoverView(grows: Grows, own: SheetView | null, tile: () => SheetView | null): SheetView | null {
   if (grows === 'wide') return own?.morph ? null : own;
   if (grows === 'below') return own ? { ...own, morph: undefined } : null;
+  if (grows === 'more') return own ? { ...own, morph: true } : null;
   if (own) return { ...own, morph: true };
   const made = tile();
   return made ? { ...made, morph: true } : null;
@@ -54,16 +56,15 @@ export function hoverGrows(id: string, grows: Grows, options: Record<string, unk
 }
 
 /**
- * Claude Code's finished and needs-you cards (keys `claude/done:…`, `claude/note:…`, a held reply
- * `claude/reply:…`) grow out of the pill like its hover card when it grows into a card; its
- * permission and question cards always hang below. Claude Status's card, raised by a session
- * finishing or one waiting on you, grows out of the pill the same way (it has no question to type into).
+ * Claude's pop-ups grow out of the pill like its hover card when it grows into a card (Into a card,
+ * or Card with more): a finished chat (`claude/done:…`), one that needs you (`claude/note:…`),
+ * a held reply (`claude/reply:…`) and the sessions card a Claude app or Chrome
+ * chat raises (`claude/status`). Its permission and question cards (`claude/perm:…`, `claude/ask:…`)
+ * always hang below.
  */
 export function chatView(owner: string, grows: Grows, view: SheetView): SheetView {
-  if (grows !== 'card') return view;
-  if (owner === 'claudeStatus') return { ...view, morph: true };
-  if (owner !== 'claude') return view;
-  return /^claude\/(done|note|reply):/.test(view.key) ? { ...view, morph: true } : view;
+  if ((grows !== 'card' && grows !== 'more') || owner !== 'claude') return view;
+  return /^claude\/(perm|ask):/.test(view.key) ? view : { ...view, morph: true };
 }
 
 /** A phone draws every card under its pill: none grows out of it there. */

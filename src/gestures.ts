@@ -27,7 +27,7 @@ export function gestureGroups(s: Settings, on: Platform): GestureGroup[] {
     {
       title: 'On the island',
       items: [
-        ['Point at it', "Shows more: a card grows out of it, or the pill widens (Settings › Appearance › When pointed at). Claude Code's card can hang below the pill instead."],
+        ['Point at it', "Shows more: a card grows out of it, or the pill widens (Settings › Appearance › When pointed at). Claude's card opens for more with its ⌄ button, or can hang below the pill instead."],
         ['Left click', 'Opens your Control Center. Click again to close it.'],
         ['Right click', 'Opens the menu: what you keep in it (Settings › Behavior › Right-click menu), and Settings. Right-click again to close it.'],
         ['Scroll', 'Switches to the next or previous activity. One flick on a touchpad is one switch.'],
