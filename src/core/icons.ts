@@ -58,7 +58,7 @@ const P: Record<string, string> = {
   fog: '<path d="M4 9.5h16M6 13.5h12M4 17.5h16"/>',
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8 10.5V7.5a4 4 0 018 0v3"/>',
   bluetooth: '<path d="M7 7l10 10-5 4.5V2.5l5 4.5L7 17"/>',
-  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/>',
+  settings: '<path d="M9.34 5.2L10.42 2.53L13.58 2.53L14.66 5.2L14.93 5.31L17.58 4.19L19.81 6.42L18.69 9.07L18.8 9.34L21.47 10.42L21.47 13.58L18.8 14.66L18.69 14.93L19.81 17.58L17.58 19.81L14.93 18.69L14.66 18.8L13.58 21.47L10.42 21.47L9.34 18.8L9.07 18.69L6.42 19.81L4.19 17.58L5.31 14.93L5.2 14.66L2.53 13.58L2.53 10.42L5.2 9.34L5.31 9.07L4.19 6.42L6.42 4.19L9.07 5.31Z" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.1"/>',
   grid: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.8"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.8"/>',
   'chevron-left': '<path d="M15 5l-7 7 7 7"/>',
   'chevron-right': '<path d="M9 5l7 7-7 7"/>',
