@@ -88,7 +88,7 @@ const P: Record<string, string> = {
   'pos-bottom': '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><rect x="8.5" y="14.4" width="7" height="2.6" rx="1.3" fill="currentColor" stroke="none"/>',
   'pos-left': '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><rect x="6" y="10.7" width="7" height="2.6" rx="1.3" fill="currentColor" stroke="none"/>',
   'pos-right': '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><rect x="11" y="10.7" width="7" height="2.6" rx="1.3" fill="currentColor" stroke="none"/>',
-  phone: '<path d="M5 3.5h3.5l1.5 4.5-2.3 1.5a11 11 0 006.8 6.8l1.5-2.3 4.5 1.5V19a1.5 1.5 0 01-1.5 1.5A16.5 16.5 0 013.5 5 1.5 1.5 0 015 3.5z"/>',
+  phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 5.5h3"/><path d="M11 18.5h2"/>',
   alert: '<path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 10v4.5M12 17.5h.01"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.5h.01"/>',
   power: '<path d="M12 3v8.5M6.8 6.3a8 8 0 1010.4 0"/>',
