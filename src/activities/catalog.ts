@@ -71,10 +71,10 @@ export const CATALOG: ActivityMeta[] = [
     icon: 'claude',
     category: 'developer',
     enabled: true,
-    priority: 'high',
-    // Not persistent: the island is for everything, so Claude only takes it for its own moments.
-    // Interrupt on: a session waiting on you holds the island open.
-    behavior: B(true, false, true, true),
+    priority: 'medium',
+    // Claude Status's defaults (Justin): medium and persistent, so the sessions' dots stay on the pill
+    // while there are any; with none, Claude leaves it. Interrupt on: a session waiting on you holds it open.
+    behavior: B(true, true, true, true),
     options: [
       { key: 'showDone', type: 'toggle', label: 'Pop up when a session finishes', help: 'Shows the island for a moment when a session is done or fails. One that needs you (orange) always opens it, until you answer or tap away.', default: true },
       { key: 'showAutoModel', type: 'toggle', label: 'Show Auto model button', help: 'Once Auto model (above) is on, a button in the expanded island pauses it and turns it back on, without removing it.', default: true },

@@ -70,8 +70,9 @@ describe("Moss's 0.4.2 settings file", () => {
     expect(s.activities.order[0]).toBe('claude');
     expect(s.activities.config.claude).toMatchObject({
       enabled: true, priority: 'high', persistent: true, interrupt: true,
-      options: { resetAlerts: true, sessionHotkeys: true, notifications: true, phone: true, showLimits: true, showDesktop: true, finishedSeconds: 8, onlyOtherChats: false, replyWindowSeconds: 45, requireHello: false },
+      options: { resetAlerts: true, sessionHotkeys: true, notifications: true, phone: true, showLimits: true, showDesktop: true, finishedSeconds: 8, onlyOtherChats: false, replyWindowSeconds: 0, requireHello: false },
     });
+    // His saved 45 s Reply window (Claude Code's old default) went off once, with settings version 6.
     expect(s.activities.config.claude.options).toMatchObject({ showDone: true, showAutoModel: true, glowInFront: true, permissions: true, questions: true, replyBox: true });
     // The heading over Claude Code's options holds no value.
     expect('code' in s.activities.config.claude.options).toBe(false);
@@ -127,7 +128,7 @@ describe("Justin's 0.2.11 settings file", () => {
     expect(s.activities.order[0]).toBe('claude');
     expect(s.activities.config.claude).toMatchObject({
       enabled: true, priority: 'high', autoShow: true, persistent: true, interactive: true, interrupt: true, grows: 'wide',
-      options: { showDone: true, showAutoModel: true, glowInFront: true, finishedSeconds: 8, replyWindowSeconds: 45, requireHello: false, sessionHotkeys: true },
+      options: { showDone: true, showAutoModel: true, glowInFront: true, finishedSeconds: 8, replyWindowSeconds: 0, requireHello: false, sessionHotkeys: true },
     });
   });
 
@@ -177,5 +178,28 @@ describe('Claude Code and Claude Status become one activity', () => {
     saved.activities.config.claude.enabled = false;
     saved.activities.config.claudeStatus.enabled = false;
     expect(migrate(saved).activities.config.claude.enabled).toBe(false);
+  });
+});
+
+describe('settings version 6: the Reply window', () => {
+  const withReply = (version: number, seconds: number) => {
+    const saved = load('settings-moss-0.4.2.json') as { version: number; activities: { config: Record<string, { options: Record<string, unknown> }> } };
+    saved.version = version;
+    saved.activities.config.claude.options.replyWindowSeconds = seconds;
+    return migrate(saved).activities.config.claude.options.replyWindowSeconds;
+  };
+
+  it("the old 45 s default goes off once; a length someone chose stays, and so does 45 chosen after", () => {
+    expect(withReply(5, 45)).toBe(0);
+    expect(withReply(5, 60)).toBe(60);
+    expect(withReply(6, 45)).toBe(45);
+  });
+});
+
+describe('a new install', () => {
+  it("Claude gets Claude Status's defaults: medium and persistent", () => {
+    const claude = CATALOG.find((m) => m.id === 'claude')!;
+    expect(claude.priority).toBe('medium');
+    expect(claude.behavior).toMatchObject({ persistent: true, interrupt: true });
   });
 });

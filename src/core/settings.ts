@@ -61,7 +61,7 @@ export interface GridLayout {
 
 export type PillColor = 'black' | 'white' | 'matte-white' | 'matte-black' | 'glass';
 
-export const SETTINGS_VERSION = 5;
+export const SETTINGS_VERSION = 6;
 
 export interface Settings {
   version: number;
@@ -357,6 +357,12 @@ export function migrate(saved: unknown): Settings {
   if (from < 4) out.island.peekThrough = true;
   // 0.2.6: the island no longer hides behind full-screen apps (Moss); the switch stays for anyone who wants it back.
   if (from < 5) out.island.hideInFullscreen = false;
+  // Version 6: Claude pops up for a moment (Claude Status's rule), so the 45 s Reply window that
+  // was Claude Code's default goes off for everyone who still had it; another length someone chose stays.
+  if (from < 6) {
+    const o = out.activities.config.claude?.options;
+    if (o && o.replyWindowSeconds === 45) o.replyWindowSeconds = 0;
+  }
   out.version = SETTINGS_VERSION;
   return out;
 }
