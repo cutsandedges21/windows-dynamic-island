@@ -632,13 +632,16 @@ describe('helpers', () => {
         items: [
           { key: 't1', action: 'tap', body: { k: 'actions', label: 'l', buttons: [{ key: 'b', action: 'start' }] } },
           { key: 't2', body: { k: 'list', icon: 'x', label: 'l', rows: [{ key: 'r', title: 'r', action: 'row' }] } },
-          { key: 't3', body: { k: 'media', title: '', artist: '', playing: true, buttons: [{ key: 'p', action: 'play' }] } },
+          { key: 't3', body: { k: 'media', title: '', artist: '', playing: true, buttons: [{ key: 'p', action: 'play' }], open: 'art' } },
           { key: 't4', action: 'island:app', body: { k: 'stat', icon: 'x', label: 'l', value: 'v' } },
         ],
       },
+      { t: 'player', key: 'pl', art: null, title: '', artist: '', playing: true, position: null, duration: null, color: null, actions: { prev: 'back', toggle: '', next: 'skip', open: 'jump' } },
     ];
     const out = JSON.stringify(mapActions(blocks, (a) => (a.startsWith('island:') ? a : `act:x:${a}`)));
-    for (const a of ['open', 'go', 'send', 'hold', 'pick', 'hide', 'choose', 'focus', 'tap', 'start', 'row', 'play']) expect(out).toContain(`"act:x:${a}"`);
+    for (const a of ['open', 'go', 'send', 'hold', 'pick', 'hide', 'choose', 'focus', 'tap', 'start', 'row', 'play', 'art', 'back', 'skip', 'jump']) expect(out).toContain(`"act:x:${a}"`);
+    // A player's empty action (no button) stays empty.
+    expect(out).toContain('"toggle":""');
     expect(out).toContain('"island:app"');
     expect(out).not.toMatch(/"action":"(?!act:|island:)/);
   });

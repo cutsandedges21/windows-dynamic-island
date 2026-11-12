@@ -1438,6 +1438,7 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 .tile.k-media { gap: 8px; }
 .tile.k-media .mtop { display: flex; gap: 10px; align-items: center; min-width: 0; }
 .tile.k-media .ma { width: 52px; height: 52px; flex: none; border-radius: 10px; overflow: hidden; background: rgba(var(--ink), 0.08); display: grid; place-items: center; color: var(--muted); }
+.tile.k-media .ma[data-action] { cursor: pointer; }
 .tile.k-media .ma img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .tile.k-media .ma .ico { width: 55%; height: 55%; }
 .tile.k-media .mm { min-width: 0; display: flex; flex-direction: column; gap: 3px; }

@@ -1436,6 +1436,18 @@ describe('music', () => {
     expect(quiet.act.sheet(hover(false))!.blocks[0]).toMatchObject({ t: 'player', actions: { toggle: '', prev: '', next: '' } });
   });
 
+  it('clicking the art, in the player or on the tile, brings the app playing forward and closes the island', async () => {
+    const { act, calls } = await boot(new MusicActivity(), { hoverPlayer: true });
+    expect(act.sheet(hover())!.blocks[0]).toMatchObject({ actions: { open: 'open' } });
+    expect(act.tile(hover())!.body).toMatchObject({ k: 'media', open: 'open' });
+    // Not interactive: the art is only a picture.
+    expect((act.sheet(hover(false))!.blocks[0] as { actions: { open?: string } }).actions.open).toBeUndefined();
+    expect((act.tile(hover(false))!.body as { open?: string }).open).toBeUndefined();
+    await act.action('open');
+    expect(h.native.mediaControl).toHaveBeenCalledWith('focus');
+    expect(calls.close).toBe(1);
+  });
+
   it('tells headphones from speakers by name', () => {
     expect(headphonesLike('Headphones (WH-1000XM4 Stereo)')).toBe(true);
     expect(headphonesLike("Moss's AirPods Pro")).toBe(true);

@@ -28,7 +28,7 @@ export function tileCard(tile: Tile, name: string, icon: string): Block[] {
     case 'media': {
       // Island's player (player.ts) takes its buttons' actions by name; none (not interactive): no buttons.
       const act = (key: string) => b.buttons.find((x) => x.key === key)?.action ?? '';
-      return [{ t: 'player', key: 'player', art: b.art ?? null, title: b.title, artist: b.artist, playing: b.playing, position: null, duration: null, color: null, actions: { prev: act('prev'), toggle: act('toggle'), next: act('next') } }];
+      return [{ t: 'player', key: 'player', art: b.art ?? null, title: b.title, artist: b.artist, playing: b.playing, position: null, duration: null, color: null, actions: { prev: act('prev'), toggle: act('toggle'), next: act('next'), open: b.open } }];
     }
     case 'week':
       return [{ t: 'head', key: 'head', icon, tone: tile.tone, title: b.title, sub: b.sub }];
