@@ -481,9 +481,12 @@ describe('notifications and the hover card', () => {
     let card = act.sheet!(senv('hover'))!;
     expect(card.key).toBe('hover');
     expect(block(card, 'head')).toMatchObject({ title: 'Claude', sub: '3 sessions' });
-    // The arrow is the card's last line, at its bottom edge, not in the header.
+    // The arrow sits right under the sessions' rows, not in the header: folded, that is the card's end.
     expect(block(card, 'head')?.buttons ?? []).toEqual([]);
-    const arrow = (c: typeof card) => c.blocks[c.blocks.length - 1] as Extract<Block, { t: 'buttons' }>;
+    const at = (c: typeof card) => c.blocks.findIndex((b) => b.t === 'buttons' && b.key === 'more');
+    const arrow = (c: typeof card) => c.blocks[at(c)] as Extract<Block, { t: 'buttons' }>;
+    expect(at(card)).toBe(card.blocks.length - 1);
+    expect(card.blocks[at(card) - 1]).toMatchObject({ t: 'rows', key: 'rows' });
     expect(arrow(card)).toMatchObject({ t: 'buttons', key: 'more', align: 'center' });
     expect(arrow(card).items.map((b) => [b.action, b.icon])).toEqual([['unfold', 'chevron-down']]);
     const rows = block(card, 'rows', 'rows')!.items;
@@ -493,9 +496,10 @@ describe('notifications and the hover card', () => {
 
     await act.action!('unfold', null);
     card = act.sheet!(senv('hover'))!;
-    // Unfolded, ⌃ is in the header (it never scrolls away) and the bottom arrow is gone.
-    expect(block(card, 'head')?.buttons?.map((b) => [b.action, b.icon])).toEqual([['unfold', 'chevron-up']]);
-    expect(card.blocks.some((b) => b.t === 'buttons' && b.key === 'more')).toBe(false);
+    // Unfolded, ⌃ is in the same place, under the rows and above the limits it opened.
+    expect(arrow(card).items.map((b) => [b.action, b.icon])).toEqual([['unfold', 'chevron-up']]);
+    expect(card.blocks[at(card) - 1]).toMatchObject({ t: 'rows', key: 'rows' });
+    expect(card.blocks[at(card) + 1]).toMatchObject({ t: 'meter' });
     const meters = card.blocks.filter((b) => b.t === 'meter') as Array<Extract<Block, { t: 'meter' }>>;
     expect(meters.map((m) => m.text)).toEqual(['41%', '79%']);
     expect(meters.every((m) => typeof m.pace === 'number')).toBe(true);

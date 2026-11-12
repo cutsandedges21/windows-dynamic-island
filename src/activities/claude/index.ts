@@ -1650,7 +1650,7 @@ export class ClaudeActivity extends BaseActivity {
 
   /**
    * Pointing at Claude: Claude Status's card. With Grows › "Card with more" (the default) a ⌄
-   * at its bottom edge opens (then ⌃ in its header folds it) the rest under the rows: the limits with their pace, this week's
+   * under the rows opens (then ⌃, in the same place, folds it) the rest under the rows: the limits with their pace, this week's
    * tokens, chats closed recently and the Claude app's recent chats (⌃ folds it again, and so
    * does pointing away). Below and Sideways show it all at once; Into a card, the small card.
    */
@@ -1661,15 +1661,17 @@ export class ClaudeActivity extends BaseActivity {
     this.unfold.asked = now;
     const more = grows === 'more';
     const full = grows === 'below' || grows === 'wide' || (more && this.unfold.on);
-    // Folded, ⌄ sits at the card's bottom edge, where the card grows when it is pressed. Unfolded,
-    // the card can be long enough to scroll, so ⌃ moves up into the header, which never scrolls
-    // away: the way back is always in reach (Justin).
-    const fold: SheetButton[] = more && this.unfold.on ? [{ key: 'more', icon: 'chevron-up', action: 'unfold', style: 'ghost', tip: 'Less' }] : [];
-    const view = this.statusCard('hover', now, fold);
-    if (full) view.blocks.push(...this.moreBlocks(now));
-    if (more && !this.unfold.on) {
-      view.blocks.push({ t: 'buttons', key: 'more', align: 'center', items: [{ key: 'more', icon: 'chevron-down', action: 'unfold', style: 'ghost', tip: 'Limits, tokens and closed chats' }] });
+    // The arrow stays in one place, open or folded: under the sessions' rows, above what it opens.
+    // Folded that is the card's bottom edge; open, it is near the top, so it never scrolls out of
+    // reach under a long list (Justin).
+    const view = this.statusCard('hover', now, []);
+    if (more) {
+      const button: SheetButton = this.unfold.on
+        ? { key: 'more', icon: 'chevron-up', action: 'unfold', style: 'ghost', tip: 'Less' }
+        : { key: 'more', icon: 'chevron-down', action: 'unfold', style: 'ghost', tip: 'Limits, tokens and closed chats' };
+      view.blocks.push({ t: 'buttons', key: 'more', align: 'center', items: [button] });
     }
+    if (full) view.blocks.push(...this.moreBlocks(now));
     return view;
   }
 
