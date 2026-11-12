@@ -50,6 +50,8 @@ mod phonelink;
 mod pipe;
 #[cfg_attr(target_os = "macos", path = "mac/procs.rs")]
 mod procs;
+#[cfg_attr(target_os = "macos", path = "mac/radios.rs")]
+mod radios;
 mod reminders;
 mod remote;
 mod screen;
@@ -349,6 +351,9 @@ pub fn run() {
             notice::notice_forget,
             keys::lock_keys,
             brightness::brightness_get,
+            brightness::brightness_set,
+            radios::radios_state,
+            radios::radio_set,
             btbattery::bt_batteries,
         ])
         .build(tauri::generate_context!())
