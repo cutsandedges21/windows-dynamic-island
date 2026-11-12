@@ -40,6 +40,8 @@ interface Options {
   showAutoModel: boolean;
   /** While a session runs, its blue glow stays on round the island whatever is in front. */
   glowInFront: boolean;
+  /** The Claude icon stays Claude's orange; off, it takes the accent colour. */
+  orangeMark: boolean;
   /** Claude Code's permission prompts wait in the island with Allow and Deny. */
   permissions: boolean;
   /** Claude's questions wait in the island to be answered there. */
@@ -120,7 +122,7 @@ const POINT_LEAVE_MS = 1500;
 const UNFOLD_FORGET_MS = 1500;
 
 /** The Claude mark that leads the pill. */
-const MARK: Seg = { t: 'icon', key: 'mark', icon: 'claude', tone: 'claude', prio: 0 };
+const MARK = { t: 'icon', key: 'mark', icon: 'claude', prio: 0 } as const;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -214,12 +216,18 @@ export class ClaudeActivity extends BaseActivity {
     return growsOf(this.ctx.config(), this.ctx.settings().island.defaultGrows, 'claude');
   }
 
+  /** The Claude icon's colour: the accent, unless "Claude icon always orange" is on (Justin). */
+  private mark(): Tone {
+    return this.opts().orangeMark ? 'claude' : 'accent';
+  }
+
   private opts(): Options {
     const o = this.ctx.options<Partial<Options>>();
     return {
       showDone: o.showDone !== false,
       showAutoModel: o.showAutoModel !== false,
       glowInFront: o.glowInFront !== false,
+      orangeMark: o.orangeMark === true,
       permissions: o.permissions !== false,
       questions: o.questions !== false,
       replyBox: o.replyBox !== false,
@@ -1310,8 +1318,8 @@ export class ClaudeActivity extends BaseActivity {
     // Claude Status's pill: a dot per session; a session that just finished (or was picked by its hotkey) leads it.
     const surfaced = env.surfaced ?? '';
     const focus = surfaced.startsWith('done:') ? surfaced.slice(5) : surfaced.startsWith('slot:') ? surfaced.slice(5) : null;
-    const segs = statusSegments(this.rows, env, focus);
-    if (!segs.length) return [MARK, { t: 'text', key: 'none', text: 'Claude', weight: 'semibold', prio: 0 }];
+    const segs = statusSegments(this.rows, env, focus, this.mark());
+    if (!segs.length) return [{ ...MARK, tone: this.mark() }, { t: 'text', key: 'none', text: 'Claude', weight: 'semibold', prio: 0 }];
     // Limits in the island: the session and weekly bars when it opens all the way.
     if (env.level === 'maximum' && !env.vertical) segs.push(...this.meters(now, 7));
     return segs;
@@ -1385,7 +1393,7 @@ export class ClaudeActivity extends BaseActivity {
     const s = this.tracker?.get(id) ?? this.tracker?.getClosed(id) ?? this.sessions.find((x) => x.id === id) ?? null;
     void env;
     return [
-      { t: 'icon', key: 'in-icon', icon: 'claude', tone: 'claude', prio: 0 },
+      { t: 'icon', key: 'in-icon', icon: 'claude', tone: this.mark(), prio: 0 },
       { t: 'input', key: 'prompt', placeholder: `Continue ${clip(s?.displayTitle ?? 'this session', 40)}…`, action: 'send', cancel: 'cancel-input', prio: 0, min: 220 },
       { t: 'button', key: 'in-cancel', icon: 'x', action: 'cancel-input', style: 'ghost', side: 'end', prio: 1, tip: 'Cancel (Esc)' },
     ];
@@ -1450,7 +1458,7 @@ export class ClaudeActivity extends BaseActivity {
           : 'Paused: Claude runs every prompt on the model you picked, with no checks. Click to turn back on.',
       });
     }
-    return { t: 'head', key: 'head', icon: 'claude', tone: 'claude', title: 'Claude', sub: this.rows.length ? statusSub(this.rows) : 'No Claude sessions right now', buttons: [...buttons, ...extra] };
+    return { t: 'head', key: 'head', icon: 'claude', tone: this.mark(), title: 'Claude', sub: this.rows.length ? statusSub(this.rows) : 'No Claude sessions right now', buttons: [...buttons, ...extra] };
   }
 
   /** Every session's row, each with its progress bar on its second line; Claude Code's carry their Alt+Shift number. */
@@ -1485,7 +1493,7 @@ export class ClaudeActivity extends BaseActivity {
       : str('file_path') || str('notebook_path') || str('url') || str('pattern') || str('query') || describeTool(card.tool, card.input).detail || '';
     const more = this.hooks.cards.length - 1;
     const title = s?.displayTitle || baseName(card.cwd) || 'Claude Code';
-    const blocks: Block[] = [{ t: 'head', key: 'h', icon: 'claude', tone: 'claude', title: this.askOf(card), sub: [title, s?.host, more > 0 ? `${more} more waiting` : null].filter(Boolean).join(' · ') }];
+    const blocks: Block[] = [{ t: 'head', key: 'h', icon: 'claude', tone: this.mark(), title: this.askOf(card), sub: [title, s?.host, more > 0 ? `${more} more waiting` : null].filter(Boolean).join(' · ') }];
     if (detail) blocks.push({ t: 'code', key: 'detail', text: detail });
     if (shell && str('description')) blocks.push({ t: 'text', key: 'why', text: str('description'), tone: 'muted', size: 'sm' });
     blocks.push(
@@ -1732,7 +1740,7 @@ export class ClaudeActivity extends BaseActivity {
       key: 'claude',
       span: 2,
       rows: 2,
-      tone: 'claude',
+      tone: this.mark(),
       body: { k: 'list', icon: 'claude', label: limits ? `Claude sessions · ${limits}` : 'Claude sessions', rows: statusRows(this.rows, env.now), empty: 'All quiet' },
     };
   }
@@ -1795,7 +1803,7 @@ export class ClaudeActivity extends BaseActivity {
     const log = this.chatLog?.id === id ? this.chatLog : null;
     if (!log) void this.loadChat();
     const blocks: Block[] = [
-      { t: 'head', key: 'h', icon: 'claude', tone: 'claude', title: chat.displayTitle, sub: [chat.project, live ? this.statusWord(live) : 'Closed'].filter(Boolean).join(' · '), buttons: [CHATS_BACK] },
+      { t: 'head', key: 'h', icon: 'claude', tone: this.mark(), title: chat.displayTitle, sub: [chat.project, live ? this.statusWord(live) : 'Closed'].filter(Boolean).join(' · '), buttons: [CHATS_BACK] },
       ...this.messageBlocks(log?.messages ?? [], pane, now, log ? 'No messages yet' : 'Reading the chat…'),
     ];
     if (live?.status === 'working') blocks.push({ t: 'text', key: 'working', text: 'Claude is working…', tone: 'muted', size: 'sm' });
@@ -1809,7 +1817,7 @@ export class ClaudeActivity extends BaseActivity {
   private newChatSheet(folder: string, now: number): SheetView {
     const pane = `new:${folder}`;
     const blocks: Block[] = [
-      { t: 'head', key: 'h', icon: 'claude', tone: 'claude', title: `New chat in ${projectName(folder)}`, sub: folder, buttons: [CHATS_BACK] },
+      { t: 'head', key: 'h', icon: 'claude', tone: this.mark(), title: `New chat in ${projectName(folder)}`, sub: folder, buttons: [CHATS_BACK] },
       ...this.messageBlocks([], pane, now, ''),
       ...this.startBlocks(pane, now, { t: 'input', key: 'say', placeholder: 'What should Claude do?', action: `say:new:${folder}`, hint: routeHint({ how: 'new', cwd: folder }) }),
     ];

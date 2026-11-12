@@ -788,12 +788,12 @@ describe("status colours (Justin's Claude Status)", () => {
     expect(chatTone('something new')).toBe('dim');
   });
 
-  it("the pill and the chip: each session's dot in its colour, the mark stays orange; a prompt waiting makes the chip amber", async () => {
+  it("the pill and the chip: each session's dot in its colour, the mark in the accent colour; a prompt waiting makes the chip amber", async () => {
     const { act } = await boot();
     stubTracker(act, [session({})], { 100: [50] });
     act.rows = [row({ state: 'input', word: 'needs you' }), row({ id: 'S2', state: 'failed', word: 'failed' })];
     const segs = act.render(renv('expanded'));
-    expect(segs[0]).toMatchObject({ key: 'mark', tone: 'claude' });
+    expect(segs[0]).toMatchObject({ key: 'mark', tone: 'accent' });
     expect(segs.filter((x) => x.t === 'dot').map((x) => x.t === 'dot' && x.tone)).toEqual(['warn', 'bad']);
     expect(segs.find((x) => x.key === 'state')).toMatchObject({ tone: 'warn' });
     expect(act.chip()).toMatchObject({ icon: 'claude', label: '2', dot: 'warn' });
@@ -824,14 +824,27 @@ describe("status colours (Justin's Claude Status)", () => {
     expect(off.act.status().beamBehind ?? null).toBeNull();
   });
 
+  it('"Claude icon always orange" keeps the mark orange on the pill, its cards and its tile', async () => {
+    const { act } = await boot({ orangeMark: true });
+    stubTracker(act, [session({})], { 100: [50] });
+    act.rows = [row({})];
+    expect(act.render(renv('expanded'))[0]).toMatchObject({ key: 'mark', tone: 'claude' });
+    expect(block(act.sheet!(senv('hover'))!, 'head')?.tone).toBe('claude');
+    expect(act.tile!(senv('open'))?.tone).toBe('claude');
+    const off = await boot();
+    stubTracker(off.act, [session({})], { 100: [50] });
+    off.act.rows = [row({})];
+    expect(off.act.tile!(senv('open'))?.tone).toBe('accent');
+  });
+
   it('a permission card is amber; a finished chat holding for a reply glows a still green', async () => {
     const { act, calls } = await boot({ replyWindowSeconds: 45 });
     stubTracker(act, [session({})], { 100: [50, 10] });
     emit('hook', { hook_event_name: 'PermissionRequest', session_id: 'S1', request_id: 'p1', tool_name: 'Bash', tool_input: { command: 'ls' } });
     expect(act.status().beam).toEqual({ tone: 'warn', urgent: true });
     expect(block(act.sheet!(senv('urgent')), 'countdown')?.tone).toBe('warn');
-    // The Claude mark on the card stays orange.
-    expect(block(act.sheet!(senv('urgent')), 'head')?.tone).toBe('claude');
+    // The Claude mark on the card takes the accent colour.
+    expect(block(act.sheet!(senv('urgent')), 'head')?.tone).toBe('accent');
     await act.action!('deny', 'p1');
 
     h.native.foregroundPid.mockResolvedValue(999);

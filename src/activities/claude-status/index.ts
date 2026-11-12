@@ -60,11 +60,11 @@ export function statusSub(rows: StatusRow[]): string {
  * yet), like the widget's compact mode; the name and state when the island grows. `focus`: the
  * row the pill talks about (a session that just finished), else the first (orange and red sort first).
  */
-export function statusSegments(rows: StatusRow[], env: RenderEnv, focus?: string | null): Seg[] {
+export function statusSegments(rows: StatusRow[], env: RenderEnv, focus?: string | null, mark: Tone = 'claude'): Seg[] {
   const t = rows.find((r) => r.id === focus) ?? rows[0];
   if (!t) return [];
   const roomy = env.level === 'expanded' || env.level === 'maximum';
-  const segs: Seg[] = [{ t: 'icon', key: 'mark', icon: 'claude', tone: 'claude', prio: 0 }];
+  const segs: Seg[] = [{ t: 'icon', key: 'mark', icon: 'claude', tone: mark, prio: 0 }];
   if (env.vertical) {
     segs.push({ t: 'dot', key: 'dot', tone: toneOf(t), pulse: t.state === 'running' && !t.grey, badge: rows.some((r) => r.unread), prio: 0 });
     return segs;
