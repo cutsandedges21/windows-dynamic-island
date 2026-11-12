@@ -1650,7 +1650,7 @@ export class ClaudeActivity extends BaseActivity {
 
   /**
    * Pointing at Claude: Claude Status's card. With Grows › "Card with more" (the default) a ⌄
-   * at its bottom edge opens the rest under the rows: the limits with their pace, this week's
+   * at its bottom edge opens (then ⌃ in its header folds it) the rest under the rows: the limits with their pace, this week's
    * tokens, chats closed recently and the Claude app's recent chats (⌃ folds it again, and so
    * does pointing away). Below and Sideways show it all at once; Into a card, the small card.
    */
@@ -1661,12 +1661,14 @@ export class ClaudeActivity extends BaseActivity {
     this.unfold.asked = now;
     const more = grows === 'more';
     const full = grows === 'below' || grows === 'wide' || (more && this.unfold.on);
-    const view = this.statusCard('hover', now, []);
+    // Folded, ⌄ sits at the card's bottom edge, where the card grows when it is pressed. Unfolded,
+    // the card can be long enough to scroll, so ⌃ moves up into the header, which never scrolls
+    // away: the way back is always in reach (Justin).
+    const fold: SheetButton[] = more && this.unfold.on ? [{ key: 'more', icon: 'chevron-up', action: 'unfold', style: 'ghost', tip: 'Less' }] : [];
+    const view = this.statusCard('hover', now, fold);
     if (full) view.blocks.push(...this.moreBlocks(now));
-    // The arrow sits at the card's bottom edge, where the card grows when it is pressed (Justin).
-    if (more) {
-      const button: SheetButton = { key: 'more', icon: this.unfold.on ? 'chevron-up' : 'chevron-down', action: 'unfold', style: 'ghost', tip: this.unfold.on ? 'Less' : 'Limits, tokens and closed chats' };
-      view.blocks.push({ t: 'buttons', key: 'more', align: 'center', items: [button] });
+    if (more && !this.unfold.on) {
+      view.blocks.push({ t: 'buttons', key: 'more', align: 'center', items: [{ key: 'more', icon: 'chevron-down', action: 'unfold', style: 'ghost', tip: 'Limits, tokens and closed chats' }] });
     }
     return view;
   }

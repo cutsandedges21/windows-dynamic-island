@@ -493,7 +493,9 @@ describe('notifications and the hover card', () => {
 
     await act.action!('unfold', null);
     card = act.sheet!(senv('hover'))!;
-    expect(arrow(card).items[0].icon).toBe('chevron-up');
+    // Unfolded, ⌃ is in the header (it never scrolls away) and the bottom arrow is gone.
+    expect(block(card, 'head')?.buttons?.map((b) => [b.action, b.icon])).toEqual([['unfold', 'chevron-up']]);
+    expect(card.blocks.some((b) => b.t === 'buttons' && b.key === 'more')).toBe(false);
     const meters = card.blocks.filter((b) => b.t === 'meter') as Array<Extract<Block, { t: 'meter' }>>;
     expect(meters.map((m) => m.text)).toEqual(['41%', '79%']);
     expect(meters.every((m) => typeof m.pace === 'number')).toBe(true);
@@ -504,6 +506,7 @@ describe('notifications and the hover card', () => {
     await tick(2000);
     card = act.sheet!(senv('hover'))!;
     expect(arrow(card).items[0].icon).toBe('chevron-down');
+    expect(block(card, 'head')?.buttons ?? []).toEqual([]);
     expect(card.blocks.some((b) => b.t === 'meter')).toBe(false);
   });
 
