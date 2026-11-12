@@ -490,7 +490,9 @@ describe('notifications and the hover card', () => {
     expect(arrow(card)).toMatchObject({ t: 'buttons', key: 'more', align: 'center' });
     expect(arrow(card).items.map((b) => [b.action, b.icon])).toEqual([['unfold', 'chevron-down']]);
     const rows = block(card, 'rows', 'rows')!.items;
-    expect(rows.map((r) => [r.title, r.dot, r.action, r.badge])).toEqual([['Docs', 'info', 'jump', '2'], ['Fix the parser', 'good', 'jump', '1'], ['Trip', 'dim', 'jump', undefined]]);
+    // No number on the rows; a Claude Code session's Alt+Shift shortcut is in its tip.
+    expect(rows.map((r) => [r.title, r.dot, r.action, r.badge])).toEqual([['Docs', 'info', 'jump', undefined], ['Fix the parser', 'good', 'jump', undefined], ['Trip', 'dim', 'jump', undefined]]);
+    expect(rows.map((r) => r.tip?.match(/Alt\+Shift\+\d/)?.[0] ?? null)).toEqual(['Alt+Shift+2', 'Alt+Shift+1', null]);
     expect(rows[0].bar).toMatchObject({ value: 0.4, text: '~3 min left' });
     expect(card.blocks.some((b) => b.t === 'meter')).toBe(false);
 

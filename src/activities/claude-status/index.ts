@@ -90,7 +90,8 @@ export function statusSegments(rows: StatusRow[], env: RenderEnv, focus?: string
 /**
  * The session rows of the card and the tile. withBars: each carries its progress bar on its
  * second line, after "Terminal · running 6m" (the grid's tile stays plain). `slot`: a Claude
- * Code session's Alt+Shift number, as a badge.
+ * Code session's Alt+Shift number, named in the row's tip only: a number on the row read as
+ * a count of something (Justin).
  */
 export function statusRows(rows: StatusRow[], now: number, withBars = false, slot: (id: string) => number | null = () => null): SheetRow[] {
   return rows.map((r) => {
@@ -104,7 +105,6 @@ export function statusRows(rows: StatusRow[], now: number, withBars = false, slo
       title: r.label,
       detail: `${r.where} · ${[r.word, age(now / 1000 - r.since)].filter(Boolean).join(' ')}${r.hidden ? ' · hidden' : ''}`,
       bar: withBars && r.progress ? { value: r.progress.value, text: r.progress.text, label: r.progress.method, tone: barTone(r) } : undefined,
-      badge: n ? String(n) : undefined,
       action: 'jump',
       arg: r.id,
       tip: `${r.label} · ${r.where}${n ? ` (Alt+Shift+${n})` : ''}`,
