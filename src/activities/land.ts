@@ -799,7 +799,7 @@ export class LandActivity extends BaseActivity {
       blocks.push({ t: 'rows', key: 'files', items: [{ key: 'text', icon: link ? 'globe' : 'edit', title: clip(this.stagedText.replace(/\s+/g, ' '), 90), detail: link ? 'Link' : `Note · ${plural(this.stagedText.length, 'character')}`, button: { key: 'rm', icon: 'x', action: 'clear', style: 'ghost', tip: 'Remove' } }] });
     } else {
       blocks.push({ t: 'text', key: 'hint', text: 'Drag files or folders onto the island, or paste a link or a note below, then pick who gets it.', tone: 'muted', size: 'sm' });
-      blocks.push({ t: 'input', key: 'text', placeholder: 'Paste a link or type a note, then Enter', action: 'stage-text' });
+      blocks.push({ t: 'input', key: 'text', placeholder: 'Paste a link or type a note, then Enter', action: 'stage-text', pasteFiles: 'paste' });
     }
 
     const targets = new Set(this.targets().map((p) => p.id));
@@ -999,7 +999,8 @@ export class LandActivity extends BaseActivity {
         void native.landShareStop();
         break;
       case 'paste': {
-        // Ctrl+V on Land's icon: what was copied goes to Land's card, ready to send.
+        // Ctrl+V on Land's icon (or a picture or files pasted in its box): what was copied goes to
+        // Land's card, ready to send. A screenshot comes back as a PNG file Rust saved for it.
         const pasted = await native.clipboardPaste();
         if (!this.alive) return;
         if (this.share) {
@@ -1013,7 +1014,7 @@ export class LandActivity extends BaseActivity {
         } else if (pasted.text?.trim()) {
           await this.action('stage-text', pasted.text);
         } else {
-          this.note = { text: 'Nothing to send yet: copy a link, a note or files, then hover Land and press Ctrl+V.', at: Date.now() };
+          this.note = { text: 'Nothing to send yet: copy a link, a note, files or a screenshot, then hover Land and press Ctrl+V.', at: Date.now() };
         }
         this.ctx.openCard?.();
         void this.scan();
