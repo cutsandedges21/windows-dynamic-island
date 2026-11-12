@@ -9,7 +9,7 @@ import { SpringSet } from './core/animator';
 import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from './core/format';
 import { icon, type IconName } from './core/icons';
 import { levelWidth, normalizeWidths, type Anchor, type Level } from './core/layout';
-import { MENU_ITEMS } from './core/menu';
+import { MENU_ITEMS, menuSegments, normalizeMenuOrder, type MenuItemId } from './core/menu';
 import { isTauri, native, on, sendTo, type AutoModelState, type MonitorInfo } from './core/native';
 import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
@@ -1013,19 +1013,109 @@ function controlsPage(): HTMLElement {
   ]);
 }
 
-/** Which items the island's right-click menu shows; Settings is always there, the way back here. */
+/** The island's right-click menu: a preview of it, and its items to drag into order, show or hide, and show as icon only or icon and name. Settings is always there, last: the way back here. */
 function menuRow(i: Settings['island']): HTMLElement {
-  const choice = multiSegmented(
-    MENU_ITEMS.filter((m) => i.menu[m.id]).map((m) => m.id),
-    MENU_ITEMS.map((m) => [m.id, m.label]),
-    (on) => {
-      for (const m of MENU_ITEMS) i.menu[m.id] = on.includes(m.id);
+  const preview = h('div', { class: 'menu-preview', 'aria-label': 'Preview of the right-click menu' });
+  const paint = () => {
+    const state = { anchor: i.anchor, dnd: settings.general.dnd, mac: platform === 'macos', reminders: true };
+    const near = h('div', { class: 'mp-end-group' });
+    const far = h('div', { class: 'mp-end-group mp-far' });
+    for (const seg of menuSegments(i.menu, state, { order: i.menuOrder, iconOnly: i.menuIconOnly })) {
+      const into = seg.side === 'end' ? far : near;
+      if (seg.t === 'sep') into.append(h('span', { class: 'mp-sep' }));
+      else if (seg.t === 'text') into.append(h('span', { class: 'mp-label', text: seg.text }));
+      else if (seg.t === 'button') {
+        const b = h('span', { class: `mp-btn style-${seg.style ?? 'secondary'}${seg.label ? '' : ' icon-only'}`, title: seg.tip ?? seg.label ?? '' });
+        b.innerHTML = seg.icon ? icon(seg.icon) : '';
+        if (seg.label) b.append(h('span', { text: seg.label }));
+        into.append(b);
+      }
+    }
+    preview.replaceChildren(near, far);
+  };
+  const label = (id: MenuItemId) => MENU_ITEMS.find((m) => m.id === id)?.label ?? id;
+  const iconOf: Record<MenuItemId, IconName> = { position: 'pos-top', quiet: 'moon', hide: 'eye-off', reminders: 'bell', workspaces: 'grid', activities: 'pulse' };
+  const list = h('div', { class: 'menu-editor', role: 'list' });
+  const commit = () => {
+    i.menuOrder = normalizeMenuOrder([...list.children].map((r) => (r as HTMLElement).dataset.id));
+    paint();
+    save(true);
+  };
+  const move = (r: HTMLElement, by: -1 | 1) => {
+    const other = by < 0 ? r.previousElementSibling : r.nextElementSibling;
+    if (!other) return;
+    if (by < 0) list.insertBefore(r, other);
+    else list.insertBefore(other, r);
+    commit();
+  };
+  for (const id of i.menuOrder) {
+    const grip = h('button', { class: 'me-grip', title: 'Drag to move (or Up / Down arrow keys)', 'aria-label': `Move ${label(id)}` });
+    grip.innerHTML = icon('grip');
+    const look = segmented(i.menuIconOnly[id] ? 'icon' : 'both', [['both', 'Icon and name'], ['icon', 'Icon only']], (v) => {
+      i.menuIconOnly[id] = v === 'icon';
+      for (const b of look.querySelectorAll('button')) b.classList.toggle('on', b.textContent === (v === 'icon' ? 'Icon only' : 'Icon and name'));
+      paint();
       save(true);
-      render();
-    },
-    0,
-  );
-  return stacked(row('Right-click menu', 'What the island shows when you right-click it. Turn off what you never use and the menu gets shorter by that much. Settings always stays.', choice));
+    });
+    const ico = h('span', { class: 'me-ico' });
+    ico.innerHTML = icon(iconOf[id]);
+    const r = h('div', { class: `me-row${i.menu[id] ? '' : ' off'}`, role: 'listitem' }, [
+      grip,
+      ico,
+      h('span', { class: 'me-name', text: label(id) }),
+      look,
+      toggle(i.menu[id], (on) => {
+        i.menu[id] = on;
+        r.classList.toggle('off', !on);
+        paint();
+        save(true);
+        // Hide's row below names the menu only while Hide is in it.
+        if (id === 'hide') render();
+      }, `Show ${label(id)}`),
+    ]);
+    r.dataset.id = id;
+    grip.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      move(r, e.key === 'ArrowUp' ? -1 : 1);
+      grip.focus();
+    });
+    // Drag by the grip: pointer events, so a mouse, a touchpad and a finger all work.
+    grip.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      r.classList.add('dragging');
+      const startOrder = [...list.children].map((x) => (x as HTMLElement).dataset.id).join();
+      const onMove = (ev: PointerEvent) => {
+        for (const other of [...list.children] as HTMLElement[]) {
+          if (other === r) continue;
+          const box = other.getBoundingClientRect();
+          const mid = box.top + box.height / 2;
+          const before = (r.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
+          if (before && ev.clientY < mid) { list.insertBefore(r, other); paint(); break; }
+          if (!before && ev.clientY > mid) { list.insertBefore(r, other.nextSibling); paint(); }
+        }
+      };
+      const onUp = () => {
+        grip.removeEventListener('pointermove', onMove);
+        grip.removeEventListener('pointerup', onUp);
+        grip.removeEventListener('pointercancel', onUp);
+        r.classList.remove('dragging');
+        if ([...list.children].map((x) => (x as HTMLElement).dataset.id).join() !== startOrder) commit();
+      };
+      grip.addEventListener('pointermove', onMove);
+      grip.addEventListener('pointerup', onUp);
+      grip.addEventListener('pointercancel', onUp);
+    });
+    list.append(r);
+  }
+  // Settings: always there and always last, so it is shown but cannot be moved or hidden.
+  const gear = h('span', { class: 'me-ico' });
+  gear.innerHTML = icon('settings');
+  list.append(h('div', { class: 'me-row fixed', role: 'listitem' }, [h('span', { class: 'me-grip' }), gear, h('span', { class: 'me-name', text: 'Settings' }), h('span', { class: 'muted', text: 'Always last, icon only' })]));
+  paint();
+  return stacked(row('Right-click menu', 'What the island shows when you right-click it, as it will look. Drag the handles to reorder; turn off what you never use and the menu gets shorter by that much. Settings always stays.', h('div', { class: 'menu-edit-wrap' }, [preview, list])));
 }
 
 /** Hide the island for a while, or, while it is hidden, say until when and bring it back. */
