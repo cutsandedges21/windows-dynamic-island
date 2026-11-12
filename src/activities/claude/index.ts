@@ -1649,8 +1649,8 @@ export class ClaudeActivity extends BaseActivity {
   }
 
   /**
-   * Pointing at Claude: Claude Status's card. With Grows › "Card with more" (the default) its
-   * header has a ⌄ that opens the rest under the rows: the limits with their pace, this week's
+   * Pointing at Claude: Claude Status's card. With Grows › "Card with more" (the default) a ⌄
+   * at its bottom edge opens the rest under the rows: the limits with their pace, this week's
    * tokens, chats closed recently and the Claude app's recent chats (⌃ folds it again, and so
    * does pointing away). Below and Sideways show it all at once; Into a card, the small card.
    */
@@ -1661,11 +1661,13 @@ export class ClaudeActivity extends BaseActivity {
     this.unfold.asked = now;
     const more = grows === 'more';
     const full = grows === 'below' || grows === 'wide' || (more && this.unfold.on);
-    const chevron: SheetButton[] = more
-      ? [{ key: 'more', icon: this.unfold.on ? 'chevron-up' : 'chevron-down', action: 'unfold', style: 'ghost', tip: this.unfold.on ? 'Less' : 'Limits, tokens and closed chats' }]
-      : [];
-    const view = this.statusCard('hover', now, chevron);
+    const view = this.statusCard('hover', now, []);
     if (full) view.blocks.push(...this.moreBlocks(now));
+    // The arrow sits at the card's bottom edge, where the card grows when it is pressed (Justin).
+    if (more) {
+      const button: SheetButton = { key: 'more', icon: this.unfold.on ? 'chevron-up' : 'chevron-down', action: 'unfold', style: 'ghost', tip: this.unfold.on ? 'Less' : 'Limits, tokens and closed chats' };
+      view.blocks.push({ t: 'buttons', key: 'more', align: 'center', items: [button] });
+    }
     return view;
   }
 

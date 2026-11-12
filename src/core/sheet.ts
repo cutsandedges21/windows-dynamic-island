@@ -109,7 +109,7 @@ export type Block =
   /** Wrapped text. `bubble` scrolls after `lines` lines (default 8). */
   | { t: 'text'; key: string; text: string; tone?: Tone; size?: 'sm' | 'md'; bubble?: boolean; lines?: number }
   | { t: 'code'; key: string; text: string }
-  | { t: 'buttons'; key: string; items: SheetButton[]; align?: 'start' | 'end' | 'fill' }
+  | { t: 'buttons'; key: string; items: SheetButton[]; align?: 'start' | 'end' | 'fill' | 'center' }
   /**
    * Never focused on its own: clicking it engages it (`engage` fires), Enter sends `action` with the text.
    * With `lines` it is a box of that many lines (a note): Enter starts a new line, Ctrl+Enter sends; it

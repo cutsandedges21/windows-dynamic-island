@@ -481,7 +481,11 @@ describe('notifications and the hover card', () => {
     let card = act.sheet!(senv('hover'))!;
     expect(card.key).toBe('hover');
     expect(block(card, 'head')).toMatchObject({ title: 'Claude', sub: '3 sessions' });
-    expect(block(card, 'head')?.buttons?.map((b) => [b.action, b.icon])).toEqual([['unfold', 'chevron-down']]);
+    // The arrow is the card's last line, at its bottom edge, not in the header.
+    expect(block(card, 'head')?.buttons ?? []).toEqual([]);
+    const arrow = (c: typeof card) => c.blocks[c.blocks.length - 1] as Extract<Block, { t: 'buttons' }>;
+    expect(arrow(card)).toMatchObject({ t: 'buttons', key: 'more', align: 'center' });
+    expect(arrow(card).items.map((b) => [b.action, b.icon])).toEqual([['unfold', 'chevron-down']]);
     const rows = block(card, 'rows', 'rows')!.items;
     expect(rows.map((r) => [r.title, r.dot, r.action, r.badge])).toEqual([['Docs', 'info', 'jump', '2'], ['Fix the parser', 'good', 'jump', '1'], ['Trip', 'dim', 'jump', undefined]]);
     expect(rows[0].bar).toMatchObject({ value: 0.4, text: '~3 min left' });
@@ -489,7 +493,7 @@ describe('notifications and the hover card', () => {
 
     await act.action!('unfold', null);
     card = act.sheet!(senv('hover'))!;
-    expect(block(card, 'head')?.buttons?.[0].icon).toBe('chevron-up');
+    expect(arrow(card).items[0].icon).toBe('chevron-up');
     const meters = card.blocks.filter((b) => b.t === 'meter') as Array<Extract<Block, { t: 'meter' }>>;
     expect(meters.map((m) => m.text)).toEqual(['41%', '79%']);
     expect(meters.every((m) => typeof m.pace === 'number')).toBe(true);
@@ -499,7 +503,7 @@ describe('notifications and the hover card', () => {
     // Pointing away and back: it starts small again.
     await tick(2000);
     card = act.sheet!(senv('hover'))!;
-    expect(block(card, 'head')?.buttons?.[0].icon).toBe('chevron-down');
+    expect(arrow(card).items[0].icon).toBe('chevron-down');
     expect(card.blocks.some((b) => b.t === 'meter')).toBe(false);
   });
 

@@ -194,7 +194,7 @@ function activitiesPage(): HTMLElement {
 const GROWS_LABEL: Record<Grows, string> = { wide: 'Sideways', card: 'Into a card', below: 'Below', more: 'Card with more' };
 const GROWS_HELP = [
   'When you point at it: Sideways widens the pill, Into a card grows a card out of it.',
-  'When you point at it: Card with more grows the sessions card out of the pill, and its ⌄ button opens the rest (limits, tokens, closed chats); Below hangs all of it under the pill; Into a card grows the sessions card alone; Sideways widens the pill and hangs the card under it.',
+  'When you point at it: Card with more grows the sessions card out of the pill, and the ⌄ at its bottom opens the rest (limits, tokens, closed chats); Below hangs all of it under the pill; Into a card grows the sessions card alone; Sideways widens the pill and hangs the card under it.',
 ];
 
 const PRIORITY_HELP = 'When several things happen at once, the highest one gets the pill and the others wait beside it as small icons. A tie goes to the one higher on this page.';

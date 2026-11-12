@@ -1033,6 +1033,7 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 .sb-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 .sb-buttons.align-end { justify-content: flex-end; }
 .sb-buttons.align-start { justify-content: flex-start; }
+.sb-buttons.align-center { justify-content: center; }
 .sb-buttons.align-fill .sbtn { flex: 1; }
 .sbtn {
   height: 30px;
