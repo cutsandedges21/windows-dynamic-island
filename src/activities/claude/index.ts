@@ -1223,7 +1223,9 @@ export class ClaudeActivity extends BaseActivity {
     const waiting = waitingRows(this.rows).length;
     const red = rows.some((r) => r.state === 'failed');
     const noticing = this.notice !== null && this.notice.until > now;
-    const active = this.rows.length > 0 || this.sessions.length > 0 || !!card || !!hold || !!note || this.inputFor !== null || this.finished.size > 0 || noticing;
+    // Claude Status's rule: the rows are what there is. A chat whose row has gone (done a while ago,
+    // dismissed) leaves the pill to others, as in Justin's widget; one still working never does.
+    const active = this.rows.length > 0 || this.sessions.some((s) => s.status === 'working') || !!card || !!hold || !!note || this.inputFor !== null || this.finished.size > 0 || noticing;
     if (!active) return { active: false };
     // Whatever waits on the user holds the island open, Quiet or not, until it is answered or
     // tapped away: Claude Code's prompts with their answers, then a row the island can only point at.
@@ -1254,7 +1256,7 @@ export class ClaudeActivity extends BaseActivity {
                 : running
                   ? { tone: 'info', motion: 'orbit' }
                   : null;
-    const n = sessionCount(this.rows) || this.sessions.length;
+    const n = sessionCount(this.rows) || this.sessions.filter((s) => s.status === 'working').length;
     // A prompt from a hook can come before its row turns orange.
     const awaiting = Math.max(waiting, card || hold || note || needs.length ? 1 : 0);
     return {
@@ -1279,7 +1281,7 @@ export class ClaudeActivity extends BaseActivity {
     const t = this.rows[0];
     const waits = this.hooks.cards.length > 0 || this.hooks.holds.length > 0 || this.waitingNote() !== null;
     if (!t && !waits) return null;
-    const n = sessionCount(this.rows) || this.sessions.length;
+    const n = sessionCount(this.rows) || this.sessions.filter((s) => s.status === 'working').length;
     return {
       icon: 'claude',
       label: String(n || 1),

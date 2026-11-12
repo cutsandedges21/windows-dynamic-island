@@ -753,6 +753,21 @@ describe("the pill (Claude Status's)", () => {
     const { act } = await boot();
     expect(act.render(renv('compact')).map((x) => x.key)).toEqual(['mark', 'none']);
   });
+
+  it("a chat whose row has gone (done a while ago, dismissed) leaves the pill, as in Justin's widget; a working one never does", async () => {
+    const { act } = await boot();
+    // The tracker still lists an old, finished chat, but Claude Status shows no row for it.
+    stubTracker(act, [session({ status: 'awaiting_input' })], { 100: [50] });
+    act.rows = [];
+    expect(act.status().active).toBe(false);
+    // Working, it stays (and counts) even before its row comes.
+    stubTracker(act, [session({ status: 'working' })], { 100: [50] });
+    expect(act.status()).toMatchObject({ active: true, summary: '1 Claude session' });
+    // With rows, the count is the rows' sessions, not the tracker's list.
+    stubTracker(act, [session({ status: 'working' }), session({ id: 'S2', sessionId: 'S2', pid: 200, status: 'awaiting_input' })], { 100: [50], 200: [60] });
+    act.rows = [row({})];
+    expect(act.status().summary).toBe('1 Claude session');
+  });
 });
 
 // ---------------------------------------------------------------- status colours
