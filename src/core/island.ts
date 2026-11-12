@@ -17,7 +17,7 @@ import { beamSpec, BorderGlow, type GlowSpec } from './glow';
 import { cellsOf, CELLS, hiddenTest, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
 import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
 import { native, on, onFileDrop, onTermOpened, sendTo, type FileDrop, type MenuItem, type TermOpened } from './native';
-import { choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
+import { cardChips, choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
 import type { MirrorFrame } from './mirror';
 import { PillRenderer } from './renderer';
 import { menuMain, menuSegments } from './menu';
@@ -1098,13 +1098,14 @@ export class Island {
     // Everything but the card's own activity: pointing at a chip shows that chip's card, and then
     // the pill's own activity is one of the others.
     const others = choice.visible.filter((id) => id !== owner);
-    const MAX = 2;
+    // Two of the others, plus Land's icon (chip-only), which always comes, as on the pill.
+    const { shown, folded } = cardChips(others, (id) => statuses.get(id)?.chipOnly === true, 2);
     const chips: SheetChip[] = [];
-    for (const seg of this.secondarySegments(others.slice(0, MAX), statuses, 'expanded', now, true)) {
+    for (const seg of this.secondarySegments(shown, statuses, 'expanded', now, true)) {
       if (seg.t !== 'chip' || !seg.action) continue;
       chips.push({ key: seg.key, icon: seg.icon, dot: seg.dot, pulse: seg.pulse, tone: seg.tone, action: seg.action, arg: seg.arg, tip: seg.tip });
     }
-    if (others.length > MAX) chips.push({ key: 'island/more', icon: 'more', label: `+${others.length - MAX}`, action: 'island:overflow', tip: 'More activities' });
+    if (folded > 0) chips.push({ key: 'island/more', icon: 'more', label: `+${folded}`, action: 'island:overflow', tip: 'More activities' });
     if (!chips.length) return blocks;
     const at = blocks.findIndex((b) => b.t === 'player');
     const i = at >= 0 ? at : blocks.findIndex((b) => b.t === 'head');

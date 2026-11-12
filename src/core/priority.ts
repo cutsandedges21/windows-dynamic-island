@@ -82,3 +82,13 @@ function order(list: Candidate[], first: string | null): string[] {
   if (!first) return ids;
   return [first, ...ids.filter((id) => id !== first)];
 }
+
+/**
+ * The chips a card grown out of the pill carries, the same way the pill picks them: up to `max`
+ * of the others, then every chip-only one (Land's icon), which always comes, last; the rest fold
+ * into "+N" (`folded`). Without this, Land folded into "+1" as soon as a card grew (Justin).
+ */
+export function cardChips(others: string[], chipOnly: (id: string) => boolean, max: number): { shown: string[]; folded: number } {
+  const plain = others.filter((id) => !chipOnly(id));
+  return { shown: [...plain.slice(0, max), ...others.filter(chipOnly)], folded: Math.max(0, plain.length - max) };
+}
