@@ -881,7 +881,9 @@ export const native = {
   /** The computer's name, for phones (Land's name when Land runs). */
   remoteName: () => call<string>('remote_name', {}, ''),
   /** A notification to every phone that turned them on; a tap opens the app on `open`'s card. How many it went to. */
-  remotePush: (title: string, body: string, tag: string, open: string, urgent: boolean) => call<number>('remote_push', { title, body, tag, open, urgent }, 0),
+  /** To every phone with a push subscription, or only `phone` (its id) when given. */
+  remotePush: (title: string, body: string, tag: string, open: string, urgent: boolean, phone?: string) =>
+    call<number>('remote_push', { title, body, tag, open, urgent, phone: phone || null }, 0),
   /** Whether Rust lets paired phones open terminals (Settings › Your phone, and Windows Hello isn't asked before Allow). */
   remoteTermAllow: (on: boolean) => call<undefined>('remote_term_allow', { on }, undefined),
 

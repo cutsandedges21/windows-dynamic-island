@@ -75,7 +75,7 @@ describe('the phone, after a tapped notification', () => {
 function setupHub(list: PhoneInfo[]) {
   const bus = new Map<string, Set<(p: unknown) => void>>();
   const sent: Array<{ phone: string | null; msg: IslandMsg }> = [];
-  const pushes: Array<[string, string, string, string, boolean]> = [];
+  const pushes: Array<[string, string, string, string, boolean, string?]> = [];
   const files: Array<[string, string]> = [];
   const state = { list };
   const native: PhoneNative = {
@@ -139,8 +139,8 @@ describe('the hub', () => {
     expect(holdForPhone(PH, note('https://example.com', (e) => ends.push(`t:${e}`)))).toBe(true);
     expect(holdForPhone(PH, pic('cat.jpg', (e) => ends.push(`f:${e}`)))).toBe(true);
     expect(h.pushes).toEqual([
-      ['MossLaptop sent you a link', 'example.com', INBOX_OPEN, INBOX_OPEN, false],
-      ['MossLaptop sent you a picture', 'Tap to save it to Photos.', INBOX_OPEN, INBOX_OPEN, false],
+      ['MossLaptop sent you a link', 'example.com', INBOX_OPEN, INBOX_OPEN, false, PH],
+      ['MossLaptop sent you a picture', 'Tap to save it to Photos.', INBOX_OPEN, INBOX_OPEN, false, PH],
     ]);
     expect(h.hub.held(PH)).toBe(2);
     expect(h.sent).toEqual([]);
@@ -162,6 +162,16 @@ describe('the hub', () => {
     await flush();
     expect(holdForPhone(PH, note('hi'))).toBe(true);
     expect(h.pushes).toEqual([]);
+    h.hub.stop();
+  });
+
+  it('notifies only the phone the item waits for, not every phone with notifications on', async () => {
+    const h = setupHub([iphone(false), { ...iphone(false), id: 'other', name: 'iPad' }]);
+    await h.hub.start();
+    await flush();
+    expect(holdForPhone('other', note('hi'))).toBe(true);
+    expect(h.pushes.map((p) => p[5])).toEqual(['other']);
+    expect(h.hub.held(PH)).toBe(0);
     h.hub.stop();
   });
 

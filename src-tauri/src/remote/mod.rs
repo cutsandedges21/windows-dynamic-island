@@ -489,11 +489,12 @@ pub fn remote_vapid(state: tauri::State<'_, RemoteState>) -> String {
     }
 }
 
-/// A notification to every phone with a push subscription: how many push services took it.
+/// A notification to every phone with a push subscription, or only `phone` (its id) when given:
+/// how many push services took it.
 #[tauri::command]
-pub async fn remote_push(app: tauri::AppHandle, title: String, body: String, tag: Option<String>, open: Option<String>, urgent: bool) -> usize {
+pub async fn remote_push(app: tauri::AppHandle, title: String, body: String, tag: Option<String>, open: Option<String>, urgent: bool, phone: Option<String>) -> usize {
     match remote_of(&app) {
-        Some(r) => r.push(&title, &body, tag.as_deref(), open.as_deref(), urgent).await,
+        Some(r) => r.push(&title, &body, tag.as_deref(), open.as_deref(), urgent, phone.as_deref()).await,
         None => 0,
     }
 }
