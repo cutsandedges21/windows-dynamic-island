@@ -87,7 +87,7 @@ export const GLANCE: Glance[] = [
   { id: 'land', label: 'Sending files nearby', icon: 'land' },
   { id: 'screenshots', label: 'Screenshots', icon: 'screenshot' },
   { id: 'clipboard', label: 'Clipboard', icon: 'clipboard' },
-  { id: 'system-controls', label: 'Volume and brightness', icon: 'speaker', windows: true },
+  { id: 'system-controls', label: 'System Controls', icon: 'sliders', windows: true },
 ];
 
 /** What each use ticks in the second question before the user changes anything. */
