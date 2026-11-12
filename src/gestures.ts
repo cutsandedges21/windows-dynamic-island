@@ -60,8 +60,9 @@ export function gestureGroups(s: Settings, on: Platform): GestureGroup[] {
       items: [
         ['Timer: scroll a box', 'Over the hours, minutes or seconds: down adds, up takes away.'],
         ['Timer: click a box', 'Type the time yourself, HH MM SS. Enter sets it.'],
-        // Top apps and Snipping Tool are Windows' (not on a Mac yet).
+        // Top apps, Snipping Tool and the player's jump are Windows' (not on a Mac yet).
         ...windowsOnly([
+          ['Music: click the album art', 'Jumps to the app that is playing, or the browser tab it plays in.'],
           ['System Stats: click a bar', 'Lists the five apps using the most of it.'],
           ['System Controls: Screenshot, Record', 'Drag over an area for Snipping Tool to capture or record it.'],
           ['System Controls: Battery saver', 'Shows whether it is on; click it to switch it in Windows Settings (on a laptop).'],

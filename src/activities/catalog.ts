@@ -110,7 +110,7 @@ export const CATALOG: ActivityMeta[] = [
         key: 'hoverPlayer',
         type: 'toggle',
         label: 'Player on hover',
-        help: "Point at the music on the pill and it grows into a player, like an iPhone's Dynamic Island: the track, a scrubber, and play, skip and sound output. Even when the hover card is set to Claude stats. Off, the pill widens instead.",
+        help: "Point at the music on the pill and it grows into a player, like an iPhone's Dynamic Island: the track, a scrubber, and play, skip and sound output; click the art to go to the app playing. Even when the hover card is set to Claude stats. Off, the pill widens instead.",
         default: true,
       },
       { key: 'showArt', type: 'toggle', label: 'Album art', default: true },
@@ -354,6 +354,26 @@ export const CATALOG: ActivityMeta[] = [
       { key: 'expandedGpu', type: 'toggle', label: 'GPU when expanded', default: true },
       { key: 'cpuSpike', type: 'number', label: 'CPU spike at', default: 90, min: 50, max: 100, unit: '%' },
       { key: 'memSpike', type: 'number', label: 'Memory warning at', default: 92, min: 50, max: 100, unit: '%' },
+    ],
+  },
+  {
+    // Justin's Claude Sessions widget in the island, beside Claude Code (which answers prompts and
+    // shows limits): every Claude session at a glance, the Claude app and Chrome included.
+    id: 'claudeStatus',
+    mac: 'never',
+    name: 'Claude Status',
+    description:
+      'Every Claude session at a glance: Claude Code, the Claude app and Chrome, with purple background shells, unread dots and progress bars for long runs.',
+    icon: 'claude',
+    category: 'developer',
+    enabled: false,
+    priority: 'medium',
+    // Interrupt on: a session waiting on you (orange) holds the island open.
+    behavior: B(true, true, true, true),
+    options: [
+      { key: 'showDone', type: 'toggle', label: 'Pop up when a session finishes', help: 'Shows the island for a moment when a session is done or fails. One that needs you (orange) always opens it, until you answer or tap away.', default: true },
+      { key: 'showAutoModel', type: 'toggle', label: 'Show Auto model button', help: 'Once Auto model (above) is on, a button in the expanded island pauses it and turns it back on, without removing it.', default: true },
+      { key: 'glowInFront', type: 'toggle', label: 'Running glow in front of everything', help: 'While a session runs (blue), the blue glow stays on round the island even when music or another activity is in front, over that activity’s own glow. Something that needs you, like a low battery, still shows over it. Off: the blue glow shows only when Claude Status is in front, or when nothing in front has a glow.', default: true },
     ],
   },
   {

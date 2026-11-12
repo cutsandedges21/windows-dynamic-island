@@ -2,18 +2,28 @@
 // source the volume flyout uses, so Spotify, browsers, Apple Music and local
 // players all work without per-app integrations.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use base64::Engine as _;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+use windows::core::{HSTRING, PCWSTR};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionManager as Manager, GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
 };
 use windows::Storage::Streams::DataReader;
-use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::UI::Accessibility::{
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationSelectionItemPattern, TreeScope_Descendants,
+    UIA_ControlTypePropertyId, UIA_SelectionItemPatternId, UIA_TabItemControlTypeId,
+};
+use windows::Win32::UI::Shell::{ApplicationActivationManager, IApplicationActivationManager, AO_NONE};
 
 use crate::overlay::LABEL as ISLAND;
+use crate::procs::WindowRow;
 
 const FILETIME_UNIX_OFFSET_MS: i64 = 11_644_473_600_000;
 const MAX_THUMB: u32 = 1_500_000;
@@ -201,6 +211,12 @@ pub async fn media_control(action: String, value: Option<f64>) -> bool {
             "next" => s.TrySkipNextAsync()?.get()?,
             "prev" => s.TrySkipPreviousAsync()?.get()?,
             "seek" => s.TryChangePlaybackPositionAsync((value.unwrap_or(0.0) * 10_000_000.0) as i64)?.get()?,
+            "focus" => {
+                let props = s.TryGetMediaPropertiesAsync()?.get()?;
+                let text = |h: windows::core::Result<HSTRING>| h.map(|h| h.to_string()).unwrap_or_default();
+                let aumid = text(s.SourceAppUserModelId());
+                focus(&aumid, &text(props.Title()), &text(props.Artist()), &text(props.AlbumTitle()))
+            }
             _ => false,
         };
         Ok(ok)
@@ -211,9 +227,102 @@ pub async fn media_control(action: String, value: Option<f64>) -> bool {
     .unwrap_or(false)
 }
 
+/// Browsers, whose media session is one of their tabs: (friendly_app name, process).
+const BROWSERS: [(&str, &str); 6] =
+    [("Chrome", "chrome.exe"), ("Edge", "msedge.exe"), ("Brave", "brave.exe"), ("Opera", "opera.exe"), ("Arc", "arc.exe"), ("Firefox", "firefox.exe")];
+
+/// Brings forward whatever is playing: the browser tab it's in, else the app's window
+/// (found by its process, or for a Store app like Netflix, by activating it).
+fn focus(aumid: &str, title: &str, artist: &str, album: &str) -> bool {
+    let app = friendly_app(aumid);
+    let exes: HashMap<u32, String> = crate::procs::snapshot(false).into_iter().map(|r| (r.0, r.2.to_lowercase())).collect();
+    let windows = crate::procs::windows();
+    if let Some((_, exe)) = BROWSERS.iter().find(|(name, _)| *name == app) {
+        let mine: Vec<&WindowRow> = windows.iter().filter(|w| exes.get(&w.pid).is_some_and(|e| e == exe)).collect();
+        if let Some(hwnd) = select_tab(&mine, title, artist, album) {
+            return crate::procs::activate(hwnd);
+        }
+        // No tab matched: the window showing it, else the frontmost one.
+        let t = title.to_lowercase();
+        let pick = mine.iter().find(|w| !t.is_empty() && w.title.to_lowercase().contains(&t)).or(mine.first());
+        return pick.is_some_and(|w| crate::procs::activate(w.hwnd));
+    }
+    // "Spotify.exe", or Spotify from the Store (whose id only names its package).
+    let exe = aumid.rsplit(['\\', '/']).next().unwrap_or(aumid).to_lowercase();
+    let stem = app.to_lowercase();
+    let own = windows.iter().find(|w| exes.get(&w.pid).is_some_and(|e| *e == exe || e.trim_end_matches(".exe") == stem));
+    if let Some(w) = own {
+        return crate::procs::activate(w.hwnd);
+    }
+    aumid.contains('!') && activate_package(aumid)
+}
+
+/// Switches to the browser tab that's playing and returns its window. Tabs only show
+/// their names to UI Automation, so the playing one is the one named after the title
+/// (Chrome also adds "Audio playing" to it, which breaks ties and finds Netflix's
+/// tabs, which are all just "Netflix").
+fn select_tab(windows: &[&WindowRow], title: &str, artist: &str, album: &str) -> Option<isize> {
+    unsafe {
+        let a: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+        let is_tab = a.CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(UIA_TabItemControlTypeId.0)).ok()?;
+        let mut best: Option<(u32, isize, IUIAutomationElement)> = None;
+        for w in windows {
+            let Ok(root) = a.ElementFromHandle(HWND(w.hwnd as *mut _)) else { continue };
+            let Ok(tabs) = root.FindAll(TreeScope_Descendants, &is_tab) else { continue };
+            for i in 0..tabs.Length().unwrap_or(0) {
+                let Ok(tab) = tabs.GetElement(i) else { continue };
+                let name = tab.CurrentName().map(|b| b.to_string()).unwrap_or_default();
+                let score = tab_score(&name, title, artist, album);
+                if score > 0 && best.as_ref().is_none_or(|b| score > b.0) {
+                    best = Some((score, w.hwnd, tab));
+                }
+            }
+        }
+        let (_, hwnd, tab) = best?;
+        if let Ok(pick) = tab.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId) {
+            let _ = pick.Select();
+        }
+        Some(hwnd)
+    }
+}
+
+fn tab_score(name: &str, title: &str, artist: &str, album: &str) -> u32 {
+    let name = name.to_lowercase();
+    let has = |s: &str| s.chars().count() > 2 && name.contains(&s.to_lowercase());
+    let mut score = 0;
+    if has(title) {
+        score += 4;
+    }
+    if name.contains("audio playing") || name.contains("playing audio") {
+        score += 2;
+    }
+    if score > 0 && (has(artist) || has(album)) {
+        score += 1;
+    }
+    score
+}
+
+fn activate_package(aumid: &str) -> bool {
+    crate::procs::allow_any_foreground();
+    unsafe {
+        let Ok(m) = CoCreateInstance::<_, IApplicationActivationManager>(&ApplicationActivationManager, None, CLSCTX_ALL) else {
+            return false;
+        };
+        m.ActivateApplication(&HSTRING::from(aumid), PCWSTR::null(), AO_NONE).is_ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::friendly_app;
+    use super::{friendly_app, tab_score};
+
+    #[test]
+    fn the_playing_tab_scores_highest() {
+        let crave = "Occupation Double Panamá | Saison 10 Épisode 42 | Crave - Memory usage - 141 MB";
+        assert!(tab_score(crave, "Occupation Double Panamá", "", "Jeudi") >= 4);
+        assert_eq!(tab_score("Fahrenheit 451 - Google Search", "Occupation Double Panamá", "", ""), 0);
+        assert!(tab_score("Netflix - Audio playing", "Wednesday", "", "") > tab_score("Netflix", "Wednesday", "", ""));
+    }
 
     #[test]
     fn app_ids_get_readable_names() {

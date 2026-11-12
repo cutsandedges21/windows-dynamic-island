@@ -309,7 +309,7 @@ export class PillRenderer {
         e = el('span', `seg seg-icon sz-${seg.size ?? 'md'}`, icon(seg.icon));
         break;
       case 'dot':
-        e = el('span', 'seg seg-dot', '<i class="ring"></i><i class="core"></i>');
+        e = el('span', 'seg seg-dot', '<i class="ring"></i><i class="core"></i><i class="badge"></i>');
         break;
       case 'text':
         e = el('span', 'seg seg-text');
@@ -399,7 +399,7 @@ export class PillRenderer {
         break;
       }
       case 'dot':
-        e.className = `seg seg-dot tone-${seg.tone}${seg.pulse ? ' pulse' : ''}`;
+        e.className = `seg seg-dot tone-${seg.tone}${seg.pulse ? ' pulse' : ''}${seg.badge ? ' unread' : ''}`;
         if (prev && prev.t === 'dot' && prev.tone !== seg.tone) {
           springAnimate(e.querySelector('.core')!, [{ transform: 'scale(1.9)' }, { transform: 'scale(1)' }], springs.bouncy);
         }

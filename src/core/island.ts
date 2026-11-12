@@ -8,6 +8,7 @@
 import { CATALOG_BY_ID } from '../activities/catalog';
 import type { Activity, ActivityContext, ActivityStatus, RenderEnv, SheetEnv, SurfaceOptions } from './activity';
 import { setReducedMotion } from './animator';
+import { pillBeam } from './beam';
 import { BubbleView } from './bubble';
 import { ChatBar, type ChatAction, type ChatView } from './chat';
 import { lookFor } from './looks';
@@ -57,6 +58,8 @@ const GRID_ROWS = 4;
 /** Narrowest grid that still gives each of the four columns 90 px. */
 const GRID_MIN_W = GRID_COLS * 90 + GRID_GAP * (GRID_COLS - 1) + GRID_PAD * 2;
 const atLeast = (a: Level, b: Level): Level => (levelIdx(a) >= levelIdx(b) ? a : b);
+/** Activities that stay in front once they pop up (a chat finished, a song started), until the user picks another. */
+const STAYS_IN_FRONT = new Set(['claudeStatus', 'music']);
 /** How long opening or closing keeps the pill's shape from overshooting: longer than the motion. */
 const CALM_MS = 1200;
 /** Chrome Remote Desktop's state is asked this often, for phones' Screen button. */
@@ -499,8 +502,8 @@ export class Island {
       open: () => {
         this.open = true;
         this.view = 'main';
-        this.selected = id;
-        this.pickedAt = 0;
+        // Opened by the activity itself, not picked: a tap away lets it go.
+        this.pick(id, 0);
         this.schedule();
       },
       close: () => {
@@ -572,6 +575,8 @@ export class Island {
     const key = opts.key ?? 'event';
     this.surfaces = this.surfaces.filter((s) => !(s.id === id && s.key === key) && s.until > now);
     this.surfaces.push({ id, key, until: now + (opts.ms ?? 3500), level: opts.level ?? 'expanded', at: now });
+    // Picked just before its own event, so the event still shows as one (its card), then it stays.
+    if (STAYS_IN_FRONT.has(id)) this.pick(id, now - 1);
     if (opts.bump !== false) this.pendingBump = true;
     this.schedule();
     setTimeout(() => this.schedule(), (opts.ms ?? 3500) + 30);
@@ -622,6 +627,8 @@ export class Island {
     if (this.selected && !statuses.get(this.selected)?.active) this.selected = null;
     const choice = choosePrimary(candidates, { selected: this.selected, pickedAt: this.pickedAt, surfaces: this.surfaces, now, dnd: this.settings.general.dnd });
     const primary = choice.primary;
+    // Asking for you pops it up too: once answered, it stays in front.
+    if (choice.urgent && primary && STAYS_IN_FRONT.has(primary) && this.selected !== primary) this.pick(primary, now);
     this.primaryId = primary;
     // Scrolling steps through a steady order: the primary-first one would only flip between two.
     this.visibleIds = choice.ranked;
@@ -803,7 +810,7 @@ export class Island {
     this.composeSheet(picked, orient, w, immediate);
     // The pill rests under a chat's grown card (see underCard): compose once more when that changes.
     if (this.sheet.grown && !morphing !== underCard) this.schedule();
-    const beam: ActivityStatus['beam'] = this.fileDrag ? { tone: 'accent', motion: 'pulse' } : (pStatus?.beam ?? this.busyElsewhere(choice.visible, statuses));
+    const beam: ActivityStatus['beam'] = this.fileDrag ? { tone: 'accent', motion: 'pulse' } : pillBeam(primary, [...choice.visible, ...this.settings.activities.order], statuses);
     this.syncGlow(hidden ? null : beam, !hidden && choice.urgent && this.sheet.visible, morph !== null || this.sheet.covering);
     // Every frame is kept for phones, whether or not Duplicate copies run.
     this.lastFrame = {
@@ -1375,20 +1382,6 @@ export class Island {
     this.cardGlow.set(cardUrgent && !grown ? urgent : null);
   }
 
-  /**
-   * The pill's own activity has no glow: something busy elsewhere may still circle
-   * the edge (Claude thinking while music has the pill). Only orbits: a fill or a
-   * pulse belongs to whatever is on the pill.
-   */
-  private busyElsewhere(visible: string[], statuses: Map<string, ActivityStatus>): ActivityStatus['beam'] {
-    for (const id of [...visible, ...this.settings.activities.order]) {
-      const st = statuses.get(id);
-      const motion = st?.beam ? (st.beam.motion ?? (st.beam.urgent ? 'pulse' : 'orbit')) : null;
-      if (st?.active && st.weight === 'foreground' && motion === 'orbit') return st.beam;
-    }
-    return null;
-  }
-
   /** Activity actions get the activity's id; island actions pass through. */
   private nsAction(id: string, action: string): string {
     return action.startsWith('island:') ? action : `act:${id}:${action}`;
@@ -1588,9 +1581,8 @@ export class Island {
         break;
       }
       case 'island:select':
-        this.selected = String(arg);
         // A chip-only activity (Land's icon, picked from the overflow list) never keeps the pill at rest.
-        this.pickedAt = this.statuses().get(String(arg))?.chipOnly ? 0 : Date.now();
+        this.pick(String(arg), this.statuses().get(String(arg))?.chipOnly ? 0 : Date.now());
         this.view = 'main';
         // The card follows the pick, not the segment the pointer last crossed (a grown card hides the pill's).
         this.hoverKey = `chip/${String(arg)}`;
@@ -1868,8 +1860,13 @@ export class Island {
     const ids = this.visibleIds;
     if (ids.length < 2) return;
     const i = Math.max(0, ids.indexOf(this.primaryId ?? ''));
-    this.selected = ids[(i + dir + ids.length) % ids.length];
-    this.pickedAt = Date.now();
+    this.pick(ids[(i + dir + ids.length) % ids.length], Date.now());
+  }
+
+  /** Puts an activity in front until the user picks another (a tap away keeps it); `at` 0 lets a tap away clear it. */
+  private pick(id: string, at: number): void {
+    this.selected = id;
+    this.pickedAt = at;
   }
 
   private tick(): void {

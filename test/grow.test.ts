@@ -74,6 +74,11 @@ describe('growing out of the pill', () => {
     expect(chatView('land', 'card', { key: 'land/done:x', blocks: [] }).morph).toBeUndefined();
   });
 
+  it("Claude Status's finished and needs-you card grows out of the pill when it grows into a card", () => {
+    expect(chatView('claudeStatus', 'card', { key: 'claudeStatus/claudeStatus', blocks: [] }).morph).toBe(true);
+    expect(chatView('claudeStatus', 'wide', { key: 'claudeStatus/claudeStatus', blocks: [] }).morph).toBeUndefined();
+  });
+
   it('clicking any grown card opens the island in one motion, the same card carrying on', () => {
     // Pointed at Weather (no card of its own): its tile's card grows out of the pill.
     const grown = hoverView('card', null, weatherTile)!;

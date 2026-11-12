@@ -64,6 +64,13 @@ describe("Moss's 0.4.2 settings file", () => {
     expect(hoverGrows('music', grows(s, 'music'), s.activities.config.music.options)).toBe('wide');
   });
 
+  it("Claude Status, which Moss never had, comes in off with Justin's defaults, after System Stats", () => {
+    expect(s.activities.config.claudeStatus).toMatchObject({ enabled: false, priority: 'medium', persistent: true, interrupt: true, options: { showDone: true, showAutoModel: true, glowInFront: true } });
+    expect(s.activities.config.claudeStatus.grows).toBeUndefined();
+    expect(grows(s, 'claudeStatus')).toBe('card');
+    expect(s.activities.order).toContain('claudeStatus');
+  });
+
   it('loading it again changes nothing', () => {
     expect(migrate(JSON.parse(JSON.stringify(s)))).toEqual(s);
   });
@@ -106,6 +113,22 @@ describe("Justin's 0.2.11 settings file", () => {
     expect(grows(s, 'claude')).toBe('wide');
     expect(grows(s, 'system-controls')).toBe('card');
     expect(grows(s, 'weather')).toBe('wide');
+  });
+
+  it('keeps Claude Status on, where he had it, with its pop-ups, Auto model button and running glow', () => {
+    expect(s.activities.config.claudeStatus).toMatchObject({
+      enabled: true, priority: 'medium', autoShow: true, persistent: true, interactive: true, interrupt: true,
+      options: { showDone: true, showAutoModel: true, glowInFront: true },
+    });
+    expect(s.activities.order.indexOf('claudeStatus')).toBe(s.activities.order.indexOf('system') + 1);
+    // Nothing saved how it grows: his Sideways, like the rest.
+    expect(grows(s, 'claudeStatus')).toBe('wide');
+  });
+
+  it("Claude Status's switches he turned off stay off", () => {
+    const saved = load('settings-justin-0.2.11.json') as { activities: { config: Record<string, { options: Record<string, unknown> }> } };
+    saved.activities.config.claudeStatus.options = { showDone: false, showAutoModel: false, glowInFront: false };
+    expect(migrate(saved).activities.config.claudeStatus.options).toMatchObject({ showDone: false, showAutoModel: false, glowInFront: false });
   });
 
   it('loading it again changes nothing', () => {

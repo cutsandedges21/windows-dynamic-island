@@ -381,12 +381,14 @@ const ACTION_KEYS = new Set(['action', 'engage', 'cancel']);
 
 /**
  * Every action string a view or pill offers to be pressed (the phone's allowlist is built from
- * these): `action`, `engage` and `cancel` fields anywhere, and every value of a player's `actions`.
+ * these): `action`, `engage` and `cancel` fields anywhere, every value of a player's `actions`, and
+ * a media tile's `open` (its art).
  */
 export function actionsIn(value: unknown, out: Set<string> = new Set()): Set<string> {
   if (Array.isArray(value)) {
     for (const x of value) actionsIn(x, out);
   } else if (isObj(value)) {
+    if (value.k === 'media' && typeof value.open === 'string' && value.open) out.add(value.open);
     for (const [k, x] of Object.entries(value)) {
       if (ACTION_KEYS.has(k) && typeof x === 'string' && x) out.add(x);
       else if (k === 'actions' && isObj(x)) for (const a of Object.values(x)) typeof a === 'string' && a && out.add(a);

@@ -1,7 +1,8 @@
 // Music: whatever Windows' media controls (GSMTC) report — Spotify, YouTube in
 // a browser, Apple Music, local players — with play/pause and skip. Pointing at
 // it grows the pill into an iPhone-style player (src/core/player.ts); the bars
-// take their colour from the album art.
+// take their colour from the album art. Clicking the art, in the player or the
+// Control Center tile, brings the app playing forward.
 
 import { reducedMotion } from '../core/animator';
 import { artColour, barColour } from '../core/artcolor';
@@ -216,7 +217,13 @@ export class MusicActivity extends BaseActivity {
       );
     }
     const showArt = this.ctx.options<{ showArt: boolean }>().showArt !== false;
-    return { key: 'music', span: 2, rows: 2, body: { k: 'media', art: showArt ? m.thumbnail : null, title: m.title, artist: m.artist || m.app || '', playing, progress, buttons } };
+    const open = env.interactive && this.canOpen() ? 'open' : undefined;
+    return { key: 'music', span: 2, rows: 2, body: { k: 'media', art: showArt ? m.thumbnail : null, title: m.title, artist: m.artist || m.app || '', playing, progress, buttons, open } };
+  }
+
+  /** Clicking the art brings the app playing forward: Windows finds its tab or window (media.rs `focus`). */
+  private canOpen(): boolean {
+    return platform === 'windows';
   }
 
   private lyricsOn(): boolean {
@@ -268,7 +275,9 @@ export class MusicActivity extends BaseActivity {
       color: this.barTint() ?? null,
       lyric: this.lyric(pos, env.now),
       // Not interactive (Activities › Music): the player only shows, with no buttons.
-      actions: on ? { prev: 'prev', toggle: 'toggle', next: 'next', seek: 'seek', output: platform === 'windows' ? 'output' : undefined } : { prev: '', toggle: '', next: '' },
+      actions: on
+        ? { prev: 'prev', toggle: 'toggle', next: 'next', seek: 'seek', output: platform === 'windows' ? 'output' : undefined, open: this.canOpen() ? 'open' : undefined }
+        : { prev: '', toggle: '', next: '' },
       output: { icon: headphonesLike(this.device) ? 'headphones' : 'speaker', tip: this.device ? `Sound output: ${this.device}` : 'Sound output' },
     };
     return { key: 'player', morph: true, blocks: [block] };
@@ -277,6 +286,12 @@ export class MusicActivity extends BaseActivity {
   async action(name: string, arg?: unknown): Promise<void> {
     if (name === 'output') {
       await native.soundOutput();
+      return;
+    }
+    if (name === 'open') {
+      // The tab or app it's playing in comes forward, and the island steps out of its way.
+      if (!native.demo) await native.mediaControl('focus');
+      this.ctx.close();
       return;
     }
     if (name !== 'toggle' && name !== 'next' && name !== 'prev' && name !== 'seek') return;

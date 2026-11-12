@@ -11,7 +11,7 @@ import { BaseActivity } from './base';
 
 const MAX_ITEMS = 10;
 const MAX_MS = 24 * 3600 * 1000;
-const TONES: ReadonlySet<string> = new Set(['default', 'muted', 'dim', 'accent', 'claude', 'good', 'warn', 'bad', 'info', 'violet']);
+const TONES: ReadonlySet<string> = new Set(['default', 'muted', 'dim', 'accent', 'claude', 'good', 'warn', 'bad', 'info', 'violet', 'purple']);
 /** Links the island will open: https anywhere, http only for localhost. */
 const SAFE_URL = /^(?:https:\/\/\S+|http:\/\/localhost(?::\d+)?(?:[/?#]\S*)?)$/i;
 

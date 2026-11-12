@@ -8,6 +8,7 @@ import { LandActivity } from './land';
 import { CalendarActivity } from './calendar';
 import { CallsActivity } from './calls';
 import { ClaudeActivity } from './claude';
+import { ClaudeStatusActivity } from './claude-status';
 import { ClipboardActivity } from './clipboard';
 import { DevicesActivity } from './devices';
 import { DownloadsActivity } from './downloads';
@@ -33,6 +34,7 @@ import { WorkspacesActivity } from './workspaces';
 export function createRegistry(): Map<string, () => Activity> {
   return new Map<string, () => Activity>([
     ['claude', () => new ClaudeActivity()],
+    ['claudeStatus', () => new ClaudeStatusActivity()],
     ['music', () => new MusicActivity()],
     ['game', () => new GameActivity()],
     ['timer', () => new TimerActivity()],

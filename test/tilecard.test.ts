@@ -38,6 +38,8 @@ describe('tile card', () => {
 
   it('media becomes a player, and a forecast lists its hours', () => {
     expect(tileCard({ key: 'k', body: { k: 'media', title: 'Song', artist: 'Band', playing: true, buttons: [] } }, 'N', 'x')[0].t).toBe('player');
+    // Its art still brings the app playing forward.
+    expect(tileCard({ key: 'k', body: { k: 'media', title: 'Song', artist: 'Band', playing: true, buttons: [], open: 'open' } }, 'N', 'x')[0]).toMatchObject({ actions: { open: 'open' } });
     const f = tileCard({ key: 'k', body: { k: 'forecast', icon: 'sun', temp: '18°', label: 'Sunny', hours: [{ t: '3 PM', icon: 'sun', temp: '19°' }] } }, 'N', 'x');
     expect(f.map((b) => b.t)).toEqual(['head', 'stats']);
   });

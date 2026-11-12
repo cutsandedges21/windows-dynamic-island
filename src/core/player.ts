@@ -1,7 +1,8 @@
 // The music player the pill grows into on hover, laid out like an iPhone's Dynamic Island:
 // the art and the track with the bars beside them, the time on either side of a scrubber,
-// and rewind, play or pause, and forward, with the sound output at the end. A card block
-// (sheet.ts), patched in place every second so the bars and a drag on the scrubber survive.
+// and rewind, play or pause, and forward, with the sound output at the end; clicking the art
+// brings the app playing forward. A card block (sheet.ts), patched in place every second so
+// the bars and a drag on the scrubber survive.
 
 import { icon } from './icons';
 
@@ -17,8 +18,8 @@ export interface PlayerBlock {
   duration: number | null;
   /** The bars' colour, from the art (artcolor.ts); null keeps the accent. */
   color: string | null;
-  /** What the buttons do; `seek` gets the seconds to jump to. */
-  actions: { prev: string; toggle: string; next: string; seek?: string; output?: string };
+  /** What the buttons do; `seek` gets the seconds to jump to, `open` is clicking the art (the app playing comes forward). */
+  actions: { prev: string; toggle: string; next: string; seek?: string; output?: string; open?: string };
   /** The output button's look: headphones or a speaker, and the device's name. */
   output?: { icon: string; tip: string };
   /** The line being sung: '' between lines, null (no space) when the song has no synced lyrics. */
@@ -91,6 +92,7 @@ export function patchPlayer(e: HTMLElement, b: PlayerBlock, bind: Bind): void {
       art.replaceChildren(img);
     } else art.innerHTML = icon('music');
   }
+  bind(art, b.actions.open, undefined);
   e.querySelector('.pl-t1')!.textContent = b.title;
   e.querySelector('.pl-t2')!.textContent = b.artist;
   e.querySelector('.pl-t2')!.toggleAttribute('hidden', !b.artist);

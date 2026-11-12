@@ -63,7 +63,8 @@ describe('System Controls in place of Sound, Brightness and Caps Lock', () => {
     };
     const s = migrate(justin);
     expect(s.activities.config['system-controls']).toMatchObject({ enabled: true, options: { volume: false, device: false, brightness: true, caps: true, num: true } });
-    expect(s.activities.order.slice(0, 3)).toEqual(['claude', 'music', 'system-controls']);
+    // His Claude Status is an activity here too, so it keeps its place.
+    expect(s.activities.order.slice(0, 4)).toEqual(['claude', 'claudeStatus', 'music', 'system-controls']);
     expect(s.island.grid.pages).toEqual([['music/music', 'system-controls/sound', null, 'battery/battery']]);
     expect(s.island.grid.sizes).toEqual({ 'system-controls/sound': '2x1' });
   });

@@ -72,6 +72,62 @@ export interface TranscriptMeta {
    */
   marks: Array<[kind: 'p' | 'e' | 'x' | 'c' | 'u', ts: number, tokens: number]>;
 }
+/** Claude Status: one event of a transcript scan (fsx.rs transcript_work); `at` in ms. */
+export type WorkEvent =
+  | { k: 'prompt'; at: number }
+  | { k: 'stop'; at: number }
+  | { k: 'todo'; at: number; total: number; done: number }
+  | { k: 'taskCreate'; at: number }
+  | { k: 'taskUpdate'; at: number; id: string; status: string }
+  | { k: 'shell'; at: number; id: string; cmd: string; desc: string; bg: boolean }
+  | { k: 'result'; at: number; id: string; task: string | null };
+export interface WorkScan {
+  consumed: number;
+  size: number;
+  events: WorkEvent[];
+}
+/** Workflow agents still working for a session (fsx.rs workflows). */
+export interface WorkflowRun {
+  session: string;
+  started: number;
+  finished: number;
+  firstMs: number;
+}
+/** A Claude notification Windows kept (claude_status.rs). */
+export interface ClaudeNotification {
+  at: number;
+  source: 'app' | 'chrome' | 'titled';
+  title: string;
+  message: string;
+}
+/** A Claude conversation the app or Chrome shows (claude_status.rs UI Automation). */
+export interface UiChat {
+  source: 'app' | 'chrome';
+  hwnd: number;
+  title: string;
+  ord: number;
+  state: 'running' | 'input' | 'done' | 'failed' | 'idle';
+  open: boolean;
+  unread: boolean;
+  chat: string;
+  step: number | null;
+  steps: number | null;
+}
+export interface UiScan {
+  chats: UiChat[];
+  sidebarOpen: boolean;
+  app: boolean;
+}
+/** Claude Status's Auto model (auto_model.rs): its hooks in Claude Code, and whether it is paused. */
+export interface AutoModelState {
+  installed: boolean;
+  on: boolean;
+  error: string | null;
+  /** It didn't turn on for want of Node.js; installAutoModelNode() gets Island's own copy. */
+  needsNode: boolean;
+  /** The size of that download, said before it starts. */
+  nodeDownloadBytes: number;
+}
 export interface UsageScan {
   consumed: number;
   size: number;
@@ -682,6 +738,23 @@ export const native = {
     call<boolean>('claude_resume', { sessionId, cwd, prompt, minimized }, false),
   claudeInject: (pid: number, text: string) => call<{ ok: boolean; error: string | null }>('claude_inject', { pid, text }, { ok: false, error: 'not available' }),
   selectTerminalTab: (title: string) => call<number | null>('claude_select_wt_tab', { title }, null),
+  // Claude Status (claude_status.rs, fsx.rs): what the Claude Sessions widget read with Python and PowerShell.
+  transcriptWork: (path: string, offset: number, open: string[]) => call<WorkScan | null>('claude_transcript_work', { path, offset, open }, null),
+  claudeWorkflows: (projectsDir: string, sessions: string[], staleMs: number) =>
+    call<WorkflowRun[]>('claude_workflows', { projectsDir, sessions, staleMs }, []),
+  claudeTaskFinished: (sessionId: string, task: string) => call<boolean>('claude_task_finished', { sessionId, task }, false),
+  claudeStatusCmdlines: (pids: number[]) => call<Array<string | null>>('claude_status_cmdlines', { pids }, pids.map(() => null)),
+  claudeStatusNotifications: (afterMs: number) => call<ClaudeNotification[]>('claude_status_notifications', { afterMs }, []),
+  claudeStatusUiScan: () => call<UiScan | null>('claude_status_ui_scan', {}, null),
+  claudeStatusOpenChat: (title: string, ord: number) => call<boolean>('claude_status_open_chat', { title, ord }, false),
+  /** Pauses (false) or resumes (true) Auto model without removing it: its `off` file. */
+  setRouter: (on: boolean) => call<boolean>('claude_router_set', { on }, on),
+  /** Auto model (src-tauri/src/auto_model.rs): installed in Claude Code, and not paused. */
+  autoModel: () => call<AutoModelState>('claude_auto_model_get', {}, { installed: false, on: false, error: null, needsNode: false, nodeDownloadBytes: 0 }),
+  /** Installs (true) or removes (false) Auto model's hooks; `error` says why it didn't work. */
+  setAutoModel: (on: boolean) => call<AutoModelState>('claude_auto_model_set', { on }, { installed: false, on: false, error: 'Island is not running', needsNode: false, nodeDownloadBytes: 0 }),
+  /** No Node.js on this PC: downloads Island's own (progress: 'auto-model-node' events, {done, total} bytes), then turns Auto model on. */
+  installAutoModelNode: () => call<AutoModelState>('claude_auto_model_node', {}, { installed: false, on: false, error: 'Island is not running', needsNode: false, nodeDownloadBytes: 0 }),
   hooksStatus: () => call<HookStatus | null>('hooks_status', {}, null),
   hooksPreview: (install: boolean) => call<HookPreview | { error: string }>('hooks_preview', { install }, { error: 'not available' }),
   hooksWrite: (install: boolean, fingerprint: string) => call<{ ok: boolean; backup?: string; error?: string }>('hooks_write', { install, fingerprint }, { ok: false, error: 'not available' }),
@@ -692,7 +765,8 @@ export const native = {
   hookReply: (requestId: string, reply: string) => call<boolean>('hook_reply', { requestId, reply }, false),
 
   mediaState: () => call<MediaState | null>('media_state', {}, null),
-  mediaControl: (action: 'toggle' | 'play' | 'pause' | 'next' | 'prev' | 'seek', value?: number) => call<boolean>('media_control', { action, value: value ?? null }, false),
+  /** `focus`: brings forward the browser tab or app window that is playing (Windows). */
+  mediaControl: (action: 'toggle' | 'play' | 'pause' | 'next' | 'prev' | 'seek' | 'focus', value?: number) => call<boolean>('media_control', { action, value: value ?? null }, false),
   /** Music bars: tap the speakers for bass-to-treble levels ('spectrum' events, six 0..1 numbers). */
   spectrumWatch: (on: boolean) => call('spectrum_watch', { on }, undefined),
   audioState: () => call<AudioState | null>('audio_state', {}, null),
