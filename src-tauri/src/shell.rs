@@ -7,7 +7,7 @@ use std::path::Path;
 use serde::Serialize;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
-use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
+use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::{CF_DIB, CF_UNICODETEXT};
 use windows::Win32::System::Shutdown::LockWorkStation;
@@ -109,16 +109,30 @@ pub fn shell_snip() {
 
 // ------------------------------------------------------------------ clipboard
 
-unsafe fn set_clipboard(format: u32, bytes: &[u8]) -> bool {
+/// Puts each (format, bytes) on the clipboard together, replacing what was there.
+unsafe fn set_clipboard_all(items: &[(u32, &[u8])]) -> bool {
     unsafe {
-        let Ok(mem) = GlobalAlloc(GMEM_MOVEABLE, bytes.len()) else { return false };
-        let ptr = GlobalLock(mem) as *mut u8;
-        if ptr.is_null() {
-            let _ = GlobalFree(Some(mem));
+        let mut mems = Vec::with_capacity(items.len());
+        for (format, bytes) in items {
+            let Ok(mem) = GlobalAlloc(GMEM_MOVEABLE, bytes.len()) else { break };
+            let ptr = GlobalLock(mem) as *mut u8;
+            if ptr.is_null() {
+                let _ = GlobalFree(Some(mem));
+                break;
+            }
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+            let _ = GlobalUnlock(mem);
+            mems.push((*format, mem));
+        }
+        let free = |mems: &[(u32, HGLOBAL)]| {
+            for (_, m) in mems {
+                let _ = GlobalFree(Some(*m));
+            }
+        };
+        if mems.len() != items.len() {
+            free(&mems);
             return false;
         }
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
-        let _ = GlobalUnlock(mem);
         let mut opened = false;
         for _ in 0..8 {
             if OpenClipboard(Some(HWND::default())).is_ok() {
@@ -128,17 +142,25 @@ unsafe fn set_clipboard(format: u32, bytes: &[u8]) -> bool {
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
         if !opened {
-            let _ = GlobalFree(Some(mem));
+            free(&mems);
             return false;
         }
         let _ = EmptyClipboard();
-        let ok = SetClipboardData(format, Some(HANDLE(mem.0))).is_ok();
-        let _ = CloseClipboard();
-        if !ok {
-            let _ = GlobalFree(Some(HGLOBAL(mem.0)));
+        let mut ok = true;
+        for (format, mem) in &mems {
+            // Once set, the clipboard owns the memory; only a refused one is freed here.
+            if SetClipboardData(*format, Some(HANDLE(mem.0))).is_err() {
+                ok = false;
+                let _ = GlobalFree(Some(*mem));
+            }
         }
+        let _ = CloseClipboard();
         ok
     }
+}
+
+unsafe fn set_clipboard(format: u32, bytes: &[u8]) -> bool {
+    unsafe { set_clipboard_all(&[(format, bytes)]) }
 }
 
 #[tauri::command]
@@ -150,27 +172,8 @@ pub fn clipboard_set_text(text: String) -> bool {
     unsafe { set_clipboard(CF_UNICODETEXT.0 as u32, &bytes) }
 }
 
-/// PNG file → CF_DIB (32-bit BGRA, bottom-up) on the clipboard.
-#[tauri::command]
-pub fn clipboard_copy_image(path: String) -> bool {
-    let p = Path::new(&path);
-    if !crate::fsx::allowed(p) {
-        return false;
-    }
-    let Ok(file) = std::fs::File::open(p) else { return false };
-    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let Ok(mut reader) = decoder.read_info() else { return false };
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let Ok(info) = reader.next_frame(&mut buf) else { return false };
-    let (w, h) = (info.width as usize, info.height as usize);
-    let channels = match info.color_type {
-        png::ColorType::Rgba => 4,
-        png::ColorType::Rgb => 3,
-        png::ColorType::GrayscaleAlpha => 2,
-        png::ColorType::Grayscale => 1,
-        _ => return false,
-    };
+/// RGBA pixels (top row first) → a CF_DIB: BITMAPINFOHEADER, 32-bit BGRA, BI_RGB, bottom-up.
+pub(crate) fn rgba_to_dib(w: usize, h: usize, rgba: &[u8]) -> Vec<u8> {
     let mut dib = Vec::with_capacity(40 + w * h * 4);
     dib.extend_from_slice(&40u32.to_le_bytes());
     dib.extend_from_slice(&(w as i32).to_le_bytes());
@@ -181,18 +184,108 @@ pub fn clipboard_copy_image(path: String) -> bool {
     dib.extend_from_slice(&((w * h * 4) as u32).to_le_bytes());
     dib.extend_from_slice(&[0u8; 16]);
     for y in (0..h).rev() {
-        for x in 0..w {
-            let i = (y * w + x) * channels;
-            let (r, g, b, a) = match channels {
-                4 => (buf[i], buf[i + 1], buf[i + 2], buf[i + 3]),
-                3 => (buf[i], buf[i + 1], buf[i + 2], 255),
-                2 => (buf[i], buf[i], buf[i], buf[i + 1]),
-                _ => (buf[i], buf[i], buf[i], 255),
-            };
-            dib.extend_from_slice(&[b, g, r, a]);
+        for px in rgba[y * w * 4..(y + 1) * w * 4].chunks_exact(4) {
+            dib.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
         }
     }
-    unsafe { set_clipboard(CF_DIB.0 as u32, &dib) }
+    dib
+}
+
+/// A PNG file's pixels as RGBA (width, height, pixels).
+fn png_rgba(bytes: &[u8]) -> Option<(usize, usize, Vec<u8>)> {
+    let mut decoder = png::Decoder::new(bytes);
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let (w, h) = (info.width as usize, info.height as usize);
+    let channels = match info.color_type {
+        png::ColorType::Rgba => 4,
+        png::ColorType::Rgb => 3,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Grayscale => 1,
+        _ => return None,
+    };
+    let mut out = Vec::with_capacity(w * h * 4);
+    for px in buf[..w * h * channels].chunks_exact(channels) {
+        out.extend_from_slice(&match channels {
+            4 => [px[0], px[1], px[2], px[3]],
+            3 => [px[0], px[1], px[2], 255],
+            2 => [px[0], px[0], px[0], px[1]],
+            _ => [px[0], px[0], px[0], 255],
+        });
+    }
+    Some((w, h, out))
+}
+
+/// Any picture Windows can read (JPEG, HEIC with its extension, GIF, BMP, TIFF, WebP…) as RGBA,
+/// turned upright the way the phone took it.
+fn wic_rgba(bytes: &[u8]) -> Option<(usize, usize, Vec<u8>)> {
+    use windows::Graphics::Imaging::{BitmapAlphaMode, BitmapDecoder, BitmapPixelFormat, BitmapTransform, ColorManagementMode, ExifOrientationMode};
+    use windows::Storage::Streams::{DataWriter, InMemoryRandomAccessStream};
+    let run = || -> windows::core::Result<(usize, usize, Vec<u8>)> {
+        let stream = InMemoryRandomAccessStream::new()?;
+        let writer = DataWriter::CreateDataWriter(&stream)?;
+        writer.WriteBytes(bytes)?;
+        writer.StoreAsync()?.get()?;
+        writer.FlushAsync()?.get()?;
+        writer.DetachStream()?;
+        stream.Seek(0)?;
+        let decoder = BitmapDecoder::CreateAsync(&stream)?.get()?;
+        let (w, h) = (decoder.OrientedPixelWidth()? as usize, decoder.OrientedPixelHeight()? as usize);
+        let pixels = decoder
+            .GetPixelDataTransformedAsync(
+                BitmapPixelFormat::Rgba8,
+                BitmapAlphaMode::Straight,
+                &BitmapTransform::new()?,
+                ExifOrientationMode::RespectExifOrientation,
+                ColorManagementMode::ColorManageToSRgb,
+            )?
+            .get()?
+            .DetachPixelData()?;
+        Ok((w, h, pixels.to_vec()))
+    };
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
+    }
+    let (w, h, px) = run().ok()?;
+    (px.len() == w * h * 4 && w > 0 && h > 0).then_some((w, h, px))
+}
+
+/// RGBA → PNG bytes, for the clipboard's "PNG" format (apps that read it keep transparency).
+fn rgba_to_png(w: usize, h: usize, rgba: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, w as u32, h as u32);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.set_compression(png::Compression::Fast);
+        let mut writer = enc.write_header().ok()?;
+        writer.write_image_data(rgba).ok()?;
+    }
+    Some(out)
+}
+
+/// A picture file → the clipboard as CF_DIB and "PNG", ready to paste into Discord, Word, Paint…
+/// PNGs are read here; other pictures (a phone's JPEG or HEIC) by Windows' own decoders.
+pub fn copy_image_file(path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else { return false };
+    let is_png = bytes.starts_with(b"\x89PNG\r\n\x1a\n");
+    let Some((w, h, rgba)) = (if is_png { png_rgba(&bytes) } else { wic_rgba(&bytes) }) else { return false };
+    let dib = rgba_to_dib(w, h, &rgba);
+    let png = if is_png { Some(bytes) } else { rgba_to_png(w, h, &rgba) };
+    let png_format = unsafe { RegisterClipboardFormatW(windows::core::w!("PNG")) };
+    match png {
+        Some(png) if png_format != 0 => unsafe { set_clipboard_all(&[(CF_DIB.0 as u32, &dib), (png_format, &png)]) },
+        _ => unsafe { set_clipboard(CF_DIB.0 as u32, &dib) },
+    }
+}
+
+/// Picture file → the clipboard (CF_DIB, plus "PNG").
+#[tauri::command]
+pub fn clipboard_copy_image(path: String) -> bool {
+    let p = Path::new(&path);
+    crate::fsx::allowed(p) && copy_image_file(p)
 }
 
 fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
@@ -262,7 +355,22 @@ pub async fn http_get(url: String, max_bytes: Option<usize>) -> Option<HttpRespo
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_key, scheme_ok};
+    use super::{capture_key, rgba_to_dib, scheme_ok};
+
+    #[test]
+    fn a_dib_is_bgra_and_bottom_up() {
+        // 1×2: a red pixel on top, a half-clear blue one under it.
+        let dib = rgba_to_dib(1, 2, &[255, 0, 0, 255, 0, 0, 255, 128]);
+        assert_eq!(dib.len(), 40 + 8);
+        assert_eq!(&dib[0..4], &40u32.to_le_bytes());
+        assert_eq!(&dib[4..8], &1i32.to_le_bytes());
+        assert_eq!(&dib[8..12], &2i32.to_le_bytes());
+        assert_eq!(&dib[14..16], &32u16.to_le_bytes());
+        assert_eq!(&dib[16..20], &0u32.to_le_bytes());
+        assert_eq!(&dib[20..24], &8u32.to_le_bytes());
+        assert_eq!(&dib[40..44], &[255, 0, 0, 128], "the bottom row comes first, as BGRA");
+        assert_eq!(&dib[44..48], &[0, 0, 255, 255]);
+    }
 
     #[test]
     fn only_known_schemes_open() {

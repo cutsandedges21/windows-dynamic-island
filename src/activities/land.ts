@@ -127,6 +127,8 @@ export class LandActivity extends BaseActivity {
   private phones: LandPeer[] = [];
   /** Numbers what goes to and comes from phones (they have no transfer ids of Rust's). */
   private phoneSeq = 0;
+  /** Transfers from a phone whose picture Rust also put on the clipboard. */
+  private phoneCopied = new Set<string>();
   private demoTimers: Array<ReturnType<typeof setTimeout>> = [];
 
   constructor() {
@@ -726,7 +728,7 @@ export class LandActivity extends BaseActivity {
     return {
       key: `end/${t.id}`,
       blocks: [
-        { t: 'head', key: 'head', icon: 'check', tone: 'good', title: `${what(t)} from ${t.peer.name}`, sub: `${bytes(t.total)} · in Downloads` },
+        { t: 'head', key: 'head', icon: 'check', tone: 'good', title: `${what(t)} from ${t.peer.name}`, sub: `${bytes(t.total)} · in Downloads${this.phoneCopied.has(t.id) ? ' · Copied to the clipboard' : ''}` },
         { t: 'rows', key: 'saved', items: rows },
         { t: 'buttons', key: 'act', items: [{ key: 'show', label: 'Show in folder', icon: 'folder', action: 'show', arg: t.saved[0], style: 'secondary' }] },
       ],
@@ -1185,13 +1187,17 @@ export class LandActivity extends BaseActivity {
 
   /**
    * What a phone sent (src/remote/hub.ts): text already on the clipboard, or a file Rust saved to
-   * Downloads. Shown like what another computer sent, with the phone's name.
+   * Downloads (a picture also put on the clipboard). Shown like what another computer sent, with the phone's name.
    */
   fromPhone(item: PhoneDelivery): void {
     const peer: LandPeer = { id: `${PHONE}${item.phone}`, name: item.from, os: 'phone' };
     const base = { dir: 'in' as const, peer, state: 'done' as const, error: null, folder: null, expires: null };
     if (item.kind === 'text') this.onTransfer({ ...base, id: `phone-in-${++this.phoneSeq}`, done: item.text.length, total: item.text.length, count: 0, items: [], saved: [], text: item.text });
-    else this.onTransfer({ ...base, id: `phone-in-${item.id || ++this.phoneSeq}`, done: item.size, total: item.size, count: 1, items: [{ name: item.name, size: item.size, files: 1, dir: false }], saved: [item.path] });
+    else {
+      const id = `phone-in-${item.id || ++this.phoneSeq}`;
+      if (item.copied) this.phoneCopied.add(id);
+      this.onTransfer({ ...base, id, done: item.size, total: item.size, count: 1, items: [{ name: item.name, size: item.size, files: 1, dir: false }], saved: [item.path] });
+    }
   }
 
   /** The name other computers see this one by; phones are greeted with it too. Null while Land is off. */

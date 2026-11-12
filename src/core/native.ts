@@ -419,6 +419,8 @@ export interface RemoteFile {
   path: string;
   size: number;
   mime: string;
+  /** A picture Rust also put on the clipboard. */
+  copied?: boolean;
 }
 /** How a file the PC sent to a phone went ('remote-file-sent'). */
 export interface RemoteFileSent {
