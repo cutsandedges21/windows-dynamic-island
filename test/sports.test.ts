@@ -103,6 +103,14 @@ describe('hockey', () => {
     expect(act.nextDelay()).toBe(LIVE_POLL);
   });
 
+  it('at rest the pill shows only the score; pointed at, the teams too', async () => {
+    reply = board(game('LIVE', 2, 0));
+    const { act } = await boot();
+    expect(texts(act, env('compact'))).toEqual(['2–0']);
+    expect(texts(act, env('compact', { hover: true }))).toEqual(['TOR 2 – 0 MTL']);
+    expect(texts(act, env('compact', { open: true }))).toEqual(['TOR 2 – 0 MTL']);
+  });
+
   it('renders valid segments at every size and on a side edge', async () => {
     reply = board(game('LIVE', 1, 2));
     const { act } = await boot();
