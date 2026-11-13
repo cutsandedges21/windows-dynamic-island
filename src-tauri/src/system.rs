@@ -161,6 +161,108 @@ fn saver_outcome(want: bool, now: bool, ac: bool) -> Result<bool, String> {
     }
 }
 
+// Energy saver's "turns on at" battery level (powercfg ESBATTTHRESHOLD), AC and DC: at 100 it is on
+// now, the way Settings' "Always" is; Island puts the user's own levels back to turn it off.
+const SUB_ENERGYSAVER: windows::core::GUID = windows::core::GUID::from_u128(0xde830923_a562_41af_a086_e3a2c6bad2da);
+const ESBATTTHRESHOLD: windows::core::GUID = windows::core::GUID::from_u128(0xe69653ca_cf7f_4f05_aa73_cb833fa90ad4);
+/// Windows' own levels, if Island never saw the user's: off plugged in, 20% on battery.
+const THRESHOLD_DEFAULT: (u32, u32) = (0, 20);
+
+#[link(name = "powrprof", kind = "raw-dylib")]
+extern "system" {
+    fn PowerGetActiveScheme(root: isize, scheme: *mut *mut windows::core::GUID) -> u32;
+    fn PowerReadACValueIndex(root: isize, scheme: *const windows::core::GUID, sub: *const windows::core::GUID, setting: *const windows::core::GUID, value: *mut u32) -> u32;
+    fn PowerReadDCValueIndex(root: isize, scheme: *const windows::core::GUID, sub: *const windows::core::GUID, setting: *const windows::core::GUID, value: *mut u32) -> u32;
+    fn PowerWriteACValueIndex(root: isize, scheme: *const windows::core::GUID, sub: *const windows::core::GUID, setting: *const windows::core::GUID, value: u32) -> u32;
+    fn PowerWriteDCValueIndex(root: isize, scheme: *const windows::core::GUID, sub: *const windows::core::GUID, setting: *const windows::core::GUID, value: u32) -> u32;
+    fn PowerSetActiveScheme(root: isize, scheme: *const windows::core::GUID) -> u32;
+}
+
+#[link(name = "kernel32", kind = "raw-dylib")]
+extern "system" {
+    #[link_name = "LocalFree"]
+    fn local_free(mem: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+}
+
+/// Where the user's own levels wait while Island holds Energy saver on.
+fn threshold_file() -> Option<std::path::PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("com.moss.island").join("energy-saver-levels.txt"))
+}
+
+/// "ac dc" as saved; None for anything else.
+fn parse_levels(text: &str) -> Option<(u32, u32)> {
+    let mut it = text.split_whitespace().map(|x| x.parse::<u32>().ok());
+    match (it.next().flatten(), it.next().flatten(), it.next()) {
+        (Some(ac), Some(dc), None) if ac <= 100 && dc <= 100 => Some((ac, dc)),
+        _ => None,
+    }
+}
+
+/// The levels to go back to: the saved ones, never 100 (that would leave it on).
+fn levels_back(saved: Option<(u32, u32)>) -> (u32, u32) {
+    match saved {
+        Some((ac, dc)) if ac < 100 && dc < 100 => (ac, dc),
+        _ => THRESHOLD_DEFAULT,
+    }
+}
+
+/// Raises the levels to 100 (on) or puts the user's back (off), on the active power plan.
+fn threshold_set(on: bool) -> Result<(), String> {
+    unsafe {
+        let mut p: *mut windows::core::GUID = std::ptr::null_mut();
+        if PowerGetActiveScheme(0, &mut p) != 0 || p.is_null() {
+            return Err("Windows didn't say which power plan is on".into());
+        }
+        let scheme = *p;
+        local_free(p as *mut _);
+        let (mut ac, mut dc) = (0u32, 0u32);
+        PowerReadACValueIndex(0, &scheme, &SUB_ENERGYSAVER, &ESBATTTHRESHOLD, &mut ac);
+        PowerReadDCValueIndex(0, &scheme, &SUB_ENERGYSAVER, &ESBATTTHRESHOLD, &mut dc);
+        let file = threshold_file();
+        let (new_ac, new_dc) = if on {
+            if ac < 100 || dc < 100 {
+                if let Some(f) = &file {
+                    let _ = std::fs::create_dir_all(f.parent().unwrap());
+                    let _ = std::fs::write(f, format!("{ac} {dc}"));
+                }
+            }
+            (100, 100)
+        } else {
+            let saved = file.as_ref().and_then(|f| std::fs::read_to_string(f).ok()).and_then(|t| parse_levels(&t));
+            // Only undo what Island did: levels the user set themselves (not 100) stay.
+            if ac < 100 && dc < 100 {
+                return Ok(());
+            }
+            levels_back(saved)
+        };
+        let a = PowerWriteACValueIndex(0, &scheme, &SUB_ENERGYSAVER, &ESBATTTHRESHOLD, new_ac);
+        let d = PowerWriteDCValueIndex(0, &scheme, &SUB_ENERGYSAVER, &ESBATTTHRESHOLD, new_dc);
+        let s = PowerSetActiveScheme(0, &scheme);
+        crate::log::line(&format!("energy saver: levels {ac}/{dc} -> {new_ac}/{new_dc} (write {a}/{d}, apply {s})"));
+        if a != 0 || d != 0 || s != 0 {
+            return Err("Windows didn't let Island change Energy saver".into());
+        }
+        if !on {
+            if let Some(f) = &file {
+                let _ = std::fs::remove_file(f);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Waits up to `ms` for Windows to report Energy saver as `on`; the last state seen.
+fn saver_wait(on: bool, ms: u64) -> PowerState {
+    let until = Instant::now() + Duration::from_millis(ms);
+    loop {
+        let p = power();
+        if p.saver == on || Instant::now() >= until {
+            return p;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 fn saver_set(on: bool) -> Result<bool, String> {
     let value = override_value(on);
     let status = unsafe {
@@ -168,17 +270,21 @@ fn saver_set(on: bool) -> Result<bool, String> {
     };
     if status < 0 {
         crate::log::line(&format!("energy saver: publish failed 0x{:08X}", status as u32));
-        return Err("Windows didn't let Island switch Energy saver".into());
     }
-    // Windows switches it a moment later; its 'power' notification follows too.
-    let until = Instant::now() + Duration::from_millis(2000);
-    loop {
-        let p = power();
-        if p.saver == on || Instant::now() >= until {
-            return saver_outcome(on, p.saver, p.ac);
-        }
-        std::thread::sleep(Duration::from_millis(100));
+    // Off: Island's raised levels go back either way, or Energy saver would come straight back on.
+    if !on {
+        threshold_set(false)?;
     }
+    let p = saver_wait(on, 800);
+    if p.saver == on {
+        return Ok(on);
+    }
+    // The Settings signal didn't do it (2026-11-12 on build 26200: it didn't): the levels do.
+    if on {
+        threshold_set(true)?;
+    }
+    let p = saver_wait(on, 3000);
+    saver_outcome(on, p.saver, p.ac)
 }
 
 /// Switches Energy saver; the state Windows reports afterwards, or why it didn't switch.
@@ -617,5 +723,23 @@ mod tests {
         // A pid no longer in the snapshot and an app using nothing are left out.
         assert_eq!(got, vec![("Chrome", "chrome.exe", 15.0, 2), ("Code", "code.exe", 12.0, 1)]);
         assert_eq!(by_app(&mut top, &rows, per_pid, 1).len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod energy_saver_levels {
+    use super::*;
+
+    #[test]
+    fn the_users_levels_come_back_never_100() {
+        assert_eq!(parse_levels("0 20"), Some((0, 20)));
+        assert_eq!(parse_levels(" 5 30
+"), Some((5, 30)));
+        assert_eq!(parse_levels("0"), None);
+        assert_eq!(parse_levels("0 20 1"), None);
+        assert_eq!(parse_levels("0 101"), None);
+        assert_eq!(levels_back(Some((0, 30))), (0, 30));
+        assert_eq!(levels_back(Some((100, 100))), THRESHOLD_DEFAULT);
+        assert_eq!(levels_back(None), (0, 20));
     }
 }
