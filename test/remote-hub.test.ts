@@ -388,7 +388,7 @@ describe('what a phone may press', () => {
     expect(JSON.stringify(r.last('view'))).toContain('act:claude:allow');
   });
 
-  it("System Controls' Screenshot, Record and Battery saver stay on the PC: never shown on a phone, never pressed from one", async () => {
+  it("System Controls' Screenshot, Record and Energy saver settings stay on the PC: never shown on a phone, never pressed from one", async () => {
     const { r, f } = await setup();
     const controls: SheetView = {
       key: 'system-controls',
@@ -398,7 +398,7 @@ describe('what a phone may press', () => {
           items: [
             { key: 'shot', label: 'Screenshot', action: 'act:system-controls:screenshot' },
             { key: 'record', label: 'Record', action: 'act:system-controls:record' },
-            { key: 'saver', label: 'Battery saver on', action: 'act:system-controls:saver' },
+            { key: 'saver-settings', label: 'Energy saver settings', action: 'act:system-controls:saver-settings' },
             { key: 'up', label: 'Volume', action: 'act:system-controls:vol-up' },
           ],
         },
@@ -411,8 +411,8 @@ describe('what a phone may press', () => {
     expect(sent).toContain('act:system-controls:vol-up');
     expect(sent).not.toContain('act:system-controls:screenshot');
     expect(sent).not.toContain('act:system-controls:record');
-    expect(sent).not.toContain('act:system-controls:saver');
-    for (const action of ['act:system-controls:record', 'act:system-controls:saver']) {
+    expect(sent).not.toContain('act:system-controls:saver-settings');
+    for (const action of ['act:system-controls:record', 'act:system-controls:saver-settings']) {
       r.line({ t: 'act', action, arg: null });
       await flush();
       expect(f.acts).toEqual([]);
@@ -421,6 +421,35 @@ describe('what a phone may press', () => {
     r.line({ t: 'act', action: 'act:system-controls:vol-up', arg: null });
     await flush();
     expect(f.acts).toEqual([[IPHONE, 'act:system-controls:vol-up', null]]);
+  });
+
+  it('a phone may press Battery saver (the button and the Control Center tile): it switches Energy saver, and why it did not comes back as a toast', async () => {
+    const { r, f } = await setup();
+    const controls: SheetView = {
+      key: 'system-controls',
+      blocks: [
+        {
+          t: 'tiles', key: 'grid', cols: 4, rows: 2, pages: 1, cell: 80,
+          items: [{ key: 'hub', span: 2, rows: 2, body: { k: 'hub', pills: [], sliders: [], buttons: [{ key: 'saver', icon: 'leaf', action: 'act:system-controls:saver' }] } }],
+        },
+        { t: 'buttons', key: 'controls', items: [{ key: 'saver', label: 'Energy saver off', action: 'act:system-controls:saver' }] },
+      ],
+    };
+    f.urgent = { id: 'system-controls', view: controls };
+    r.phones([phone()]);
+    await flush();
+    const sent = JSON.stringify(r.last('view'));
+    expect(sent.split('act:system-controls:saver"').length - 1).toBe(2);
+    r.line({ t: 'act', action: 'act:system-controls:saver', arg: null });
+    await flush();
+    expect(f.acts).toEqual([[IPHONE, 'act:system-controls:saver', null]]);
+    expect(r.last('toast')).toBeUndefined();
+    // Windows won't (the activity throws a PhoneError with why): the phone gets it as a toast.
+    f.fail = new PhoneError('Energy saver only turns on while unplugged');
+    r.line({ t: 'act', action: 'act:system-controls:saver', arg: null });
+    await flush();
+    expect(f.acts).toHaveLength(2);
+    expect(r.last('toast')).toEqual({ t: 'toast', text: 'Energy saver only turns on while unplugged', tone: 'bad' });
   });
 
   it('ignores lines it cannot read', async () => {

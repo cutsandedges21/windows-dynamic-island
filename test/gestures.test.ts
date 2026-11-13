@@ -38,7 +38,7 @@ describe('the Controls page', () => {
     expect(mac).not.toContain('System Controls: Screenshot, Record');
     expect(win).toContain('System Controls: Battery saver');
     expect(mac).not.toContain('System Controls: Battery saver');
-    expect(what(gestureGroups(defaultSettings(), 'windows'), 'System Controls: Battery saver')).toContain('Windows Settings');
+    expect(what(gestureGroups(defaultSettings(), 'windows'), 'System Controls: Battery saver')).toContain('turn it on or off');
   });
 
   it('says how to bring a hidden island back with the key the user set, or without one', () => {

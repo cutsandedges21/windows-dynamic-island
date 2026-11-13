@@ -786,6 +786,8 @@ export const native = {
   /** Presses the call app's own camera shortcut (Teams Ctrl+Shift+O, Zoom Alt+V, Meet Ctrl+E). */
   callCamera: (label: string) => tryCall<null>('call_camera', { label }),
   powerState: () => call<PowerState | null>('power_state', {}, null),
+  /** Switches Energy saver (Windows 11's battery saver): the state Windows reports afterwards, or why it didn't switch. */
+  powerSaverSet: (on: boolean) => tryCall<boolean>('power_saver_set', { on }),
   /** Caps Lock and Num Lock now; 'lock-keys' events say when one changes. */
   lockKeys: () => call<LockKeys | null>('lock_keys', {}, null),
   /** The screen's brightness 0-100 as Windows last reported it (null: never, like an external monitor); 'brightness' events say when it changes. */

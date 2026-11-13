@@ -12,10 +12,11 @@ export const HELLO_GUARDED: readonly string[] = ['act:claude:allow'];
 
 /**
  * Buttons that only make sense at the PC: System Controls' Screenshot and Record open Snipping
- * Tool's overlay there, to drag an area with the PC's mouse, and Battery saver opens Windows
- * Settings there. Phones never get them or press them.
+ * Tool's overlay there, to drag an area with the PC's mouse, and Energy saver settings opens
+ * Windows Settings there. Phones never get them or press them. (Battery saver itself switches
+ * Energy saver, so a phone may press it; why it didn't switch comes back as a toast.)
  */
-export const PC_ONLY: readonly string[] = ['act:system-controls:screenshot', 'act:system-controls:record', 'act:system-controls:saver'];
+export const PC_ONLY: readonly string[] = ['act:system-controls:screenshot', 'act:system-controls:record', 'act:system-controls:saver-settings'];
 
 /** Every action shown, with the arguments it was shown with (as JSON); ANY for typed text and seeking. */
 export type Pressables = Map<string, Set<string>>;

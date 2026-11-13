@@ -1733,15 +1733,19 @@ export class ClaudeActivity extends BaseActivity {
 
   /** Claude's cell in the open island: every session's row, with the limits in its label. */
   tile(env: SheetEnv): Tile | null {
-    if (!this.rows.length) return null;
+    // Always in Control Center, also with no session: the way to Claude's card and its limits (with
+    // nothing on the pill, a missing tile left Claude out of reach). Hidden sessions get a row to bring them back.
     const d = this.opts().showLimits ? this.limitsNow(env.now) : null;
     const limits = [d?.fiveHour ? `S ${Math.round(d.fiveHour.pct)}%` : null, d?.sevenDay ? `W ${Math.round(d.sevenDay.pct)}%` : null].filter(Boolean).join(' · ');
+    const rows = statusRows(this.rows, env.now);
+    const hidden = this.opts().hiddenSessions.length;
+    if (hidden) rows.push({ key: 'unhide', icon: 'eye', title: `Show hidden (${hidden})`, detail: hidden === 1 ? 'A session hidden from Claude Status' : `${hidden} sessions hidden from Claude Status`, action: 'unhide-all' });
     return {
       key: 'claude',
       span: 2,
       rows: 2,
       tone: this.mark(),
-      body: { k: 'list', icon: 'claude', label: limits ? `Claude sessions · ${limits}` : 'Claude sessions', rows: statusRows(this.rows, env.now), empty: 'All quiet' },
+      body: { k: 'list', icon: 'claude', label: limits ? `Claude sessions · ${limits}` : 'Claude sessions', rows, empty: 'All quiet' },
     };
   }
 
