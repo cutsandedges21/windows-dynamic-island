@@ -52,10 +52,42 @@ pub fn power() -> PowerState {
         percent,
         ac: s.ACLineStatus == 1,
         charging,
-        saver: s.SystemStatusFlag == 1,
+        saver: saver_from(s.SystemStatusFlag == 1, EFFECTIVE_MODE.load(std::sync::atomic::Ordering::Relaxed)),
         seconds_left: (s.BatteryLifeTime != u32::MAX && s.ACLineStatus != 1).then_some(s.BatteryLifeTime as f64),
         seconds_to_full: if charging { seconds_to_full(percent) } else { forget_rate() },
     }
+}
+
+/// Windows' effective power mode (PowerRegisterForEffectivePowerModeNotifications v2); -1 until it
+/// says. Energy saver turned on by hand shows here (0 BatterySaver or 1 BetterBattery) but not in
+/// GetSystemPowerStatus' SystemStatusFlag on build 26200 (2026-11-13: the flag stayed 0 while the
+/// mode went Balanced -> BetterBattery -> Balanced with the Quick Settings tile).
+static EFFECTIVE_MODE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static MODE_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+
+#[link(name = "powrprof", kind = "raw-dylib")]
+extern "system" {
+    fn PowerRegisterForEffectivePowerModeNotifications(
+        version: u32,
+        callback: unsafe extern "system" fn(i32, *const std::ffi::c_void),
+        context: *const std::ffi::c_void,
+        handle: *mut *mut std::ffi::c_void,
+    ) -> i32;
+}
+
+unsafe extern "system" fn on_power_mode(mode: i32, _context: *const std::ffi::c_void) {
+    let was = EFFECTIVE_MODE.swap(mode, std::sync::atomic::Ordering::Relaxed);
+    if was != mode {
+        if let Some(app) = MODE_APP.get() {
+            emit_power(app);
+        }
+    }
+}
+
+/// Energy saver is on: Windows' battery-saver flag, or an effective power mode it sets (0 or 1;
+/// 1 is also what Settings' Best power efficiency gives, which reads as saving too).
+fn saver_from(flag: bool, mode: i32) -> bool {
+    flag || mode == 0 || mode == 1
 }
 
 /// The charge rate, smoothed: it swings from one reading to the next.
@@ -103,6 +135,13 @@ pub fn emit_power(app: &AppHandle) {
 
 /// Battery changes slowly; WM_POWERBROADCAST (msgwin) covers plug events at once.
 pub fn start(app: AppHandle) {
+    if MODE_APP.set(app.clone()).is_ok() {
+        let mut handle = std::ptr::null_mut();
+        let r = unsafe { PowerRegisterForEffectivePowerModeNotifications(2, on_power_mode, std::ptr::null(), &mut handle) };
+        if r < 0 {
+            crate::log::line(&format!("power: effective power mode not available (0x{:08X})", r as u32));
+        }
+    }
     std::thread::spawn(move || {
         let mut last = PowerState::default();
         loop {
@@ -251,7 +290,8 @@ fn qs_hidden(h: windows::Win32::Foundation::HWND, hide: bool, ex: i32) -> bool {
 }
 
 /// Finds the tile in the open Quick Settings and presses it if needed; whether it was pressed.
-fn press_tile(h: windows::Win32::Foundation::HWND, want: bool) -> Result<bool, String> {
+/// `want`: None presses it whatever the tile says (its toggle state can disagree with Windows).
+fn press_tile(h: windows::Win32::Foundation::HWND, want: Option<bool>) -> Result<bool, String> {
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern, IUIAutomationTogglePattern, ToggleState_On,
@@ -280,9 +320,11 @@ fn press_tile(h: windows::Win32::Foundation::HWND, want: bool) -> Result<bool, S
             std::thread::sleep(Duration::from_millis(50));
         };
         if let Ok(t) = tile.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId) {
-            let on = t.CurrentToggleState().map(|s| s == ToggleState_On).unwrap_or(!want);
-            if !needs_press(want, on) {
-                return Ok(false);
+            if let Some(want) = want {
+                let on = t.CurrentToggleState().map(|s| s == ToggleState_On).unwrap_or(!want);
+                if !needs_press(want, on) {
+                    return Ok(false);
+                }
             }
             return t.Toggle().map(|_| true).map_err(|e| e.to_string());
         }
@@ -293,7 +335,7 @@ fn press_tile(h: windows::Win32::Foundation::HWND, want: bool) -> Result<bool, S
 
 /// Opens Quick Settings out of sight, presses Energy saver if needed, closes it and gives the
 /// focus back, even when something on the way fails.
-fn press_through_quick_settings(want: bool) -> Result<(), String> {
+fn press_through_quick_settings(want: Option<bool>) -> Result<(), String> {
     use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowLongW, IsWindowVisible, SetForegroundWindow, GWL_EXSTYLE};
     let prev = unsafe { GetForegroundWindow() };
@@ -349,8 +391,11 @@ fn saver_set(on: bool) -> Result<bool, String> {
     if on && p.ac {
         return saver_outcome(on, p.saver, p.ac);
     }
-    press_through_quick_settings(on)?;
-    let p = saver_wait(on, 2000);
+    // Windows' state decides (power() reads the effective power mode too), not the tile's toggle
+    // state. One press only: a second one, after a reading that hadn't caught up, switched it back.
+    let _ = p;
+    press_through_quick_settings(None)?;
+    let p = saver_wait(on, 3000);
     saver_outcome(on, p.saver, p.ac)
 }
 
@@ -805,5 +850,19 @@ mod tests {
         // A pid no longer in the snapshot and an app using nothing are left out.
         assert_eq!(got, vec![("Chrome", "chrome.exe", 15.0, 2), ("Code", "code.exe", 12.0, 1)]);
         assert_eq!(by_app(&mut top, &rows, per_pid, 1).len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod energy_saver_state {
+    use super::*;
+
+    #[test]
+    fn energy_saver_is_read_from_the_power_mode_too() {
+        assert!(saver_from(true, -1));
+        assert!(saver_from(false, 0));
+        assert!(saver_from(false, 1));
+        assert!(!saver_from(false, 2));
+        assert!(!saver_from(false, -1));
     }
 }
