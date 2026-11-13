@@ -189,6 +189,9 @@ export class App {
       send: () => this.island && openSend(this.link, this.island.name),
       menu: () => this.menu(),
       retry: () => this.island && this.link.open(this.island),
+      saveGrid: (l) => {
+        if (!this.link.send({ t: 'grid-set', order: l.order, hidden: l.hidden })) toast('Not connected', 'bad');
+      },
     });
     s.setName(this.hello?.name || island.name);
     this.mount(s);
@@ -397,6 +400,13 @@ export class App {
     if (yes && !this.link.send({ t: 'lock' })) toast('Not connected', 'bad');
   }
 
+  /** Sleep: the phone can't wake it again (Island sleeps with it); the PC's own key or lid does. */
+  private async sleep(): Promise<void> {
+    const name = this.island?.name ?? 'your PC';
+    const yes = await confirmSheet({ title: `Put ${name} to sleep?`, text: "It sleeps right away and this app loses it until it's woken at the PC (a key, the power button or opening the lid).", ok: 'Sleep', icon: 'moon' });
+    if (yes && !this.link.send({ t: 'sleep' })) toast('Not connected', 'bad');
+  }
+
   private menu(): void {
     const island = this.island;
     if (!island) return;
@@ -413,6 +423,7 @@ export class App {
       prefs: (kind: PrefsKind) => {
         if (this.island) this.prefs = new PrefsSheet(kind, this.island.name, (m) => this.link.send(m));
       },
+      sleep: () => void this.sleep(),
       switchTo: (id) => {
         const it = this.store.get(id);
         if (!it) return;

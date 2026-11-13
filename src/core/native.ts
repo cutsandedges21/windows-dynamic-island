@@ -805,6 +805,8 @@ export const native = {
   reveal: (path: string) => call<boolean>('shell_reveal', { path }, false),
   edit: (path: string) => call<boolean>('shell_edit_image', { path }, false),
   lock: () => call('shell_lock', {}, undefined),
+  /** Puts the PC to sleep (a phone's Sleep). */
+  sleep: () => call('shell_sleep', {}, undefined),
   snip: () => call('shell_snip', {}, undefined),
   /** Snipping Tool's overlay to drag an area: a screenshot (Win+Shift+S) or a screen recording (Win+Shift+R). Windows only. */
   screenCapture: (what: 'image' | 'video') => call<boolean>('screen_capture', { video: what === 'video' }, false),

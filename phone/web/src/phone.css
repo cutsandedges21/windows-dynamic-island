@@ -816,3 +816,13 @@ body {
 .ph-seg-b { flex: 1 1 auto; min-height: 32px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--dim); font: 600 13px/1 var(--font); }
 .ph-seg-b.on { background: rgba(255, 255, 255, 0.16); color: var(--fg); }
 .ph-range { width: 100%; accent-color: var(--accent); }
+/* Edit Control Center (screens/grid-edit.ts): rows jiggle like the PC's tiles in edit mode. */
+.ph-ge { display: flex; flex-direction: column; gap: 6px; }
+.ph-ge-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 255, 255, 0.07); }
+.ph-ge-row.jiggle { animation: ph-jiggle 0.3s ease-in-out infinite alternate; }
+.ph-ge-row.off { opacity: 0.7; }
+.ph-ge-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-ge-btn { width: 34px; height: 34px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.12); color: inherit; display: grid; place-items: center; }
+.ph-ge-btn:disabled { opacity: 0.3; }
+@keyframes ph-jiggle { from { transform: rotate(-0.6deg); } to { transform: rotate(0.6deg); } }
+@media (prefers-reduced-motion: reduce) { .ph-ge-row.jiggle { animation: none; } }

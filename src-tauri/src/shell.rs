@@ -10,6 +10,7 @@ use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::{CF_DIB, CF_UNICODETEXT};
+use windows::Win32::System::Power::SetSuspendState;
 use windows::Win32::System::Shutdown::LockWorkStation;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_SHIFT,
@@ -99,6 +100,14 @@ pub fn shell_edit_image(path: String) -> bool {
 pub fn shell_lock() {
     unsafe {
         let _ = LockWorkStation();
+    }
+}
+
+/** Puts the PC to sleep (not hibernate), for a phone's Sleep. Waking it again takes the PC itself. */
+#[tauri::command]
+pub fn shell_sleep() {
+    unsafe {
+        let _ = SetSuspendState(false, false, false);
     }
 }
 

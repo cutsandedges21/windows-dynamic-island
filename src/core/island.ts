@@ -1250,7 +1250,8 @@ export class Island {
       const slot = where.get(t.key);
       return slot ? [{ ...t, page: slot.page, col: slot.col, row: slot.row, w: slot.w, h: slot.h }] : [];
     });
-    const tray: Tile[] = editing ? sized.filter((t) => isHidden(t.key)).map((t) => ({ ...t, w: 1, h: 1, hidden: true, sizes: undefined })) : [];
+    // A phone always gets the tray, to arrange from its own copy (the hub never lets it press these).
+    const tray: Tile[] = editing || !live ? sized.filter((t) => isHidden(t.key)).map((t) => ({ ...t, w: 1, h: 1, hidden: true, sizes: undefined })) : [];
     // The card is only as tall as the rows the tiles reach; editing opens every row to drag into.
     const rows = editing ? geo.rows : rowsUsed(slots);
 
@@ -1659,6 +1660,15 @@ export class Island {
       pill: () => (this.lastFrame ? { frame: this.lastFrame, bot: this.lastFrame.bot ? this.botNow : null } : null),
       view: (nav, width) => this.phoneView(nav, width),
       act: (phone, action, arg) => this.phoneAction(phone, action, arg),
+      setGrid: (l) => {
+        // The phone's tiles in its order, flowed onto pages as the grid fits them; tiles it
+        // wasn't shown (an activity off now) stay as they were.
+        const grid = this.settings.island.grid;
+        const touched = new Set([...l.order, ...l.hidden]);
+        grid.hidden = [...grid.hidden.filter((k) => !touched.has(k)), ...l.hidden];
+        grid.pages = [l.order];
+        this.saveSettings();
+      },
       facts: () => ({
         name: this.computerName(),
         platform,

@@ -43,6 +43,8 @@ export class IslandView {
   private lookTimer: ReturnType<typeof setTimeout> | undefined;
   /** Where the card is drawn, every frame it moves (null once it is gone). */
   onCard: (r: Rect | null) => void = () => {};
+  /** A tile in Control Center was held: the phone opens its own Edit Control Center. */
+  onHoldGrid: () => void = () => {};
 
   constructor(host: HTMLElement, onAction: ActionSink) {
     this.stage = document.createElement('div');
@@ -188,7 +190,11 @@ export class IslandView {
         const grid = (e.target as HTMLElement).closest<HTMLElement>('.sb-tiles');
         clearTimeout(timer);
         if (!grid) return;
-        timer = setTimeout(() => grid.dispatchEvent(new PointerEvent('pointercancel', { pointerId: e.pointerId, bubbles: true })), HOLD_CUTOFF_MS);
+        timer = setTimeout(() => {
+          grid.dispatchEvent(new PointerEvent('pointercancel', { pointerId: e.pointerId, bubbles: true }));
+          // The PC's edit mode would start here; the phone opens its own (screens/grid-edit.ts).
+          if (this.view?.key === 'island/grid') this.onHoldGrid();
+        }, HOLD_CUTOFF_MS);
       },
       { capture: true },
     );

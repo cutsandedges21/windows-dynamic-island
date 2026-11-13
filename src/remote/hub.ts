@@ -9,6 +9,7 @@ import type { RemoteFile, RemotePhone } from '../core/native';
 import type { Settings } from '../core/settings';
 import type { SheetView } from '../core/sheet';
 import { MAX_VIEWS_PER_S, PHONE_ISLAND_ACTIONS, PROTOCOL_V, readPhoneMsg, type BotState, type HelloFacts, type IslandMsg, type Nav, type PrefActivity, type PrefRow, type PrefValue } from './protocol';
+import { gridSetAllowed, shownGridKeys, withoutTray, type PhoneLayout } from './grid-edit';
 import { HELLO_GUARDED, mayPress, PC_ONLY, pressables, stripActions, stripPill, type Pressables } from './views';
 
 /** A paired phone, as Rust lists it (`remote_phones`, the `remote-phones` event). */
@@ -50,6 +51,8 @@ export interface PhoneIslandHooks {
   prefs?(): { rows: PrefRow[]; acts: PrefActivity[] } | null;
   /** Changes one of them, through the allow-list (`applyPref`) only, and saves; false: refused. */
   setPref?(key: string, value: PrefValue): boolean;
+  /** Control Center arranged on a phone (tiles the hub checked it was shown): saved like an edit on the PC. */
+  setGrid(layout: PhoneLayout): void;
 }
 
 /** The native calls the hub makes (src/remote/native.ts; faked in tests). */
@@ -62,6 +65,7 @@ export interface PhoneNative {
   copy(text: string): Promise<boolean>;
   clipboard(): Promise<{ files: string[]; text: string | null }>;
   lock(): Promise<unknown>;
+  sleep(): Promise<unknown>;
   log(text: string): void;
   on<T>(event: string, cb: (payload: T) => void): Promise<() => void>;
 }
@@ -139,6 +143,8 @@ interface Session {
   /** The last view sent (its JSON), and what it offered to press. */
   viewJson: string;
   viewPress: Pressables;
+  /** The Control Center tiles it was last shown (grid and tray): the only ones it may arrange. */
+  gridKeys: Set<string>;
   /** The last pill sent (its key and frame), and what it offered to press. */
   pillKey: string;
   pillFrame: MirrorFrame | null;
@@ -275,6 +281,7 @@ export class PhoneHub {
       width: DEFAULT_WIDTH,
       viewJson: '',
       viewPress: new Map(),
+      gridKeys: new Set(),
       pillKey: '',
       pillFrame: null,
       pillPress: new Map(),
@@ -360,7 +367,9 @@ export class PhoneHub {
     const json = JSON.stringify(msg);
     if (json === s.viewJson) return;
     s.viewJson = json;
-    s.viewPress = pressables(view);
+    // Tiles taken off the grid are shown to put back, never to press.
+    s.viewPress = pressables(withoutTray(view));
+    s.gridKeys = shownGridKeys(view);
     this.send(s, msg);
   }
 
@@ -395,6 +404,10 @@ export class PhoneHub {
         return this.syncPrefs(s);
       case 'pref':
         return this.pref(s, m.key, m.value);
+      case 'sleep':
+        return this.sleep(s);
+      case 'grid-set':
+        return this.gridSet(s, { order: m.order, hidden: m.hidden });
     }
   }
 
@@ -457,6 +470,23 @@ export class PhoneHub {
   private async lock(s: Session): Promise<void> {
     await this.native.lock();
     this.toast(s, 'Locked', 'good');
+  }
+
+  /** Control Center arranged on the phone: saved only if it names exactly the tiles it was shown. */
+  private gridSet(s: Session, l: PhoneLayout): void {
+    if (!gridSetAllowed(s.gridKeys, l)) {
+      this.native.log(`phone: refused a layout from ${s.name}`);
+      this.toast(s, 'Control Center changed meanwhile; try again', 'bad');
+      return;
+    }
+    this.hooks.setGrid(l);
+    this.toast(s, 'Control Center saved', 'good');
+  }
+
+  /** Sleep: said first, since the link drops with the PC. Waking it takes the PC itself. */
+  private async sleep(s: Session): Promise<void> {
+    this.toast(s, 'Going to sleep', 'good');
+    await this.native.sleep();
   }
 
   /** A file from a phone, saved to Downloads by Rust (which told the phone): the island shows it. */
