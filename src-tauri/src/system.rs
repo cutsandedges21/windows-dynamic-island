@@ -251,7 +251,8 @@ fn qs_hidden(h: windows::Win32::Foundation::HWND, hide: bool, ex: i32) -> bool {
 }
 
 /// Finds the tile in the open Quick Settings and presses it if needed; whether it was pressed.
-fn press_tile(h: windows::Win32::Foundation::HWND, want: bool) -> Result<bool, String> {
+/// `want`: None presses it whatever the tile says (its toggle state can disagree with Windows).
+fn press_tile(h: windows::Win32::Foundation::HWND, want: Option<bool>) -> Result<bool, String> {
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern, IUIAutomationTogglePattern, ToggleState_On,
@@ -280,9 +281,11 @@ fn press_tile(h: windows::Win32::Foundation::HWND, want: bool) -> Result<bool, S
             std::thread::sleep(Duration::from_millis(50));
         };
         if let Ok(t) = tile.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId) {
-            let on = t.CurrentToggleState().map(|s| s == ToggleState_On).unwrap_or(!want);
-            if !needs_press(want, on) {
-                return Ok(false);
+            if let Some(want) = want {
+                let on = t.CurrentToggleState().map(|s| s == ToggleState_On).unwrap_or(!want);
+                if !needs_press(want, on) {
+                    return Ok(false);
+                }
             }
             return t.Toggle().map(|_| true).map_err(|e| e.to_string());
         }
@@ -293,7 +296,7 @@ fn press_tile(h: windows::Win32::Foundation::HWND, want: bool) -> Result<bool, S
 
 /// Opens Quick Settings out of sight, presses Energy saver if needed, closes it and gives the
 /// focus back, even when something on the way fails.
-fn press_through_quick_settings(want: bool) -> Result<(), String> {
+fn press_through_quick_settings(want: Option<bool>) -> Result<(), String> {
     use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowLongW, IsWindowVisible, SetForegroundWindow, GWL_EXSTYLE};
     let prev = unsafe { GetForegroundWindow() };
@@ -349,8 +352,17 @@ fn saver_set(on: bool) -> Result<bool, String> {
     if on && p.ac {
         return saver_outcome(on, p.saver, p.ac);
     }
-    press_through_quick_settings(on)?;
-    let p = saver_wait(on, 2000);
+    // Windows' own state decides, not the tile's: on 2026-11-13 the tile read On while Windows said
+    // off (unplugged, 98%), so going by the tile Island never pressed it. A press that didn't land
+    // (the tile was out of step) gets a second one.
+    let mut p = p;
+    for wait in [2500, 2000] {
+        press_through_quick_settings(None)?;
+        p = saver_wait(on, wait);
+        if p.saver == on {
+            return Ok(on);
+        }
+    }
     saver_outcome(on, p.saver, p.ac)
 }
 
