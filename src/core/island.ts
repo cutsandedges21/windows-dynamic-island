@@ -694,10 +694,11 @@ export class Island {
         viewKey = 'hide';
       } else if (this.view === 'menu') {
         const state = { anchor, dnd: this.settings.general.dnd, mac: platform === 'macos', reminders: this.running.has('reminders') };
-        segs = menuSegments(s.menu, state);
+        const look = { order: s.menuOrder, iconOnly: s.menuIconOnly };
+        segs = menuSegments(s.menu, state, look);
         viewKey = 'menu';
         // The menu pill is only as long as the items the user keeps in it.
-        const main = menuMain(s.menu, state, { max: size.main, cross: size.cross, pad, vertical, crossMax });
+        const main = menuMain(s.menu, state, { max: size.main, cross: size.cross, pad, vertical, crossMax }, undefined, look);
         size = vertical ? { ...size, h: main, main } : { ...size, w: main, main };
         inner = main - pad * 2;
       } else if (this.view === 'overflow') {

@@ -453,3 +453,26 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 .codegrid-codes button { width: 48px; height: 28px; padding: 0; border-radius: 6px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.04); color: var(--muted); font-weight: 600; font-size: 12px; letter-spacing: 0.4px; transition: background-color 0.15s, color 0.15s; }
 .codegrid-codes button:hover { background: rgba(255, 255, 255, 0.1); color: var(--fg); }
 .codegrid-codes button.on { background: var(--accent); border-color: var(--accent); color: #1a0c06; }
+
+/* Settings › Behavior › Right-click menu: a preview of the menu, and its items to drag, show or hide. */
+.menu-edit-wrap { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.menu-preview { display: flex; align-items: center; gap: 4px; min-height: 40px; padding: 5px 10px; border-radius: 22px; background: #000; color: #f3f2ee; overflow: hidden; }
+.menu-preview .mp-end-group { display: flex; align-items: center; gap: 4px; flex: none; }
+.menu-preview .mp-far { margin-left: auto; padding-left: 16px; }
+.menu-preview .mp-label { font-size: 11.5px; color: rgba(243, 242, 238, 0.62); padding: 0 4px; }
+.menu-preview .mp-sep { width: 1px; height: 18px; background: rgba(255, 255, 255, 0.16); margin: 0 4px; }
+.menu-preview .mp-btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 14px; font-size: 12.5px; background: rgba(255, 255, 255, 0.12); white-space: nowrap; }
+.menu-preview .mp-btn.icon-only { width: 28px; padding: 0; justify-content: center; }
+.menu-preview .mp-btn .ico { width: 15px; height: 15px; flex: none; }
+.menu-preview .mp-btn.style-primary { background: var(--accent); color: #1a0c06; }
+.menu-preview .mp-btn.style-ghost { background: transparent; color: rgba(243, 242, 238, 0.62); }
+.menu-editor { display: flex; flex-direction: column; gap: 4px; }
+.me-row { display: flex; align-items: center; gap: 10px; padding: 5px 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.04); }
+.me-row.off .me-name, .me-row.off .me-ico { opacity: 0.45; }
+.me-row.dragging { background: rgba(255, 255, 255, 0.1); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
+.me-row.fixed { background: transparent; }
+.me-row .me-name { flex: 1 1 0; min-width: 0; }
+.me-row .me-ico .ico, .me-row .me-grip .ico { width: 16px; height: 16px; display: block; }
+.me-grip { width: 22px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: grab; touch-action: none; padding: 0; }
+button.me-grip:hover, button.me-grip:focus-visible { background: rgba(255, 255, 255, 0.08); color: var(--fg, inherit); }
+.me-row.dragging .me-grip { cursor: grabbing; }

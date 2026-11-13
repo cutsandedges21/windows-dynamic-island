@@ -4,7 +4,7 @@
 import { CATALOG, type Band, type Behavior } from '../activities/catalog';
 import { normalizeWidths, type Anchor, type IslandSize, type Widths } from './layout';
 import { GLASS_DEFAULT } from './glass';
-import { FULL_MENU, type MenuShown } from './menu';
+import { DEFAULT_ICON_ONLY, DEFAULT_MENU_ORDER, FULL_MENU, normalizeIconOnly, normalizeMenuOrder, type MenuIconOnly, type MenuItemId, type MenuShown } from './menu';
 
 export type DisplayMode = 'primary' | 'cursor' | 'active' | 'specific' | 'duplicate';
 
@@ -101,6 +101,10 @@ export interface Settings {
     hiddenUntil: number;
     /** What the right-click menu shows (src/core/menu.ts); Settings is always in it. */
     menu: MenuShown;
+    /** The right-click menu's order (Settings › Behavior › Right-click menu, by dragging); Settings stays last. */
+    menuOrder: MenuItemId[];
+    /** Which of its items show only their icon, their name in a tip. */
+    menuIconOnly: MenuIconOnly;
   };
   activities: {
     order: string[];
@@ -201,6 +205,8 @@ export function defaultSettings(): Settings {
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       hiddenUntil: 0,
       menu: { ...FULL_MENU },
+      menuOrder: [...DEFAULT_MENU_ORDER],
+      menuIconOnly: { ...DEFAULT_ICON_ONLY },
     },
     activities: { order: CATALOG.map((m) => m.id), config },
     general: {
@@ -342,6 +348,9 @@ export function migrate(saved: unknown): Settings {
   if (!Number.isFinite(out.island.hiddenUntil) || out.island.hiddenUntil < 0) out.island.hiddenUntil = 0;
   out.island.hiddenUntil = Math.min(out.island.hiddenUntil, HIDE_UNTIL_SHOWN);
   if (!['primary', 'cursor', 'active', 'specific', 'duplicate'].includes(out.island.display)) out.island.display = 'primary';
+  // The menu's order and icon-only choices came after 0.4.2: missing (older settings) means the menu as it always was.
+  out.island.menuOrder = normalizeMenuOrder(isObj(saved.island) ? saved.island.menuOrder : null);
+  out.island.menuIconOnly = normalizeIconOnly(isObj(saved.island) ? saved.island.menuIconOnly : null);
 
   // Version 2: orange is Claude's alone (the old default accent goes), and Claude no
   // longer holds the pill at rest; it shows when a chat works, finishes or needs you.
