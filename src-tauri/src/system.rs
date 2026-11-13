@@ -123,33 +123,6 @@ pub fn power_state() -> PowerState {
 
 // ------------------------------------------------------------------ energy saver
 
-/// The WNF state that Settings › Energy saver publishes to switch Energy saver on or off (found in
-/// SettingsHandlers_OneCore_BatterySaver.dll on build 26200, 2026-11-12: its toggle publishes a u32
-/// here, 1 when it was off and 2 when it was on; it read 2 with Energy saver off). Windows has no
-/// documented call for this; raising powercfg's ESBATTTHRESHOLD to 100 did not turn it on (2026-11-09).
-/// Settings runs without admin rights and so does this.
-const ENERGY_SAVER_OVERRIDE: u64 = 0x41C6_013D_A3BC_3075;
-
-#[link(name = "ntdll", kind = "raw-dylib")]
-extern "system" {
-    fn RtlPublishWnfStateData(
-        state_name: u64,
-        type_id: *const std::ffi::c_void,
-        buffer: *const std::ffi::c_void,
-        length: u32,
-        explicit_scope: *const std::ffi::c_void,
-    ) -> i32;
-}
-
-/// What is published for on or off.
-fn override_value(on: bool) -> u32 {
-    if on {
-        1
-    } else {
-        2
-    }
-}
-
 /// Whether Windows did what was asked: `now` is Energy saver as Windows reports it after waiting.
 fn saver_outcome(want: bool, now: bool, ac: bool) -> Result<bool, String> {
     if now == want {
@@ -158,96 +131,6 @@ fn saver_outcome(want: bool, now: bool, ac: bool) -> Result<bool, String> {
         Err("Energy saver only turns on while unplugged".into())
     } else {
         Err(format!("Windows kept Energy saver {}", if now { "on" } else { "off" }))
-    }
-}
-
-// Energy saver's "turns on at" battery level (powercfg ESBATTTHRESHOLD), AC and DC: at 100 it is on
-// now, the way Settings' "Always" is; Island puts the user's own levels back to turn it off.
-const SUB_ENERGYSAVER: windows::core::GUID = windows::core::GUID::from_u128(0xde830923_a562_41af_a086_e3a2c6bad2da);
-const ESBATTTHRESHOLD: windows::core::GUID = windows::core::GUID::from_u128(0xe69653ca_cf7f_4f05_aa73_cb833fa90ad4);
-/// Windows' own levels, if Island never saw the user's: off plugged in, 20% on battery.
-const THRESHOLD_DEFAULT: (u32, u32) = (0, 20);
-
-#[link(name = "powrprof", kind = "raw-dylib")]
-extern "system" {
-    fn PowerGetActiveScheme(root: isize, scheme: *mut *mut windows::core::GUID) -> u32;
-    fn PowerReadACValueIndex(root: isize, scheme: *const windows::core::GUID, sub: *const windows::core::GUID, setting: *const windows::core::GUID, value: *mut u32) -> u32;
-    fn PowerReadDCValueIndex(root: isize, scheme: *const windows::core::GUID, sub: *const windows::core::GUID, setting: *const windows::core::GUID, value: *mut u32) -> u32;
-    fn PowerWriteACValueIndex(root: isize, scheme: *const windows::core::GUID, sub: *const windows::core::GUID, setting: *const windows::core::GUID, value: u32) -> u32;
-    fn PowerWriteDCValueIndex(root: isize, scheme: *const windows::core::GUID, sub: *const windows::core::GUID, setting: *const windows::core::GUID, value: u32) -> u32;
-    fn PowerSetActiveScheme(root: isize, scheme: *const windows::core::GUID) -> u32;
-}
-
-#[link(name = "kernel32", kind = "raw-dylib")]
-extern "system" {
-    #[link_name = "LocalFree"]
-    fn local_free(mem: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
-}
-
-/// Where the user's own levels wait while Island holds Energy saver on.
-fn threshold_file() -> Option<std::path::PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("com.moss.island").join("energy-saver-levels.txt"))
-}
-
-/// "ac dc" as saved; None for anything else.
-fn parse_levels(text: &str) -> Option<(u32, u32)> {
-    let mut it = text.split_whitespace().map(|x| x.parse::<u32>().ok());
-    match (it.next().flatten(), it.next().flatten(), it.next()) {
-        (Some(ac), Some(dc), None) if ac <= 100 && dc <= 100 => Some((ac, dc)),
-        _ => None,
-    }
-}
-
-/// The levels to go back to: the saved ones, never 100 (that would leave it on).
-fn levels_back(saved: Option<(u32, u32)>) -> (u32, u32) {
-    match saved {
-        Some((ac, dc)) if ac < 100 && dc < 100 => (ac, dc),
-        _ => THRESHOLD_DEFAULT,
-    }
-}
-
-/// Raises the levels to 100 (on) or puts the user's back (off), on the active power plan.
-fn threshold_set(on: bool) -> Result<(), String> {
-    unsafe {
-        let mut p: *mut windows::core::GUID = std::ptr::null_mut();
-        if PowerGetActiveScheme(0, &mut p) != 0 || p.is_null() {
-            return Err("Windows didn't say which power plan is on".into());
-        }
-        let scheme = *p;
-        local_free(p as *mut _);
-        let (mut ac, mut dc) = (0u32, 0u32);
-        PowerReadACValueIndex(0, &scheme, &SUB_ENERGYSAVER, &ESBATTTHRESHOLD, &mut ac);
-        PowerReadDCValueIndex(0, &scheme, &SUB_ENERGYSAVER, &ESBATTTHRESHOLD, &mut dc);
-        let file = threshold_file();
-        let (new_ac, new_dc) = if on {
-            if ac < 100 || dc < 100 {
-                if let Some(f) = &file {
-                    let _ = std::fs::create_dir_all(f.parent().unwrap());
-                    let _ = std::fs::write(f, format!("{ac} {dc}"));
-                }
-            }
-            (100, 100)
-        } else {
-            let saved = file.as_ref().and_then(|f| std::fs::read_to_string(f).ok()).and_then(|t| parse_levels(&t));
-            // Only undo what Island did: levels the user set themselves (not 100) stay.
-            if ac < 100 && dc < 100 {
-                return Ok(());
-            }
-            levels_back(saved)
-        };
-        let a = PowerWriteACValueIndex(0, &scheme, &SUB_ENERGYSAVER, &ESBATTTHRESHOLD, new_ac);
-        let d = PowerWriteDCValueIndex(0, &scheme, &SUB_ENERGYSAVER, &ESBATTTHRESHOLD, new_dc);
-        let s = PowerSetActiveScheme(0, &scheme);
-        crate::log::line(&format!("energy saver: levels {ac}/{dc} -> {new_ac}/{new_dc} (write {a}/{d}, apply {s})"));
-        if a != 0 || d != 0 || s != 0 {
-            return Err("Windows didn't let Island change Energy saver".into());
-        }
-        if !on {
-            if let Some(f) = &file {
-                let _ = std::fs::remove_file(f);
-            }
-        }
-        Ok(())
     }
 }
 
@@ -263,27 +146,211 @@ fn saver_wait(on: bool, ms: u64) -> PowerState {
     }
 }
 
-fn saver_set(on: bool) -> Result<bool, String> {
-    let value = override_value(on);
-    let status = unsafe {
-        RtlPublishWnfStateData(ENERGY_SAVER_OVERRIDE, std::ptr::null(), &value as *const u32 as *const _, 4, std::ptr::null())
+// Windows has no call that switches Energy saver (Settings' WNF signal and powercfg's
+// ESBATTTHRESHOLD at 100 both did nothing on build 26200, 2026-11-12), so Island presses Quick
+// Settings' own Energy saver button through UI Automation: Win+A, find the tile, toggle it, Esc.
+// Quick Settings is ShellHost.exe's "ControlCenterWindow" (UIA name "Quick settings"): one window
+// kept for the session, shown on Win+A and hidden again on close. EnumWindows/FindWindow don't
+// list it (it lives in the shell's own z-band), so it is found as the foreground window. Its
+// tiles are only in the UIA tree while it is open.
+
+/// Quick Settings' window class on Windows 11 (ShellHost.exe, build 26200).
+const QS_CLASS: &str = "ControlCenterWindow";
+const ADD_TILE: &str = "Add Energy saver to Quick Settings (Win+A, pencil) to switch it from Island";
+
+/// The tile's name in the languages Island speaks and a few more (Windows 10/11 called it
+/// Battery saver before Energy saver).
+const SAVER_NAMES: &[&str] = &[
+    "energy saver",
+    "battery saver",
+    "économiseur d'énergie",
+    "économiseur de batterie",
+    "economizador de energia",
+    "ahorro de energía",
+    "ahorro de batería",
+    "risparmio energia",
+    "risparmio batteria",
+    "energiesparmodus",
+    "stromsparmodus",
+    "energiebesparing",
+    "batterijbesparing",
+];
+
+/// Whether a Quick Settings button is the Energy saver tile, by AutomationId first (the same in
+/// every language) and by its name otherwise. Names may carry a state after a comma.
+fn is_saver_tile(name: &str, id: &str) -> bool {
+    let id = id.to_lowercase();
+    if id.contains("energysaver") || id.contains("batterysaver") {
+        return true;
+    }
+    let name = name.trim().to_lowercase().replace('\u{2019}', "'");
+    let head = name.split([',', '\n']).next().unwrap_or("").trim();
+    SAVER_NAMES.iter().any(|n| head == *n)
+}
+
+/// Whether the tile has to be pressed: only when it isn't already where Island wants it.
+fn needs_press(want: bool, tile_on: bool) -> bool {
+    want != tile_on
+}
+
+fn class_of(h: windows::Win32::Foundation::HWND) -> String {
+    let mut buf = [0u16; 128];
+    let n = unsafe { windows::Win32::UI::WindowsAndMessaging::GetClassNameW(h, &mut buf) };
+    String::from_utf16_lossy(&buf[..n.max(0) as usize])
+}
+
+fn keys(seq: &[(windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY, bool)]) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP};
+    let inputs: Vec<INPUT> = seq
+        .iter()
+        .map(|&(vk, down)| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: if down { KEYBD_EVENT_FLAGS(0) } else { KEYEVENTF_KEYUP }, time: 0, dwExtraInfo: 0 },
+            },
+        })
+        .collect();
+    unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+}
+
+fn win_a() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_A, VK_LWIN};
+    keys(&[(VK_LWIN, true), (VK_A, true), (VK_A, false), (VK_LWIN, false)]);
+}
+
+/// Quick Settings, open and in front, within `ms`.
+fn qs_window(ms: u64) -> Option<windows::Win32::Foundation::HWND> {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let until = Instant::now() + Duration::from_millis(ms);
+    loop {
+        let h = unsafe { GetForegroundWindow() };
+        if !h.is_invalid() && class_of(h) == QS_CLASS {
+            return Some(h);
+        }
+        if Instant::now() >= until {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Makes Quick Settings see-through (alpha 0) while Island works in it; `false` puts its own
+/// style back so the user's next Win+A looks as always (the window is kept between opens).
+fn qs_hidden(h: windows::Win32::Foundation::HWND, hide: bool, ex: i32) -> bool {
+    use windows::Win32::Foundation::COLORREF;
+    use windows::Win32::UI::WindowsAndMessaging::{SetLayeredWindowAttributes, SetWindowLongW, GWL_EXSTYLE, LWA_ALPHA, WS_EX_LAYERED};
+    unsafe {
+        if hide {
+            SetWindowLongW(h, GWL_EXSTYLE, ex | WS_EX_LAYERED.0 as i32);
+            SetLayeredWindowAttributes(h, COLORREF(0), 0, LWA_ALPHA).is_ok()
+        } else {
+            SetWindowLongW(h, GWL_EXSTYLE, ex);
+            true
+        }
+    }
+}
+
+/// Finds the tile in the open Quick Settings and presses it if needed; whether it was pressed.
+fn press_tile(h: windows::Win32::Foundation::HWND, want: bool) -> Result<bool, String> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern, IUIAutomationTogglePattern, ToggleState_On,
+        TreeScope_Descendants, UIA_InvokePatternId, UIA_TogglePatternId,
     };
-    if status < 0 {
-        crate::log::line(&format!("energy saver: publish failed 0x{:08X}", status as u32));
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let a: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).map_err(|e| e.to_string())?;
+        let all = a.CreateTrueCondition().map_err(|e| e.to_string())?;
+        let until = Instant::now() + Duration::from_millis(1500);
+        let tile: IUIAutomationElement = loop {
+            let found = a.ElementFromHandle(h).and_then(|w| w.FindAll(TreeScope_Descendants, &all)).ok().and_then(|arr| {
+                let n = arr.Length().unwrap_or(0);
+                (0..n).filter_map(|i| arr.GetElement(i).ok()).find(|e| {
+                    let name = e.CurrentName().map(|b| b.to_string()).unwrap_or_default();
+                    let id = e.CurrentAutomationId().map(|b| b.to_string()).unwrap_or_default();
+                    is_saver_tile(&name, &id)
+                })
+            });
+            if let Some(t) = found {
+                break t;
+            }
+            if Instant::now() >= until {
+                return Err(ADD_TILE.into());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        if let Ok(t) = tile.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId) {
+            let on = t.CurrentToggleState().map(|s| s == ToggleState_On).unwrap_or(!want);
+            if !needs_press(want, on) {
+                return Ok(false);
+            }
+            return t.Toggle().map(|_| true).map_err(|e| e.to_string());
+        }
+        let i = tile.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId).map_err(|_| ADD_TILE.to_string())?;
+        i.Invoke().map(|_| true).map_err(|e| e.to_string())
     }
-    // Off: Island's raised levels go back either way, or Energy saver would come straight back on.
-    if !on {
-        threshold_set(false)?;
+}
+
+/// Opens Quick Settings out of sight, presses Energy saver if needed, closes it and gives the
+/// focus back, even when something on the way fails.
+fn press_through_quick_settings(want: bool) -> Result<(), String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowLongW, IsWindowVisible, SetForegroundWindow, GWL_EXSTYLE};
+    let prev = unsafe { GetForegroundWindow() };
+    let t0 = Instant::now();
+    win_a();
+    let Some(h) = qs_window(1500) else {
+        return Err("Quick Settings didn't open".into());
+    };
+    let ex = unsafe { GetWindowLongW(h, GWL_EXSTYLE) };
+    let see_through = qs_hidden(h, true, ex);
+    let found = t0.elapsed();
+    let result = press_tile(h, want);
+    // Close: Esc while it has the focus, Win+A again (it toggles) if it lost it; once more if
+    // it is still open after a moment.
+    let close = || {
+        if unsafe { GetForegroundWindow() } == h {
+            keys(&[(VK_ESCAPE, true), (VK_ESCAPE, false)]);
+        } else {
+            win_a();
+        }
+    };
+    close();
+    let mut until = Instant::now() + Duration::from_millis(800);
+    let mut again = true;
+    while unsafe { IsWindowVisible(h) }.as_bool() {
+        if Instant::now() >= until {
+            if !again {
+                break;
+            }
+            again = false;
+            close();
+            until = Instant::now() + Duration::from_millis(800);
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
-    let p = saver_wait(on, 800);
+    qs_hidden(h, false, ex);
+    if !prev.is_invalid() && unsafe { GetForegroundWindow() } != prev {
+        let _ = unsafe { SetForegroundWindow(prev) };
+    }
+    crate::log::line(&format!(
+        "energy saver: quick settings open {} ms (found in {} ms, see-through {see_through}), press {result:?}",
+        t0.elapsed().as_millis(),
+        found.as_millis(),
+    ));
+    result.map(|_| ())
+}
+
+fn saver_set(on: bool) -> Result<bool, String> {
+    let p = power();
     if p.saver == on {
         return Ok(on);
     }
-    // The Settings signal didn't do it (2026-11-12 on build 26200: it didn't): the levels do.
-    if on {
-        threshold_set(true)?;
+    if on && p.ac {
+        return saver_outcome(on, p.saver, p.ac);
     }
-    let p = saver_wait(on, 3000);
+    press_through_quick_settings(on)?;
+    let p = saver_wait(on, 2000);
     saver_outcome(on, p.saver, p.ac)
 }
 
@@ -653,14 +720,29 @@ pub async fn sys_top(kind: String, limit: usize) -> Vec<AppUse> {
 
 #[cfg(test)]
 mod tests {
-    use super::{by_app, instance_pid, override_value, plain_name, saver_outcome, time_to_full, Top};
+    use super::{by_app, instance_pid, is_saver_tile, needs_press, plain_name, saver_outcome, time_to_full, Top};
     use crate::procs::ProcRow;
     use std::collections::HashMap;
 
     #[test]
-    fn energy_saver_is_published_as_settings_does_it() {
-        assert_eq!(override_value(true), 1);
-        assert_eq!(override_value(false), 2);
+    fn quick_settings_energy_saver_tile_is_found_in_any_language() {
+        assert!(is_saver_tile("Energy saver", ""));
+        assert!(is_saver_tile("Energy saver, Off", ""));
+        assert!(is_saver_tile("Économiseur d’énergie", ""));
+        assert!(is_saver_tile("Battery saver", ""));
+        assert!(is_saver_tile("Anything", "Microsoft.QuickAction.EnergySaver"));
+        assert!(is_saver_tile("", "Microsoft.QuickAction.BatterySaver"));
+        assert!(!is_saver_tile("Bluetooth", "Microsoft.QuickAction.Bluetooth"));
+        assert!(!is_saver_tile("Energy saver settings", ""));
+        assert!(!is_saver_tile("", ""));
+    }
+
+    #[test]
+    fn the_tile_is_pressed_only_when_it_is_not_already_there() {
+        assert!(needs_press(true, false));
+        assert!(needs_press(false, true));
+        assert!(!needs_press(true, true));
+        assert!(!needs_press(false, false));
     }
 
     #[test]
@@ -672,7 +754,7 @@ mod tests {
         assert_eq!(saver_outcome(false, true, false), Err("Windows kept Energy saver on".into()));
     }
 
-    /// Really switches Energy saver on this PC and back: run by hand only.
+    /// Really opens Quick Settings and switches Energy saver on this PC and back: run by hand only.
     #[test]
     #[ignore]
     fn switches_energy_saver_for_real() {
@@ -723,23 +805,5 @@ mod tests {
         // A pid no longer in the snapshot and an app using nothing are left out.
         assert_eq!(got, vec![("Chrome", "chrome.exe", 15.0, 2), ("Code", "code.exe", 12.0, 1)]);
         assert_eq!(by_app(&mut top, &rows, per_pid, 1).len(), 1);
-    }
-}
-
-#[cfg(test)]
-mod energy_saver_levels {
-    use super::*;
-
-    #[test]
-    fn the_users_levels_come_back_never_100() {
-        assert_eq!(parse_levels("0 20"), Some((0, 20)));
-        assert_eq!(parse_levels(" 5 30
-"), Some((5, 30)));
-        assert_eq!(parse_levels("0"), None);
-        assert_eq!(parse_levels("0 20 1"), None);
-        assert_eq!(parse_levels("0 101"), None);
-        assert_eq!(levels_back(Some((0, 30))), (0, 30));
-        assert_eq!(levels_back(Some((100, 100))), THRESHOLD_DEFAULT);
-        assert_eq!(levels_back(None), (0, 20));
     }
 }
