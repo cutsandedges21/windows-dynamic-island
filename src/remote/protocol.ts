@@ -96,7 +96,42 @@ export type PhoneMsg =
   | { t: 'act'; action: string; arg?: unknown }
   | { t: 'text'; text: string }
   | { t: 'clip-get' }
-  | { t: 'lock' };
+  | { t: 'lock' }
+  /** The PC's Activities and Settings the phone may change → `prefs`, and again whenever they change. */
+  | { t: 'prefs-get' }
+  /** Change one of them; the PC checks `key` against its own allow-list (src/remote/prefs.ts). */
+  | { t: 'pref'; key: string; value: PrefValue };
+
+/** A setting's value as a phone sends it: a switch, a choice, or a number (Glass). */
+export type PrefValue = boolean | string | number;
+
+/** A pick in a setting's or an activity's choices. */
+export interface PrefChoice {
+  value: string;
+  label: string;
+}
+
+/** One PC setting a phone may change, with its value now. */
+export interface PrefRow {
+  key: string;
+  /** The PC's Settings nav section it sits under ("Look", "Behavior", "General"). */
+  section: string;
+  label: string;
+  kind: 'bool' | 'choice' | 'range';
+  value: PrefValue;
+  choices?: PrefChoice[];
+  min?: number;
+  max?: number;
+}
+
+/** One activity: on or off, and how it grows when pointed at. Its keys are `act:<id>:enabled` and `act:<id>:grows`. */
+export interface PrefActivity {
+  id: string;
+  name: string;
+  enabled: boolean;
+  grows: string;
+  choices: PrefChoice[];
+}
 
 /** Phone → island lines Rust handles itself (never passed on). */
 export type PhoneControl =
@@ -179,7 +214,9 @@ export type IslandMsg =
   | { t: 'pong' }
   | { t: 'bye'; why: 'removed' }
   /** The terminals on the PC: the answer to `term-list` and `term-kill`, and sent whenever they change. `allowed`: this phone may open them. */
-  | { t: 'terms'; items: TermInfo[]; allowed: boolean };
+  | { t: 'terms'; items: TermInfo[]; allowed: boolean }
+  /** The settings and activities a phone may change: the answer to `prefs-get`, and sent whenever they change. */
+  | { t: 'prefs'; rows: PrefRow[]; acts: PrefActivity[] };
 
 /** First line of a file stream (either way), then exactly `size` bytes. */
 export interface FileHeader {
@@ -288,10 +325,38 @@ export function readPhoneMsg(v: unknown): PhoneMsg | null {
       return short(v.text, 20_000) && v.text.trim() ? { t: 'text', text: v.text } : null;
     case 'clip-get':
     case 'lock':
+    case 'prefs-get':
       return { t: v.t };
+    case 'pref':
+      return isPrefKey(v.key) && isPrefValue(v.value) ? { t: 'pref', key: v.key, value: v.value } : null;
     default:
       return null;
   }
+}
+
+/** A setting's key as a phone may name it: `island.glass`, `act:music:enabled`. */
+export const isPrefKey = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9.:_-]{1,100}$/.test(v);
+const isPrefValue = (v: unknown): v is PrefValue => typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)) || short(v, 64);
+
+function readChoices(v: unknown): PrefChoice[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v.slice(0, 20).filter((c): c is PrefChoice => isObj(c) && short(c.value, 64) && short(c.label, 80));
+}
+
+function readPrefRow(v: unknown): PrefRow | null {
+  if (!isObj(v) || !isPrefKey(v.key) || !short(v.section, 60) || !short(v.label, 120) || !isPrefValue(v.value)) return null;
+  if (v.kind !== 'bool' && v.kind !== 'choice' && v.kind !== 'range') return null;
+  const row: PrefRow = { key: v.key, section: v.section, label: v.label, kind: v.kind, value: v.value };
+  const choices = readChoices(v.choices);
+  if (choices) row.choices = choices;
+  if (typeof v.min === 'number' && Number.isFinite(v.min)) row.min = v.min;
+  if (typeof v.max === 'number' && Number.isFinite(v.max)) row.max = v.max;
+  return row;
+}
+
+function readPrefActivity(v: unknown): PrefActivity | null {
+  if (!isObj(v) || !short(v.id, 64) || !v.id || !short(v.name, 120) || typeof v.enabled !== 'boolean' || !short(v.grows, 64)) return null;
+  return { id: v.id, name: v.name, enabled: v.enabled, grows: v.grows, choices: readChoices(v.choices) ?? [] };
 }
 
 /** An island's line for the phone, checked enough to draw it; null for anything else. */
@@ -323,6 +388,14 @@ export function readIslandMsg(v: unknown): IslandMsg | null {
       return short(v.name, 200) ? { t: 'paired', name: v.name } : null;
     case 'denied':
       return v.why === 'code' || v.why === 'expired' || v.why === 'unknown' || v.why === 'version' ? { t: 'denied', why: v.why } : null;
+    case 'prefs':
+      return Array.isArray(v.rows) && Array.isArray(v.acts)
+        ? {
+            t: 'prefs',
+            rows: v.rows.slice(0, 100).map(readPrefRow).filter((x): x is PrefRow => x !== null),
+            acts: v.acts.slice(0, 100).map(readPrefActivity).filter((x): x is PrefActivity => x !== null),
+          }
+        : null;
     case 'pong':
       return { t: 'pong' };
     case 'bye':

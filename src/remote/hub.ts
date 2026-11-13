@@ -8,7 +8,7 @@ import type { MirrorFrame } from '../core/mirror';
 import type { RemoteFile, RemotePhone } from '../core/native';
 import type { Settings } from '../core/settings';
 import type { SheetView } from '../core/sheet';
-import { MAX_VIEWS_PER_S, PHONE_ISLAND_ACTIONS, PROTOCOL_V, readPhoneMsg, type BotState, type HelloFacts, type IslandMsg, type Nav } from './protocol';
+import { MAX_VIEWS_PER_S, PHONE_ISLAND_ACTIONS, PROTOCOL_V, readPhoneMsg, type BotState, type HelloFacts, type IslandMsg, type Nav, type PrefActivity, type PrefRow, type PrefValue } from './protocol';
 import { HELLO_GUARDED, mayPress, PC_ONLY, pressables, stripActions, stripPill, type Pressables } from './views';
 
 /** A paired phone, as Rust lists it (`remote_phones`, the `remote-phones` event). */
@@ -46,6 +46,10 @@ export interface PhoneIslandHooks {
   facts(): HelloFacts;
   /** Text or a file from a phone arrived (already copied, or saved to Downloads; a picture copied too). */
   fromPhone(item: PhoneDelivery): void;
+  /** The settings and activities a phone may change, with their values now (src/remote/prefs.ts `prefsOf`); null before settings load. */
+  prefs?(): { rows: PrefRow[]; acts: PrefActivity[] } | null;
+  /** Changes one of them, through the allow-list (`applyPref`) only, and saves; false: refused. */
+  setPref?(key: string, value: PrefValue): boolean;
 }
 
 /** The native calls the hub makes (src/remote/native.ts; faked in tests). */
@@ -141,6 +145,8 @@ interface Session {
   pillPress: Pressables;
   /** The facts its last hello said (JSON): a change sends a fresh one. */
   helloKey: string;
+  /** The last `prefs` sent (JSON); null until the phone asks for them (its Activities or Settings screen). */
+  prefsKey: string | null;
   /** Lines go out one after another, in order (hello first). */
   chain: Promise<void>;
   pill: Throttle;
@@ -179,6 +185,7 @@ export class PhoneHub {
   /** After every island compose: whatever changed goes to each phone. */
   tick(): void {
     this.syncHello();
+    this.syncPrefs();
     for (const s of this.sessions.values()) {
       s.pill.poke();
       s.view.poke();
@@ -191,6 +198,22 @@ export class PhoneHub {
     const facts = this.hooks.facts();
     const key = JSON.stringify(facts);
     for (const s of this.sessions.values()) if (s.helloKey !== key) this.sendHello(s, facts, key);
+  }
+
+  /** Settings changed (here, on the PC or from a phone): each phone that asked for them gets the new values. */
+  syncPrefs(force: Session | null = null): void {
+    if (!this.hooks.prefs) return;
+    const want = [...this.sessions.values()].filter((s) => s === force || s.prefsKey !== null);
+    if (!want.length) return;
+    const p = this.hooks.prefs();
+    if (!p) return;
+    const msg: IslandMsg = { t: 'prefs', rows: p.rows, acts: p.acts };
+    const key = JSON.stringify(msg);
+    for (const s of want) {
+      if (s.prefsKey === key && s !== force) continue;
+      s.prefsKey = key;
+      this.send(s, msg);
+    }
   }
 
   /** A paired phone's name (the island says which phone opened a terminal); null for one it doesn't know. */
@@ -256,6 +279,7 @@ export class PhoneHub {
       pillFrame: null,
       pillPress: new Map(),
       helloKey: '',
+      prefsKey: null,
       chain: Promise.resolve(),
       pill: new Throttle(GAP_MS, () => this.sendPill(s)),
       view: new Throttle(GAP_MS, () => this.sendView(s)),
@@ -367,7 +391,25 @@ export class PhoneHub {
         return this.clip(s);
       case 'lock':
         return this.lock(s);
+      case 'prefs-get':
+        return this.syncPrefs(s);
+      case 'pref':
+        return this.pref(s, m.key, m.value);
     }
+  }
+
+  /**
+   * A setting changed from the phone's Activities or Settings screen. Only the allow-list in
+   * src/remote/prefs.ts is ever written (the island's `setPref` goes through `applyPref`): never
+   * pairing, terminals, keys or paths. Refused, the phone says so and gets the values back.
+   */
+  private pref(s: Session, key: string, value: PrefValue): void {
+    const ok = this.hooks.setPref?.(key, value) === true;
+    if (!ok) {
+      this.native.log(`phone: refused setting ${key} from ${s.name}`);
+      this.toast(s, "That setting can't be changed from your phone", 'bad');
+    }
+    this.syncPrefs(s);
   }
 
   /**
