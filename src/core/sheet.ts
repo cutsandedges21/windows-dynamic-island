@@ -295,7 +295,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
       case 'buttons':
         return { ...b, items: b.items.map(btn) };
       case 'input':
-        return { ...b, action: fn(b.action), engage: b.engage ? fn(b.engage) : undefined, change: b.change ? fn(b.change) : undefined, point: b.point ? fn(b.point) : undefined };
+        return { ...b, action: fn(b.action), engage: b.engage ? fn(b.engage) : undefined, change: b.change ? fn(b.change) : undefined, point: b.point ? fn(b.point) : undefined, pasteFiles: b.pasteFiles ? fn(b.pasteFiles) : undefined };
       case 'meter':
         return b.action ? { ...b, action: fn(b.action) } : b;
       case 'rows':
@@ -1318,7 +1318,8 @@ export class SheetRenderer {
     input.addEventListener('paste', (ev) => {
       const s = spec();
       const data = (ev as ClipboardEvent).clipboardData;
-      if (!s.pasteFiles || !data || data.getData('text/plain') || !data.files.length) return;
+      // No text in it: files or a picture (WebView2 doesn't always list a screenshot in `files`), so Rust reads the clipboard.
+      if (!s.pasteFiles || !data || data.getData('text/plain')) return;
       ev.preventDefault();
       this.onAction(s.pasteFiles, null, e);
     });
