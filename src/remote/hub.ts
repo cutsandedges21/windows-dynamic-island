@@ -10,6 +10,7 @@ import type { Settings } from '../core/settings';
 import type { SheetView } from '../core/sheet';
 import { MAX_VIEWS_PER_S, PHONE_ISLAND_ACTIONS, PROTOCOL_V, readPhoneMsg, type BotState, type HelloFacts, type IslandMsg, type Nav, type PrefActivity, type PrefRow, type PrefValue } from './protocol';
 import { gridSetAllowed, shownGridKeys, withoutTray, type PhoneLayout } from './grid-edit';
+import { heldPush, PhoneOutbox, setPhoneHolder, type HeldItem } from './outbox';
 import { HELLO_GUARDED, mayPress, PC_ONLY, pressables, stripActions, stripPill, type Pressables } from './views';
 
 /** A paired phone, as Rust lists it (`remote_phones`, the `remote-phones` event). */
@@ -62,6 +63,8 @@ export interface PhoneNative {
   /** Phase 3: the key phones subscribe to pushes with; '' while there is none. */
   vapid(): Promise<string>;
   push(title: string, body: string, tag: string, open: string, urgent: boolean): Promise<number>;
+  /** A file to a connected phone (Rust says how it went with `remote-file-sent`). */
+  sendFile?(phone: string, path: string): Promise<unknown>;
   copy(text: string): Promise<boolean>;
   clipboard(): Promise<{ files: string[]; text: string | null }>;
   lock(): Promise<unknown>;
@@ -167,6 +170,8 @@ export class PhoneHub {
   private phones: PhoneInfo[] = [];
   private vapidKey: Promise<string | null> | null = null;
   private readonly offs: Array<() => void> = [];
+  /** What Land sent a phone while it wasn't connected: it goes when that phone connects. */
+  private readonly outbox = new PhoneOutbox();
 
   constructor(
     private readonly hooks: PhoneIslandHooks,
@@ -180,10 +185,12 @@ export class PhoneHub {
       await this.native.on<{ phone: string; msg: unknown }>('remote-msg', (e) => void this.onMsg(e)),
       await this.native.on<RemoteFile>('remote-file', (e) => this.onFile(e)),
     );
+    setPhoneHolder((phone, item) => this.hold(phone, item));
     await this.refresh();
   }
 
   stop(): void {
+    setPhoneHolder(null);
     for (const off of this.offs.splice(0)) off();
     for (const s of [...this.sessions.values()]) this.drop(s);
   }
@@ -255,6 +262,28 @@ export class PhoneHub {
     void this.native.push(title, body, tag, open, urgent).catch((err) => this.native.log(`phone: push failed: ${String(err)}`));
   }
 
+  /**
+   * Land sends a paired phone that isn't connected: the item waits (bounded, a day at most) and
+   * the phone is notified, if it took notifications. False when the phone is connected (send it
+   * now, as always), unknown, or the item can't wait.
+   */
+  hold(phone: string, item: HeldItem): boolean {
+    if (this.sessions.has(phone)) return false;
+    const p = this.phones.find((x) => x.id === phone);
+    if (!p || p.connected) return false;
+    if (!this.outbox.add(phone, item, Date.now())) return false;
+    if (p.push) {
+      const n = heldPush(item, this.hooks.facts().name);
+      this.push(n.title, n.body, n.tag, n.open, false);
+    }
+    return true;
+  }
+
+  /** What waits for a phone now (Land's card counts on it; tests too). */
+  held(phone: string): number {
+    return this.outbox.count(phone, Date.now());
+  }
+
   // ---------------------------------------------------------------- phones coming and going
 
   private async refresh(): Promise<void> {
@@ -262,7 +291,9 @@ export class PhoneHub {
   }
 
   private onPhones(list: unknown): void {
+    const before = this.phones;
     this.phones = Array.isArray(list) ? list.filter(isPhone) : [];
+    for (const p of before) if (!this.phones.some((x) => x.id === p.id)) this.outbox.forget(p.id);
     const live = new Set(this.phones.filter((p) => p.connected).map((p) => p.id));
     for (const s of [...this.sessions.values()]) if (!live.has(s.id)) this.drop(s);
     for (const p of this.phones) {
@@ -297,6 +328,27 @@ export class PhoneHub {
     this.sendHello(s, facts, JSON.stringify(facts));
     s.pill.now();
     s.view.now();
+    this.deliverHeld(s);
+  }
+
+  /** What waited for this phone goes now, after its hello, oldest first. */
+  private deliverHeld(s: Session): void {
+    for (const item of this.outbox.take(s.id, Date.now())) {
+      if (item.kind === 'text') {
+        this.send(s, { t: 'text', text: item.text, from: item.from });
+        s.chain = s.chain.then(() => item.settle?.(this.sessions.get(s.id) === s ? 'sent' : 'dropped'));
+      } else {
+        const sendFile = this.native.sendFile;
+        s.chain = s.chain
+          .then(async () => {
+            if (this.sessions.get(s.id) !== s) return item.settle?.('dropped');
+            if (!sendFile) return item.settle?.('dropped');
+            await sendFile.call(this.native, s.id, item.path);
+            item.settle?.('sent');
+          })
+          .catch((err) => this.native.log(`phone: a held file for ${s.name} failed: ${String(err)}`));
+      }
+    }
   }
 
   /** Hello: who this island is, what a phone may do here, and the push key (asked once). */

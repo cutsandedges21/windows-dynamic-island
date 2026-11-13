@@ -33,6 +33,8 @@ export const MAX_UPLOAD = 2 * 1024 ** 3;
 export const MAX_DOWNLOAD = 200 * 1024 ** 2;
 /** The only island-wide actions a phone may press (Quiet). Activity actions are `act:<id>:<name>`. */
 export const PHONE_ISLAND_ACTIONS: readonly string[] = ['island:dnd'];
+/** A notification's `open` for what the PC sent while Island was closed there: the phone's inbox, not a card. */
+export const INBOX_OPEN = 'inbox';
 /** A phone's action string is at most this long (Claude's New chat names its folder in it). */
 export const MAX_ACTION = 1000;
 /** Recent project folders a hello carries, at most (the terminal's folder picker). */

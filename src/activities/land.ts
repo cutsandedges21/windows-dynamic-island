@@ -11,6 +11,7 @@ import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/acti
 import { baseName, bytes, clip, clock, percent, rate } from '../core/format';
 import { native, type LandFriend, type LandFirewall, type LandFriendAsk, type LandPeer, type LandStaged, type LandTransfer, type RemoteFileSent, type RemotePhone, type ShareInfo, type Tried } from '../core/native';
 import type { PhoneDelivery } from '../remote/hub';
+import { holdForPhone, type HeldEnd } from '../remote/outbox';
 import type { PetSignal } from '../core/pet';
 import type { Seg } from '../core/segments';
 import type { Block, Person, SheetButton, SheetRow, SheetView, Tile } from '../core/sheet';
@@ -123,8 +124,10 @@ export class LandActivity extends BaseActivity {
   private fixing = false;
   /** Land's first start here: when the island said what it is (the system asks about the network at the same time). */
   private introAt = 0;
-  /** Paired phones connected now (Island on your phone): they get files and text too. */
+  /** Paired phones connected now, or that took notifications (Island on your phone): they get files and text too. */
   private phones: LandPeer[] = [];
+  /** Which of them are connected now (the others get what waits for them, and a notification). */
+  private phonesLive = new Set<string>();
   /** Numbers what goes to and comes from phones (they have no transfer ids of Rust's). */
   private phoneSeq = 0;
   /** Transfers from a phone whose picture Rust also put on the clipboard. */
@@ -208,7 +211,9 @@ export class LandActivity extends BaseActivity {
 
   /** Paired phones as Rust lists them: the connected ones are targets. */
   private onPhones(list: RemotePhone[]): void {
-    const next = (Array.isArray(list) ? list : []).filter((p) => p.connected).map((p): LandPeer => ({ id: `${PHONE}${p.id}`, name: p.name, os: 'phone' }));
+    const all = (Array.isArray(list) ? list : []).filter((p) => p.connected || p.push);
+    this.phonesLive = new Set(all.filter((p) => p.connected).map((p) => `${PHONE}${p.id}`));
+    const next = all.map((p): LandPeer => ({ id: `${PHONE}${p.id}`, name: p.name, os: 'phone' }));
     if (next.length === this.phones.length && next.every((p, i) => p.id === this.phones[i].id && p.name === this.phones[i].name)) return;
     this.phones = next;
     this.unpickGone();
@@ -895,7 +900,7 @@ export class LandActivity extends BaseActivity {
     const how = t.via === 'relay' ? ' · through a relay' : t.via === 'direct' ? ' · direct' : '';
     let detail: string;
     if (t.state === 'waiting') detail = isPhone(t.peer.id) ? `Sending to ${t.peer.name}…` : `Waiting for ${t.peer.name} to accept`;
-    else if (t.state === 'queued') detail = `Sends when ${t.peer.name} is online`;
+    else if (t.state === 'queued') detail = isPhone(t.peer.id) ? `${t.peer.name} was notified · goes when Island opens there` : `Sends when ${t.peer.name} is online`;
     else if (t.state === 'asking') detail = 'Waiting for your answer';
     else if (t.state === 'sending' || t.state === 'receiving') detail = `${percent(this.frac(t) ?? 0)} · ${bytes(t.done)} of ${bytes(t.total)}${t.speed >= 1 ? ` · ${rate(t.speed)}` : ''}${how}`;
     // The connection dropped after Accept: what arrived is kept, and it goes on by itself.
@@ -1151,6 +1156,7 @@ export class LandActivity extends BaseActivity {
     const all = this.staged.filter((s) => !s.error);
     const files = all.filter((s) => !s.dir);
     if (!files.length) return { ok: false, error: 'A phone takes files, not folders.' };
+    if (!this.phonesLive.has(p.id)) return this.holdFiles(p, files);
     let started = 0;
     let error = '';
     for (const f of files) {
@@ -1167,8 +1173,43 @@ export class LandActivity extends BaseActivity {
     return started ? { ok: true, value: null } : { ok: false, error: error || `${p.name} didn't take it.` };
   }
 
+  /**
+   * Files for a phone that isn't connected: they wait on the hub (src/remote/outbox.ts) and the
+   * phone is notified; each shows here as waiting until it goes.
+   */
+  private holdFiles(p: LandPeer, files: LandStaged[]): Tried<null> {
+    let held = 0;
+    for (const f of files) {
+      const id = `phone-out-${++this.phoneSeq}`;
+      // Sent: Rust's remote-file-sent says how it went (onPhoneSent).
+      const settle = (end: HeldEnd) => void (end === 'dropped' && this.heldGone(id));
+      if (!holdForPhone(p.id.slice(PHONE.length), { kind: 'file', path: f.path, name: f.name, size: f.size, settle })) continue;
+      held++;
+      this.onTransfer({ id, dir: 'out', peer: p, state: 'queued', done: 0, total: f.size, count: 1, items: [{ name: f.name, size: f.size, files: 1, dir: false }], error: null, saved: [], folder: null, expires: null });
+    }
+    return held ? { ok: true, value: null } : { ok: false, error: `${p.name} isn't connected right now.` };
+  }
+
+  /** Something held for a phone waited too long, or gave way to newer: its row says so. */
+  private heldGone(id: string): void {
+    const t = this.transfers.get(id);
+    if (this.alive && t?.state === 'queued') this.onTransfer({ ...t, state: 'failed', error: `${t.peer.name} didn't open Island in time` });
+  }
+
   /** Text or a link to a paired phone: one line, shown there with Copy (and Open). */
   private async textToPhone(p: LandPeer, text: string): Promise<Tried<null>> {
+    if (!this.phonesLive.has(p.id)) {
+      const id = `phone-out-${++this.phoneSeq}`;
+      const from = this.computerName() ?? (platform === 'macos' ? 'Mac' : 'PC');
+      const settle = (end: HeldEnd) => {
+        const t = this.transfers.get(id);
+        if (end === 'dropped') this.heldGone(id);
+        else if (this.alive && t?.state === 'queued') this.onTransfer({ ...t, state: 'done', done: text.length });
+      };
+      if (!holdForPhone(p.id.slice(PHONE.length), { kind: 'text', text, from, settle })) return { ok: false, error: `${p.name} isn't connected right now.` };
+      this.onTransfer({ id, dir: 'out', peer: p, state: 'queued', done: 0, total: text.length, count: 0, items: [], error: null, saved: [], folder: null, expires: null, text });
+      return { ok: true, value: null };
+    }
     const ok = await native.remoteSend(p.id.slice(PHONE.length), { t: 'text', text, from: this.computerName() ?? (platform === 'macos' ? 'Mac' : 'PC') });
     if (!ok) return { ok: false, error: `${p.name} isn't connected right now.` };
     this.onTransfer({ id: `phone-out-${++this.phoneSeq}`, dir: 'out', peer: p, state: 'done', done: text.length, total: text.length, count: 0, items: [], error: null, saved: [], folder: null, expires: null, text });

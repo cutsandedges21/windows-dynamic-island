@@ -3,11 +3,11 @@
 // sends (hello, pill, view, toasts, clipboard, text, files, terminals), and where a tap goes
 // (routing.ts, nav.ts).
 
-import type { IslandMsg, Nav, PairPayload, TermInfo } from '../../../src/remote/protocol';
+import { INBOX_OPEN, type IslandMsg, type Nav, type PairPayload, type TermInfo } from '../../../src/remote/protocol';
 import { NavKeeper, navMsg } from './nav';
 import { deniedText, pairErrorText, phoneName } from './pairing';
 import { pushFlag, pushOff, pushOn, pushResend, pushState } from './push';
-import { actMsg, routeAction } from './routing';
+import { actMsg, INBOX_READY_MS, inboxReady, routeAction } from './routing';
 import type { IslandStore } from './store';
 import type { IncomingFile, Link, LinkState, SavedIsland } from './link/api';
 import { ClipSheet } from './screens/clipboard';
@@ -63,6 +63,8 @@ export class App {
   private seenTimer: ReturnType<typeof setInterval> | undefined;
   private width = 0;
   private openId: string | null;
+  /** Until when what the PC sends shows ready (a "sent you …" notification was tapped). */
+  private readyUntil = 0;
   /** The terminal screen, over the island while it shows. */
   private termScreen: TerminalScreen | null = null;
   private termLoading = false;
@@ -77,6 +79,7 @@ export class App {
   ) {
     this.state = link.state;
     this.openId = opts.open;
+    if (opts.open === INBOX_OPEN) this.inboxOpened();
     link.onState((s) => this.onState(s));
     link.onMessage((m) => this.onMessage(m));
     link.onFile((f) => this.onFile(f));
@@ -278,7 +281,7 @@ export class App {
         if (this.prefs?.alive) this.prefs.show(m.rows, m.acts);
         return;
       case 'text':
-        if (s) inboxText(s.inbox, m.text, m.from);
+        if (s) inboxText(s.inbox, m.text, m.from, inboxReady(this.readyUntil, Date.now()));
         return;
       default:
         // paired, denied, pong, bye: the link's own business.
@@ -288,7 +291,18 @@ export class App {
 
   private onFile(f: IncomingFile): void {
     const s = this.islandScreen;
-    if (s) inboxFile(s.inbox, f, this.island?.name ?? 'your PC');
+    if (s) inboxFile(s.inbox, f, this.island?.name ?? 'your PC', inboxReady(this.readyUntil, Date.now()));
+  }
+
+  /** A "sent you …" notification was tapped: no card to open; what waited on the PC comes after hello, ready. */
+  private inboxOpened(): void {
+    this.openId = null;
+    this.readyUntil = Date.now() + INBOX_READY_MS;
+    if (new URLSearchParams(location.search).has('open')) {
+      const url = new URL(location.href);
+      url.searchParams.delete('open');
+      history.replaceState(null, '', url);
+    }
   }
 
   // ---------------------------------------------------------------- taps and navigation
@@ -329,6 +343,7 @@ export class App {
   }
 
   private openCard(id: string): void {
+    if (id === INBOX_OPEN) return this.inboxOpened();
     if (this.state.s !== 'online' || !this.hello) {
       this.openId = id;
       return;
