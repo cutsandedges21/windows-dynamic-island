@@ -528,11 +528,12 @@ describe('notifications and the hover card', () => {
     }
   });
 
-  it('the grid tile lists every session, with both limits in its label, and is absent with no session', async () => {
+  it('the grid tile lists every session, with both limits in its label, and stays with no session', async () => {
     const { act } = await boot();
     stubTracker(act, [session({}), session({ id: 'S2', sessionId: 'S2', pid: 200 })], { 100: [50], 200: [60] });
     act.usageState = { data: { fiveHour: { pct: 12, resetsAt: T0 + 3600_000 }, sevenDay: { pct: 60, resetsAt: T0 + 86400_000 }, models: [] }, error: null, source: 'api', fetchedAt: T0 } as never;
-    expect(act.tile!(senv('open'))).toBeNull();
+    // No session: still there (the way to Claude's card), saying so.
+    expect(act.tile!(senv('open'))!.body).toMatchObject({ k: 'list', rows: [], empty: 'All quiet' });
     act.rows = [row({}), row({ id: 'S2', label: 'Docs', state: 'done', word: 'done' })];
     const tile = act.tile!(senv('open'))!;
     expect(tile).toMatchObject({ key: 'claude', span: 2, rows: 2 });
@@ -540,6 +541,10 @@ describe('notifications and the hover card', () => {
     expect(tile.body.k === 'list' && tile.body.rows.map((r) => r.title)).toEqual(['Fix the parser', 'Docs']);
     (act as unknown as { ctx: { options: () => unknown } }).ctx.options = () => ({ showLimits: false });
     expect(act.tile!(senv('open'))!.body).toMatchObject({ label: 'Claude sessions' });
+    // A hidden session (Moss's old Hide) can be brought back from the tile.
+    (act as unknown as { ctx: { options: () => unknown } }).ctx.options = () => ({ hiddenSessions: ['S9'] });
+    const t2 = act.tile!(senv('open'))!;
+    expect(t2.body.k === 'list' && t2.body.rows.at(-1)).toMatchObject({ title: 'Show hidden (1)', action: 'unhide-all' });
   });
 });
 
