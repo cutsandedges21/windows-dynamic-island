@@ -19,6 +19,14 @@ export interface HubState {
   brightness: number | null;
   /** Battery saver; null without a battery. */
   saver: boolean | null;
+  /** Why Energy saver just didn't switch, while that shows. */
+  saverNote?: string | null;
+}
+
+/** The battery saver button's tip: what a click does, or why it just didn't switch. */
+export function saverTip(on: boolean, interactive: boolean, note: string | null = null): string {
+  if (note) return `${note}. Energy saver is ${on ? 'on' : 'off'}.`;
+  return interactive ? `Turn Energy saver ${on ? 'off' : 'on'}` : `Energy saver is ${on ? 'on' : 'off'}`;
 }
 
 /** "Wi-Fi · Home" on, "Wi-Fi · Off" off; null without a Wi-Fi radio. */
@@ -62,7 +70,7 @@ export function hubTile(s: HubState, interactive: boolean): Tile | null {
       action: 'saver',
       style: s.saver ? 'primary' : 'secondary',
       disabled: interactive ? undefined : true,
-      tip: `Battery saver is ${s.saver ? 'on' : 'off'}.${interactive ? ' Click to switch it in Windows Settings.' : ''}`,
+      tip: saverTip(s.saver, interactive, s.saverNote ?? null),
     });
   }
   if (!pills.length && !sliders.length) return null;

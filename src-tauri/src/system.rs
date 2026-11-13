@@ -121,6 +121,245 @@ pub fn power_state() -> PowerState {
     power()
 }
 
+// ------------------------------------------------------------------ energy saver
+
+/// Whether Windows did what was asked: `now` is Energy saver as Windows reports it after waiting.
+fn saver_outcome(want: bool, now: bool, ac: bool) -> Result<bool, String> {
+    if now == want {
+        Ok(now)
+    } else if want && ac {
+        Err("Energy saver only turns on while unplugged".into())
+    } else {
+        Err(format!("Windows kept Energy saver {}", if now { "on" } else { "off" }))
+    }
+}
+
+/// Waits up to `ms` for Windows to report Energy saver as `on`; the last state seen.
+fn saver_wait(on: bool, ms: u64) -> PowerState {
+    let until = Instant::now() + Duration::from_millis(ms);
+    loop {
+        let p = power();
+        if p.saver == on || Instant::now() >= until {
+            return p;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+// Windows has no call that switches Energy saver (Settings' WNF signal and powercfg's
+// ESBATTTHRESHOLD at 100 both did nothing on build 26200, 2026-11-12), so Island presses Quick
+// Settings' own Energy saver button through UI Automation: Win+A, find the tile, toggle it, Esc.
+// Quick Settings is ShellHost.exe's "ControlCenterWindow" (UIA name "Quick settings"): one window
+// kept for the session, shown on Win+A and hidden again on close. EnumWindows/FindWindow don't
+// list it (it lives in the shell's own z-band), so it is found as the foreground window. Its
+// tiles are only in the UIA tree while it is open.
+
+/// Quick Settings' window class on Windows 11 (ShellHost.exe, build 26200).
+const QS_CLASS: &str = "ControlCenterWindow";
+const ADD_TILE: &str = "Add Energy saver to Quick Settings (Win+A, pencil) to switch it from Island";
+
+/// The tile's name in the languages Island speaks and a few more (Windows 10/11 called it
+/// Battery saver before Energy saver).
+const SAVER_NAMES: &[&str] = &[
+    "energy saver",
+    "battery saver",
+    "économiseur d'énergie",
+    "économiseur de batterie",
+    "economizador de energia",
+    "ahorro de energía",
+    "ahorro de batería",
+    "risparmio energia",
+    "risparmio batteria",
+    "energiesparmodus",
+    "stromsparmodus",
+    "energiebesparing",
+    "batterijbesparing",
+];
+
+/// Whether a Quick Settings button is the Energy saver tile, by AutomationId first (the same in
+/// every language) and by its name otherwise. Names may carry a state after a comma.
+fn is_saver_tile(name: &str, id: &str) -> bool {
+    let id = id.to_lowercase();
+    if id.contains("energysaver") || id.contains("batterysaver") {
+        return true;
+    }
+    let name = name.trim().to_lowercase().replace('\u{2019}', "'");
+    let head = name.split([',', '\n']).next().unwrap_or("").trim();
+    SAVER_NAMES.iter().any(|n| head == *n)
+}
+
+/// Whether the tile has to be pressed: only when it isn't already where Island wants it.
+fn needs_press(want: bool, tile_on: bool) -> bool {
+    want != tile_on
+}
+
+fn class_of(h: windows::Win32::Foundation::HWND) -> String {
+    let mut buf = [0u16; 128];
+    let n = unsafe { windows::Win32::UI::WindowsAndMessaging::GetClassNameW(h, &mut buf) };
+    String::from_utf16_lossy(&buf[..n.max(0) as usize])
+}
+
+fn keys(seq: &[(windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY, bool)]) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP};
+    let inputs: Vec<INPUT> = seq
+        .iter()
+        .map(|&(vk, down)| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: if down { KEYBD_EVENT_FLAGS(0) } else { KEYEVENTF_KEYUP }, time: 0, dwExtraInfo: 0 },
+            },
+        })
+        .collect();
+    unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+}
+
+fn win_a() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_A, VK_LWIN};
+    keys(&[(VK_LWIN, true), (VK_A, true), (VK_A, false), (VK_LWIN, false)]);
+}
+
+/// Quick Settings, open and in front, within `ms`.
+fn qs_window(ms: u64) -> Option<windows::Win32::Foundation::HWND> {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let until = Instant::now() + Duration::from_millis(ms);
+    loop {
+        let h = unsafe { GetForegroundWindow() };
+        if !h.is_invalid() && class_of(h) == QS_CLASS {
+            return Some(h);
+        }
+        if Instant::now() >= until {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Makes Quick Settings see-through (alpha 0) while Island works in it; `false` puts its own
+/// style back so the user's next Win+A looks as always (the window is kept between opens).
+fn qs_hidden(h: windows::Win32::Foundation::HWND, hide: bool, ex: i32) -> bool {
+    use windows::Win32::Foundation::COLORREF;
+    use windows::Win32::UI::WindowsAndMessaging::{SetLayeredWindowAttributes, SetWindowLongW, GWL_EXSTYLE, LWA_ALPHA, WS_EX_LAYERED};
+    unsafe {
+        if hide {
+            SetWindowLongW(h, GWL_EXSTYLE, ex | WS_EX_LAYERED.0 as i32);
+            SetLayeredWindowAttributes(h, COLORREF(0), 0, LWA_ALPHA).is_ok()
+        } else {
+            SetWindowLongW(h, GWL_EXSTYLE, ex);
+            true
+        }
+    }
+}
+
+/// Finds the tile in the open Quick Settings and presses it if needed; whether it was pressed.
+fn press_tile(h: windows::Win32::Foundation::HWND, want: bool) -> Result<bool, String> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern, IUIAutomationTogglePattern, ToggleState_On,
+        TreeScope_Descendants, UIA_InvokePatternId, UIA_TogglePatternId,
+    };
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let a: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).map_err(|e| e.to_string())?;
+        let all = a.CreateTrueCondition().map_err(|e| e.to_string())?;
+        let until = Instant::now() + Duration::from_millis(1500);
+        let tile: IUIAutomationElement = loop {
+            let found = a.ElementFromHandle(h).and_then(|w| w.FindAll(TreeScope_Descendants, &all)).ok().and_then(|arr| {
+                let n = arr.Length().unwrap_or(0);
+                (0..n).filter_map(|i| arr.GetElement(i).ok()).find(|e| {
+                    let name = e.CurrentName().map(|b| b.to_string()).unwrap_or_default();
+                    let id = e.CurrentAutomationId().map(|b| b.to_string()).unwrap_or_default();
+                    is_saver_tile(&name, &id)
+                })
+            });
+            if let Some(t) = found {
+                break t;
+            }
+            if Instant::now() >= until {
+                return Err(ADD_TILE.into());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        if let Ok(t) = tile.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId) {
+            let on = t.CurrentToggleState().map(|s| s == ToggleState_On).unwrap_or(!want);
+            if !needs_press(want, on) {
+                return Ok(false);
+            }
+            return t.Toggle().map(|_| true).map_err(|e| e.to_string());
+        }
+        let i = tile.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId).map_err(|_| ADD_TILE.to_string())?;
+        i.Invoke().map(|_| true).map_err(|e| e.to_string())
+    }
+}
+
+/// Opens Quick Settings out of sight, presses Energy saver if needed, closes it and gives the
+/// focus back, even when something on the way fails.
+fn press_through_quick_settings(want: bool) -> Result<(), String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowLongW, IsWindowVisible, SetForegroundWindow, GWL_EXSTYLE};
+    let prev = unsafe { GetForegroundWindow() };
+    let t0 = Instant::now();
+    win_a();
+    let Some(h) = qs_window(1500) else {
+        return Err("Quick Settings didn't open".into());
+    };
+    let ex = unsafe { GetWindowLongW(h, GWL_EXSTYLE) };
+    let see_through = qs_hidden(h, true, ex);
+    let found = t0.elapsed();
+    let result = press_tile(h, want);
+    // Close: Esc while it has the focus, Win+A again (it toggles) if it lost it; once more if
+    // it is still open after a moment.
+    let close = || {
+        if unsafe { GetForegroundWindow() } == h {
+            keys(&[(VK_ESCAPE, true), (VK_ESCAPE, false)]);
+        } else {
+            win_a();
+        }
+    };
+    close();
+    let mut until = Instant::now() + Duration::from_millis(800);
+    let mut again = true;
+    while unsafe { IsWindowVisible(h) }.as_bool() {
+        if Instant::now() >= until {
+            if !again {
+                break;
+            }
+            again = false;
+            close();
+            until = Instant::now() + Duration::from_millis(800);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    qs_hidden(h, false, ex);
+    if !prev.is_invalid() && unsafe { GetForegroundWindow() } != prev {
+        let _ = unsafe { SetForegroundWindow(prev) };
+    }
+    crate::log::line(&format!(
+        "energy saver: quick settings open {} ms (found in {} ms, see-through {see_through}), press {result:?}",
+        t0.elapsed().as_millis(),
+        found.as_millis(),
+    ));
+    result.map(|_| ())
+}
+
+fn saver_set(on: bool) -> Result<bool, String> {
+    let p = power();
+    if p.saver == on {
+        return Ok(on);
+    }
+    if on && p.ac {
+        return saver_outcome(on, p.saver, p.ac);
+    }
+    press_through_quick_settings(on)?;
+    let p = saver_wait(on, 2000);
+    saver_outcome(on, p.saver, p.ac)
+}
+
+/// Switches Energy saver; the state Windows reports afterwards, or why it didn't switch.
+#[tauri::command]
+pub async fn power_saver_set(on: bool) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || saver_set(on)).await.map_err(|e| e.to_string())?
+}
+
 // ------------------------------------------------------------------ load
 
 fn ft(f: FILETIME) -> u64 {
@@ -481,9 +720,48 @@ pub async fn sys_top(kind: String, limit: usize) -> Vec<AppUse> {
 
 #[cfg(test)]
 mod tests {
-    use super::{by_app, instance_pid, plain_name, time_to_full, Top};
+    use super::{by_app, instance_pid, is_saver_tile, needs_press, plain_name, saver_outcome, time_to_full, Top};
     use crate::procs::ProcRow;
     use std::collections::HashMap;
+
+    #[test]
+    fn quick_settings_energy_saver_tile_is_found_in_any_language() {
+        assert!(is_saver_tile("Energy saver", ""));
+        assert!(is_saver_tile("Energy saver, Off", ""));
+        assert!(is_saver_tile("Économiseur d’énergie", ""));
+        assert!(is_saver_tile("Battery saver", ""));
+        assert!(is_saver_tile("Anything", "Microsoft.QuickAction.EnergySaver"));
+        assert!(is_saver_tile("", "Microsoft.QuickAction.BatterySaver"));
+        assert!(!is_saver_tile("Bluetooth", "Microsoft.QuickAction.Bluetooth"));
+        assert!(!is_saver_tile("Energy saver settings", ""));
+        assert!(!is_saver_tile("", ""));
+    }
+
+    #[test]
+    fn the_tile_is_pressed_only_when_it_is_not_already_there() {
+        assert!(needs_press(true, false));
+        assert!(needs_press(false, true));
+        assert!(!needs_press(true, true));
+        assert!(!needs_press(false, false));
+    }
+
+    #[test]
+    fn energy_saver_says_why_it_did_not_switch() {
+        assert_eq!(saver_outcome(true, true, true), Ok(true));
+        assert_eq!(saver_outcome(false, false, false), Ok(false));
+        assert_eq!(saver_outcome(true, false, true), Err("Energy saver only turns on while unplugged".into()));
+        assert_eq!(saver_outcome(true, false, false), Err("Windows kept Energy saver off".into()));
+        assert_eq!(saver_outcome(false, true, false), Err("Windows kept Energy saver on".into()));
+    }
+
+    /// Really opens Quick Settings and switches Energy saver on this PC and back: run by hand only.
+    #[test]
+    #[ignore]
+    fn switches_energy_saver_for_real() {
+        let was = super::power().saver;
+        assert_eq!(super::saver_set(!was), Ok(!was));
+        assert_eq!(super::saver_set(was), Ok(was));
+    }
 
     #[test]
     fn full_in_is_what_is_missing_over_the_rate() {

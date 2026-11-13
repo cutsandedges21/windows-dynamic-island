@@ -288,6 +288,8 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
     if (b.k === 'actions') return { ...b, buttons: b.buttons.map(btn) };
     if (b.k === 'stat' && b.buttons) return { ...b, buttons: b.buttons.map(btn) };
     if (b.k === 'list') return { ...b, rows: b.rows.map(row) };
+    // Control Center's Wi-Fi / Bluetooth / sliders tile: every press is its activity's.
+    if (b.k === 'hub') return { ...b, pills: b.pills.map((p) => (p.action ? { ...p, action: fn(p.action) } : p)), sliders: b.sliders.map((h) => (h.action ? { ...h, action: fn(h.action) } : h)), buttons: b.buttons.map(btn) };
     return b;
   };
   return blocks.map((b): Block => {

@@ -248,6 +248,7 @@ pub fn run() {
             audio::mic_set_mute,
             spectrum::spectrum_watch,
             system::power_state,
+            system::power_saver_set,
             system::sys_sample,
             system::sys_top,
             net::net_sample,
