@@ -1182,7 +1182,8 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 .sb-rows .rbt { flex: none; color: var(--fg); font-variant-numeric: tabular-nums; }
 .sb-rows .rbtn { flex: none; width: 24px; height: 24px; opacity: 0; transition: opacity 0.15s ease; }
 .sb-rows .rbtn .bi { width: 13px; height: 13px; }
-.sb-rows .row:hover .rbtn { opacity: 1; }
+.sb-rows .row:hover .rbtn,
+.sb-rows .rbtn.shown { opacity: 1; }
 
 /* people: round avatars to pick from (Land's nearby devices) */
 .sb-people {

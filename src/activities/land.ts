@@ -879,6 +879,13 @@ export class LandActivity extends BaseActivity {
       out.progress = this.frac(t);
       out.sub = t.state === 'waiting' ? `${this.progressText(t)}…` : t.state === 'queued' ? 'Sends when online' : this.progressText(t);
       out.tone = 'accent';
+      // Tapping it again while it goes stops that send (the row's Cancel is small on a touch screen).
+      // (A phone's send is over in a moment and has nothing to cancel.)
+      if (!isPhone(p.id)) {
+        out.action = 'cancel';
+        out.arg = t.id;
+        out.tip = `Cancel the send to ${p.name}`;
+      }
     } else if (t.ended !== null && now - t.ended < 10000) {
       const ok = t.state === 'done';
       out.badge = ok ? 'check' : 'x';
@@ -916,8 +923,9 @@ export class LandActivity extends BaseActivity {
       title: `${to} · ${what(t)}`,
       detail,
     };
-    if (t.state === 'asking') row.button = { key: 'no', icon: 'x', action: 'decline', arg: t.id, style: 'ghost', tip: 'Decline' };
-    else if (active) row.button = { key: 'stop', icon: 'x', action: 'cancel', arg: t.id, style: 'ghost', tip: 'Cancel' };
+    // Cancel and Decline stay in sight: a touch screen (or a phone driving the PC) has no pointing at a row.
+    if (t.state === 'asking') row.button = { key: 'no', icon: 'x', action: 'decline', arg: t.id, style: 'ghost', tip: 'Decline', shown: true };
+    else if (active) row.button = { key: 'stop', icon: 'x', action: 'cancel', arg: t.id, style: 'ghost', tip: 'Cancel', shown: true };
     else if (t.dir === 'in' && t.state === 'done' && t.saved.length) {
       row.action = 'show';
       row.arg = t.saved[0];
