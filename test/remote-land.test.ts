@@ -100,6 +100,13 @@ describe('your phones in Land', () => {
 
   it('sends each file to a phone, folders staying here, and circles its avatar until it arrives', async () => {
     const { act, surfaced } = await boot();
+    // Like Rust: remote-file-sent comes before the call returns, which is once the phone answered.
+    h.native.remoteSendFile = vi.fn(async (phone: string, path: string) => {
+      const name = path.split('\\').pop()!;
+      const ok = name !== 'report.pdf';
+      emit('remote-file-sent', ok ? { phone, name, ok } : { phone, name, ok, error: 'The phone ran out of memory' });
+      return ok ? { ok, value: name } : { ok, error: 'The phone ran out of memory' };
+    });
     act.drop(['C:\\Users\\moss\\report.pdf', 'C:\\Users\\moss\\photo.jpg', 'C:\\Users\\moss\\Trip']);
     await tick(0);
     // The phone is the only one there: it is who Send goes to.
@@ -110,12 +117,10 @@ describe('your phones in Land', () => {
       [IPHONE, 'C:\\Users\\moss\\photo.jpg'],
     ]);
     expect(h.native.landSend).not.toHaveBeenCalled();
-    const avatar = people(act)[0];
-    expect(avatar).toMatchObject({ progress: null, sub: 'Sending…' });
-    expect(act.render(env()).find((s) => s.key === 'pct')).toMatchObject({ text: 'Sending' });
+    // Both answered: nothing says Sending any more (it used to stay, the row made after the answer).
+    expect(people(act)[0]?.sub).not.toBe('Sending…');
+    expect(act.render(env()).find((s) => s.key === 'pct')?.text).not.toBe('Sending');
     expect(JSON.stringify(act.sheet(sheetEnv('open')))).toContain('Folders stayed here');
-    emit('remote-file-sent', { phone: IPHONE, name: 'photo.jpg', ok: true });
-    emit('remote-file-sent', { phone: IPHONE, name: 'report.pdf', ok: false, error: 'The phone ran out of memory' });
     const rows = block(act.sheet(sheetEnv('open')), 'rows');
     const details = JSON.stringify(act.sheet(sheetEnv('open')));
     expect(details).toContain('The phone ran out of memory');
