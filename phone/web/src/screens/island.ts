@@ -1,5 +1,5 @@
 // The island screen: the live copy of the island at the top, the card or Control Center under it,
-// a Back button under a card, the bar at the bottom (Claude, Terminal, Screen, Send, More; the
+// a Back button under a card, the bar at the bottom (Home, Claude, Terminal, Screen, Send, More; the
 // Clipboard and Lock PC are in More), and, while the PC can't be reached, its name and when it was
 // last seen.
 
@@ -8,6 +8,7 @@ import type { IslandMsg } from '../../../../src/remote/protocol';
 import { lastSeenText, retryText } from '../format';
 import { IslandView } from '../island-view';
 import type { LinkState } from '../link/api';
+import { onTap } from '../tap';
 import { button, h, ico, spinner } from '../ui';
 
 type PillMsg = Extract<IslandMsg, { t: 'pill' }>;
@@ -16,6 +17,8 @@ type ViewMsg = Extract<IslandMsg, { t: 'view' }>;
 export interface IslandHooks {
   action(action: string, arg: unknown): void;
   back(): void;
+  /** Home: just the island, Control Center under it. */
+  home(): void;
   /** Claude's card (chats, and a box to message one). */
   claude(): void;
   terminal(): void;
@@ -61,7 +64,10 @@ export class IslandScreen {
     this.main = h('div', { class: 'ph-main' });
     this.view = new IslandView(this.main, (action, arg) => hooks.action(action, arg));
     this.backBtn = h('button', { class: 'ph-back', type: 'button' }, [ico('chevron-left'), h('span', { text: 'Control Center' })]);
-    this.backBtn.addEventListener('click', () => hooks.back());
+    onTap(this.backBtn, () => {
+      this.leaveCard();
+      hooks.back();
+    });
     this.note = h('div', { class: 'ph-note' });
     this.hint = h('div', { class: 'ph-hint', text: 'Tap the island for Control Center' });
     this.overlay = h('div', { class: 'ph-overlay' });
@@ -74,8 +80,9 @@ export class IslandScreen {
       if (needsLink) this.barButtons.push(b);
       return b;
     };
-    // Five across fit a 320 px wide iPhone (Display Zoom): an icon over a one-word label.
+    // Six across fit a 320 px wide iPhone (Display Zoom): an icon over a one-word label.
     const bar = h('nav', { class: 'ph-bar' }, [
+      item('Home', 'home', () => hooks.home(), false),
       item('Claude', 'claude', () => hooks.claude(), true),
       item('Terminal', 'terminal', () => hooks.terminal(), true),
       item('Screen', 'laptop', () => hooks.screen(), false),
@@ -124,6 +131,12 @@ export class IslandScreen {
     this.back = back && m.view !== null && !m.urgent;
     this.view.drawView(m.view, tone);
     this.hint.classList.toggle('on', m.view === null && this.hasPill);
+    this.layoutExtras();
+  }
+
+  /** Leaving a card: its Back button goes at once (the island's Control Center follows). */
+  leaveCard(): void {
+    this.back = false;
     this.layoutExtras();
   }
 

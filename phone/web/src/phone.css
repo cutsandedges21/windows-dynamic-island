@@ -206,7 +206,7 @@ body {
   height: var(--bar-h);
   padding: 0 calc(4px + var(--safe-r)) var(--safe-b) calc(4px + var(--safe-l));
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   background: rgba(9, 10, 12, 0.82);
   -webkit-backdrop-filter: blur(22px) saturate(1.4);
   backdrop-filter: blur(22px) saturate(1.4);
@@ -221,13 +221,14 @@ body {
   border: 0;
   background: none;
   color: var(--muted);
-  font: 500 11px/1 var(--font);
+  /* six across a 320 px screen: 52 px each, room for "Terminal" at 10.5 px */
+  font: 500 10.5px/1 var(--font);
   min-height: 44px;
   min-width: 0;
   padding: 0;
 }
 .ph-tab > span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ph-tab .ph-ico { width: 24px; height: 24px; }
+.ph-tab .ph-ico { width: 22px; height: 22px; }
 .ph-tab:active { color: var(--fg); }
 .ph-tab:disabled { opacity: 0.35; }
 

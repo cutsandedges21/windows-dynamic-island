@@ -109,6 +109,7 @@ const P: Record<string, string> = {
   // Land: a file's arc coming down onto the ground.
   land: '<path d="M3.5 20h17"/><path d="M4.5 4.5c6.2 0 10.6 4 11.9 10.6"/><path d="M13.3 13.1l3.1 2.4 2.3-3.2"/>',
   file: '<path d="M6.5 3h7.5l4.5 4.5V20a1 1 0 01-1 1h-11a1 1 0 01-1-1V4a1 1 0 011-1z"/><path d="M13.5 3v5h5"/>',
+  home: '<path d="M4 11l8-6.5 8 6.5"/><path d="M6.5 9.5V19h11V9.5"/><path d="M10.5 19v-4.5h3V19"/>',
   laptop: '<rect x="4.5" y="5" width="15" height="10.5" rx="1.5"/><path d="M2.5 19h19"/>',
   // Workspaces: a window in front of another.
   spaces: '<rect x="2.5" y="8.5" width="13.5" height="11" rx="2"/><path d="M2.5 12h13.5"/><path d="M7 8.5V6.5a2 2 0 012-2h10.5a2 2 0 012 2V14a2 2 0 01-2 2H16"/>',
