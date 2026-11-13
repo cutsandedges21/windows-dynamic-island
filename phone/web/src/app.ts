@@ -186,6 +186,7 @@ export class App {
     const s = new IslandScreen(this.root, {
       action: (a, arg) => this.action(a, arg),
       back: () => this.go(this.nav.back(Date.now())),
+      home: () => this.home(),
       claude: () => this.claude(),
       terminal: () => void this.openTerminal(),
       screen: () => openScreen(this.hello?.screen ?? null, this.island?.name ?? 'your PC'),
@@ -267,7 +268,11 @@ export class App {
         return;
       case 'view':
         // An urgent card shows whatever the phone asked for; anything else must answer the latest ask.
-        if (!m.urgent && !this.nav.accept(m.nav, Date.now())) return;
+        if (!m.urgent && !this.nav.accept(m.nav, Date.now())) {
+          // Still the old view long after the ask (its line lost on the way): ask again.
+          if (this.nav.overdue(Date.now())) this.sendNav(this.nav.resend(Date.now()));
+          return;
+        }
         this.lastView = m;
         s?.draw(m, m.nav.open === 'card');
         return;
@@ -370,6 +375,13 @@ export class App {
   }
 
   // ---------------------------------------------------------------- the bar
+
+  /** Home: the island with Control Center under it, whatever was showing (a card, the terminal). */
+  private home(): void {
+    this.closeTerminal();
+    this.islandScreen?.leaveCard();
+    this.go(this.nav.back(Date.now()));
+  }
 
   /** Claude's card: the island draws it (its chats, a box to message one), like any card. */
   private claude(): void {

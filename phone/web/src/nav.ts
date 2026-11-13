@@ -9,6 +9,8 @@ import type { Nav, PhoneMsg } from '../../../src/remote/protocol';
 
 /** How long a nav waits for its answer before the island's word goes again. */
 export const NAV_SETTLE_MS = 2500;
+/** How long what the user left is kept away when the island keeps answering with it (a card it can't have). */
+export const NAV_LEFT_MS = NAV_SETTLE_MS * 4;
 
 export function sameNav(a: Nav, b: Nav): boolean {
   if (a.open !== b.open) return false;
@@ -24,7 +26,8 @@ export function navMsg(nav: Nav, width?: number): PhoneMsg {
 
 export class NavKeeper {
   private wanted: Nav;
-  private pending: { nav: Nav; at: number } | null = null;
+  /** The ask waiting for its answer, and what was showing when the user asked (`from`). */
+  private pending: { nav: Nav; at: number; since: number; from: Nav | null } | null = null;
 
   /** Control Center by default: a phone is opened to do something. */
   constructor(initial: Nav = { open: 'grid' }) {
@@ -43,8 +46,9 @@ export class NavKeeper {
 
   /** The user asked for `nav`; the caller sends it. */
   go(nav: Nav, now: number): Nav {
+    const from = sameNav(nav, this.wanted) ? null : this.wanted;
     this.wanted = nav;
-    this.pending = { nav, at: now };
+    this.pending = { nav, at: now, since: now, from };
     return nav;
   }
 
@@ -60,8 +64,16 @@ export class NavKeeper {
 
   /** After (re)connecting: the island starts afresh, so the phone says again what it shows. */
   resend(now: number): Nav {
-    this.pending = { nav: this.wanted, at: now };
+    this.pending = { nav: this.wanted, at: now, since: this.pending?.since ?? now, from: this.pending?.from ?? null };
     return this.wanted;
+  }
+
+  /**
+   * The ask went unanswered for NAV_SETTLE_MS while the island kept drawing what the user left
+   * (the line was lost, or the relay is slow): the caller asks again (`resend`).
+   */
+  overdue(now: number): boolean {
+    return this.pending !== null && now - this.pending.at >= NAV_SETTLE_MS;
   }
 
   /**
@@ -75,6 +87,11 @@ export class NavKeeper {
         this.wanted = nav;
         return true;
       }
+      // What the user just left never comes back by itself while the ask is unanswered: Back from
+      // a card whose content keeps streaming in (Claude's meters, a live score) used to be undone
+      // by that card's next update once NAV_SETTLE_MS had passed.
+      const left = this.pending.from;
+      if (left && sameNav(nav, left) && now - this.pending.since < NAV_LEFT_MS) return false;
       if (now - this.pending.at < NAV_SETTLE_MS) return false;
       this.pending = null;
     }

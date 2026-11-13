@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { NAV_SETTLE_MS, NavKeeper, navMsg, sameNav } from '../phone/web/src/nav';
+import { NAV_LEFT_MS, NAV_SETTLE_MS, NavKeeper, navMsg, sameNav } from '../phone/web/src/nav';
 import { actMsg, routeAction } from '../phone/web/src/routing';
+import { isTap, TAP_SLOP } from '../phone/web/src/tap';
+
+describe('a tap on a button that moves (Back rides under a card that changes height)', () => {
+  it('counts the finger, not where the button went', () => {
+    expect(isTap({ x: 100, y: 400 }, { x: 102, y: 405 })).toBe(true);
+    expect(isTap({ x: 100, y: 400 }, { x: 100, y: 400 + TAP_SLOP + 1 })).toBe(false);
+  });
+});
 
 describe('where a tap on the phone goes', () => {
   it('sends activity actions and Quiet to the island', () => {
@@ -51,8 +59,45 @@ describe("the phone's navigation", () => {
     expect(n.accept({ open: 'card', id: 'music' }, 1200)).toBe(true);
     expect(n.waiting).toBe(false);
     n.go({ open: 'none' }, 2000);
-    expect(n.accept({ open: 'card', id: 'music' }, 2000 + NAV_SETTLE_MS + 1)).toBe(true);
-    expect(n.want).toEqual({ open: 'card', id: 'music' });
+    expect(n.accept({ open: 'card', id: 'timer' }, 2000 + NAV_SETTLE_MS + 1)).toBe(true);
+    expect(n.want).toEqual({ open: 'card', id: 'timer' });
+  });
+
+  it('keeps Control Center after Back while the card it left keeps streaming in late', () => {
+    // The bug: Back from Claude's card, the answer slow to come, and the card's next meter update
+    // (sent before the island read the Back) put the card back once NAV_SETTLE_MS had passed.
+    const n = new NavKeeper({ open: 'grid' });
+    n.go({ open: 'card', id: 'claude' }, 0);
+    expect(n.accept({ open: 'card', id: 'claude' }, 100)).toBe(true);
+    n.back(1000);
+    expect(n.accept({ open: 'card', id: 'claude' }, 1200)).toBe(false);
+    expect(n.accept({ open: 'card', id: 'claude' }, 1000 + NAV_SETTLE_MS + 500)).toBe(false);
+    expect(n.want).toEqual({ open: 'grid' });
+    // Unanswered that long: the phone asks again, and still keeps the card away.
+    expect(n.overdue(1000 + NAV_SETTLE_MS + 500)).toBe(true);
+    expect(n.resend(1000 + NAV_SETTLE_MS + 500)).toEqual({ open: 'grid' });
+    expect(n.overdue(1000 + NAV_SETTLE_MS + 600)).toBe(false);
+    expect(n.accept({ open: 'card', id: 'claude' }, 1000 + NAV_SETTLE_MS * 2 + 600)).toBe(false);
+    expect(n.accept({ open: 'grid' }, 1000 + NAV_SETTLE_MS * 2 + 700)).toBe(true);
+    expect(n.waiting).toBe(false);
+    // Answered, the island's word goes again (an action can open its card here).
+    expect(n.accept({ open: 'card', id: 'claude' }, 9000)).toBe(true);
+  });
+
+  it('lets the card it left back in only if the island keeps saying so for a long time', () => {
+    const n = new NavKeeper({ open: 'grid' });
+    n.go({ open: 'card', id: 'music' }, 0);
+    n.accept({ open: 'card', id: 'music' }, 10);
+    n.back(100);
+    expect(n.accept({ open: 'card', id: 'music' }, 100 + NAV_LEFT_MS - 1)).toBe(false);
+    expect(n.accept({ open: 'card', id: 'music' }, 100 + NAV_LEFT_MS + 1)).toBe(true);
+  });
+
+  it('Home always asks for Control Center, even when it is already showing', () => {
+    const n = new NavKeeper();
+    expect(n.back(0)).toEqual({ open: 'grid' });
+    expect(n.waiting).toBe(true);
+    expect(n.accept({ open: 'grid' }, 10)).toBe(true);
   });
 
   it('follows the island when nothing is pending (an action opened a card on this phone)', () => {
