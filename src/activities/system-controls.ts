@@ -1,7 +1,7 @@
 // System Controls: the volume, the screen's brightness and Caps Lock / Num Lock flash on the pill as
 // they change, each part with its own switch (Volume, Audio device, Brightness, Caps Lock, Num
 // Lock). Its card and Control Center add Screenshot and Record through Snipping Tool, and whether
-// battery saver is on, with a button to its page in Windows Settings. Sound came from Justin's fork,
+// battery saver is on, with a button that switches Energy saver. Sound came from Justin's fork,
 // Brightness and the lock keys from Moss's; they were three activities until the forks merged
 // (settings.ts carries their settings over). Each part lives in its own file: sound.ts,
 // brightness.ts, keys.ts.
@@ -13,9 +13,10 @@ import type { MomentId } from '../core/pet';
 import { platform } from '../core/platform';
 import type { Seg } from '../core/segments';
 import type { Block, SheetButton, SheetRow, SheetView, Tile } from '../core/sheet';
+import { PhoneError } from '../remote/hub';
 import { BaseActivity } from './base';
 import { Brightness } from './brightness';
-import { hubTile, sliderPct } from './control-hub';
+import { hubTile, saverTip, sliderPct } from './control-hub';
 import { Keys } from './keys';
 import { Sound } from './sound';
 
@@ -52,8 +53,11 @@ type Options = { volume: boolean; device: boolean; brightness: boolean; caps: bo
  */
 export const CAPTURE_DELAY_MS = 350;
 
-/** Windows Settings › Battery saver, where battery saver is switched (Island can't switch it itself). */
+/** Windows Settings › Energy saver: offered (on the PC only) when Island couldn't switch it itself. */
 export const SAVER_SETTINGS = 'ms-settings:batterysaver';
+
+/** Why Energy saver didn't switch shows on its button this long, with a button to Settings beside it. */
+export const SAVER_NOTE_MS = 6000;
 
 /** Snipping Tool is Windows'; a Mac has its own (Cmd+Shift+5). */
 const CAPTURE_HERE = platform !== 'macos';
@@ -79,6 +83,9 @@ export class SystemControlsActivity extends BaseActivity {
   private power: PowerState | null = null;
   private radios: RadiosState | null = null;
   private btDevices: number | null = null;
+  /** Why Energy saver last didn't switch, while it shows (SAVER_NOTE_MS). */
+  private saverNote: string | null = null;
+  private saverNoteAt = 0;
   /** When the tiles were last asked for: the radios are polled only while Control Center is up. */
   private tilesAt = 0;
   private radiosAt = 0;
@@ -164,19 +171,22 @@ export class SystemControlsActivity extends BaseActivity {
     }
     const saver = this.saver();
     if (saver != null) {
-      // Windows gives apps no supported way to switch battery saver (PowerManager.EnergySaverStatus and
-      // GetSystemPowerStatus only read it; raising powercfg's ESBATTTHRESHOLD to 100 did not turn it on,
-      // tried 2026-11-09). So the button says how it is and opens Settings › Battery saver to switch it
-      // (Justin and Moss, 2026-11-11). With buttons off it only says how it is.
+      // The button switches Energy saver the way Settings does (power_saver_set, src-tauri/src/system.rs);
+      // when Windows won't, it says why for a moment and offers Settings › Energy saver beside it.
+      // With buttons off it only says how it is.
+      const note = this.note();
       out.push({
         key: 'saver',
         icon: 'leaf',
-        label: labels ? `Battery saver ${saver ? 'on' : 'off'}` : undefined,
+        label: labels ? `Energy saver ${saver ? 'on' : 'off'}` : undefined,
         action: 'saver',
         style: saver ? 'primary' : 'secondary',
         disabled: interactive ? undefined : true,
-        tip: `Battery saver is ${saver ? 'on' : 'off'}.${interactive ? ' Click to switch it in Windows Settings.' : ''}`,
+        tip: saverTip(saver, interactive, note),
       });
+      if (note && interactive) {
+        out.push({ key: 'saver-settings', icon: 'leaf', label: labels ? 'Energy saver settings' : undefined, action: 'saver-settings', style: 'secondary', tip: 'Open Settings › Energy saver' });
+      }
     }
     return out;
   }
@@ -187,7 +197,7 @@ export class SystemControlsActivity extends BaseActivity {
     this.tilesAt = Date.now();
     if (Date.now() - this.radiosAt >= RADIOS_POLL_MS) void this.readRadios();
     const a = this.sound.state();
-    const hub = hubTile({ radios: this.radios, btDevices: this.btDevices, volume: a?.volume ?? null, muted: a?.muted ?? false, brightness: this.brightness.state(), saver: this.saver() }, env.interactive);
+    const hub = hubTile({ radios: this.radios, btDevices: this.btDevices, volume: a?.volume ?? null, muted: a?.muted ?? false, brightness: this.brightness.state(), saver: this.saver(), saverNote: this.note() }, env.interactive);
     if (hub) out.push(hub);
     const sound = this.sound.tile(env);
     if (sound) out.push(sound);
@@ -271,9 +281,36 @@ export class SystemControlsActivity extends BaseActivity {
       this.ctx.close();
       this.later(CAPTURE_DELAY_MS, () => void native.screenCapture(name === 'record' ? 'video' : 'image'));
     } else if (name === 'saver' && this.saver() != null) {
-      // Settings › Battery saver opens in front; the island gets out of its way.
+      await this.toggleSaver();
+    } else if (name === 'saver-settings' && this.saver() != null) {
+      // Settings › Energy saver opens in front; the island gets out of its way. Never from a phone (PC_ONLY).
       this.ctx.close();
       await native.open(SAVER_SETTINGS);
     }
+  }
+
+  /** Why Energy saver last didn't switch, while that still shows. */
+  private note(): string | null {
+    return this.saverNote && Date.now() - this.saverNoteAt < SAVER_NOTE_MS ? this.saverNote : null;
+  }
+
+  /**
+   * Switches Energy saver and shows it as Windows reports it. When Windows won't, the button says
+   * why for a moment, and a phone that pressed it gets it as a toast (the PhoneError).
+   */
+  private async toggleSaver(): Promise<void> {
+    const want = !this.saver();
+    const r = await native.powerSaverSet(want);
+    if (r.ok) {
+      this.saverNote = null;
+      if (this.power) this.power = { ...this.power, saver: r.value };
+      this.ctx.update();
+      return;
+    }
+    this.saverNote = r.error;
+    this.saverNoteAt = Date.now();
+    this.ctx.update();
+    this.later(SAVER_NOTE_MS, () => this.ctx.update());
+    throw new PhoneError(r.error);
   }
 }

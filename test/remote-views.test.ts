@@ -124,7 +124,7 @@ describe('Allow held back from phones', () => {
     const out = stripActions(grid, blocked);
     const tile = out.blocks[0].t === 'tiles' ? out.blocks[0].items[0] : null;
     expect(tile?.body.k === 'stat' ? tile.body.buttons?.map((b) => b.action) : []).toEqual(['act:x:vol-up']);
-    expect(PC_ONLY).toEqual(['act:system-controls:screenshot', 'act:system-controls:record', 'act:system-controls:saver']);
+    expect(PC_ONLY).toEqual(['act:system-controls:screenshot', 'act:system-controls:record', 'act:system-controls:saver-settings']);
   });
 
   it('takes such a segment off the pill', () => {

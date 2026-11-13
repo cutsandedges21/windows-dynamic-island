@@ -35,7 +35,8 @@ import { QuickActivity } from '../src/activities/quick';
 import { ScreenshotsActivity } from '../src/activities/screenshots';
 import { ServersActivity } from '../src/activities/servers';
 import { parseOrder, pickedStats, SystemActivity } from '../src/activities/system';
-import { CAPTURE_DELAY_MS, SAVER_SETTINGS, SystemControlsActivity } from '../src/activities/system-controls';
+import { CAPTURE_DELAY_MS, SAVER_NOTE_MS, SAVER_SETTINGS, SystemControlsActivity } from '../src/activities/system-controls';
+import { PhoneError } from '../src/remote/hub';
 import { headphonesLike, MusicActivity } from '../src/activities/music';
 import { PhoneActivity } from '../src/activities/phone';
 import { WeatherActivity } from '../src/activities/weather';
@@ -529,36 +530,57 @@ describe('system controls: the parts together', () => {
     expect(controls(act, { ...tileEnv, interactive: false })).toBeUndefined();
   });
 
-  it('battery saver: shows how it is, as Windows says, and opens Settings › Battery saver to switch it', async () => {
+  it('battery saver: shows how it is, as Windows says, and a click switches Energy saver itself', async () => {
     h.native.powerState = vi.fn(async () => power());
     h.native.open = vi.fn(async () => true);
+    h.native.powerSaverSet = vi.fn(async (on: boolean) => ({ ok: true, value: on }));
     const { act, calls } = await boot(new SystemControlsActivity());
-    const saver = (e = tileEnv) => {
+    const button = (key: string, e = tileEnv) => {
       const b = controls(act, e)!.body;
-      return b.k === 'actions' ? b.buttons.find((x) => x.key === 'saver') : undefined;
+      return b.k === 'actions' ? b.buttons.find((x) => x.key === key) : undefined;
     };
-    expect(saver()).toMatchObject({ icon: 'leaf', action: 'saver', style: 'secondary', tip: 'Battery saver is off. Click to switch it in Windows Settings.' });
+    const saver = (e = tileEnv) => button('saver', e);
+    expect(saver()).toMatchObject({ icon: 'leaf', action: 'saver', style: 'secondary', tip: 'Turn Energy saver on' });
     expect(saver()!.disabled).toBeUndefined();
     expect(controls(act)!.body).toMatchObject({ sub: 'Battery saver off' });
 
     const updates = calls.update;
     emit('power', power({ saver: true }));
     expect(calls.update).toBe(updates + 1);
-    expect(saver()).toMatchObject({ style: 'primary', tip: 'Battery saver is on. Click to switch it in Windows Settings.' });
+    expect(saver()).toMatchObject({ style: 'primary', tip: 'Turn Energy saver off' });
     // Buttons off: it only says how it is.
-    expect(controls(act, { ...tileEnv, interactive: false })!.body).toMatchObject({ sub: 'Battery saver on', buttons: [{ key: 'saver', disabled: true, tip: 'Battery saver is on.' }] });
+    expect(controls(act, { ...tileEnv, interactive: false })!.body).toMatchObject({ sub: 'Battery saver on', buttons: [{ key: 'saver', disabled: true, tip: 'Energy saver is on' }] });
 
+    // A click switches it, and shows it as Windows reports it; Settings doesn't open.
     await act.action!('saver', null);
-    expect(h.native.open).toHaveBeenCalledTimes(1);
+    expect(h.native.powerSaverSet).toHaveBeenLastCalledWith(false);
+    expect(saver()).toMatchObject({ style: 'secondary', tip: 'Turn Energy saver on' });
+    expect(h.native.open).not.toHaveBeenCalled();
+    expect(calls.close).toBe(0);
+    expect(button('saver-settings')).toBeUndefined();
+
+    // Windows won't: the button says why for a moment, with Settings › Energy saver beside it, and a
+    // phone that pressed it gets the words (a PhoneError, its toast).
+    h.native.powerSaverSet = vi.fn(async () => ({ ok: false, error: 'Energy saver only turns on while unplugged' }));
+    await expect(act.action!('saver', null)).rejects.toThrow(PhoneError);
+    expect(h.native.powerSaverSet).toHaveBeenLastCalledWith(true);
+    expect(saver()).toMatchObject({ style: 'secondary', tip: 'Energy saver only turns on while unplugged. Energy saver is off.' });
+    expect(button('saver-settings')).toMatchObject({ action: 'saver-settings' });
+    await act.action!('saver-settings', null);
     expect(h.native.open).toHaveBeenCalledWith('ms-settings:batterysaver');
     expect(SAVER_SETTINGS).toBe('ms-settings:batterysaver');
     expect(calls.close).toBe(1);
+    await tick(SAVER_NOTE_MS);
+    expect(saver()).toMatchObject({ tip: 'Turn Energy saver on' });
+    expect(button('saver-settings')).toBeUndefined();
     expect(h.native.screenCapture).not.toHaveBeenCalled();
 
-    // A desktop: no battery, so no saver button, and nothing to open.
+    // A desktop: no battery, so no saver button, and nothing to switch or open.
     emit('power', power({ hasBattery: false, percent: null }));
     expect(saver()).toBeUndefined();
     await act.action!('saver', null);
+    await act.action!('saver-settings', null);
+    expect(h.native.powerSaverSet).toHaveBeenCalledTimes(1);
     expect(h.native.open).toHaveBeenCalledTimes(1);
   });
 
@@ -571,7 +593,7 @@ describe('system controls: the parts together', () => {
     const view = act.sheet!({ ...tileEnv, reason: 'hover' })!;
     expect(view.blocks.map((b) => b.key)).toEqual(['head', 'levels', 'volume', 'controls']);
     expect(view.blocks[1]).toMatchObject({ items: [{ key: 'sound', meter: { value: 0.42, text: '42%' } }, { key: 'brightness', meter: { value: 0.62, text: '62%' } }] });
-    expect(view.blocks[3]).toMatchObject({ items: [{ label: 'Screenshot' }, { label: 'Record' }, { label: 'Battery saver on', action: 'saver', style: 'primary' }] });
+    expect(view.blocks[3]).toMatchObject({ items: [{ label: 'Screenshot' }, { label: 'Record' }, { label: 'Energy saver on', action: 'saver', style: 'primary' }] });
     for (const b of view.blocks) if ('icon' in b && b.icon) expect(hasIcon(b.icon)).toBe(true);
   });
 });

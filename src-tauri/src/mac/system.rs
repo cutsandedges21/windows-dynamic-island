@@ -10,6 +10,12 @@ pub fn power_state() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn power_saver_set(on: bool) -> Result<bool, String> {
+    let _ = on;
+    Err("Low Power Mode is switched in System Settings on a Mac".into())
+}
+
+#[tauri::command]
 pub async fn sys_sample() -> Result<(), String> {
     Err(crate::mac::NOT_YET.into())
 }

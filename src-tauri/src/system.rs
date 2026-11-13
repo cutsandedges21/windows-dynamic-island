@@ -121,6 +121,72 @@ pub fn power_state() -> PowerState {
     power()
 }
 
+// ------------------------------------------------------------------ energy saver
+
+/// The WNF state that Settings › Energy saver publishes to switch Energy saver on or off (found in
+/// SettingsHandlers_OneCore_BatterySaver.dll on build 26200, 2026-11-12: its toggle publishes a u32
+/// here, 1 when it was off and 2 when it was on; it read 2 with Energy saver off). Windows has no
+/// documented call for this; raising powercfg's ESBATTTHRESHOLD to 100 did not turn it on (2026-11-09).
+/// Settings runs without admin rights and so does this.
+const ENERGY_SAVER_OVERRIDE: u64 = 0x41C6_013D_A3BC_3075;
+
+#[link(name = "ntdll", kind = "raw-dylib")]
+extern "system" {
+    fn RtlPublishWnfStateData(
+        state_name: u64,
+        type_id: *const std::ffi::c_void,
+        buffer: *const std::ffi::c_void,
+        length: u32,
+        explicit_scope: *const std::ffi::c_void,
+    ) -> i32;
+}
+
+/// What is published for on or off.
+fn override_value(on: bool) -> u32 {
+    if on {
+        1
+    } else {
+        2
+    }
+}
+
+/// Whether Windows did what was asked: `now` is Energy saver as Windows reports it after waiting.
+fn saver_outcome(want: bool, now: bool, ac: bool) -> Result<bool, String> {
+    if now == want {
+        Ok(now)
+    } else if want && ac {
+        Err("Energy saver only turns on while unplugged".into())
+    } else {
+        Err(format!("Windows kept Energy saver {}", if now { "on" } else { "off" }))
+    }
+}
+
+fn saver_set(on: bool) -> Result<bool, String> {
+    let value = override_value(on);
+    let status = unsafe {
+        RtlPublishWnfStateData(ENERGY_SAVER_OVERRIDE, std::ptr::null(), &value as *const u32 as *const _, 4, std::ptr::null())
+    };
+    if status < 0 {
+        crate::log::line(&format!("energy saver: publish failed 0x{:08X}", status as u32));
+        return Err("Windows didn't let Island switch Energy saver".into());
+    }
+    // Windows switches it a moment later; its 'power' notification follows too.
+    let until = Instant::now() + Duration::from_millis(2000);
+    loop {
+        let p = power();
+        if p.saver == on || Instant::now() >= until {
+            return saver_outcome(on, p.saver, p.ac);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Switches Energy saver; the state Windows reports afterwards, or why it didn't switch.
+#[tauri::command]
+pub async fn power_saver_set(on: bool) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || saver_set(on)).await.map_err(|e| e.to_string())?
+}
+
 // ------------------------------------------------------------------ load
 
 fn ft(f: FILETIME) -> u64 {
@@ -481,9 +547,33 @@ pub async fn sys_top(kind: String, limit: usize) -> Vec<AppUse> {
 
 #[cfg(test)]
 mod tests {
-    use super::{by_app, instance_pid, plain_name, time_to_full, Top};
+    use super::{by_app, instance_pid, override_value, plain_name, saver_outcome, time_to_full, Top};
     use crate::procs::ProcRow;
     use std::collections::HashMap;
+
+    #[test]
+    fn energy_saver_is_published_as_settings_does_it() {
+        assert_eq!(override_value(true), 1);
+        assert_eq!(override_value(false), 2);
+    }
+
+    #[test]
+    fn energy_saver_says_why_it_did_not_switch() {
+        assert_eq!(saver_outcome(true, true, true), Ok(true));
+        assert_eq!(saver_outcome(false, false, false), Ok(false));
+        assert_eq!(saver_outcome(true, false, true), Err("Energy saver only turns on while unplugged".into()));
+        assert_eq!(saver_outcome(true, false, false), Err("Windows kept Energy saver off".into()));
+        assert_eq!(saver_outcome(false, true, false), Err("Windows kept Energy saver on".into()));
+    }
+
+    /// Really switches Energy saver on this PC and back: run by hand only.
+    #[test]
+    #[ignore]
+    fn switches_energy_saver_for_real() {
+        let was = super::power().saver;
+        assert_eq!(super::saver_set(!was), Ok(!was));
+        assert_eq!(super::saver_set(was), Ok(was));
+    }
 
     #[test]
     fn full_in_is_what_is_missing_over_the_rate() {
