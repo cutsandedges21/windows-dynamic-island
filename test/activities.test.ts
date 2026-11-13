@@ -530,6 +530,19 @@ describe('system controls: the parts together', () => {
     expect(controls(act, { ...tileEnv, interactive: false })).toBeUndefined();
   });
 
+  it('Energy saver shows once: in the Wi-Fi tile when there is one, not again in System Controls', async () => {
+    h.native.powerState = vi.fn(async () => power());
+    h.native.brightnessGet = vi.fn(async () => 40);
+    const { act } = await boot(new SystemControlsActivity());
+    emit('brightness', 40);
+    const tiles = act.tiles(tileEnv);
+    const hub = tiles.find((t) => t.key === 'hub')!.body;
+    expect(hub.k === 'hub' && hub.buttons.map((b) => b.key)).toEqual(['saver']);
+    const body = controls(act)!.body;
+    expect(body.k === 'actions' && body.buttons.some((b) => b.key === 'saver')).toBe(false);
+    expect(body).toMatchObject({ sub: 'Battery saver off' });
+  });
+
   it('battery saver: shows how it is, as Windows says, and a click switches Energy saver itself', async () => {
     h.native.powerState = vi.fn(async () => power());
     h.native.open = vi.fn(async () => true);

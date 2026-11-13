@@ -203,7 +203,9 @@ export class SystemControlsActivity extends BaseActivity {
     if (sound) out.push(sound);
     const brightness = this.brightness.tile();
     if (brightness) out.push(brightness);
-    const buttons = this.buttons(env.interactive, false);
+    // Energy saver sits in the Wi-Fi tile when there is one: not twice (Justin).
+    const inHub = hub?.body.k === 'hub' && hub.body.buttons.some((b) => b.key === 'saver');
+    const buttons = this.buttons(env.interactive, false).filter((b) => !inHub || (b.key !== 'saver' && b.key !== 'saver-settings'));
     if (buttons.length) {
       const saver = this.saver();
       out.push({
