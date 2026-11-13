@@ -62,7 +62,8 @@ export interface PhoneNative {
   send(phone: string | null, msg: IslandMsg): Promise<boolean>;
   /** Phase 3: the key phones subscribe to pushes with; '' while there is none. */
   vapid(): Promise<string>;
-  push(title: string, body: string, tag: string, open: string, urgent: boolean): Promise<number>;
+  /** To every phone with a subscription, or only `phone`'s when given. */
+  push(title: string, body: string, tag: string, open: string, urgent: boolean, phone?: string): Promise<number>;
   /** A file to a connected phone (Rust says how it went with `remote-file-sent`). */
   sendFile?(phone: string, path: string): Promise<unknown>;
   copy(text: string): Promise<boolean>;
@@ -256,10 +257,14 @@ export class PhoneHub {
     return false;
   }
 
-  /** Phase 3: a notification to the phones that turned them on; `open` is the activity whose card a tap opens. */
-  push(title: string, body: string, tag: string, open: string, urgent: boolean): void {
-    if (!this.phones.some((p) => p.push)) return;
-    void this.native.push(title, body, tag, open, urgent).catch((err) => this.native.log(`phone: push failed: ${String(err)}`));
+  /**
+   * Phase 3: a notification to the phones that turned them on (only `phone`, when given); `open`
+   * is the activity whose card a tap opens.
+   */
+  push(title: string, body: string, tag: string, open: string, urgent: boolean, phone?: string): void {
+    if (!this.phones.some((p) => p.push && (!phone || p.id === phone))) return;
+    const sent = phone ? this.native.push(title, body, tag, open, urgent, phone) : this.native.push(title, body, tag, open, urgent);
+    void sent.catch((err) => this.native.log(`phone: push failed: ${String(err)}`));
   }
 
   /**
@@ -274,7 +279,7 @@ export class PhoneHub {
     if (!this.outbox.add(phone, item, Date.now())) return false;
     if (p.push) {
       const n = heldPush(item, this.hooks.facts().name);
-      this.push(n.title, n.body, n.tag, n.open, false);
+      this.push(n.title, n.body, n.tag, n.open, false, p.id);
     }
     return true;
   }
