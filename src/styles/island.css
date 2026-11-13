@@ -1465,6 +1465,9 @@ button.hp { cursor: pointer; }
 .tile.k-hub .hps { font: 500 10.5px/1.15 var(--font); opacity: 0.66; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile.k-hub .hub-b { flex: none; display: flex; gap: 6px; }
 .tile.k-hub .hub-b .sbtn { width: 32px; height: 32px; padding: 0; border-radius: 50%; }
+/* On (Energy saver): white like the Wi-Fi and Bluetooth pills, as on an iPhone. */
+.tile.k-hub .hub-b .sbtn.style-primary { background: var(--fg); color: var(--cut); }
+.tile.k-hub .hub-b .sbtn.style-primary:hover { background: color-mix(in srgb, var(--fg) 88%, transparent); }
 .tile.k-hub .hub-s { flex: none; display: flex; gap: 6px; }
 .tile.k-hub .hs {
   --v: 0;
