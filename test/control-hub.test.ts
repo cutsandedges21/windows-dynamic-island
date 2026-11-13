@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { bluetoothPill, hubTile, sliderPct, wifiPill, type HubState } from '../src/activities/control-hub';
 import { withNew } from '../src/core/grid';
 import { migrate } from '../src/core/settings';
-import { sliderAt } from '../src/core/sheet';
+import { mapActions, sliderAt } from '../src/core/sheet';
 import { mayPress, pressables } from '../src/remote/views';
 
 const state = (over: Partial<HubState> = {}): HubState => ({
@@ -128,5 +128,17 @@ describe('the hub on the phone', () => {
     const shown = pressables([hubTile(state({ saver: null }), false)]);
     expect(mayPress(shown, 'vol-set', 0.42)).toBe(false);
     expect(mayPress(shown, 'wifi', null)).toBe(false);
+  });
+});
+
+describe('the tile on the island', () => {
+  it('every press carries its activity, or the island drops it (Wi-Fi, Bluetooth, sliders and battery saver did nothing)', () => {
+    const t = hubTile(state({ saver: false }), true)!;
+    const [b] = mapActions([{ t: 'tiles', key: 'g', items: [t], cols: 2, rows: 2, pages: 1, cell: 0 }], (a) => `act:system-controls:${a}`);
+    const body = b.t === 'tiles' ? b.items[0].body : null;
+    if (body?.k !== 'hub') throw new Error('not the hub tile');
+    const actions = [...body.pills.map((p) => p.action), ...body.sliders.map((h) => h.action), ...body.buttons.map((x) => x.action)];
+    expect(actions.length).toBeGreaterThanOrEqual(5);
+    for (const a of actions) expect(a).toMatch(/^act:system-controls:/);
   });
 });
