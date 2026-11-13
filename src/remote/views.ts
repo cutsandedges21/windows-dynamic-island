@@ -34,7 +34,7 @@ function argKey(arg: unknown): string {
 /**
  * What a view or pill offers to press. Buttons, rows, tiles, choices and avatars carry their
  * argument (a media tile's art none); an input sends what is typed, a player's seek a time and a
- * timer's dial (and its Start) the length it was turned to, so those take any.
+ * timer's dial (and its Start) the length it was turned to, and a hub tile's sliders a level, so those take any.
  */
 export function pressables(value: unknown, out: Pressables = new Map()): Pressables {
   const add = (action: unknown, arg: string) => {
@@ -61,6 +61,9 @@ export function pressables(value: unknown, out: Pressables = new Map()): Pressab
       const dial = o.dial as { action?: unknown; start?: { action?: unknown } };
       add(dial.action, ANY);
       add(dial.start?.action, ANY);
+    } else if (o.k === 'hub' && Array.isArray(o.sliders)) {
+      // A hub tile's sliders send where they were dragged to (System Controls checks it is 0-1).
+      for (const x of o.sliders as Array<{ action?: unknown }>) add(x?.action, ANY);
     } else if ('action' in o) add(o.action, argKey(o.arg));
     // Music's tile: its art is pressed with no argument.
     if (o.k === 'media') add(o.open, argKey(null));

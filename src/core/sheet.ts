@@ -175,7 +175,38 @@ export type TileBody =
    * type), with `start` beside them; `buttons` then sit small at the heading's end.
    */
   | { k: 'actions'; icon?: string; label: string; sub?: string; buttons: SheetButton[]; dial?: Dial }
-  | { k: 'list'; icon: string; label: string; rows: SheetRow[]; empty?: string };
+  | { k: 'list'; icon: string; label: string; rows: SheetRow[]; empty?: string }
+  /**
+   * iPhone-style controls in one tile: wide pills that switch something (Wi-Fi, Bluetooth), tall
+   * sliders whose fill rises from the bottom (brightness, volume), and round `buttons`.
+   */
+  | { k: 'hub'; pills: HubPill[]; sliders: HubSlider[]; buttons: SheetButton[] };
+
+/** A wide switch in a hub tile: bright when on, glass when off. No `action`: it only says how it is. */
+export interface HubPill {
+  key: string;
+  icon: string;
+  label: string;
+  sub: string;
+  on: boolean;
+  action?: string;
+  tip?: string;
+}
+
+/** A tall slider in a hub tile, 0-1. Dragging sends `action` with the new value (0-1) as its arg. */
+export interface HubSlider {
+  key: string;
+  icon: string;
+  value: number;
+  action?: string;
+  tip?: string;
+}
+
+/** A slider's value for a pointer `y` px down a track `top`..`top + height`: 1 at the top, 0 at the bottom, in hundredths. */
+export function sliderAt(y: number, top: number, height: number): number {
+  if (!(height > 0)) return 0;
+  return Math.round(clamp01(1 - (y - top) / height) * 100) / 100;
+}
 
 /** A length picker: `action` gets the new total in seconds, `start` is sent with it as its arg. */
 export interface Dial {
@@ -334,6 +365,8 @@ const args = new WeakMap<HTMLElement, unknown>();
 /** A dial's way to take a new length from the activity without being rebuilt. */
 const dialSetters = new WeakMap<Element, (seconds: number) => void>();
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+/** A hub slider being dragged sends its value at most this often (setting the brightness runs PowerShell). */
+const SLIDER_SEND_MS = 150;
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 /** Rounds a CSS length to whole device pixels (125% and 150% scaling make those fractions of a CSS px). */
 const snapPx = (v: number) => {
@@ -2005,6 +2038,7 @@ export class SheetRenderer {
   private patchTile(el: HTMLElement, t: Tile, editing: boolean): boolean {
     const b = t.body;
     if (b.k === 'actions' && b.dial) return el.dataset.mode === this.tileMode(t, editing) && this.patchDial(el, t, b.dial);
+    if (b.k === 'hub') return el.dataset.mode === this.tileMode(t, editing) && this.patchHub(el, t);
     if (b.k !== 'battery' || !el.classList.contains('k-battery') || el.dataset.mode !== this.tileMode(t, editing)) return false;
     const was = this.tileSigs.get(el);
     const prev = was ? (JSON.parse(was.split('|')[0]) as Tile) : null;
@@ -2014,6 +2048,20 @@ export class SheetRenderer {
     el.querySelector('.bs')!.textContent = b.sub;
     el.querySelector<HTMLElement>('.bb i')!.style.width = `${Math.max(3, Math.min(100, b.pct))}%`;
     el.classList.toggle('low', !b.charging && b.pct <= 20);
+    return true;
+  }
+
+  /** Only the sliders moved (the volume or brightness changed): slide them, never the one being dragged. */
+  private patchHub(el: HTMLElement, t: Tile): boolean {
+    const was = this.tileSigs.get(el);
+    const prev = was ? (JSON.parse(was.split('|')[0]) as Tile) : null;
+    if (!prev || prev.body.k !== 'hub' || t.body.k !== 'hub') return false;
+    const flat = (x: Tile) => this.tileSig({ ...x, body: { ...x.body, sliders: (x.body as { sliders: HubSlider[] }).sliders.map((h) => ({ ...h, value: 0 })) } } as Tile, false);
+    if (flat(prev) !== flat(t)) return false;
+    for (const h of t.body.sliders) {
+      const track = el.querySelector<HTMLElement>(`.hs[data-key="${h.key}"]`);
+      if (track && !track.classList.contains('dragging')) track.style.setProperty('--v', String(clamp01(h.value)));
+    }
     return true;
   }
 
@@ -2165,6 +2213,71 @@ export class SheetRenderer {
     return row;
   }
 
+  /**
+   * A tall slider: press or drag anywhere on it to set it (the fill follows at once; the value is
+   * sent every SLIDER_SEND_MS while dragging and once more on letting go), or scroll over it.
+   */
+  private hubSlider(h: HubSlider, live: boolean): HTMLElement {
+    const track = make('div', 'hs');
+    track.dataset.key = h.key;
+    track.style.setProperty('--v', String(clamp01(h.value)));
+    if (h.tip) track.title = h.tip;
+    track.append(make('i', 'hf'), iconEl(h.icon, 'hsi'));
+    if (!live || !h.action) return track;
+    const action = h.action;
+    let value = clamp01(h.value);
+    let sentAt = 0;
+    let timer = 0;
+    const send = (now: boolean) => {
+      clearTimeout(timer);
+      const wait = now ? 0 : Math.max(0, SLIDER_SEND_MS - (Date.now() - sentAt));
+      timer = window.setTimeout(() => {
+        sentAt = Date.now();
+        this.onAction(action, value, track);
+      }, wait);
+    };
+    const follow = (y: number) => {
+      const r = track.getBoundingClientRect();
+      value = sliderAt(y, r.top, r.height);
+      track.style.setProperty('--v', String(value));
+    };
+    track.addEventListener('pointerdown', (ev) => {
+      // The grid never sees it: no long-press to arrange, no page turn.
+      ev.stopPropagation();
+      ev.preventDefault();
+      track.setPointerCapture(ev.pointerId);
+      track.classList.add('dragging');
+      follow(ev.clientY);
+      send(false);
+    });
+    track.addEventListener('pointermove', (ev) => {
+      if (!track.hasPointerCapture(ev.pointerId)) return;
+      follow(ev.clientY);
+      send(false);
+    });
+    const end = (ev: PointerEvent) => {
+      if (!track.classList.contains('dragging')) return;
+      if (track.hasPointerCapture(ev.pointerId)) track.releasePointerCapture(ev.pointerId);
+      track.classList.remove('dragging');
+      send(true);
+    };
+    track.addEventListener('pointerup', end);
+    track.addEventListener('pointercancel', end);
+    track.addEventListener('click', (ev) => ev.stopPropagation());
+    track.addEventListener(
+      'wheel',
+      (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        value = clamp01(Math.round((value - Math.sign(ev.deltaY) * 0.05) * 100) / 100);
+        track.style.setProperty('--v', String(value));
+        send(false);
+      },
+      { passive: false },
+    );
+    return track;
+  }
+
   private tile(t: Tile, editing = false): HTMLElement {
     const b = t.body;
     const live = Boolean(t.action) && !editing && !t.hidden;
@@ -2296,6 +2409,29 @@ export class SheetRenderer {
         const bar = make('div', 'ab');
         for (const x of b.buttons) bar.append(this.button(x));
         e.append(head, bar);
+        break;
+      }
+      case 'hub': {
+        const live = !editing && !t.hidden;
+        const left = make('div', 'hub-l');
+        for (const p of b.pills) {
+          const pill = make(live && p.action ? 'button' : 'div', `hp${p.on ? ' on' : ''}`);
+          if (pill instanceof HTMLButtonElement) pill.type = 'button';
+          if (live) this.bind(pill, p.action, undefined);
+          if (p.tip && live) pill.title = p.tip;
+          const tx = make('div', 'hpt');
+          tx.append(make('div', 'hpl', p.label), make('div', 'hps', p.sub));
+          pill.append(iconEl(p.icon, 'hpi'), tx);
+          left.append(pill);
+        }
+        if (b.buttons.length) {
+          const row = make('div', 'hub-b');
+          for (const x of b.buttons) row.append(this.button(x));
+          left.append(row);
+        }
+        const right = make('div', 'hub-s');
+        for (const h of b.sliders) right.append(this.hubSlider(h, live));
+        e.append(left, right);
         break;
       }
       case 'list': {

@@ -214,6 +214,13 @@ export interface BtBattery {
   percent: number;
   connected: boolean;
 }
+/** Wi-Fi and Bluetooth (src-tauri/src/radios.rs): on, off, or null without that radio. */
+export interface RadiosState {
+  wifi: boolean | null;
+  bluetooth: boolean | null;
+  /** The Wi-Fi network it is on. */
+  network: string | null;
+}
 export interface AudioState {
   volume: number;
   muted: boolean;
@@ -783,6 +790,12 @@ export const native = {
   lockKeys: () => call<LockKeys | null>('lock_keys', {}, null),
   /** The screen's brightness 0-100 as Windows last reported it (null: never, like an external monitor); 'brightness' events say when it changes. */
   brightnessGet: () => call<number | null>('brightness_get', {}, null),
+  /** Sets the laptop screen's brightness 0-100; true when Windows took it (a 'brightness' event follows). */
+  brightnessSet: (percent: number) => call<boolean>('brightness_set', { percent }, false),
+  /** Wi-Fi and Bluetooth now; null where they can't be read (a Mac). */
+  radiosState: () => call<RadiosState | null>('radios_state', {}, null),
+  /** Switches the Wi-Fi or Bluetooth radio; true when Windows did it. */
+  radioSet: (kind: 'wifi' | 'bluetooth', on: boolean) => call<boolean>('radio_set', { kind, on }, false),
   /** Battery of paired Bluetooth earbuds, headphones and the like (src-tauri/src/btbattery.rs). */
   btBatteries: () => call<BtBattery[]>('bt_batteries', {}, []),
   sysSample: (withTop: boolean) => call<SysSample | null>('sys_sample', { withTop }, null),

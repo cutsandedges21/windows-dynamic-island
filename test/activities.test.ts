@@ -73,6 +73,10 @@ function resetNative() {
     clipboardHistory: vi.fn(async () => undefined),
     lockKeys: vi.fn(async () => null),
     brightnessGet: vi.fn(async () => null),
+    brightnessSet: vi.fn(async () => true),
+    radiosState: vi.fn(async () => null),
+    radioSet: vi.fn(async () => true),
+    btBatteries: vi.fn(async () => []),
     screenCapture: vi.fn(async () => true),
   });
 }
@@ -453,7 +457,52 @@ describe('system controls: the parts together', () => {
     await tick(10);
     emit('audio', { volume: 0.3, muted: false, device: 'Speakers', deviceId: 'a', micMuted: false, micDevice: 'Mic' });
     expect(act.status()).toMatchObject({ summary: 'Volume 30%' });
-    expect(act.tiles(tileEnv).map((t) => t.key)).toEqual(['sound', 'brightness', 'controls']);
+    expect(act.tiles(tileEnv).map((t) => t.key)).toEqual(['hub', 'sound', 'brightness', 'controls']);
+  });
+
+  it('the hub tile switches Wi-Fi and Bluetooth and sets the volume and brightness from its sliders', async () => {
+    h.native.audioState = vi.fn(async () => ({ volume: 0.5, muted: true, device: 'Speakers', deviceId: 'a', micMuted: false, micDevice: 'Mic' }));
+    h.native.brightnessGet = vi.fn(async () => 40);
+    h.native.radiosState = vi.fn(async () => ({ wifi: true, bluetooth: false, network: 'Home' }));
+    h.native.btBatteries = vi.fn(async () => [{ name: 'Buds', percent: 80, connected: true }]);
+    const { act } = await boot(new SystemControlsActivity());
+    act.tiles(tileEnv);
+    await tick(10);
+    const hub = act.tiles(tileEnv).find((t) => t.key === 'hub')!;
+    expect(hub).toMatchObject({ span: 2, rows: 2 });
+    const body = hub.body;
+    if (body.k !== 'hub') throw new Error('not a hub');
+    expect(body.pills.map((p) => [p.key, p.sub, p.on])).toEqual([
+      ['wifi', 'Home', true],
+      ['bluetooth', 'Off', false],
+    ]);
+    expect(body.sliders.map((s) => [s.key, s.value])).toEqual([
+      ['brightness', 0.4],
+      ['volume', 0],
+    ]);
+
+    await act.action!('wifi', null);
+    expect(h.native.radioSet).toHaveBeenLastCalledWith('wifi', false);
+    await act.action!('bluetooth', null);
+    expect(h.native.radioSet).toHaveBeenLastCalledWith('bluetooth', true);
+    // Dragging the volume up unmutes it; brightness goes over as a whole percent.
+    await act.action!('vol-set', 0.734);
+    expect(h.native.audioSet).toHaveBeenLastCalledWith(0.73, false);
+    await act.action!('bright-set', 0.25);
+    expect(h.native.brightnessSet).toHaveBeenLastCalledWith(25);
+    await act.action!('bright-set', 'nope');
+    expect(h.native.brightnessSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('without radios (a Mac) the hub keeps its sliders and leaves the pills out', async () => {
+    h.native.brightnessGet = vi.fn(async () => 70);
+    const { act } = await boot(new SystemControlsActivity());
+    act.tiles(tileEnv);
+    await tick(10);
+    const body = act.tiles(tileEnv).find((t) => t.key === 'hub')!.body;
+    expect(body.k === 'hub' && body.pills).toEqual([]);
+    await act.action!('wifi', null);
+    expect(h.native.radioSet).not.toHaveBeenCalled();
   });
 
   it('Screenshot and Record close the card, then open Snipping Tool', async () => {
