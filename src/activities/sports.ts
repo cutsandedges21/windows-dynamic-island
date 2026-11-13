@@ -190,6 +190,10 @@ export class SportsActivity extends BaseActivity {
     if (goal) {
       return [icon, { t: 'text', key: 'goal', text: `Goal! ${goal.team}`, tone: 'accent', weight: 'semibold', prio: 0 }, { t: 'text', key: 'score', text: scoreLine(g), side: 'end', prio: 1 }];
     }
+    // At rest the pill shows only the score ("2–0"), so it leaves room for the rest; the teams come
+    // when it is pointed at or opened (Justin: the whole line took the pill).
+    const resting = (env.level === 'compact' || env.level === 'idle') && !env.hover && !env.open && !env.surfaced;
+    if (resting) return [icon, { t: 'text', key: 'score', text: `${g.away.score}–${g.home.score}`, weight: 'semibold', prio: 0 }];
     const score: Seg = { t: 'text', key: 'score', text: scoreLine(g), weight: 'semibold', prio: 0 };
     if (env.level === 'compact' || env.level === 'idle') return [icon, score];
     const tail = done(g) ? 'Final' : periodText(g);
