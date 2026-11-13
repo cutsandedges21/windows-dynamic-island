@@ -11,6 +11,7 @@ import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/acti
 import { baseName, bytes, clip, clock, percent, rate } from '../core/format';
 import { native, type LandFriend, type LandFirewall, type LandFriendAsk, type LandPeer, type LandStaged, type LandTransfer, type RemoteFileSent, type RemotePhone, type ShareInfo, type Tried } from '../core/native';
 import type { PhoneDelivery } from '../remote/hub';
+import { holdForPhone, type HeldEnd } from '../remote/outbox';
 import type { PetSignal } from '../core/pet';
 import type { Seg } from '../core/segments';
 import type { Block, Person, SheetButton, SheetRow, SheetView, Tile } from '../core/sheet';
@@ -123,10 +124,14 @@ export class LandActivity extends BaseActivity {
   private fixing = false;
   /** Land's first start here: when the island said what it is (the system asks about the network at the same time). */
   private introAt = 0;
-  /** Paired phones connected now (Island on your phone): they get files and text too. */
+  /** Paired phones connected now, or that took notifications (Island on your phone): they get files and text too. */
   private phones: LandPeer[] = [];
+  /** Which of them are connected now (the others get what waits for them, and a notification). */
+  private phonesLive = new Set<string>();
   /** Numbers what goes to and comes from phones (they have no transfer ids of Rust's). */
   private phoneSeq = 0;
+  /** Transfers from a phone whose picture Rust also put on the clipboard. */
+  private phoneCopied = new Set<string>();
   private demoTimers: Array<ReturnType<typeof setTimeout>> = [];
 
   constructor() {
@@ -206,7 +211,9 @@ export class LandActivity extends BaseActivity {
 
   /** Paired phones as Rust lists them: the connected ones are targets. */
   private onPhones(list: RemotePhone[]): void {
-    const next = (Array.isArray(list) ? list : []).filter((p) => p.connected).map((p): LandPeer => ({ id: `${PHONE}${p.id}`, name: p.name, os: 'phone' }));
+    const all = (Array.isArray(list) ? list : []).filter((p) => p.connected || p.push);
+    this.phonesLive = new Set(all.filter((p) => p.connected).map((p) => `${PHONE}${p.id}`));
+    const next = all.map((p): LandPeer => ({ id: `${PHONE}${p.id}`, name: p.name, os: 'phone' }));
     if (next.length === this.phones.length && next.every((p, i) => p.id === this.phones[i].id && p.name === this.phones[i].name)) return;
     this.phones = next;
     this.unpickGone();
@@ -726,7 +733,7 @@ export class LandActivity extends BaseActivity {
     return {
       key: `end/${t.id}`,
       blocks: [
-        { t: 'head', key: 'head', icon: 'check', tone: 'good', title: `${what(t)} from ${t.peer.name}`, sub: `${bytes(t.total)} · in Downloads` },
+        { t: 'head', key: 'head', icon: 'check', tone: 'good', title: `${what(t)} from ${t.peer.name}`, sub: `${bytes(t.total)} · in Downloads${this.phoneCopied.has(t.id) ? ' · Copied to the clipboard' : ''}` },
         { t: 'rows', key: 'saved', items: rows },
         { t: 'buttons', key: 'act', items: [{ key: 'show', label: 'Show in folder', icon: 'folder', action: 'show', arg: t.saved[0], style: 'secondary' }] },
       ],
@@ -799,7 +806,7 @@ export class LandActivity extends BaseActivity {
       blocks.push({ t: 'rows', key: 'files', items: [{ key: 'text', icon: link ? 'globe' : 'edit', title: clip(this.stagedText.replace(/\s+/g, ' '), 90), detail: link ? 'Link' : `Note · ${plural(this.stagedText.length, 'character')}`, button: { key: 'rm', icon: 'x', action: 'clear', style: 'ghost', tip: 'Remove' } }] });
     } else {
       blocks.push({ t: 'text', key: 'hint', text: 'Drag files or folders onto the island, or paste a link or a note below, then pick who gets it.', tone: 'muted', size: 'sm' });
-      blocks.push({ t: 'input', key: 'text', placeholder: 'Paste a link or type a note, then Enter', action: 'stage-text' });
+      blocks.push({ t: 'input', key: 'text', placeholder: 'Paste a link or type a note, then Enter', action: 'stage-text', pasteFiles: 'paste' });
     }
 
     const targets = new Set(this.targets().map((p) => p.id));
@@ -872,6 +879,13 @@ export class LandActivity extends BaseActivity {
       out.progress = this.frac(t);
       out.sub = t.state === 'waiting' ? `${this.progressText(t)}…` : t.state === 'queued' ? 'Sends when online' : this.progressText(t);
       out.tone = 'accent';
+      // Tapping it again while it goes stops that send (the row's Cancel is small on a touch screen).
+      // (A phone's send is over in a moment and has nothing to cancel.)
+      if (!isPhone(p.id)) {
+        out.action = 'cancel';
+        out.arg = t.id;
+        out.tip = `Cancel the send to ${p.name}`;
+      }
     } else if (t.ended !== null && now - t.ended < 10000) {
       const ok = t.state === 'done';
       out.badge = ok ? 'check' : 'x';
@@ -893,7 +907,7 @@ export class LandActivity extends BaseActivity {
     const how = t.via === 'relay' ? ' · through a relay' : t.via === 'direct' ? ' · direct' : '';
     let detail: string;
     if (t.state === 'waiting') detail = isPhone(t.peer.id) ? `Sending to ${t.peer.name}…` : `Waiting for ${t.peer.name} to accept`;
-    else if (t.state === 'queued') detail = `Sends when ${t.peer.name} is online`;
+    else if (t.state === 'queued') detail = isPhone(t.peer.id) ? `${t.peer.name} was notified · goes when Island opens there` : `Sends when ${t.peer.name} is online`;
     else if (t.state === 'asking') detail = 'Waiting for your answer';
     else if (t.state === 'sending' || t.state === 'receiving') detail = `${percent(this.frac(t) ?? 0)} · ${bytes(t.done)} of ${bytes(t.total)}${t.speed >= 1 ? ` · ${rate(t.speed)}` : ''}${how}`;
     // The connection dropped after Accept: what arrived is kept, and it goes on by itself.
@@ -909,8 +923,9 @@ export class LandActivity extends BaseActivity {
       title: `${to} · ${what(t)}`,
       detail,
     };
-    if (t.state === 'asking') row.button = { key: 'no', icon: 'x', action: 'decline', arg: t.id, style: 'ghost', tip: 'Decline' };
-    else if (active) row.button = { key: 'stop', icon: 'x', action: 'cancel', arg: t.id, style: 'ghost', tip: 'Cancel' };
+    // Cancel and Decline stay in sight: a touch screen (or a phone driving the PC) has no pointing at a row.
+    if (t.state === 'asking') row.button = { key: 'no', icon: 'x', action: 'decline', arg: t.id, style: 'ghost', tip: 'Decline', shown: true };
+    else if (active) row.button = { key: 'stop', icon: 'x', action: 'cancel', arg: t.id, style: 'ghost', tip: 'Cancel', shown: true };
     else if (t.dir === 'in' && t.state === 'done' && t.saved.length) {
       row.action = 'show';
       row.arg = t.saved[0];
@@ -999,7 +1014,8 @@ export class LandActivity extends BaseActivity {
         void native.landShareStop();
         break;
       case 'paste': {
-        // Ctrl+V on Land's icon: what was copied goes to Land's card, ready to send.
+        // Ctrl+V on Land's icon (or a picture or files pasted in its box): what was copied goes to
+        // Land's card, ready to send. A screenshot comes back as a PNG file Rust saved for it.
         const pasted = await native.clipboardPaste();
         if (!this.alive) return;
         if (this.share) {
@@ -1013,7 +1029,7 @@ export class LandActivity extends BaseActivity {
         } else if (pasted.text?.trim()) {
           await this.action('stage-text', pasted.text);
         } else {
-          this.note = { text: 'Nothing to send yet: copy a link, a note or files, then hover Land and press Ctrl+V.', at: Date.now() };
+          this.note = { text: 'Nothing to send yet: copy a link, a note, files or a screenshot, then hover Land and press Ctrl+V.', at: Date.now() };
         }
         this.ctx.openCard?.();
         void this.scan();
@@ -1148,24 +1164,65 @@ export class LandActivity extends BaseActivity {
     const all = this.staged.filter((s) => !s.error);
     const files = all.filter((s) => !s.dir);
     if (!files.length) return { ok: false, error: 'A phone takes files, not folders.' };
+    if (!this.phonesLive.has(p.id)) return this.holdFiles(p, files);
     let started = 0;
     let error = '';
     for (const f of files) {
+      // The row first: the call returns only once the phone has the file, and Rust's
+      // remote-file-sent comes before that, so a row made after it would say Sending for ever.
+      const id = `phone-out-${++this.phoneSeq}`;
+      this.onTransfer({ id, dir: 'out', peer: p, state: 'waiting', done: 0, total: f.size, count: 1, items: [{ name: f.name, size: f.size, files: 1, dir: false }], error: null, saved: [], folder: null, expires: null });
       const r = await native.remoteSendFile(p.id.slice(PHONE.length), f.path);
       if (!this.alive) break;
+      const t = this.transfers.get(id);
+      if (t && ACTIVE.has(t.state)) this.onTransfer(r.ok ? { ...t, state: 'done', done: t.total } : { ...t, state: 'failed', error: r.error });
       if (!r.ok) {
         error = r.error;
         continue;
       }
       started++;
-      this.onTransfer({ id: `phone-out-${++this.phoneSeq}`, dir: 'out', peer: p, state: 'waiting', done: 0, total: f.size, count: 1, items: [{ name: f.name, size: f.size, files: 1, dir: false }], error: null, saved: [], folder: null, expires: null });
     }
     if (started && files.length < all.length) this.note = { text: 'Folders stayed here: a phone takes files only.', at: Date.now() };
     return started ? { ok: true, value: null } : { ok: false, error: error || `${p.name} didn't take it.` };
   }
 
+  /**
+   * Files for a phone that isn't connected: they wait on the hub (src/remote/outbox.ts) and the
+   * phone is notified; each shows here as waiting until it goes.
+   */
+  private holdFiles(p: LandPeer, files: LandStaged[]): Tried<null> {
+    let held = 0;
+    for (const f of files) {
+      const id = `phone-out-${++this.phoneSeq}`;
+      // Sent: Rust's remote-file-sent says how it went (onPhoneSent).
+      const settle = (end: HeldEnd) => void (end === 'dropped' && this.heldGone(id));
+      if (!holdForPhone(p.id.slice(PHONE.length), { kind: 'file', path: f.path, name: f.name, size: f.size, settle })) continue;
+      held++;
+      this.onTransfer({ id, dir: 'out', peer: p, state: 'queued', done: 0, total: f.size, count: 1, items: [{ name: f.name, size: f.size, files: 1, dir: false }], error: null, saved: [], folder: null, expires: null });
+    }
+    return held ? { ok: true, value: null } : { ok: false, error: `${p.name} isn't connected right now.` };
+  }
+
+  /** Something held for a phone waited too long, or gave way to newer: its row says so. */
+  private heldGone(id: string): void {
+    const t = this.transfers.get(id);
+    if (this.alive && t?.state === 'queued') this.onTransfer({ ...t, state: 'failed', error: `${t.peer.name} didn't open Island in time` });
+  }
+
   /** Text or a link to a paired phone: one line, shown there with Copy (and Open). */
   private async textToPhone(p: LandPeer, text: string): Promise<Tried<null>> {
+    if (!this.phonesLive.has(p.id)) {
+      const id = `phone-out-${++this.phoneSeq}`;
+      const from = this.computerName() ?? (platform === 'macos' ? 'Mac' : 'PC');
+      const settle = (end: HeldEnd) => {
+        const t = this.transfers.get(id);
+        if (end === 'dropped') this.heldGone(id);
+        else if (this.alive && t?.state === 'queued') this.onTransfer({ ...t, state: 'done', done: text.length });
+      };
+      if (!holdForPhone(p.id.slice(PHONE.length), { kind: 'text', text, from, settle })) return { ok: false, error: `${p.name} isn't connected right now.` };
+      this.onTransfer({ id, dir: 'out', peer: p, state: 'queued', done: 0, total: text.length, count: 0, items: [], error: null, saved: [], folder: null, expires: null, text });
+      return { ok: true, value: null };
+    }
     const ok = await native.remoteSend(p.id.slice(PHONE.length), { t: 'text', text, from: this.computerName() ?? (platform === 'macos' ? 'Mac' : 'PC') });
     if (!ok) return { ok: false, error: `${p.name} isn't connected right now.` };
     this.onTransfer({ id: `phone-out-${++this.phoneSeq}`, dir: 'out', peer: p, state: 'done', done: text.length, total: text.length, count: 0, items: [], error: null, saved: [], folder: null, expires: null, text });
@@ -1184,13 +1241,17 @@ export class LandActivity extends BaseActivity {
 
   /**
    * What a phone sent (src/remote/hub.ts): text already on the clipboard, or a file Rust saved to
-   * Downloads. Shown like what another computer sent, with the phone's name.
+   * Downloads (a picture also put on the clipboard). Shown like what another computer sent, with the phone's name.
    */
   fromPhone(item: PhoneDelivery): void {
     const peer: LandPeer = { id: `${PHONE}${item.phone}`, name: item.from, os: 'phone' };
     const base = { dir: 'in' as const, peer, state: 'done' as const, error: null, folder: null, expires: null };
     if (item.kind === 'text') this.onTransfer({ ...base, id: `phone-in-${++this.phoneSeq}`, done: item.text.length, total: item.text.length, count: 0, items: [], saved: [], text: item.text });
-    else this.onTransfer({ ...base, id: `phone-in-${item.id || ++this.phoneSeq}`, done: item.size, total: item.size, count: 1, items: [{ name: item.name, size: item.size, files: 1, dir: false }], saved: [item.path] });
+    else {
+      const id = `phone-in-${item.id || ++this.phoneSeq}`;
+      if (item.copied) this.phoneCopied.add(id);
+      this.onTransfer({ ...base, id, done: item.size, total: item.size, count: 1, items: [{ name: item.name, size: item.size, files: 1, dir: false }], saved: [item.path] });
+    }
   }
 
   /** The name other computers see this one by; phones are greeted with it too. Null while Land is off. */

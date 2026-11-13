@@ -3,11 +3,11 @@
 // sends (hello, pill, view, toasts, clipboard, text, files, terminals), and where a tap goes
 // (routing.ts, nav.ts).
 
-import type { IslandMsg, Nav, PairPayload, TermInfo } from '../../../src/remote/protocol';
+import { INBOX_OPEN, type IslandMsg, type Nav, type PairPayload, type TermInfo } from '../../../src/remote/protocol';
 import { NavKeeper, navMsg } from './nav';
 import { deniedText, pairErrorText, phoneName } from './pairing';
 import { pushFlag, pushOff, pushOn, pushResend, pushState } from './push';
-import { actMsg, routeAction } from './routing';
+import { actMsg, INBOX_READY_MS, inboxReady, routeAction } from './routing';
 import type { IslandStore } from './store';
 import type { IncomingFile, Link, LinkState, SavedIsland } from './link/api';
 import { ClipSheet } from './screens/clipboard';
@@ -15,6 +15,7 @@ import { inboxFile, inboxText } from './screens/inbox';
 import { installScreen, platformOf } from './screens/install';
 import { IslandScreen } from './screens/island';
 import { openMenu } from './screens/menu';
+import { PrefsSheet, type PrefsKind } from './screens/prefs';
 import { PairScreen } from './screens/pair';
 import { openScreen } from './screens/pc-screen';
 import { openSend } from './screens/send';
@@ -57,9 +58,13 @@ export class App {
   private readonly nav = new NavKeeper();
   private pairing = false;
   private clip: ClipSheet | null = null;
+  /** The PC's Activities or Settings, while that sheet is open. */
+  private prefs: PrefsSheet | null = null;
   private seenTimer: ReturnType<typeof setInterval> | undefined;
   private width = 0;
   private openId: string | null;
+  /** Until when what the PC sends shows ready (a "sent you …" notification was tapped). */
+  private readyUntil = 0;
   /** The terminal screen, over the island while it shows. */
   private termScreen: TerminalScreen | null = null;
   private termLoading = false;
@@ -74,6 +79,7 @@ export class App {
   ) {
     this.state = link.state;
     this.openId = opts.open;
+    if (opts.open === INBOX_OPEN) this.inboxOpened();
     link.onState((s) => this.onState(s));
     link.onMessage((m) => this.onMessage(m));
     link.onFile((f) => this.onFile(f));
@@ -180,12 +186,16 @@ export class App {
     const s = new IslandScreen(this.root, {
       action: (a, arg) => this.action(a, arg),
       back: () => this.go(this.nav.back(Date.now())),
+      home: () => this.home(),
       claude: () => this.claude(),
       terminal: () => void this.openTerminal(),
       screen: () => openScreen(this.hello?.screen ?? null, this.island?.name ?? 'your PC'),
       send: () => this.island && openSend(this.link, this.island.name),
       menu: () => this.menu(),
       retry: () => this.island && this.link.open(this.island),
+      saveGrid: (l) => {
+        if (!this.link.send({ t: 'grid-set', order: l.order, hidden: l.hidden })) toast('Not connected', 'bad');
+      },
     });
     s.setName(this.hello?.name || island.name);
     this.mount(s);
@@ -258,7 +268,11 @@ export class App {
         return;
       case 'view':
         // An urgent card shows whatever the phone asked for; anything else must answer the latest ask.
-        if (!m.urgent && !this.nav.accept(m.nav, Date.now())) return;
+        if (!m.urgent && !this.nav.accept(m.nav, Date.now())) {
+          // Still the old view long after the ask (its line lost on the way): ask again.
+          if (this.nav.overdue(Date.now())) this.sendNav(this.nav.resend(Date.now()));
+          return;
+        }
         this.lastView = m;
         s?.draw(m, m.nav.open === 'card');
         return;
@@ -268,8 +282,11 @@ export class App {
       case 'clip':
         if (this.clip?.alive) this.clip.show(m.text);
         return;
+      case 'prefs':
+        if (this.prefs?.alive) this.prefs.show(m.rows, m.acts);
+        return;
       case 'text':
-        if (s) inboxText(s.inbox, m.text, m.from);
+        if (s) inboxText(s.inbox, m.text, m.from, inboxReady(this.readyUntil, Date.now()));
         return;
       default:
         // paired, denied, pong, bye: the link's own business.
@@ -279,7 +296,18 @@ export class App {
 
   private onFile(f: IncomingFile): void {
     const s = this.islandScreen;
-    if (s) inboxFile(s.inbox, f, this.island?.name ?? 'your PC');
+    if (s) inboxFile(s.inbox, f, this.island?.name ?? 'your PC', inboxReady(this.readyUntil, Date.now()));
+  }
+
+  /** A "sent you …" notification was tapped: no card to open; what waited on the PC comes after hello, ready. */
+  private inboxOpened(): void {
+    this.openId = null;
+    this.readyUntil = Date.now() + INBOX_READY_MS;
+    if (new URLSearchParams(location.search).has('open')) {
+      const url = new URL(location.href);
+      url.searchParams.delete('open');
+      history.replaceState(null, '', url);
+    }
   }
 
   // ---------------------------------------------------------------- taps and navigation
@@ -320,6 +348,7 @@ export class App {
   }
 
   private openCard(id: string): void {
+    if (id === INBOX_OPEN) return this.inboxOpened();
     if (this.state.s !== 'online' || !this.hello) {
       this.openId = id;
       return;
@@ -346,6 +375,13 @@ export class App {
   }
 
   // ---------------------------------------------------------------- the bar
+
+  /** Home: the island with Control Center under it, whatever was showing (a card, the terminal). */
+  private home(): void {
+    this.closeTerminal();
+    this.islandScreen?.leaveCard();
+    this.go(this.nav.back(Date.now()));
+  }
 
   /** Claude's card: the island draws it (its chats, a box to message one), like any card. */
   private claude(): void {
@@ -391,6 +427,13 @@ export class App {
     if (yes && !this.link.send({ t: 'lock' })) toast('Not connected', 'bad');
   }
 
+  /** Sleep: the phone can't wake it again (Island sleeps with it); the PC's own key or lid does. */
+  private async sleep(): Promise<void> {
+    const name = this.island?.name ?? 'your PC';
+    const yes = await confirmSheet({ title: `Put ${name} to sleep?`, text: "It sleeps right away and this app loses it until it's woken at the PC (a key, the power button or opening the lid).", ok: 'Sleep', icon: 'moon' });
+    if (yes && !this.link.send({ t: 'sleep' })) toast('Not connected', 'bad');
+  }
+
   private menu(): void {
     const island = this.island;
     if (!island) return;
@@ -404,6 +447,10 @@ export class App {
         if (this.island) this.clip = new ClipSheet(this.link, this.island.name);
       },
       lock: () => void this.lock(),
+      prefs: (kind: PrefsKind) => {
+        if (this.island) this.prefs = new PrefsSheet(kind, this.island.name, (m) => this.link.send(m));
+      },
+      sleep: () => void this.sleep(),
       switchTo: (id) => {
         const it = this.store.get(id);
         if (!it) return;

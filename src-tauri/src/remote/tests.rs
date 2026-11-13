@@ -336,7 +336,7 @@ async fn files_go_from_the_phone_to_downloads() {
         assert_eq!(reply, json!({ "t": "file-ok", "id": id, "name": saved }));
         assert_eq!(std::fs::read(downloads.join(saved)).unwrap(), data, "never over the file already there");
         let ev = rig.take("remote-file").await;
-        assert_eq!(ev, json!({ "phone": me.id().to_string(), "id": id, "name": saved, "path": downloads.join(saved).to_string_lossy(), "size": 200_000, "mime": "image/jpeg" }));
+        assert_eq!(ev, json!({ "phone": me.id().to_string(), "id": id, "name": saved, "path": downloads.join(saved).to_string_lossy(), "size": 200_000, "mime": "image/jpeg", "copied": false }), "not a real picture, so nothing to paste");
     }
     // A name that would leave Downloads stays in it.
     let reply = upload(&conn, json!({ "t": "file", "id": "n", "name": r"..\..\notes.txt", "size": 2, "mime": "text/plain" }), b"hi").await;

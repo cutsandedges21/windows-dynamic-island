@@ -61,6 +61,11 @@ pub fn shell_edit_image(path: String) -> bool {
 pub fn shell_lock() {}
 
 #[tauri::command]
+pub fn shell_sleep() {
+    let _ = Command::new("pmset").arg("sleepnow").status();
+}
+
+#[tauri::command]
 pub fn shell_snip() {}
 
 /// Snipping Tool's screenshot and recording keys: Windows only (a Mac has Cmd+Shift+5 of its own).
@@ -76,6 +81,11 @@ pub fn clipboard_set_text() -> bool {
 
 #[tauri::command]
 pub fn clipboard_copy_image() -> bool {
+    false
+}
+
+/// A picture from a phone onto the clipboard: Windows only for now.
+pub fn copy_image_file(_path: &Path) -> bool {
     false
 }
 

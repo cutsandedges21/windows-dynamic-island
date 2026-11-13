@@ -64,6 +64,7 @@ const P: Record<string, string> = {
   'chevron-right': '<path d="M9 5l7 7-7 7"/>',
   'chevron-down': '<path d="M5 9l7 7 7-7"/>',
   'chevron-up': '<path d="M5 15l7-7 7 7"/>',
+  grip: '<circle cx="9" cy="6" r="1.5" fill="currentColor"/><circle cx="15" cy="6" r="1.5" fill="currentColor"/><circle cx="9" cy="12" r="1.5" fill="currentColor"/><circle cx="15" cy="12" r="1.5" fill="currentColor"/><circle cx="9" cy="18" r="1.5" fill="currentColor"/><circle cx="15" cy="18" r="1.5" fill="currentColor"/>',
   more: '<circle cx="5.5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="18.5" cy="12" r="1.6" fill="currentColor"/>',
   pin: '<path d="M9 3.5h6l-1 5 3.5 3.5h-11L10 8.5zM12 12v8.5"/>',
   server: '<rect x="3.5" y="4" width="17" height="7" rx="1.8"/><rect x="3.5" y="13" width="17" height="7" rx="1.8"/><path d="M7 7.5h.01M7 16.5h.01"/>',
@@ -88,7 +89,7 @@ const P: Record<string, string> = {
   'pos-bottom': '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><rect x="8.5" y="14.4" width="7" height="2.6" rx="1.3" fill="currentColor" stroke="none"/>',
   'pos-left': '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><rect x="6" y="10.7" width="7" height="2.6" rx="1.3" fill="currentColor" stroke="none"/>',
   'pos-right': '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><rect x="11" y="10.7" width="7" height="2.6" rx="1.3" fill="currentColor" stroke="none"/>',
-  phone: '<path d="M5 3.5h3.5l1.5 4.5-2.3 1.5a11 11 0 006.8 6.8l1.5-2.3 4.5 1.5V19a1.5 1.5 0 01-1.5 1.5A16.5 16.5 0 013.5 5 1.5 1.5 0 015 3.5z"/>',
+  phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 5.5h3"/><path d="M11 18.5h2"/>',
   alert: '<path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 10v4.5M12 17.5h.01"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.5h.01"/>',
   power: '<path d="M12 3v8.5M6.8 6.3a8 8 0 1010.4 0"/>',
@@ -109,6 +110,7 @@ const P: Record<string, string> = {
   // Land: a file's arc coming down onto the ground.
   land: '<path d="M3.5 20h17"/><path d="M4.5 4.5c6.2 0 10.6 4 11.9 10.6"/><path d="M13.3 13.1l3.1 2.4 2.3-3.2"/>',
   file: '<path d="M6.5 3h7.5l4.5 4.5V20a1 1 0 01-1 1h-11a1 1 0 01-1-1V4a1 1 0 011-1z"/><path d="M13.5 3v5h5"/>',
+  home: '<path d="M4 11l8-6.5 8 6.5"/><path d="M6.5 9.5V19h11V9.5"/><path d="M10.5 19v-4.5h3V19"/>',
   laptop: '<rect x="4.5" y="5" width="15" height="10.5" rx="1.5"/><path d="M2.5 19h19"/>',
   // Workspaces: a window in front of another.
   spaces: '<rect x="2.5" y="8.5" width="13.5" height="11" rx="2"/><path d="M2.5 12h13.5"/><path d="M7 8.5V6.5a2 2 0 012-2h10.5a2 2 0 012 2V14a2 2 0 01-2 2H16"/>',

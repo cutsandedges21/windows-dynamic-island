@@ -8,13 +8,14 @@
 
 import type { ActivityStatus, RenderEnv, SheetEnv } from '../core/activity';
 import { clip } from '../core/format';
-import { native, type PowerState } from '../core/native';
+import { native, type PowerState, type RadiosState } from '../core/native';
 import type { MomentId } from '../core/pet';
 import { platform } from '../core/platform';
 import type { Seg } from '../core/segments';
 import type { Block, SheetButton, SheetRow, SheetView, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
 import { Brightness } from './brightness';
+import { hubTile, sliderPct } from './control-hub';
 import { Keys } from './keys';
 import { Sound } from './sound';
 
@@ -57,6 +58,9 @@ export const SAVER_SETTINGS = 'ms-settings:batterysaver';
 /** Snipping Tool is Windows'; a Mac has its own (Cmd+Shift+5). */
 const CAPTURE_HERE = platform !== 'macos';
 
+/** Wi-Fi and Bluetooth are read this often, and only while Control Center was drawn lately (the tile is up). */
+export const RADIOS_POLL_MS = 5000;
+
 export class SystemControlsActivity extends BaseActivity {
   private readonly host: Host = {
     listen: <T>(event: string, cb: (payload: T) => void) => this.listen<T>(event, cb),
@@ -73,6 +77,11 @@ export class SystemControlsActivity extends BaseActivity {
   private readonly brightness = new Brightness(this.host);
   private readonly keys = new Keys(this.host);
   private power: PowerState | null = null;
+  private radios: RadiosState | null = null;
+  private btDevices: number | null = null;
+  /** When the tiles were last asked for: the radios are polled only while Control Center is up. */
+  private tilesAt = 0;
+  private radiosAt = 0;
 
   constructor() {
     super('system-controls');
@@ -88,6 +97,27 @@ export class SystemControlsActivity extends BaseActivity {
     void native.powerState().then((p) => {
       if (p && !this.power) this.power = p;
     });
+    this.every(RADIOS_POLL_MS, () => {
+      if (Date.now() - this.tilesAt < RADIOS_POLL_MS * 2) void this.readRadios();
+    });
+  }
+
+  /** Wi-Fi, Bluetooth, the network and how many Bluetooth devices are connected; redraws on a change. */
+  private async readRadios(): Promise<void> {
+    this.radiosAt = Date.now();
+    let r: RadiosState | null;
+    let bt: Array<{ connected: boolean }>;
+    try {
+      [r, bt] = await Promise.all([native.radiosState(), native.btBatteries()]);
+    } catch {
+      return;
+    }
+    if (!this.alive) return;
+    const devices = bt.filter((d) => d.connected).length;
+    const changed = JSON.stringify([r, devices]) !== JSON.stringify([this.radios, this.btDevices]);
+    this.radios = r;
+    this.btDevices = devices;
+    if (changed) this.ctx.update();
   }
 
   private parts(): Part[] {
@@ -154,6 +184,11 @@ export class SystemControlsActivity extends BaseActivity {
   /** Speakers (volume with − and +), Brightness, and a cell with the buttons; each only once it has something. */
   tiles(env: SheetEnv): Tile[] {
     const out: Tile[] = [];
+    this.tilesAt = Date.now();
+    if (Date.now() - this.radiosAt >= RADIOS_POLL_MS) void this.readRadios();
+    const a = this.sound.state();
+    const hub = hubTile({ radios: this.radios, btDevices: this.btDevices, volume: a?.volume ?? null, muted: a?.muted ?? false, brightness: this.brightness.state(), saver: this.saver() }, env.interactive);
+    if (hub) out.push(hub);
     const sound = this.sound.tile(env);
     if (sound) out.push(sound);
     const brightness = this.brightness.tile();
@@ -208,7 +243,28 @@ export class SystemControlsActivity extends BaseActivity {
     return { key: 'system-controls', blocks };
   }
 
-  async action(name: string): Promise<void> {
+  async action(name: string, arg?: unknown): Promise<void> {
+    if (name === 'vol-set') {
+      const pct = sliderPct(arg);
+      // Dragging the volume up unmutes, as the iPhone does.
+      if (pct != null) await native.audioSet(pct / 100, pct > 0 && this.sound.state()?.muted ? false : null);
+      return;
+    }
+    if (name === 'bright-set') {
+      const pct = sliderPct(arg);
+      if (pct != null) await native.brightnessSet(pct);
+      return;
+    }
+    if (name === 'wifi' || name === 'bluetooth') {
+      const on = this.radios?.[name];
+      if (on == null) return;
+      // Shown switched at once; the next read says how Windows left it.
+      this.radios = { ...this.radios!, [name]: !on, ...(name === 'wifi' && on ? { network: null } : {}) };
+      this.ctx.update();
+      await native.radioSet(name, !on);
+      this.later(1500, () => void this.readRadios());
+      return;
+    }
     if (await this.sound.action(name)) return;
     if (name === 'card') this.ctx.openCard?.();
     else if ((name === 'screenshot' || name === 'record') && CAPTURE_HERE) {

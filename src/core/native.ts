@@ -214,6 +214,13 @@ export interface BtBattery {
   percent: number;
   connected: boolean;
 }
+/** Wi-Fi and Bluetooth (src-tauri/src/radios.rs): on, off, or null without that radio. */
+export interface RadiosState {
+  wifi: boolean | null;
+  bluetooth: boolean | null;
+  /** The Wi-Fi network it is on. */
+  network: string | null;
+}
 export interface AudioState {
   volume: number;
   muted: boolean;
@@ -419,6 +426,8 @@ export interface RemoteFile {
   path: string;
   size: number;
   mime: string;
+  /** A picture Rust also put on the clipboard. */
+  copied?: boolean;
 }
 /** How a file the PC sent to a phone went ('remote-file-sent'). */
 export interface RemoteFileSent {
@@ -781,6 +790,12 @@ export const native = {
   lockKeys: () => call<LockKeys | null>('lock_keys', {}, null),
   /** The screen's brightness 0-100 as Windows last reported it (null: never, like an external monitor); 'brightness' events say when it changes. */
   brightnessGet: () => call<number | null>('brightness_get', {}, null),
+  /** Sets the laptop screen's brightness 0-100; true when Windows took it (a 'brightness' event follows). */
+  brightnessSet: (percent: number) => call<boolean>('brightness_set', { percent }, false),
+  /** Wi-Fi and Bluetooth now; null where they can't be read (a Mac). */
+  radiosState: () => call<RadiosState | null>('radios_state', {}, null),
+  /** Switches the Wi-Fi or Bluetooth radio; true when Windows did it. */
+  radioSet: (kind: 'wifi' | 'bluetooth', on: boolean) => call<boolean>('radio_set', { kind, on }, false),
   /** Battery of paired Bluetooth earbuds, headphones and the like (src-tauri/src/btbattery.rs). */
   btBatteries: () => call<BtBattery[]>('bt_batteries', {}, []),
   sysSample: (withTop: boolean) => call<SysSample | null>('sys_sample', { withTop }, null),
@@ -803,6 +818,8 @@ export const native = {
   reveal: (path: string) => call<boolean>('shell_reveal', { path }, false),
   edit: (path: string) => call<boolean>('shell_edit_image', { path }, false),
   lock: () => call('shell_lock', {}, undefined),
+  /** Puts the PC to sleep (a phone's Sleep). */
+  sleep: () => call('shell_sleep', {}, undefined),
   snip: () => call('shell_snip', {}, undefined),
   /** Snipping Tool's overlay to drag an area: a screenshot (Win+Shift+S) or a screen recording (Win+Shift+R). Windows only. */
   screenCapture: (what: 'image' | 'video') => call<boolean>('screen_capture', { video: what === 'video' }, false),
@@ -881,7 +898,9 @@ export const native = {
   /** The computer's name, for phones (Land's name when Land runs). */
   remoteName: () => call<string>('remote_name', {}, ''),
   /** A notification to every phone that turned them on; a tap opens the app on `open`'s card. How many it went to. */
-  remotePush: (title: string, body: string, tag: string, open: string, urgent: boolean) => call<number>('remote_push', { title, body, tag, open, urgent }, 0),
+  /** To every phone with a push subscription, or only `phone` (its id) when given. */
+  remotePush: (title: string, body: string, tag: string, open: string, urgent: boolean, phone?: string) =>
+    call<number>('remote_push', { title, body, tag, open, urgent, phone: phone || null }, 0),
   /** Whether Rust lets paired phones open terminals (Settings › Your phone, and Windows Hello isn't asked before Allow). */
   remoteTermAllow: (on: boolean) => call<undefined>('remote_term_allow', { on }, undefined),
 

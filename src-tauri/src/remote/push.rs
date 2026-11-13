@@ -10,7 +10,7 @@ use ring::rand::SystemRandom;
 use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use ring::{aead, agreement, hmac};
 
-use super::store::{b64url, PushSub};
+use super::store::{b64url, Phone, PushSub};
 use super::*;
 
 /// Who sends the pushes, as the push services ask (an https URL or a mailto).
@@ -160,6 +160,12 @@ pub(super) fn request(kp: &EcdsaKeyPair, sub: &PushSub, message: &[u8], urgent: 
     Ok(Request { endpoint: sub.endpoint.clone(), headers, body })
 }
 
+/// The subscriptions a push goes to: every phone's, or only `phone`'s when given (a held item
+/// notifies only the phone it waits for).
+pub(super) fn targets(phones: &[Phone], phone: Option<&str>) -> Vec<(String, PushSub)> {
+    phones.iter().filter(|p| phone.map_or(true, |id| p.id == id)).filter_map(|p| p.push.clone().map(|s| (p.id.clone(), s))).collect()
+}
+
 impl Remote {
     fn vapid_key(&self) -> Result<Arc<EcdsaKeyPair>, String> {
         let mut slot = self.vapid.lock().unwrap();
@@ -176,10 +182,10 @@ impl Remote {
         Ok(public_key(self.vapid_key()?.as_ref()))
     }
 
-    /// A notification to every phone with a push subscription: how many push services took it.
-    /// A subscription its service says is gone (404, 410) is dropped.
-    pub async fn push(self: &Arc<Self>, title: &str, body: &str, tag: Option<&str>, open: Option<&str>, urgent: bool) -> usize {
-        let subs: Vec<(String, PushSub)> = self.store.lock().unwrap().phones().iter().filter_map(|p| p.push.clone().map(|s| (p.id.clone(), s))).collect();
+    /// A notification to every phone with a push subscription (only `phone`'s, when given): how
+    /// many push services took it. A subscription its service says is gone (404, 410) is dropped.
+    pub async fn push(self: &Arc<Self>, title: &str, body: &str, tag: Option<&str>, open: Option<&str>, urgent: bool, phone: Option<&str>) -> usize {
+        let subs = targets(self.store.lock().unwrap().phones(), phone);
         if subs.is_empty() {
             return 0;
         }
@@ -274,6 +280,21 @@ mod tests {
         let rng = SystemRandom::new();
         let doc = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
         EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, doc.as_ref(), &rng).unwrap()
+    }
+
+    fn phone(id: &str, push: bool) -> Phone {
+        let sub = |n: &str| PushSub { endpoint: format!("https://web.push.apple.com/{n}"), keys: super::super::store::PushKeys { p256dh: "k".into(), auth: "a".into() } };
+        Phone { id: id.into(), name: id.into(), paired_at: 1, last_seen: 1, push: push.then(|| sub(id)) }
+    }
+
+    #[test]
+    fn a_push_for_one_phone_goes_only_to_its_subscription() {
+        let phones = [phone("a", true), phone("b", true), phone("c", false)];
+        let ids = |only: Option<&str>| targets(&phones, only).into_iter().map(|(id, s)| (id, s.endpoint)).collect::<Vec<_>>();
+        assert_eq!(ids(None), [("a".to_string(), "https://web.push.apple.com/a".to_string()), ("b".into(), "https://web.push.apple.com/b".into())]);
+        assert_eq!(ids(Some("b")), [("b".to_string(), "https://web.push.apple.com/b".to_string())]);
+        assert!(ids(Some("c")).is_empty(), "that phone took no notifications");
+        assert!(ids(Some("z")).is_empty(), "an unknown phone gets nothing, and nobody else does");
     }
 
     #[test]

@@ -79,12 +79,17 @@ features = [
   "ApplicationModel",
   "ApplicationModel_Appointments",
   "Foundation_Collections",
+  # Decoding a phone's JPEG/HEIC picture to put it on the clipboard (src/shell.rs).
+  "Graphics_Imaging",
   "Media_Control",
   "Storage_Streams",
   "UI_Notifications",
   "UI_Notifications_Management",
   # Scheduled reminder toasts (src/reminders.rs) are built from XML.
   "Data_Xml_Dom",
+  # Wi-Fi and Bluetooth radios and the Wi-Fi network name (src/radios.rs).
+  "Devices_Radios",
+  "Networking_Connectivity",
   "UI_Shell",
   "Win32_Foundation",
   "Win32_Devices_DeviceAndDriverInstallation",

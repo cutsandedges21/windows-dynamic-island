@@ -50,6 +50,14 @@ export function tileCard(tile: Tile, name: string, icon: string): Block[] {
         ...(items.length ? [{ t: 'buttons', key: 'buttons', items } as Block] : []),
       ];
     }
+    case 'hub':
+      // Each pill a button saying how it is, each slider a bar.
+      return [
+        { t: 'head', key: 'head', icon, tone: tile.tone, title: name },
+        ...(b.pills.length ? [{ t: 'buttons', key: 'pills', items: b.pills.map((p) => ({ key: p.key, icon: p.icon, label: `${p.label} · ${p.sub}`, action: p.action ?? '', style: p.on ? 'primary' : 'secondary', disabled: p.action ? undefined : true, tip: p.tip })) } as Block] : []),
+        ...b.sliders.map((s) => ({ t: 'meter', key: s.key, label: s.tip ?? s.key, value: s.value, text: `${Math.round(s.value * 100)}%`, tone: tile.tone }) as Block),
+        ...(b.buttons.length ? [{ t: 'buttons', key: 'buttons', items: b.buttons } as Block] : []),
+      ];
     case 'list':
       return [
         { t: 'head', key: 'head', icon: b.icon, tone: tile.tone, title: b.label || name },

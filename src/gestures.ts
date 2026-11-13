@@ -36,7 +36,7 @@ export function gestureGroups(s: Settings, on: Platform): GestureGroup[] {
         ['Click the moon', 'Turns Quiet off. The moon sits at the end of the pill while Quiet is on.'],
         ['Click outside, or Esc', 'Closes whatever is open and shrinks it back.'],
         ['Drop files on it', 'Land opens with them, to send to a computer nearby.'],
-        [`Point at Land's icon, press ${paste}`, 'Land opens with what you copied, ready to send.'],
+        [`Point at Land's icon, press ${paste}`, 'Land opens with what you copied (files, a screenshot, a link or a note), ready to send.'],
         ['Click the bot', 'Opens a bar under it to ask Local AI, or Claude. Click away or press Esc to close it.'],
       ],
     },

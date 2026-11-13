@@ -19,6 +19,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Ole::{CF_BITMAP, CF_DIB, CF_HDROP, CF_UNICODETEXT};
 use windows::Win32::System::Power::{RegisterPowerSettingNotification, POWERBROADCAST_SETTING};
+use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetWindowThreadProcessId, RegisterClassW, TranslateMessage,
@@ -140,8 +141,130 @@ pub struct Pasted {
     text: Option<String>,
 }
 
+/// The bytes of one clipboard format, copied out while the clipboard is open.
+unsafe fn read_bytes(format: u32) -> Option<Vec<u8>> {
+    unsafe {
+        let h = GetClipboardData(format).ok()?;
+        let g = HGLOBAL(h.0);
+        let ptr = GlobalLock(g) as *const u8;
+        if ptr.is_null() {
+            return None;
+        }
+        let bytes = std::slice::from_raw_parts(ptr, GlobalSize(g)).to_vec();
+        let _ = GlobalUnlock(g);
+        Some(bytes)
+    }
+}
+
+/// The name a pasted screenshot gets; the friend who receives it sees this.
+fn screenshot_name(year: u16, month: u16, day: u16, hour: u16, minute: u16, second: u16) -> String {
+    format!("Screenshot {year:04}-{month:02}-{day:02} {hour:02}{minute:02}{second:02}.png")
+}
+
+/// A packed DIB (CF_DIB / CF_DIBV5: a BITMAPINFOHEADER or larger, then the pixels) as
+/// width, height and top-down RGBA. Uncompressed 24- and 32-bit only, which is what
+/// screenshots are; anything else is None.
+fn dib_to_rgba(dib: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    let u32_at = |o: usize| dib.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    let header = u32_at(0)? as usize;
+    if header < 40 {
+        return None;
+    }
+    let width = u32_at(4)? as i32;
+    let height = u32_at(8)? as i32;
+    let bits = u16::from_le_bytes([*dib.get(14)?, *dib.get(15)?]);
+    let compression = u32_at(16)?;
+    // BI_RGB = 0, BI_BITFIELDS = 3 (32-bit BGRA with masks); a 40-byte header keeps its masks after it.
+    let masks = match (compression, header) {
+        (0, _) => 0,
+        (3, 40) => 12,
+        (3, _) => 0,
+        _ => return None,
+    };
+    if width <= 0 || height == 0 || width > 32_768 || height.unsigned_abs() > 32_768 || !(bits == 24 || bits == 32) {
+        return None;
+    }
+    if compression == 3 && bits != 32 {
+        return None;
+    }
+    let colors = if bits <= 8 { 0 } else { u32_at(32).unwrap_or(0) as usize * 4 };
+    let start = header + masks + colors;
+    let (w, h) = (width as usize, height.unsigned_abs() as usize);
+    let step = bits as usize / 8;
+    let stride = (w * step).div_ceil(4) * 4;
+    if dib.len() < start + stride * h {
+        return None;
+    }
+    let mut out = vec![0u8; w * h * 4];
+    let mut any_alpha = false;
+    for y in 0..h {
+        let src_row = if height > 0 { h - 1 - y } else { y };
+        let row = &dib[start + src_row * stride..];
+        for x in 0..w {
+            let p = &row[x * step..x * step + step];
+            let o = (y * w + x) * 4;
+            out[o] = p[2];
+            out[o + 1] = p[1];
+            out[o + 2] = p[0];
+            out[o + 3] = if step == 4 { p[3] } else { 255 };
+            any_alpha |= step == 4 && p[3] != 0;
+        }
+    }
+    // Most 32-bit screenshots leave the alpha byte at 0: that means opaque, not invisible.
+    if step == 4 && !any_alpha {
+        out.chunks_exact_mut(4).for_each(|p| p[3] = 255);
+    }
+    Some((width as u32, h as u32, out))
+}
+
+fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut buf, width, height);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().ok()?;
+        w.write_image_data(rgba).ok()?;
+    }
+    Some(buf)
+}
+
+/// A picture on the clipboard (a screenshot: Win+Shift+S, PrtScn, Snipping Tool) saved as a
+/// PNG in %TEMP%\Island\Land, so Land can send it like a file. Call with the clipboard open.
+unsafe fn save_image() -> Option<String> {
+    unsafe {
+        let png_format = RegisterClipboardFormatW(w!("PNG"));
+        let bytes = if png_format != 0 && IsClipboardFormatAvailable(png_format).is_ok() {
+            read_bytes(png_format).filter(|b| b.starts_with(b"\x89PNG"))
+        } else {
+            None
+        };
+        let bytes = match bytes {
+            Some(b) => b,
+            None if IsClipboardFormatAvailable(CF_DIB.0 as u32).is_ok() => {
+                let (w, h, rgba) = dib_to_rgba(&read_bytes(CF_DIB.0 as u32)?)?;
+                encode_png(w, h, &rgba)?
+            }
+            None => return None,
+        };
+        let dir = std::env::temp_dir().join("Island").join("Land");
+        std::fs::create_dir_all(&dir).ok()?;
+        let t = GetLocalTime();
+        let name = screenshot_name(t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+        let mut path = dir.join(&name);
+        let mut n = 2;
+        while path.exists() {
+            path = dir.join(name.replace(".png", &format!(" ({n}).png")));
+            n += 1;
+        }
+        std::fs::write(&path, bytes).ok()?;
+        Some(path.to_string_lossy().into_owned())
+    }
+}
+
 /// Reads the clipboard because the user pasted (hovering Land's icon, Ctrl+V): files first,
-/// then text, one character past Land's limit so the island can say it is too long.
+/// then a picture (saved as a PNG to send), then text, one character past Land's limit so
+/// the island can say it is too long.
 #[tauri::command]
 pub fn clipboard_paste() -> Pasted {
     unsafe {
@@ -158,6 +281,8 @@ pub fn clipboard_paste() -> Pasted {
         }
         let out = if IsClipboardFormatAvailable(CF_HDROP.0 as u32).is_ok() {
             Pasted { files: read_files_max(10_000), text: None }
+        } else if let Some(path) = save_image() {
+            Pasted { files: vec![path], text: None }
         } else if IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_ok() {
             Pasted { files: Vec::new(), text: read_text_max(20_001) }
         } else {
@@ -334,6 +459,54 @@ fn _handle(h: HANDLE) -> HANDLE {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 40-byte BITMAPINFOHEADER followed by the given pixel rows (already padded).
+    fn dib(width: i32, height: i32, bits: u16, compression: u32, rest: &[u8]) -> Vec<u8> {
+        let mut d = Vec::new();
+        d.extend_from_slice(&40u32.to_le_bytes());
+        d.extend_from_slice(&width.to_le_bytes());
+        d.extend_from_slice(&height.to_le_bytes());
+        d.extend_from_slice(&1u16.to_le_bytes());
+        d.extend_from_slice(&bits.to_le_bytes());
+        d.extend_from_slice(&compression.to_le_bytes());
+        d.extend_from_slice(&[0u8; 20]);
+        d.extend_from_slice(rest);
+        d
+    }
+
+    #[test]
+    fn a_pasted_screenshot_gets_a_friendly_dated_name() {
+        assert_eq!(screenshot_name(2026, 3, 7, 9, 5, 2), "Screenshot 2026-03-07 090502.png");
+    }
+
+    #[test]
+    fn a_bottom_up_24_bit_dib_becomes_top_down_rgba() {
+        // 1 x 2: bottom row blue, top row red, each padded to 4 bytes.
+        let d = dib(1, 2, 24, 0, &[255, 0, 0, 0, 0, 0, 255, 0]);
+        let (w, h, px) = dib_to_rgba(&d).unwrap();
+        assert_eq!((w, h), (1, 2));
+        assert_eq!(px, vec![255, 0, 0, 255, 0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn a_32_bit_dib_with_no_alpha_is_opaque_and_bitfields_masks_are_skipped() {
+        let mut rest = Vec::new();
+        rest.extend_from_slice(&0x00ff_0000u32.to_le_bytes());
+        rest.extend_from_slice(&0x0000_ff00u32.to_le_bytes());
+        rest.extend_from_slice(&0x0000_00ffu32.to_le_bytes());
+        rest.extend_from_slice(&[10, 20, 30, 0]);
+        let (_, _, px) = dib_to_rgba(&dib(1, -1, 32, 3, &rest)).unwrap();
+        assert_eq!(px, vec![30, 20, 10, 255]);
+        let png = encode_png(1, 1, &px).unwrap();
+        assert!(png.starts_with(b"\x89PNG"));
+    }
+
+    #[test]
+    fn a_short_or_unsupported_dib_is_refused() {
+        assert!(dib_to_rgba(&dib(4, 4, 24, 0, &[0; 8])).is_none());
+        assert!(dib_to_rgba(&dib(1, 1, 8, 0, &[0; 4])).is_none());
+        assert!(dib_to_rgba(&[0; 10]).is_none());
+    }
 
     /// A POWERBROADCAST_SETTING with a DWORD of data, laid out the way Windows sends it.
     #[repr(C)]

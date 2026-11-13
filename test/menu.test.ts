@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { innerPadding, normalizeWidths, pillSize, type Orientation } from '../src/core/layout';
-import { FULL_MENU, MENU_ITEMS, MENU_SPLIT, menuLength, menuMain, menuSegments, type MenuShown, type MenuState } from '../src/core/menu';
+import { DEFAULT_ICON_ONLY, DEFAULT_MENU_LOOK, DEFAULT_MENU_ORDER, FULL_MENU, MENU_ITEMS, MENU_SPLIT, menuLength, menuMain, menuSegments, normalizeMenuOrder, type MenuIconOnly, type MenuItemId, type MenuShown, type MenuState } from '../src/core/menu';
 import { fitSegments, fitVertical, GAP, naturalRun, verticalRun, VGAP, type Measure, type Placed, type Seg } from '../src/core/segments';
 import { defaultSettings, migrate } from '../src/core/settings';
 
@@ -202,5 +202,70 @@ describe('how long the menu is', () => {
       { t: 'button', key: 'b', icon: 'moon', action: 'x' },
     ];
     expect(naturalRun(two, 50, measure)).toBe(26 * 2 + GAP);
+  });
+});
+
+describe('the right-click menu, arranged in Settings', () => {
+  const look = (order: MenuItemId[], iconOnly: Partial<MenuIconOnly> = {}) => ({ order, iconOnly: { ...DEFAULT_ICON_ONLY, ...iconOnly } });
+
+  it('comes as it always did: the default order and icon choices give exactly the old menu', () => {
+    expect(menuSegments(FULL_MENU, st, DEFAULT_MENU_LOOK)).toEqual(menuSegments(FULL_MENU, st));
+    expect(keys(menuSegments(FULL_MENU, st, look([...DEFAULT_MENU_ORDER])))).toEqual([
+      'menu/label', 'menu/top', 'menu/right', 'menu/bottom', 'menu/left', 'menu/sep',
+      'menu/dnd', 'menu/hide', 'menu/reminders', 'menu/workspaces', 'menu/activities', 'menu/settings',
+    ]);
+    const segs = menuSegments(FULL_MENU, st);
+    const by = (k: string) => segs.find((x) => x.key === k) as Extract<Seg, { t: 'button' }>;
+    expect(by('menu/activities').label).toBeUndefined();
+    expect(by('menu/activities').tip).toBe('Activities');
+    expect(by('menu/workspaces').label).toBe('Workspaces');
+    expect(by('menu/dnd').side).toBeUndefined();
+    expect(by('menu/reminders').side).toBe('end');
+    const s = defaultSettings();
+    expect(s.island.menuOrder).toEqual(DEFAULT_MENU_ORDER);
+    expect(s.island.menuIconOnly).toEqual(DEFAULT_ICON_ONLY);
+  });
+
+  it('follows the saved order, Settings still last', () => {
+    const segs = menuSegments(FULL_MENU, st, look(['activities', 'hide', 'quiet', 'workspaces', 'reminders', 'position']));
+    expect(keys(segs)).toEqual([
+      'menu/activities', 'menu/hide', 'menu/dnd', 'menu/workspaces', 'menu/reminders',
+      'menu/sep-before', 'menu/label', 'menu/top', 'menu/right', 'menu/bottom', 'menu/left', 'menu/sep', 'menu/settings',
+    ]);
+    // Moved in front, Activities stays in front instead of going to the far end.
+    expect(segs[0].side).toBeUndefined();
+    expect(segs[segs.length - 1].side).toBe('end');
+  });
+
+  it('a bare icon drops its name but keeps it in the tip; Position drops its label', () => {
+    const segs = menuSegments(FULL_MENU, st, look([...DEFAULT_MENU_ORDER], { position: true, hide: true, workspaces: true, activities: false }));
+    const by = (k: string) => segs.find((x) => x.key === k) as Extract<Seg, { t: 'button' }>;
+    expect(keys(segs)).not.toContain('menu/label');
+    expect(by('menu/hide').label).toBeUndefined();
+    expect(by('menu/hide').tip).toBe('Hide the island for a while');
+    expect(by('menu/workspaces').label).toBeUndefined();
+    expect(by('menu/workspaces').tip).toBe('Workspaces');
+    expect(by('menu/activities').label).toBe('Activities');
+  });
+
+  it('a bare icon makes the pill shorter', () => {
+    const pill = { max: 2000, cross: 40, pad: 8, vertical: false, crossMax: 30 };
+    const named = menuMain(FULL_MENU, st, pill, measure);
+    const bare = menuMain(FULL_MENU, st, pill, measure, look([...DEFAULT_MENU_ORDER], { quiet: true, hide: true }));
+    expect(bare).toBeLessThan(named);
+  });
+
+  it('settings saved before the menu could be arranged still load, as the menu always was', () => {
+    const s = migrate({ version: 6, island: { anchor: 'top', menu: { ...FULL_MENU, hide: false } } });
+    expect(s.island.menu.hide).toBe(false);
+    expect(s.island.menuOrder).toEqual(DEFAULT_MENU_ORDER);
+    expect(s.island.menuIconOnly).toEqual(DEFAULT_ICON_ONLY);
+  });
+
+  it('a saved arrangement loads back; unknown or repeated ids are dropped and missing ones come back', () => {
+    const s = migrate({ version: 6, island: { menuOrder: ['hide', 'nope', 'hide', 'quiet', 4], menuIconOnly: { hide: true, quiet: 'yes' } } });
+    expect(s.island.menuOrder).toEqual(['hide', 'quiet', 'position', 'reminders', 'workspaces', 'activities']);
+    expect(s.island.menuIconOnly).toEqual({ ...DEFAULT_ICON_ONLY, hide: true });
+    expect(normalizeMenuOrder(null)).toEqual(DEFAULT_MENU_ORDER);
   });
 });

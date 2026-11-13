@@ -41,6 +41,17 @@ export function routeAction(action: string, arg: unknown): Route {
   return { to: 'none' };
 }
 
+/**
+ * How long after a tapped "sent you …" notification what arrives shows ready: text copied at
+ * once (or a big Copy), a picture with Save to Photos. The PC sends what waited right after hello.
+ */
+export const INBOX_READY_MS = 120_000;
+
+/** Whether what arrives now came for a tapped notification (`readyUntil` set when it was tapped). */
+export function inboxReady(readyUntil: number, now: number): boolean {
+  return now < readyUntil;
+}
+
 /** The line for a tap the island runs. */
 export function actMsg(action: string, arg: unknown): PhoneMsg {
   return arg === undefined ? { t: 'act', action } : { t: 'act', action, arg };

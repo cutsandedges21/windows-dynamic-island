@@ -16,6 +16,10 @@ export interface MenuHooks {
   clipboard(): void;
   /** Locks the PC (asks first). */
   lock(): void;
+  /** The PC's Activities or Settings (screens/prefs.ts). */
+  prefs(kind: 'activities' | 'settings'): void;
+  /** Puts the PC to sleep (asks first). */
+  sleep(): void;
   switchTo(id: string): void;
   pairAnother(): void;
   remove(): void;
@@ -38,6 +42,9 @@ export function openMenu(m: MenuHooks): void {
   const pcActions = h('div', { class: 'ph-section ph-menu-rows' }, [
     row(`${m.current.name}'s clipboard`, 'clipboard', () => m.clipboard()),
     row(`Lock ${m.current.name}`, 'lock', () => m.lock()),
+    row('Activities', 'grid', () => m.prefs('activities')),
+    row('Settings', 'sliders', () => m.prefs('settings')),
+    row(`Sleep ${m.current.name}`, 'moon', () => m.sleep()),
   ]);
 
   const pcs =

@@ -286,6 +286,20 @@ describe('land', () => {
     expect(people.some((x) => x.arg === HERE.anywhere && x.action === 'pick')).toBe(true);
   });
 
+  it('tapping a computer again while a send to it waits cancels that send', async () => {
+    h.native.landScan = vi.fn(async () => [MAC]);
+    const { act } = await boot();
+    await act.action('card');
+    await tick(4100);
+    emit('land-transfer', transfer());
+    const avatar = block(act.sheet(sheetEnv('open')), 'people')!.items.find((x) => x.key === MAC.id)!;
+    expect(avatar).toMatchObject({ action: 'cancel', arg: 'out-1', sub: 'Waiting…' });
+    await act.action(avatar.action!, avatar.arg);
+    expect(h.native.landCancel).toHaveBeenCalledWith('out-1');
+    emit('land-transfer', transfer({ state: 'cancelled' }));
+    expect(block(act.sheet(sheetEnv('open')), 'people')!.items.find((x) => x.key === MAC.id)).toMatchObject({ action: 'pick' });
+  });
+
   it('an Island here that is also on the network shows once', async () => {
     h.native.landPlace = vi.fn(async () => [LAB]);
     h.native.landScan = vi.fn(async () => [LAB]);
@@ -491,7 +505,7 @@ describe('land', () => {
     expect(act.status()).toMatchObject({ chipOnly: true });
     const row = block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items[0];
     expect(row.detail).toBe('Sends when Alex is online');
-    expect(row.button).toMatchObject({ action: 'cancel', arg: 'out-q' });
+    expect(row.button).toMatchObject({ action: 'cancel', arg: 'out-q', shown: true });
     expect(act.tile(sheetEnv('open'))!.body).toMatchObject({ value: '1 waiting' });
     emit('land-transfer', { ...far, state: 'sending', done: 5_000_000 });
     expect(act.status()).toMatchObject({ active: true, summary: 'To Alex · 50%' });

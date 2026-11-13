@@ -74,6 +74,7 @@ function fakeIsland() {
     widths: [] as number[],
     acts: [] as Array<[string, string, unknown]>,
     got: [] as PhoneDelivery[],
+    layouts: [] as Array<{ order: string[]; hidden: string[] }>,
   };
   const hooks: PhoneIslandHooks = {
     pill: () => (f.frame ? { frame: f.frame, bot: f.bot } : null),
@@ -92,6 +93,7 @@ function fakeIsland() {
     },
     facts: () => ({ name: 'MossLaptop', platform: 'windows', version: '0.3.1', allow: f.allow, term: f.term, screen: f.screen, folders: [...f.folders] }),
     fromPhone: (item) => void f.got.push(item),
+    setGrid: (l) => void f.layouts.push(l),
   };
   return { f, hooks };
 }
@@ -127,6 +129,7 @@ function fakeRust() {
     copy: vi.fn(async () => true),
     clipboard: vi.fn(async () => ({ files: [], text: r.clipText })),
     lock: vi.fn(async () => undefined),
+    sleep: vi.fn(async () => undefined),
     log: (t: string) => void r.logs.push(t),
     on: async <T>(event: string, cb: (p: T) => void) => {
       let set = bus.get(event);
@@ -500,11 +503,57 @@ describe('phone ↔ PC', () => {
     expect(r.last('toast')).toEqual({ t: 'toast', text: 'Locked', tone: 'good' });
   });
 
+  it('puts the PC to sleep, saying so first', async () => {
+    const { r, native } = await setup([phone()]);
+    r.line({ t: 'sleep' });
+    await flush();
+    expect(native.sleep).toHaveBeenCalledTimes(1);
+    expect(r.last('toast')).toEqual({ t: 'toast', text: 'Going to sleep', tone: 'good' });
+  });
+
+  it('saves a Control Center layout naming exactly the tiles the phone was shown', async () => {
+    const { r, f } = await setup([phone()]);
+    r.line({ t: 'nav', open: 'grid' });
+    await flush();
+    r.line({ t: 'grid-set', order: ['land/land'], hidden: ['music/m'] });
+    await flush();
+    expect(f.layouts).toEqual([{ order: ['land/land'], hidden: ['music/m'] }]);
+    expect(r.last('toast')?.text).toBe('Control Center saved');
+  });
+
+  it('refuses a layout naming a tile it was never shown, or leaving one out', async () => {
+    const { r, f } = await setup([phone()]);
+    r.line({ t: 'nav', open: 'grid' });
+    await flush();
+    r.line({ t: 'grid-set', order: ['land/land', 'music/m', 'claude/secret'], hidden: [] });
+    r.line({ t: 'grid-set', order: ['land/land'], hidden: [] });
+    await flush();
+    expect(f.layouts).toEqual([]);
+    expect(r.last('toast')?.tone).toBe('bad');
+  });
+
+  it("never lets a phone press a tile from the tray, only arrange it", async () => {
+    const { r, f } = await setup([phone()]);
+    const g = grid();
+    const b = g.blocks[0];
+    if (b.t === 'tiles') b.tray = [{ key: 'timer/t', action: 'act:timer:start', body: { k: 'stat', icon: 'timer', label: 'Timer', value: '' } }];
+    f.grid = g;
+    r.line({ t: 'nav', open: 'grid' });
+    await flush();
+    r.line({ t: 'act', action: 'act:timer:start' });
+    await flush();
+    expect(f.acts).toEqual([]);
+    r.line({ t: 'grid-set', order: ['music/m', 'land/land', 'timer/t'], hidden: [] });
+    await flush();
+    expect(f.layouts).toEqual([{ order: ['music/m', 'land/land', 'timer/t'], hidden: [] }]);
+  });
+
   it('shows a file the phone sent, named for the phone', async () => {
     const { r, f } = await setup([phone()]);
     r.emit('remote-file', { phone: IPHONE, id: 'f1', name: 'IMG_0001.JPG', path: 'C:\\Users\\moss\\Downloads\\IMG_0001.JPG', size: 2_000_000, mime: 'image/jpeg' });
     r.emit('remote-file', { phone: IPHONE, id: 'f2', path: '' });
-    expect(f.got).toEqual([{ kind: 'file', phone: IPHONE, from: 'iPhone', id: 'f1', name: 'IMG_0001.JPG', path: 'C:\\Users\\moss\\Downloads\\IMG_0001.JPG', size: 2_000_000, mime: 'image/jpeg' }]);
+    r.emit('remote-file', { phone: IPHONE, id: 'f3', name: 'IMG_0002.PNG', path: 'C:\Users\moss\Downloads\IMG_0002.PNG', size: 9, mime: 'image/png', copied: true });
+    expect(f.got).toEqual([{ kind: 'file', phone: IPHONE, from: 'iPhone', id: 'f1', name: 'IMG_0001.JPG', path: 'C:\\Users\\moss\\Downloads\\IMG_0001.JPG', size: 2_000_000, mime: 'image/jpeg', copied: false }, expect.objectContaining({ id: 'f3', copied: true })]);
   });
 });
 

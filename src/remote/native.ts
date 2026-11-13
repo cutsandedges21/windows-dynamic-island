@@ -8,10 +8,12 @@ export const phoneNative: PhoneNative = {
   phones: () => native.remotePhones(),
   send: (phone, msg) => native.remoteSend(phone, msg),
   vapid: () => native.remoteVapid(),
-  push: (title, body, tag, open, urgent) => native.remotePush(title, body, tag, open, urgent),
+  push: (title, body, tag, open, urgent, phone) => native.remotePush(title, body, tag, open, urgent, phone),
+  sendFile: (phone, path) => native.remoteSendFile(phone, path),
   copy: (text) => native.clipboardSetText(text),
   clipboard: () => native.clipboardPaste(),
   lock: () => native.lock(),
+  sleep: () => native.sleep(),
   log: (text) => void native.log(text),
   on: (event, cb) => on(event, cb),
 };

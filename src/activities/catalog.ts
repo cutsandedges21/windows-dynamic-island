@@ -250,7 +250,7 @@ export const CATALOG: ActivityMeta[] = [
     id: 'system-controls',
     name: 'System Controls',
     description:
-      "The pill shows the volume, the screen's brightness and Caps Lock or Num Lock as you change them, and when headphones connect. In Control Center: the volume with − and +, the brightness, Screenshot and Record (Snipping Tool: drag an area), and whether battery saver is on.",
+      "The pill shows the volume, the screen's brightness and Caps Lock or Num Lock as you change them, and when headphones connect. In Control Center: an iPhone-style tile (Wi-Fi and Bluetooth switches, brightness and volume sliders, battery saver), the volume with − and +, the brightness, Screenshot and Record (Snipping Tool: drag an area), and whether battery saver is on.",
     icon: 'sliders',
     category: 'system',
     enabled: true,
