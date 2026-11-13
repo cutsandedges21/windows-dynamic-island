@@ -491,7 +491,7 @@ describe('land', () => {
     expect(act.status()).toMatchObject({ chipOnly: true });
     const row = block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items[0];
     expect(row.detail).toBe('Sends when Alex is online');
-    expect(row.button).toMatchObject({ action: 'cancel', arg: 'out-q' });
+    expect(row.button).toMatchObject({ action: 'cancel', arg: 'out-q', shown: true });
     expect(act.tile(sheetEnv('open'))!.body).toMatchObject({ value: '1 waiting' });
     emit('land-transfer', { ...far, state: 'sending', done: 5_000_000 });
     expect(act.status()).toMatchObject({ active: true, summary: 'To Alex · 50%' });

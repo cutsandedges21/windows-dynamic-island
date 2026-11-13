@@ -31,6 +31,8 @@ export interface SheetButton {
   tip?: string;
   /** Shown but not pressable (Send with nothing to send). */
   disabled?: boolean;
+  /** On a row: always shown, not only while the row is pointed at (a send's Cancel). */
+  shown?: boolean;
 }
 
 /** Someone to pick, as a round avatar with a name under it (Land's nearby devices). */
@@ -1098,6 +1100,7 @@ export class SheetRenderer {
     if (r.button) {
       const b = this.button(r.button);
       b.classList.add('rbtn');
+      b.classList.toggle('shown', r.button.shown === true);
       e.append(b);
     }
     if (r.tip) e.title = r.tip;

@@ -909,8 +909,9 @@ export class LandActivity extends BaseActivity {
       title: `${to} · ${what(t)}`,
       detail,
     };
-    if (t.state === 'asking') row.button = { key: 'no', icon: 'x', action: 'decline', arg: t.id, style: 'ghost', tip: 'Decline' };
-    else if (active) row.button = { key: 'stop', icon: 'x', action: 'cancel', arg: t.id, style: 'ghost', tip: 'Cancel' };
+    // Cancel and Decline stay in sight: a touch screen (or a phone driving the PC) has no pointing at a row.
+    if (t.state === 'asking') row.button = { key: 'no', icon: 'x', action: 'decline', arg: t.id, style: 'ghost', tip: 'Decline', shown: true };
+    else if (active) row.button = { key: 'stop', icon: 'x', action: 'cancel', arg: t.id, style: 'ghost', tip: 'Cancel', shown: true };
     else if (t.dir === 'in' && t.state === 'done' && t.saved.length) {
       row.action = 'show';
       row.arg = t.saved[0];
