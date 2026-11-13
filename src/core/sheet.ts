@@ -117,7 +117,7 @@ export type Block =
    * what was typed is kept even if the card closes. `point` fires with true when the pointer comes onto
    * the box and false when it leaves (Claude's finished card stays up while you are about to reply).
    */
-  | { t: 'input'; key: string; placeholder: string; action: string; engage?: string; hint?: string; lines?: number; value?: string; change?: string; point?: string }
+  | { t: 'input'; key: string; placeholder: string; action: string; engage?: string; hint?: string; lines?: number; value?: string; change?: string; point?: string; pasteFiles?: string }
   /** `action`: the whole meter can be clicked. */
   | { t: 'meter'; key: string; label: string; value: number; pace?: number | null; text: string; sub?: string; tone?: Tone; tip?: string; action?: string; arg?: unknown }
   | { t: 'rows'; key: string; items: SheetRow[] }
@@ -1281,6 +1281,14 @@ export class SheetRenderer {
       wait = setTimeout(flush, CHANGE_MS);
     });
     input.addEventListener('blur', flush);
+    // Pasting a picture or files (no text) into a box that takes them: the activity reads the clipboard itself.
+    input.addEventListener('paste', (ev) => {
+      const s = spec();
+      const data = (ev as ClipboardEvent).clipboardData;
+      if (!s.pasteFiles || !data || data.getData('text/plain') || !data.files.length) return;
+      ev.preventDefault();
+      this.onAction(s.pasteFiles, null, e);
+    });
     // Clicking is the only way in: the island takes the keyboard just for this.
     input.addEventListener('pointerdown', () => {
       this.engagedInput = input;

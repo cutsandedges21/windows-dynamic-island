@@ -127,6 +127,8 @@ export class LandActivity extends BaseActivity {
   private phones: LandPeer[] = [];
   /** Numbers what goes to and comes from phones (they have no transfer ids of Rust's). */
   private phoneSeq = 0;
+  /** Transfers from a phone whose picture Rust also put on the clipboard. */
+  private phoneCopied = new Set<string>();
   private demoTimers: Array<ReturnType<typeof setTimeout>> = [];
 
   constructor() {
@@ -726,7 +728,7 @@ export class LandActivity extends BaseActivity {
     return {
       key: `end/${t.id}`,
       blocks: [
-        { t: 'head', key: 'head', icon: 'check', tone: 'good', title: `${what(t)} from ${t.peer.name}`, sub: `${bytes(t.total)} · in Downloads` },
+        { t: 'head', key: 'head', icon: 'check', tone: 'good', title: `${what(t)} from ${t.peer.name}`, sub: `${bytes(t.total)} · in Downloads${this.phoneCopied.has(t.id) ? ' · Copied to the clipboard' : ''}` },
         { t: 'rows', key: 'saved', items: rows },
         { t: 'buttons', key: 'act', items: [{ key: 'show', label: 'Show in folder', icon: 'folder', action: 'show', arg: t.saved[0], style: 'secondary' }] },
       ],
@@ -799,7 +801,7 @@ export class LandActivity extends BaseActivity {
       blocks.push({ t: 'rows', key: 'files', items: [{ key: 'text', icon: link ? 'globe' : 'edit', title: clip(this.stagedText.replace(/\s+/g, ' '), 90), detail: link ? 'Link' : `Note · ${plural(this.stagedText.length, 'character')}`, button: { key: 'rm', icon: 'x', action: 'clear', style: 'ghost', tip: 'Remove' } }] });
     } else {
       blocks.push({ t: 'text', key: 'hint', text: 'Drag files or folders onto the island, or paste a link or a note below, then pick who gets it.', tone: 'muted', size: 'sm' });
-      blocks.push({ t: 'input', key: 'text', placeholder: 'Paste a link or type a note, then Enter', action: 'stage-text' });
+      blocks.push({ t: 'input', key: 'text', placeholder: 'Paste a link or type a note, then Enter', action: 'stage-text', pasteFiles: 'paste' });
     }
 
     const targets = new Set(this.targets().map((p) => p.id));
@@ -999,7 +1001,8 @@ export class LandActivity extends BaseActivity {
         void native.landShareStop();
         break;
       case 'paste': {
-        // Ctrl+V on Land's icon: what was copied goes to Land's card, ready to send.
+        // Ctrl+V on Land's icon (or a picture or files pasted in its box): what was copied goes to
+        // Land's card, ready to send. A screenshot comes back as a PNG file Rust saved for it.
         const pasted = await native.clipboardPaste();
         if (!this.alive) return;
         if (this.share) {
@@ -1013,7 +1016,7 @@ export class LandActivity extends BaseActivity {
         } else if (pasted.text?.trim()) {
           await this.action('stage-text', pasted.text);
         } else {
-          this.note = { text: 'Nothing to send yet: copy a link, a note or files, then hover Land and press Ctrl+V.', at: Date.now() };
+          this.note = { text: 'Nothing to send yet: copy a link, a note, files or a screenshot, then hover Land and press Ctrl+V.', at: Date.now() };
         }
         this.ctx.openCard?.();
         void this.scan();
@@ -1184,13 +1187,17 @@ export class LandActivity extends BaseActivity {
 
   /**
    * What a phone sent (src/remote/hub.ts): text already on the clipboard, or a file Rust saved to
-   * Downloads. Shown like what another computer sent, with the phone's name.
+   * Downloads (a picture also put on the clipboard). Shown like what another computer sent, with the phone's name.
    */
   fromPhone(item: PhoneDelivery): void {
     const peer: LandPeer = { id: `${PHONE}${item.phone}`, name: item.from, os: 'phone' };
     const base = { dir: 'in' as const, peer, state: 'done' as const, error: null, folder: null, expires: null };
     if (item.kind === 'text') this.onTransfer({ ...base, id: `phone-in-${++this.phoneSeq}`, done: item.text.length, total: item.text.length, count: 0, items: [], saved: [], text: item.text });
-    else this.onTransfer({ ...base, id: `phone-in-${item.id || ++this.phoneSeq}`, done: item.size, total: item.size, count: 1, items: [{ name: item.name, size: item.size, files: 1, dir: false }], saved: [item.path] });
+    else {
+      const id = `phone-in-${item.id || ++this.phoneSeq}`;
+      if (item.copied) this.phoneCopied.add(id);
+      this.onTransfer({ ...base, id, done: item.size, total: item.size, count: 1, items: [{ name: item.name, size: item.size, files: 1, dir: false }], saved: [item.path] });
+    }
   }
 
   /** The name other computers see this one by; phones are greeted with it too. Null while Land is off. */

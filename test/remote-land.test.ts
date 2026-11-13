@@ -150,13 +150,21 @@ describe('your phones in Land', () => {
 describe('what a phone sends', () => {
   it('a file shows like one from another computer: from the phone, Open and Show in folder', async () => {
     const { act, surfaced } = await boot();
-    act.fromPhone({ kind: 'file', phone: IPHONE, from: "Moss's iPhone", id: 'f1', name: 'IMG_0001.JPG', path: 'C:\\Users\\moss\\Downloads\\IMG_0001.JPG', size: 2_000_000, mime: 'image/jpeg' });
+    act.fromPhone({ kind: 'file', phone: IPHONE, from: "Moss's iPhone", id: 'f1', name: 'IMG_0001.JPG', path: 'C:\\Users\\moss\\Downloads\\IMG_0001.JPG', size: 2_000_000, mime: 'image/jpeg', copied: false });
     expect(surfaced.at(-1)?.key).toBe('end:phone-in-f1');
     const pill = act.render(env());
     expect(pill.find((s) => s.key === 'end')).toMatchObject({ text: "IMG_0001.JPG from Moss's iPhone" });
     expect(pill.find((s) => s.key === 'open')).toMatchObject({ action: 'open', arg: 'C:\\Users\\moss\\Downloads\\IMG_0001.JPG' });
     const card = act.sheet(sheetEnv('surfaced'));
     expect(block(card, 'buttons')?.items[0]).toMatchObject({ label: 'Show in folder', action: 'show' });
+    expect(block(card, 'head')?.sub).not.toContain('clipboard');
+  });
+
+  it('a picture the phone sent says it is on the clipboard too, ready to paste', async () => {
+    const { act } = await boot();
+    act.fromPhone({ kind: 'file', phone: IPHONE, from: "Moss's iPhone", id: 'p1', name: 'IMG_0002.JPG', path: 'C:\\Users\\moss\\Downloads\\IMG_0002.JPG', size: 2_000_000, mime: 'image/jpeg', copied: true });
+    const card = act.sheet(sheetEnv('surfaced'));
+    expect(block(card, 'head')?.sub).toContain('in Downloads · Copied to the clipboard');
   });
 
   it('text shows with its phone, already copied; a link can be opened, and copied again', async () => {

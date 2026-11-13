@@ -79,6 +79,11 @@ pub fn clipboard_copy_image() -> bool {
     false
 }
 
+/// A picture from a phone onto the clipboard: Windows only for now.
+pub fn copy_image_file(_path: &Path) -> bool {
+    false
+}
+
 #[tauri::command]
 pub fn clipboard_history() {}
 

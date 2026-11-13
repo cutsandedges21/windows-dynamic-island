@@ -28,7 +28,7 @@ export function termAllowed(s: Pick<Settings, 'general' | 'activities'>): boolea
 /** Something a phone sent the PC, for the island to show the way Land shows what another computer sent. */
 export type PhoneDelivery =
   | { kind: 'text'; phone: string; from: string; text: string }
-  | { kind: 'file'; phone: string; from: string; id: string; name: string; path: string; size: number; mime: string };
+  | { kind: 'file'; phone: string; from: string; id: string; name: string; path: string; size: number; mime: string; copied: boolean };
 
 /** What the island gives the hub (src/core/island.ts). */
 export interface PhoneIslandHooks {
@@ -44,7 +44,7 @@ export interface PhoneIslandHooks {
    * `folders`: recent project folders. Asked after every compose: a change sends a fresh hello.
    */
   facts(): HelloFacts;
-  /** Text or a file from a phone arrived (already copied, or saved to Downloads). */
+  /** Text or a file from a phone arrived (already copied, or saved to Downloads; a picture copied too). */
   fromPhone(item: PhoneDelivery): void;
 }
 
@@ -422,6 +422,6 @@ export class PhoneHub {
     if (!e || typeof e.phone !== 'string' || typeof e.path !== 'string' || !e.path) return;
     const from = this.sessions.get(e.phone)?.name ?? this.phones.find((p) => p.id === e.phone)?.name ?? 'Your phone';
     const name = typeof e.name === 'string' && e.name ? e.name : (e.path.split(/[\\/]/).pop() ?? e.path);
-    this.hooks.fromPhone({ kind: 'file', phone: e.phone, from, id: String(e.id ?? ''), name, path: e.path, size: Number(e.size) || 0, mime: String(e.mime ?? '') });
+    this.hooks.fromPhone({ kind: 'file', phone: e.phone, from, id: String(e.id ?? ''), name, path: e.path, size: Number(e.size) || 0, mime: String(e.mime ?? ''), copied: e.copied === true });
   }
 }

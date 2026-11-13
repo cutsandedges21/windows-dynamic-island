@@ -96,6 +96,13 @@ async fn copy_in(first: &[u8], recv: &mut RecvStream, file: &mut tokio::fs::File
     Ok(())
 }
 
+/// A still picture the clipboard can hold (not a video or a document), by its name or type.
+pub(super) fn is_picture(name: &str, mime: &str) -> bool {
+    const EXT: &[&str] = &["png", "jpg", "jpeg", "jfif", "heic", "heif", "webp", "gif", "bmp", "tif", "tiff"];
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    EXT.contains(&ext.as_str()) || (mime.starts_with("image/") && !mime.contains("svg"))
+}
+
 impl Remote {
     fn downloads(&self) -> PathBuf {
         self.cfg.downloads.clone().unwrap_or_else(crate::land::share::downloads_dir)
@@ -128,7 +135,14 @@ impl Remote {
         match saved {
             Ok((name, path)) => {
                 crate::log::line(format!("remote: a file from a phone ({} bytes) is in Downloads", h.size));
-                (self.emit)("remote-file", json!({ "phone": phone, "id": h.id, "name": name, "path": path.to_string_lossy(), "size": h.size, "mime": h.mime }));
+                // A picture also goes on the clipboard, ready to paste, like text from the phone does.
+                let copied = if is_picture(&name, &h.mime) {
+                    let p = path.clone();
+                    tokio::task::spawn_blocking(move || crate::shell::copy_image_file(&p)).await.unwrap_or(false)
+                } else {
+                    false
+                };
+                (self.emit)("remote-file", json!({ "phone": phone, "id": h.id, "name": name, "path": path.to_string_lossy(), "size": h.size, "mime": h.mime, "copied": copied }));
             }
             Err(e) => crate::log::line(format!("remote: a file from a phone failed: {e}")),
         }
@@ -218,6 +232,17 @@ impl Remote {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_pictures_go_on_the_clipboard() {
+        assert!(is_picture("IMG_0001.JPG", "image/jpeg"));
+        assert!(is_picture("IMG_0002.HEIC", ""));
+        assert!(is_picture("shot.png", "application/octet-stream"));
+        assert!(is_picture("photo", "image/webp"));
+        assert!(!is_picture("IMG_0003.MOV", "video/quicktime"));
+        assert!(!is_picture("notes.pdf", "application/pdf"));
+        assert!(!is_picture("logo.svg", "image/svg+xml"));
+    }
 
     #[test]
     fn headers_are_checked() {

@@ -504,7 +504,8 @@ describe('phone ↔ PC', () => {
     const { r, f } = await setup([phone()]);
     r.emit('remote-file', { phone: IPHONE, id: 'f1', name: 'IMG_0001.JPG', path: 'C:\\Users\\moss\\Downloads\\IMG_0001.JPG', size: 2_000_000, mime: 'image/jpeg' });
     r.emit('remote-file', { phone: IPHONE, id: 'f2', path: '' });
-    expect(f.got).toEqual([{ kind: 'file', phone: IPHONE, from: 'iPhone', id: 'f1', name: 'IMG_0001.JPG', path: 'C:\\Users\\moss\\Downloads\\IMG_0001.JPG', size: 2_000_000, mime: 'image/jpeg' }]);
+    r.emit('remote-file', { phone: IPHONE, id: 'f3', name: 'IMG_0002.PNG', path: 'C:\Users\moss\Downloads\IMG_0002.PNG', size: 9, mime: 'image/png', copied: true });
+    expect(f.got).toEqual([{ kind: 'file', phone: IPHONE, from: 'iPhone', id: 'f1', name: 'IMG_0001.JPG', path: 'C:\\Users\\moss\\Downloads\\IMG_0001.JPG', size: 2_000_000, mime: 'image/jpeg', copied: false }, expect.objectContaining({ id: 'f3', copied: true })]);
   });
 });
 

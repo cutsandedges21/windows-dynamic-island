@@ -79,6 +79,8 @@ features = [
   "ApplicationModel",
   "ApplicationModel_Appointments",
   "Foundation_Collections",
+  # Decoding a phone's JPEG/HEIC picture to put it on the clipboard (src/shell.rs).
+  "Graphics_Imaging",
   "Media_Control",
   "Storage_Streams",
   "UI_Notifications",
