@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carryCurve, carryFades, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
+import { carryCurve, carryFades, slideCurve, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
 import { defaultSettings, growsChoices, growsOf, migrate } from '../src/core/settings';
 import type { SheetView } from '../src/core/sheet';
 import { tileCard } from '../src/core/tilecard';
@@ -237,7 +237,25 @@ describe('a grown card carried on into the open island (and back)', () => {
     expect(carryFades(0.3).glass).toBe(0);
     expect(carryFades(0.6).glass).toBeGreaterThan(carryFades(0.6).pill);
     // The pill's content stays out until the card has mostly slid off it, and the old content is gone first.
-    expect(carryFades(0.5).pill).toBe(0);
+    expect(carryFades(0.4).pill).toBe(0);
+    expect(slideCurve(0.4)).toBeGreaterThan(0.85);
     expect(carryFades(0.5).old).toBe(0);
+    // The bar's glass is never there on its own for long: its content is on its way in by the time the glass is a third back.
+    for (let r = 0; r <= 1.0001; r += 0.01) if (carryFades(r).glass < 0.999) expect(carryFades(r).glass - carryFades(r).pill).toBeLessThan(0.4);
+  });
+
+  it('slides the carried card off the pill ahead of its size, done once the new content is in', () => {
+    expect(slideCurve(0)).toBe(0);
+    expect(slideCurve(1)).toBe(1);
+    let last = 0;
+    for (let r = 0; r <= 1.0001; r += 0.01) {
+      const m = slideCurve(r);
+      expect(m).toBeGreaterThanOrEqual(r - 1e-9);
+      expect(m).toBeGreaterThanOrEqual(last);
+      last = m;
+    }
+    // Where the new content is all there (carryFades' `new` at 1), the card is where it stays.
+    expect(carryFades(0.6).new).toBe(1);
+    expect(slideCurve(0.6)).toBe(1);
   });
 });

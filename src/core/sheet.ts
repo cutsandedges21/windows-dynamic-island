@@ -13,7 +13,7 @@
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
-import { carryCurve, carryFades, closeCurve, contentLeft, GROW_MS, GROW_SPRING, handOff, snapSpan, tweenShape, type Shape } from './grow';
+import { carryCurve, carryFades, closeCurve, contentLeft, GROW_MS, GROW_SPRING, handOff, slideCurve, snapSpan, tweenShape, type Shape } from './grow';
 import { buildPlayer, patchPlayer, type PlayerBlock } from './player';
 import { springAnimate, wheelDelta, type PillCover } from './renderer';
 import type { Tone } from './segments';
@@ -426,6 +426,8 @@ export class SheetRenderer {
   private anchor: Anchor = 'top';
   private area: Area = { width: 1280, height: 720 };
   private pill: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  /** Where the pill is springing to (island.ts sets it with the pill's target each compose). */
+  pillTo: Rect | null = null;
   private width = 380;
   private drawn: Rect | null = null;
   private engagedInput: HTMLInputElement | HTMLTextAreaElement | null = null;
@@ -853,7 +855,10 @@ export class SheetRenderer {
       const u = Math.min(1, (now - o.start) / GROW_MS);
       const r = carryCurve(u, o.s);
       if (this.carry) this.carryR = r;
-      this.springs.set(tweenShape({ w: o.w0, h: o.h0, m: o.m0 }, { w: o.w1, h: o.h1, m: o.m1 }, r), { immediate: true });
+      const shape = tweenShape({ w: o.w0, h: o.h0, m: o.m0 }, { w: o.w1, h: o.h1, m: o.m1 }, r);
+      // Carried, it slides off the pill ahead of its size (and back over it the same way reversed).
+      if (this.carry) shape.m = o.m0 + (o.m1 - o.m0) * (this.carry === 'open' ? slideCurve(r) : 1 - slideCurve(1 - r));
+      this.springs.set(shape, { immediate: true });
       if (u < 1) {
         this.openFrame = requestAnimationFrame(step);
         return;
@@ -919,21 +924,24 @@ export class SheetRenderer {
     // Grown out of the pill: over it, from the edge it rests on; else beside it, across the gap.
     // In between while a grown card slides off the pill to become the open island's card.
     const m = clamp01(v.m);
+    // Carried on, it hangs from where the pill is going, not from where its spring has got to: the
+    // pill bar grows into the gap above it instead of pushing a card whose content is already there.
+    const q = this.carry && this.pillTo ? this.pillTo : p;
     switch (this.anchor) {
       case 'top':
         x = clampX(p.x + p.w / 2 - w / 2);
-        y = mix(p.y + p.h + GAP, p.y, m);
+        y = mix(q.y + q.h + GAP, p.y, m);
         break;
       case 'bottom':
         x = clampX(p.x + p.w / 2 - w / 2);
-        y = mix(p.y - GAP - h, p.y + p.h - h, m);
+        y = mix(q.y - GAP - h, p.y + p.h - h, m);
         break;
       case 'left':
-        x = mix(p.x + p.w + GAP, p.x, m);
+        x = mix(q.x + q.w + GAP, p.x, m);
         y = clampY(p.y + p.h / 2 - h / 2);
         break;
       case 'right':
-        x = mix(p.x - GAP - w, p.x + p.w - w, m);
+        x = mix(q.x - GAP - w, p.x + p.w - w, m);
         y = clampY(p.y + p.h / 2 - h / 2);
         break;
     }

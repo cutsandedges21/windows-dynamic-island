@@ -53,6 +53,17 @@ export function carryCurve(u: number, s = 0): number {
   return (growCurve(from + (1 - from) * Math.max(0, Math.min(1, u))) - q0) / (1 - q0);
 }
 
+/**
+ * How far a carried card has slid off the pill (0 → 1) when the carry is `r` of the way: ahead of
+ * its size, done by the time the new content is in, so that content arrives where it stays. Slid
+ * on the size's own pace, the new content sank some 40 px under a pill bar growing in above it
+ * after it was fully there (Justin's recording, 2026-11-14: "still some shaking").
+ */
+export function slideCurve(r: number): number {
+  const q = Math.max(0, Math.min(1, r / 0.6));
+  return 1 - (1 - q) * (1 - q);
+}
+
 const smooth = (r: number, a: number, b: number): number => {
   const u = Math.max(0, Math.min(1, (r - a) / (b - a)));
   return u * u * (3 - 2 * u);
@@ -70,7 +81,9 @@ export function carryFades(r: number): { old: number; new: number; pill: number;
   // The pill's glass (its dark shape) comes back a little before its content, and only once the card
   // has started sliding off it: drawn at once, it showed through the glass card as a pale bar on the
   // click frame (Justin's real-screen test, 2026-11-14).
-  return { old: 1 - smooth(r, 0, 0.42), new: smooth(r, 0.05, 0.47), pill: smooth(r, 0.55, 1), glass: smooth(r, 0.4, 0.75) };
+  // The bar's glass and its content come back close together: the glass on its own read as an empty
+  // bar popping in above the card for a frame or two.
+  return { old: 1 - smooth(r, 0, 0.42), new: smooth(r, 0.05, 0.47), pill: smooth(r, 0.4, 0.85), glass: smooth(r, 0.35, 0.7) };
 }
 
 /**

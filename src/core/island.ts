@@ -777,6 +777,7 @@ export class Island {
     this.lastLevel = level;
     const motion = pillMotion(travelling, now < this.calmUntil, now < this.carriedUntil);
     this.renderer.setShell(target, { config: motion.shell, immediate });
+    this.sheet.pillTo = target;
     this.lastAnchor = anchor;
     this.lastOrientation = orient;
     // The bot stays beside where the pill rests, even while the idle pill is tucked away; it goes
