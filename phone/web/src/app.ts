@@ -194,7 +194,7 @@ export class App {
       menu: () => this.menu(),
       retry: () => this.island && this.link.open(this.island),
       saveGrid: (l) => {
-        if (!this.link.send({ t: 'grid-set', order: l.order, hidden: l.hidden })) toast('Not connected', 'bad');
+        if (!this.link.send({ t: 'grid-set', ...l })) toast('Not connected', 'bad');
       },
     });
     s.setName(this.hello?.name || island.name);

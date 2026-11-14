@@ -9,7 +9,7 @@
 import type { PetLook } from '../core/looks';
 import type { MirrorFrame } from '../core/mirror';
 import type { SheetView } from '../core/sheet';
-import { MAX_GRID_KEYS } from './grid-edit';
+import { isTileSize, MAX_GRID_KEYS, MAX_GRID_PAGES, MAX_PAGE_ENTRIES, type PhoneLayout } from './grid-edit';
 
 /** Where the phone website lives; the pairing QR code points here. */
 export const PHONE_SITE = 'https://islandphone.vercel.app';
@@ -105,8 +105,11 @@ export type PhoneMsg =
   /** Change one of them; the PC checks `key` against its own allow-list (src/remote/prefs.ts). */
   | { t: 'pref'; key: string; value: PrefValue }
   | { t: 'sleep' }
-  /** Control Center arranged on the phone: tiles on the grid in order, and the ones taken off. */
-  | { t: 'grid-set'; order: string[]; hidden: string[] };
+  /**
+   * Control Center arranged on the phone: tiles on the grid in order, and the ones taken off; with
+   * the pages they sit on and the sizes changed, or `reset` for Reset layout (src/remote/grid-edit.ts).
+   */
+  | ({ t: 'grid-set' } & PhoneLayout);
 
 /** A setting's value as a phone sends it: a switch, a choice, or a number (Glass). */
 export type PrefValue = boolean | string | number;
@@ -338,8 +341,27 @@ export function readPhoneMsg(v: unknown): PhoneMsg | null {
     case 'sleep':
       return { t: v.t };
     case 'grid-set': {
-      const keys = (x: unknown): x is string[] => Array.isArray(x) && x.length <= MAX_GRID_KEYS && x.every((k) => short(k, 128) && k !== '');
-      return keys(v.order) && keys(v.hidden) ? { t: 'grid-set', order: [...v.order], hidden: [...v.hidden] } : null;
+      const key = (k: unknown): k is string => short(k, 128) && k !== '';
+      const keys = (x: unknown): x is string[] => Array.isArray(x) && x.length <= MAX_GRID_KEYS && x.every(key);
+      if (!keys(v.order) || !keys(v.hidden)) return null;
+      const out: Extract<PhoneMsg, { t: 'grid-set' }> = { t: 'grid-set', order: [...v.order], hidden: [...v.hidden] };
+      if (v.pages !== undefined) {
+        const page = (p: unknown): p is Array<string | null> => Array.isArray(p) && p.length <= MAX_PAGE_ENTRIES && p.every((e) => e === null || key(e));
+        if (!Array.isArray(v.pages) || v.pages.length > MAX_GRID_PAGES || !v.pages.every(page)) return null;
+        out.pages = v.pages.map((p: Array<string | null>) => [...p]);
+      }
+      if (v.sizes !== undefined) {
+        const s = v.sizes;
+        if (typeof s !== 'object' || s === null || Array.isArray(s)) return null;
+        const entries = Object.entries(s as Record<string, unknown>);
+        if (entries.length > MAX_GRID_KEYS || !entries.every(([k, size]) => key(k) && isTileSize(size))) return null;
+        out.sizes = Object.fromEntries(entries) as PhoneLayout['sizes'];
+      }
+      if (v.reset !== undefined) {
+        if (typeof v.reset !== 'boolean') return null;
+        if (v.reset) out.reset = true;
+      }
+      return out;
     }
     default:
       return null;
