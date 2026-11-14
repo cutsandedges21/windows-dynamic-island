@@ -186,11 +186,6 @@ export class PillRenderer {
 
   /** A card grown out of the pill stands in for it (see PillCover); the styles do the fading. */
   setCover(cover: PillCover): void {
-    // Uncovered straight from a grown card (the island opening from it): the pill's content comes
-    // in once the card's own content has gone (sheet.ts LEAVE_MS), not over it.
-    if (cover === 'off' && this.pill.classList.contains('cover-out') && !reducedMotion()) {
-      this.content.animate([{ opacity: 0 }, { opacity: 0, offset: 0.3 }, { opacity: 1 }], { duration: 260, easing: 'ease-out' });
-    }
     this.pill.classList.toggle('covered', cover !== 'off');
     this.pill.classList.toggle('cover-out', cover === 'grown');
   }

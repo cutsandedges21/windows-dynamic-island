@@ -118,17 +118,3 @@ export function contentLeft(x: number, w: number, innerW: number, scale: number)
   const snap = devicePixels(scale);
   return snap(x + w / 2 - innerW / 2) - snap(x);
 }
-
-/** A grown card's content goes this fast when the island opens from it: three frames, no blur. */
-export const LEAVE_MS = 50;
-
-/**
- * How much of the open island's content shows while its card (`m`: 1 over the pill, 0 hanging
- * under it) slides off the pill: none for most of the way, then in over the last part, fully in
- * just before the card stops. Shown earlier it would be seen drifting down with the card, over
- * the grown card's content still fading.
- */
-export function arrivalOpacity(m: number): number {
-  const u = Math.max(0, Math.min(1, (0.15 - m) / 0.13));
-  return u * u * (3 - 2 * u);
-}

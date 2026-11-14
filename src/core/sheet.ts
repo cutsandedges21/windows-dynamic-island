@@ -13,7 +13,7 @@
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
-import { arrivalOpacity, closeCurve, contentLeft, GROW_MS, GROW_SPRING, growCurve, handOff, LEAVE_MS, snapSpan } from './grow';
+import { closeCurve, contentLeft, GROW_MS, GROW_SPRING, growCurve, handOff, snapSpan } from './grow';
 import { buildPlayer, patchPlayer, type PlayerBlock } from './player';
 import { springAnimate, wheelDelta, type PillCover } from './renderer';
 import type { Tone } from './segments';
@@ -436,8 +436,6 @@ export class SheetRenderer {
   private morphH = 0;
   /** What the grown card means for the pill under it, from the moment it grows until it is back. */
   private cover: PillCover = 'off';
-  /** The open island's content, after a grown card turned into its card: shown as that card lands. */
-  private arriving: HTMLElement | null = null;
   /** Grown: where the card's box sits on screen, on whole device pixels (see placeGrown()), and the content's height. */
   private boxX: number | null = null;
   private boxY: number | null = null;
@@ -677,7 +675,6 @@ export class SheetRenderer {
 
   private hide(immediate: boolean): void {
     if (!this.shown) return;
-    this.settleArrival();
     // Gone mid-grow: the grow stops here (the close starts from where it got to).
     this.stopGrow();
     this.drag?.abort();
@@ -815,12 +812,6 @@ export class SheetRenderer {
     // Grown out of the pill: over it, from the edge it rests on; else beside it, across the gap.
     // In between while a grown card slides off the pill to become the open island's card.
     const m = clamp01(v.m);
-    // The open island's content comes in as its card lands under the pill, never while it slides.
-    if (this.arriving && !this.morph) {
-      const o = arrivalOpacity(m);
-      if (o >= 1) this.settleArrival();
-      else this.arriving.style.opacity = o.toFixed(3);
-    }
     switch (this.anchor) {
       case 'top':
         x = clampX(p.x + p.w / 2 - w / 2);
@@ -996,30 +987,15 @@ export class SheetRenderer {
     // A grown card swaps with a plain fade (and so does one turning into the open island's card):
     // blurring text that size reads as a wobble.
     const blur = this.morph || fromGrown ? 0 : 5;
-    this.settleArrival();
-    // Out of a grown card (the island opening from it), one hand-off: the grown card's content goes
-    // first, in a few frames and where it is, so no frame shows it and the open island's content
-    // both; the shape moves on its own, and the new content comes in as it lands (arrivalOpacity).
-    const anim = fromGrown
-      ? old.animate([{ opacity: 1 }, { opacity: 0 }], { duration: reducedMotion() ? 0 : LEAVE_MS, easing: 'linear', fill: 'forwards' })
-      : springAnimate(old, [{ opacity: 1, filter: 'blur(0px)' }, { opacity: 0, filter: `blur(${blur}px)` }], springs.fade, { fill: 'forwards' });
+    const anim = springAnimate(old, [{ opacity: 1, filter: 'blur(0px)' }, { opacity: 0, filter: `blur(${blur}px)` }], springs.fade, { fill: 'forwards' });
     if (anim) anim.finished.then(gone, gone);
     else gone();
     this.inner = make('div', 'sheet-inner');
     this.inner.style.setProperty('--cols', this.width >= 520 ? '4' : '2');
     this.el.append(this.inner);
-    if (fromGrown) {
-      this.arriving = this.inner;
-      this.inner.style.opacity = '0';
-    } else springAnimate(this.inner, [{ opacity: 0, filter: `blur(${blur}px)` }, { opacity: 1, filter: 'blur(0px)' }], springs.content);
+    springAnimate(this.inner, [{ opacity: 0, filter: `blur(${blur}px)` }, { opacity: 1, filter: 'blur(0px)' }], springs.content);
     this.nodes.clear();
     this.engagedInput = null;
-  }
-
-  /** The content waiting for its card to land is shown as it is (the card landed, went or changed). */
-  private settleArrival(): void {
-    if (this.arriving) this.arriving.style.opacity = '';
-    this.arriving = null;
   }
 
   /** Brings the DOM in line with `blocks`; true when anything changed. */
