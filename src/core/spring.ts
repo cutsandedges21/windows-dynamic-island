@@ -4,6 +4,8 @@
 // overshoot; below 1 = a little bounce). Retargeting keeps the current velocity,
 // which is what makes an interrupted animation look physical.
 
+import { GROW_SPRING } from './grow';
+
 export interface SpringConfig {
   response: number;
   damping: number;
@@ -37,8 +39,10 @@ export const springs = {
  * from where it was to where it lands. On a faster spring of its own it ran past the edge and came
  * back (it read as the pill swinging sideways as it opened).
  */
-export function pillMotion(travelling: boolean, calm: boolean): { shell: SpringConfig; content: SpringConfig } {
+export function pillMotion(travelling: boolean, calm: boolean, carried = false): { shell: SpringConfig; content: SpringConfig } {
   if (travelling) return { shell: springs.travel, content: springs.content };
+  // Opening from a grown card (or closing back into one): the pill grows on the card's own curve.
+  if (carried) return { shell: GROW_SPRING, content: GROW_SPRING };
   if (calm) return { shell: springs.open, content: springs.open };
   return { shell: springs.shell, content: springs.content };
 }

@@ -34,7 +34,13 @@ const args = new WeakMap<HTMLElement, unknown>();
  * shadow are gone under the card's, its content fades out on top of the card. `shrinking`: the
  * card goes back, the content fades in again. `off`: the pill is itself again.
  */
-export type PillCover = 'off' | 'grown' | 'shrinking';
+/**
+ * What a card grown out of the pill means for the pill: nothing ('off'); standing in for it
+ * ('grown', the pill's glass and content go); on its way back into it ('shrinking', the pill's
+ * content fades in as it lands); or carried on into the open island's card, or back from it, as the
+ * pill is drawn beside it ('uncovering': the pill's glass is there, its content fades locked to the card).
+ */
+export type PillCover = 'off' | 'grown' | 'shrinking' | 'uncovering';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, html?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -186,8 +192,9 @@ export class PillRenderer {
 
   /** A card grown out of the pill stands in for it (see PillCover); the styles do the fading. */
   setCover(cover: PillCover): void {
-    this.pill.classList.toggle('covered', cover !== 'off');
+    this.pill.classList.toggle('covered', cover === 'grown' || cover === 'shrinking');
     this.pill.classList.toggle('cover-out', cover === 'grown');
+    this.pill.classList.toggle('uncover', cover === 'uncovering');
   }
 
   /** A sideways wobble: the island shaking its head (alerts, failed actions). */

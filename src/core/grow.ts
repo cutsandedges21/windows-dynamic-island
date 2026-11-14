@@ -30,6 +30,46 @@ export function closeCurve(u: number): number {
   return 1 - growCurve(1 - u);
 }
 
+/** A card's shape on its way: width, height and how far it stands over the pill (m, see sheet.ts). */
+export interface Shape {
+  w: number;
+  h: number;
+  m: number;
+}
+
+/** The shape `r` of the way (0 → 1, already on the curve) from `from` to `to`. */
+export function tweenShape(from: Shape, to: Shape, r: number): Shape {
+  return { w: from.w + (to.w - from.w) * r, h: from.h + (to.h - from.h) * r, m: from.m + (to.m - from.m) * r };
+}
+
+/**
+ * How far along a tween is, 0 → 1, `u` of its time in (0 → 1). One started while a grow was `s`
+ * of its time in carries that grow's curve on from where it got to (no stop and restart at the
+ * click), stretched over its own full time.
+ */
+export function carryCurve(u: number, s = 0): number {
+  const from = Math.max(0, Math.min(0.6, s));
+  const q0 = growCurve(from);
+  return (growCurve(from + (1 - from) * Math.max(0, Math.min(1, u))) - q0) / (1 - q0);
+}
+
+const smooth = (r: number, a: number, b: number): number => {
+  const u = Math.max(0, Math.min(1, (r - a) / (b - a)));
+  return u * u * (3 - 2 * u);
+};
+
+/**
+ * A grown card carried on into the open island's card (or back), `r` of the way: the opacity of
+ * the content it had (`old`), of the content it takes on (`new`) and of the pill's own content
+ * (`pill`), all locked to how far the shape got. The old fades a little ahead of the new, so the
+ * two are never both more than half there, and close enough behind it that the card is never
+ * empty (together never under 0.8); the pill's content comes back over the last part, once the
+ * card has slid off it. Played backwards (into a grown card) it is the same at 1 − r.
+ */
+export function carryFades(r: number): { old: number; new: number; pill: number } {
+  return { old: 1 - smooth(r, 0, 0.42), new: smooth(r, 0.05, 0.47), pill: smooth(r, 0.55, 1) };
+}
+
 /**
  * What pointing at an activity shows, by how it grows: 'card' grows its own card out of the pill,
  * or else one made from its Control Center tile (`tile`, asked only then); 'more' (Claude's) grows
@@ -76,14 +116,16 @@ export function flatView(view: SheetView): SheetView {
  * What the card does with the next view, from what it shows now: grows a new one out of the
  * pill, grows one still on its way back again from where it is, carries a grown one on as an
  * ordinary card (the island opening from it: one motion, no frame of the small pill alone),
- * replaces one at once, or just updates it.
+ * carries an ordinary one on back into a grown one (the island closing with the pointer on the
+ * pill), replaces one at once (no motion wanted), or just updates it.
  */
-export type HandOff = 'appear' | 'grow' | 'regrow' | 'unmorph' | 'replace' | 'update';
+export type HandOff = 'appear' | 'grow' | 'regrow' | 'unmorph' | 'remorph' | 'replace' | 'update';
 
 export function handOff(now: { shown: boolean; morph: boolean; closing: boolean }, morph: boolean, instant: boolean): HandOff {
   if (now.shown) {
     if (morph === now.morph) return 'update';
-    return now.morph && !instant ? 'unmorph' : 'replace';
+    if (instant) return 'replace';
+    return now.morph ? 'unmorph' : 'remorph';
   }
   if (!morph) return 'appear';
   return now.closing && !instant ? 'regrow' : 'grow';

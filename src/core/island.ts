@@ -90,6 +90,8 @@ export class Island {
   /** The level last composed, and until when the pill's shape moves without overshoot (opening, closing). */
   private lastLevel: Level | null = null;
   private calmUntil = 0;
+  /** Opening from a grown card, or closing back into one: the pill moves on the card's curve till then. */
+  private carriedUntil = 0;
   private lastOrientation: Orientation | null = null;
   private scheduled = false;
   private fullscreenOn: string | null = null;
@@ -193,7 +195,7 @@ export class Island {
       (cover) => {
         this.renderer.setCover(cover);
         // The card is back in the pill (or the island opened from it): the pill's light comes back to the pill.
-        if (cover === 'off') this.schedule();
+        if (cover === 'off' || cover === 'uncovering') this.schedule();
       },
     );
     // The light is drawn above the pill and the card, not inside them, so it can spill over their edges.
@@ -766,9 +768,14 @@ export class Island {
     // Opening and closing (the menu too) change the pill most: no overshoot for the whole motion,
     // or a few pixels of it visibly settle back. A spring takes the config of every retarget,
     // so it is kept for as long as that motion runs.
-    if (this.lastLevel !== null && (level === 'maximum') !== (this.lastLevel === 'maximum')) this.calmUntil = now + CALM_MS;
+    if (this.lastLevel !== null && (level === 'maximum') !== (this.lastLevel === 'maximum')) {
+      this.calmUntil = now + CALM_MS;
+      // Out of a grown card (or back into one, the pointer still on the pill), the card carries on
+      // in one move (sheet.ts unmorph/remorph): the pill grows (or shrinks) on that move's curve.
+      this.carriedUntil = this.sheet.grown || morphing ? now + CALM_MS : 0;
+    }
     this.lastLevel = level;
-    const motion = pillMotion(travelling, now < this.calmUntil);
+    const motion = pillMotion(travelling, now < this.calmUntil, now < this.carriedUntil);
     this.renderer.setShell(target, { config: motion.shell, immediate });
     this.lastAnchor = anchor;
     this.lastOrientation = orient;

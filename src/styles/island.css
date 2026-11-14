@@ -508,6 +508,9 @@ html[data-pill='glass'] .pill.covered { box-shadow: none; }
 /* On the card's way back the pill's content fades in as the shape lands, locked to how far it got
    (sheet.ts placeGrown sets --pill-in), so it and the card's fading content barely overlap. */
 .pill.covered:not(.cover-out) > .pill-content { opacity: var(--pill-in, 1); filter: none; transition: none; }
+/* A grown card carried on into the open island's card (or back): the pill is drawn again beside it,
+   its content fading locked to the card's move (sheet.ts place sets --pill-in). */
+.pill.uncover > .pill-content { opacity: var(--pill-in, 1); filter: none; transition: none; }
 .pill.cover-out > .pill-content {
   opacity: 0;
   filter: blur(4px);

@@ -13,7 +13,7 @@
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
-import { closeCurve, contentLeft, GROW_MS, GROW_SPRING, growCurve, handOff, snapSpan } from './grow';
+import { carryCurve, carryFades, closeCurve, contentLeft, GROW_MS, GROW_SPRING, handOff, snapSpan, tweenShape, type Shape } from './grow';
 import { buildPlayer, patchPlayer, type PlayerBlock } from './player';
 import { springAnimate, wheelDelta, type PillCover } from './renderer';
 import type { Tone } from './segments';
@@ -441,9 +441,22 @@ export class SheetRenderer {
   private boxY: number | null = null;
   private fitH = 0;
   private grownStyled = false;
-  /** Growing out of the pill: where it is heading (fit() updates the height), in a fixed time. */
-  private opening: { start: number; w0: number; h0: number; w1: number; h1: number } | null = null;
+  /**
+   * Growing out of the pill, or a grown card carried on into the open island's card (or back):
+   * where it is heading (show() updates the width, fit() the height), in a fixed time. `s`: how far
+   * in time a grow it carries on had got (see carryCurve).
+   */
+  private opening: { start: number; s: number; w0: number; h0: number; m0: number; w1: number; h1: number; m1: number } | null = null;
   private openFrame = 0;
+  /**
+   * Carried on: a grown card turning into the open island's card ('open'), or that card turning
+   * back into a grown one ('back'). The content it had (`carryOld`) and the content it takes on, and
+   * the pill's own content, fade locked to how far the shape got (`carryR`, see carryFades).
+   */
+  private carry: 'open' | 'back' | null = null;
+  private carryR = 0;
+  private carryOld: HTMLElement | null = null;
+  private carryFrom = 1;
   /** Going back into the pill: how far, 0 → 1, and the frame request driving it. */
   private closeT = 0;
   private closeFrame = 0;
@@ -531,7 +544,7 @@ export class SheetRenderer {
 
   /** A card grown out of the pill is standing in for it, growing, open or on its way back. */
   get covering(): boolean {
-    return this.cover !== 'off';
+    return this.cover === 'grown' || this.cover === 'shrinking';
   }
 
   /** Showing a card grown out of the pill (not one on its way back). */
@@ -594,10 +607,13 @@ export class SheetRenderer {
     this.inner.style.setProperty('--cols', this.width >= 520 ? '4' : '2');
 
     // Out of a card grown from the pill (the island opening from it): the same card carries on.
-    // Into one: the old card goes at once, the grown one starts afresh from the pill.
+    // Into one (the island closing with the pointer on the pill): it carries on back the same way.
+    // On its way back into a grown card it counts as one already.
     const morph = view.morph === true;
-    const step = handOff({ shown: this.shown, morph: this.morph, closing: this.cover === 'shrinking' }, morph, geo.immediate === true || reducedMotion());
+    const nowMorph = this.carry === 'back' || this.morph;
+    const step = handOff({ shown: this.shown, morph: nowMorph, closing: this.cover === 'shrinking' }, morph, geo.immediate === true || reducedMotion());
     if (step === 'unmorph') this.unmorph();
+    else if (step === 'remorph') this.remorph();
     else if (step === 'replace') this.hide(true);
     const appearing = !this.shown;
     if (appearing) {
@@ -630,11 +646,19 @@ export class SheetRenderer {
     let changed = false;
     // Out of a grown card the content always crosses over: the old one keeps the grown card's
     // layout where it is and fades, the new one comes in laid out for the open island.
-    if (view.key !== this.viewKey || step === 'unmorph') {
-      if (!appearing && this.viewKey !== null) this.crossFade(step === 'unmorph');
+    const carried = step === 'unmorph' || step === 'remorph';
+    if (view.key !== this.viewKey || carried) {
+      if (!appearing && this.viewKey !== null) this.crossFade(carried);
       else this.clear();
       this.viewKey = view.key;
       changed = true;
+    }
+    if (step === 'remorph') {
+      // Laid out (and measured) as the grown card it is turning into, so nothing moves inside it
+      // when it becomes one.
+      this.el.classList.add('morph');
+      this.inner.style.padding = getComputedStyle(this.inner).padding;
+      this.el.classList.remove('morph');
     }
     this.pinInner(this.inner, this.width);
     changed = this.patch(view.blocks) || changed;
@@ -654,17 +678,77 @@ export class SheetRenderer {
    * a moment before the island opened (Moss: it looked like a glitch).
    */
   private unmorph(): void {
-    // Opened mid-grow: the card carries on from where it got to.
+    // Opened mid-grow: the card carries on from where it got to, on the grow's own curve (a new
+    // tween from rest there read as the card stopping at the click and setting off again).
+    const g = this.opening;
+    const s = g && this.carry === null ? (performance.now() - g.start) / GROW_MS : 0;
+    const from = this.shapeNow();
     this.stopGrow();
     // Its content stays exactly as it was drawn (a grown card pads it differently) while it fades:
     // dropping the grown look first nudged it sideways inside the card the moment of the click.
     this.inner.style.padding = getComputedStyle(this.inner).padding;
     this.morph = false;
     this.el.classList.remove('morph');
-    // Its box is the shape again; the pill is drawn again; the card, still over it, uncovers it as it slides off.
+    // Its box is the shape again; the pill is drawn again (its content still out, coming back as
+    // the card slides off it); the card, still over it, uncovers it as it slides off.
     this.unstyleGrown();
-    this.setCover('off');
-    this.springs.set({ m: 0 }, { config: springs.open });
+    this.carry = 'open';
+    this.carryR = 0;
+    document.documentElement.style.setProperty('--pill-in', '0');
+    this.setCover('uncovering');
+    // One move, the hover's grow carried on: to the open island's width and height (show() and
+    // fit() aim it), sliding off the pill to hang under it.
+    this.tween(from, 0, s < 1 ? s : 0);
+  }
+
+  /**
+   * The island closed with the pointer still on the pill: its card carries on back into the grown
+   * card the pointer asks for, the open island's opening played backwards (the content crossing
+   * over, the pill's content fading out as the card slides up over it).
+   */
+  private remorph(): void {
+    const from = this.shapeNow();
+    this.stopGrow();
+    this.carry = 'back';
+    this.carryR = 0;
+    document.documentElement.style.setProperty('--pill-in', '1');
+    this.setCover('uncovering');
+    this.tween(from, 1, 0);
+  }
+
+  /** The card's shape as it is now. */
+  private shapeNow(): Shape {
+    return { w: this.springs.get('w'), h: this.springs.get('h'), m: clamp01(this.springs.get('m')) };
+  }
+
+  /** A carry that got where it was going: its old content goes, and the card is what it became. */
+  private endCarry(): void {
+    const c = this.carry;
+    if (!c) return;
+    this.dropCarry(c === 'open');
+    if (c === 'open') {
+      this.setCover('off');
+      return;
+    }
+    // Back as a grown card: from here it is the pill again (laid out as one all the way, see show()).
+    this.morph = true;
+    this.morphH = this.fitH;
+    this.el.classList.add('morph');
+    this.el.style.borderRadius = '';
+    this.inner.style.padding = '';
+    this.setCover('grown');
+    this.place();
+  }
+
+  /** Stops a carry where it is: its old content goes, the pill's content is the pill's own again. */
+  private dropCarry(uncover = true): void {
+    if (!this.carry) return;
+    this.carry = null;
+    this.carryOld?.remove();
+    this.carryOld = null;
+    this.inner.style.opacity = '';
+    document.documentElement.style.removeProperty('--pill-in');
+    if (uncover && this.cover === 'uncovering') this.setCover('off');
   }
 
   private setCover(cover: PillCover): void {
@@ -745,23 +829,39 @@ export class SheetRenderer {
 
   /** Grows a card out of the pill to its full size, in a fixed time (the close's mirror). */
   private grow(w0: number, h0: number): void {
+    this.tween({ w: w0, h: h0, m: 1 }, 1, 0);
+  }
+
+  /**
+   * The card's shape from `from` to this.width wide, the fitted height and `m1` (over the pill or
+   * under it), on the grow's curve in its fixed time; show() and fit() re-aim it on the way. A carry
+   * (see `carry`) ends with it.
+   */
+  private tween(from: Shape, m1: number, s: number): void {
     cancelAnimationFrame(this.openFrame);
-    this.opening = { start: performance.now(), w0, h0, w1: this.width, h1: this.fitH || h0 };
+    this.opening = { start: performance.now(), s, w0: from.w, h0: from.h, m0: from.m, w1: this.width, h1: this.fitH || from.h, m1 };
     const step = (now: number) => {
       const o = this.opening;
       if (!o) return;
       const u = Math.min(1, (now - o.start) / GROW_MS);
-      const q = growCurve(u);
-      this.springs.set({ w: o.w0 + (o.w1 - o.w0) * q, h: o.h0 + (o.h1 - o.h0) * q }, { immediate: true });
-      if (u < 1) this.openFrame = requestAnimationFrame(step);
-      else this.opening = null;
+      const r = carryCurve(u, o.s);
+      if (this.carry) this.carryR = r;
+      this.springs.set(tweenShape({ w: o.w0, h: o.h0, m: o.m0 }, { w: o.w1, h: o.h1, m: o.m1 }, r), { immediate: true });
+      if (u < 1) {
+        this.openFrame = requestAnimationFrame(step);
+        return;
+      }
+      this.opening = null;
+      this.endCarry();
     };
     this.openFrame = requestAnimationFrame(step);
   }
 
+  /** Stops a grow (or a carry) where it got to. */
   private stopGrow(): void {
     cancelAnimationFrame(this.openFrame);
     this.opening = null;
+    this.dropCarry();
   }
 
   /** Measures the content and springs the card's height to it. */
@@ -775,7 +875,7 @@ export class SheetRenderer {
     // Grown on a side edge: at least as long as the pill it covers, so no end of the pill is left out.
     if (this.morph && (this.anchor === 'left' || this.anchor === 'right')) h = Math.max(h, this.pill.h);
     this.fitH = h;
-    if (this.morph) this.morphH = h;
+    if (this.morph || this.carry === 'back') this.morphH = h;
     if (this.opening) {
       this.opening.h1 = h;
       return;
@@ -849,6 +949,22 @@ export class SheetRenderer {
     for (const inner of this.el.querySelectorAll<HTMLElement>(':scope > .sheet-inner')) {
       const iw = parseFloat(inner.style.width);
       if (iw > 0) inner.style.left = `${contentLeft(x, w, iw, k)}px`;
+    }
+    if (this.carry) {
+      // Carried on (a grown card turning into the open island's card, or back): the contents and the
+      // pill's own content fade locked to how far the shape got. The old content keeps the scale it
+      // was drawn at on a card still growing (opened mid-grow), till the shape is its size.
+      const f = carryFades(this.carryR);
+      const old = this.carryOld;
+      if (old) {
+        old.style.opacity = String(f.old * this.carryFrom);
+        const iw = parseFloat(old.style.width);
+        const kw = this.carry === 'open' && iw > 0 && (this.anchor === 'top' || this.anchor === 'bottom') ? Math.min(1, w / iw) : 1;
+        old.style.transform = kw < 0.999 ? `scale(${kw.toFixed(4)})` : '';
+      }
+      this.inner.style.opacity = String(f.new);
+      const pill = this.carry === 'open' ? f.pill : carryFades(1 - this.carryR).pill;
+      document.documentElement.style.setProperty('--pill-in', pill.toFixed(3));
     }
     const span = snapSpan(x, w, k);
     x = span.x;
@@ -983,6 +1099,22 @@ export class SheetRenderer {
     const old = this.inner;
     old.classList.add('leaving');
     old.style.pointerEvents = 'none';
+    if (fromGrown && this.carry) {
+      // Carried on: the two fade locked to the shape's move (place(), carryFades), from however far
+      // the old one had faded in.
+      this.carryFrom = clamp01(Number(getComputedStyle(old).opacity));
+      for (const a of old.getAnimations()) a.cancel();
+      old.style.opacity = String(this.carryFrom);
+      this.carryOld?.remove();
+      this.carryOld = old;
+      this.inner = make('div', 'sheet-inner');
+      this.inner.style.setProperty('--cols', this.width >= 520 ? '4' : '2');
+      this.inner.style.opacity = '0';
+      this.el.append(this.inner);
+      this.nodes.clear();
+      this.engagedInput = null;
+      return;
+    }
     const gone = () => old.remove();
     // A grown card swaps with a plain fade (and so does one turning into the open island's card):
     // blurring text that size reads as a wobble.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan } from '../src/core/grow';
+import { carryCurve, carryFades, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
 import { defaultSettings, growsChoices, growsOf, migrate } from '../src/core/settings';
 import type { SheetView } from '../src/core/sheet';
 import { tileCard } from '../src/core/tilecard';
@@ -90,8 +90,10 @@ describe('growing out of the pill', () => {
     expect(handOff({ shown: true, morph: true, closing: false }, false, false)).toBe('unmorph');
     // Without motion (reduce motion, a jump) it is simply replaced.
     expect(handOff({ shown: true, morph: true, closing: false }, false, true)).toBe('replace');
-    // An ordinary card turning into a grown one starts afresh from the pill.
-    expect(handOff({ shown: true, morph: false, closing: false }, true, false)).toBe('replace');
+    // An ordinary card turning into a grown one (the island closing with the pointer on the pill)
+    // carries on back into it; without motion it is replaced.
+    expect(handOff({ shown: true, morph: false, closing: false }, true, false)).toBe('remorph');
+    expect(handOff({ shown: true, morph: false, closing: false }, true, true)).toBe('replace');
     expect(handOff({ shown: true, morph: true, closing: false }, true, false)).toBe('update');
   });
 
@@ -187,5 +189,52 @@ describe('a card widening on whole device pixels (125%)', () => {
     const a = snapSpan(454 + 1e-7, 372, k).x + contentLeft(454 + 1e-7, 372, 372, k);
     const b = snapSpan(454 - 1e-7, 372, k).x + contentLeft(454 - 1e-7, 372, 372, k);
     expect(a).toBe(b);
+  });
+});
+
+describe('a grown card carried on into the open island (and back)', () => {
+  it('moves width, height and m together, on one curve', () => {
+    const from = { w: 372, h: 174, m: 1 };
+    const to = { w: 576, h: 436, m: 0 };
+    expect(tweenShape(from, to, 0)).toEqual(from);
+    expect(tweenShape(from, to, 1)).toEqual(to);
+    const half = tweenShape(from, to, 0.5);
+    expect(half.w).toBeCloseTo(474);
+    expect(half.h).toBeCloseTo(305);
+    expect(half.m).toBeCloseTo(0.5);
+  });
+
+  it('carries a grow on from where it got to, without stopping, and lands on 1', () => {
+    expect(carryCurve(0)).toBe(0);
+    expect(carryCurve(1)).toBeCloseTo(1, 9);
+    // From rest it is the grow's own curve.
+    for (const u of [0.1, 0.3, 0.7]) expect(carryCurve(u)).toBeCloseTo(growCurve(u), 9);
+    // Carried on mid-grow it is already moving at the start (the grow's speed, not a restart from rest).
+    const dt = 0.01;
+    expect(carryCurve(dt, 0.4) / dt).toBeGreaterThan(carryCurve(dt, 0) / dt);
+    expect(carryCurve(1, 0.4)).toBeCloseTo(1, 9);
+    let last = 0;
+    for (let u = 0; u <= 1.0001; u += 0.01) {
+      const r = carryCurve(u, 0.4);
+      expect(r).toBeGreaterThanOrEqual(last - 1e-12);
+      last = r;
+    }
+  });
+
+  it('crosses the content over with no empty card and never both clearly there', () => {
+    let minSum = 9;
+    let both = 0;
+    for (let r = 0; r <= 1.0001; r += 0.001) {
+      const f = carryFades(r);
+      minSum = Math.min(minSum, f.old + f.new);
+      both = Math.max(both, Math.min(f.old, f.new));
+    }
+    expect(minSum).toBeGreaterThanOrEqual(0.8);
+    expect(both).toBeLessThanOrEqual(0.5);
+    expect(carryFades(0)).toEqual({ old: 1, new: 0, pill: 0 });
+    expect(carryFades(1)).toEqual({ old: 0, new: 1, pill: 1 });
+    // The pill's content stays out until the card has mostly slid off it, and the old content is gone first.
+    expect(carryFades(0.5).pill).toBe(0);
+    expect(carryFades(0.5).old).toBe(0);
   });
 });
