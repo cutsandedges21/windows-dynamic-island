@@ -13,7 +13,7 @@
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
-import { carryCurve, carryFades, closeCurve, contentLeft, GROW_MS, GROW_SPRING, handOff, slideCurve, snapSpan, tweenShape, type Shape } from './grow';
+import { carryCurve, carryFades, uncarryPill, closeCurve, contentLeft, GROW_MS, GROW_SPRING, handOff, slideCurve, snapSpan, tweenShape, type Shape } from './grow';
 import { buildPlayer, patchPlayer, type PlayerBlock } from './player';
 import { springAnimate, wheelDelta, type PillCover } from './renderer';
 import type { Tone } from './segments';
@@ -856,8 +856,8 @@ export class SheetRenderer {
       const r = carryCurve(u, o.s);
       if (this.carry) this.carryR = r;
       const shape = tweenShape({ w: o.w0, h: o.h0, m: o.m0 }, { w: o.w1, h: o.h1, m: o.m1 }, r);
-      // Carried, it slides off the pill ahead of its size (and back over it the same way reversed).
-      if (this.carry) shape.m = o.m0 + (o.m1 - o.m0) * (this.carry === 'open' ? slideCurve(r) : 1 - slideCurve(1 - r));
+      // Carried, it slides off the pill (or back over it) ahead of its size: either way its new content is in where it stays.
+      if (this.carry) shape.m = o.m0 + (o.m1 - o.m0) * slideCurve(r);
       this.springs.set(shape, { immediate: true });
       if (u < 1) {
         this.openFrame = requestAnimationFrame(step);
@@ -982,7 +982,7 @@ export class SheetRenderer {
       }
       this.inner.style.opacity = String(f.new);
       this.inner.style.filter = f.new < 0.999 ? `blur(${(4 * (1 - f.new)).toFixed(2)}px)` : '';
-      const back = this.carry === 'open' ? f : carryFades(1 - this.carryR);
+      const back = this.carry === 'open' ? f : uncarryPill(this.carryR);
       document.documentElement.style.setProperty('--pill-in', back.pill.toFixed(3));
       document.documentElement.style.setProperty('--pill-glass', back.glass.toFixed(3));
     }

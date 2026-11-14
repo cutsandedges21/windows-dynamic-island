@@ -176,3 +176,12 @@ export function contentLeft(x: number, w: number, innerW: number, scale: number)
   const snap = devicePixels(scale);
   return snap(x + w / 2 - innerW / 2) - snap(x);
 }
+
+/**
+ * Carried back into a grown card, `r` of the way: the pill's content and its glass go before the card
+ * slides up over them (slideCurve), so neither shows through or over it. Played as the opening's
+ * mirror, the pill stayed till the card had covered it and the card crept up after its content was in.
+ */
+export function uncarryPill(r: number): { pill: number; glass: number } {
+  return { pill: 1 - smooth(r, 0, 0.35), glass: 1 - smooth(r, 0.05, 0.4) };
+}

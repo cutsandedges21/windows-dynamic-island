@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carryCurve, carryFades, slideCurve, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
+import { carryCurve, carryFades, slideCurve, uncarryPill, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
 import { defaultSettings, growsChoices, growsOf, migrate } from '../src/core/settings';
 import type { SheetView } from '../src/core/sheet';
 import { tileCard } from '../src/core/tilecard';
@@ -257,5 +257,13 @@ describe('a grown card carried on into the open island (and back)', () => {
     // Where the new content is all there (carryFades' `new` at 1), the card is where it stays.
     expect(carryFades(0.6).new).toBe(1);
     expect(slideCurve(0.6)).toBe(1);
+  });
+
+  it('carried back, the pill is gone before the card has slid up over it', () => {
+    expect(uncarryPill(0)).toEqual({ pill: 1, glass: 1 });
+    expect(uncarryPill(1)).toEqual({ pill: 0, glass: 0 });
+    const r = 0.4;
+    expect(slideCurve(r)).toBeGreaterThan(0.85);
+    expect(uncarryPill(r)).toEqual({ pill: 0, glass: 0 });
   });
 });
