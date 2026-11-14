@@ -55,6 +55,7 @@ async function run(hoverFirst, { opened = false, midGrow = false } = {}) {
         segs: [...document.querySelectorAll('.pill-content > .seg')].map((e) => ({ k: e.dataset.key, r: rect(e), o: +getComputedStyle(e).opacity })),
         pillO: +getComputedStyle(document.querySelector('.pill-content')).opacity,
         inners: inners.map((i) => ({ leaving: i.classList.contains('leaving'), first: rect(i.firstElementChild), opacity: getComputedStyle(i).opacity })),
+        sheetO: sheet && sheet.style.display !== 'none' ? +getComputedStyle(sheet).opacity : 0,
       });
       if (performance.now() - t0 < 1800) requestAnimationFrame(tick);
     };
@@ -116,8 +117,37 @@ function report(label, { grown, rec }) {
   const pillBack = abs.length ? swing(abs) : 0;
   const edgeBack = rel.length ? swing(rel) : 0;
   console.log(`pill content '${last?.k}': x ${abs[0]?.toFixed(1)} -> ${abs.at(-1)?.toFixed(1)}, steps back ${pillBack.toFixed(2)} px; to the pill's edge ${Math.min(...rel).toFixed(1)}..${Math.max(...rel).toFixed(1)} px, steps back ${edgeBack.toFixed(2)} px`);
+  // The hand-off: no frame with both the old card's content and the new readable (> 0.15), nor the
+  // pill's content over the old card's; and the new content, once readable, only closes in on where
+  // it lands (no drift back, none after the shape has stopped).
+  const eff = (f, leaving) => {
+    const i = f.inners.find((x) => x.leaving === leaving && x.first);
+    return i ? +i.opacity * f.sheetO : 0;
+  };
+  const clickAt = rec.findIndex((f) => f.inners.some((x) => x.leaving));
+  let both = 0;
+  let pillOver = 0;
+  for (const f of rec.slice(Math.max(0, clickAt))) {
+    if (clickAt < 0) break;
+    if (eff(f, true) > 0.15 && eff(f, false) > 0.15) both += 1;
+    if (eff(f, true) > 0.15 && f.pillO > 0.15) pillOver += 1;
+  }
+  // The content the click brought: from the click on (with no card before it, from its first frame).
+  const from = clickAt >= 0 ? clickAt : rec.findIndex((f) => f.shown);
+  const newY = rec.slice(Math.max(0, from)).map((f) => ({ f, i: f.inners.find((x) => !x.leaving && x.first) })).filter((e) => e.i && eff(e.f, false) > 0.15);
+  const yEnd = newY.at(-1)?.i.first.y ?? 0;
+  const ys = newY.map((e) => e.i.first.y - yEnd);
+  let yBack = 0;
+  for (let i = 1; i < ys.length; i++) yBack = Math.max(yBack, Math.abs(ys[i]) - Math.abs(ys[i - 1]));
+  const shapeKey = (f) => (f.bg ? `${f.bg.x.toFixed(1)},${f.bg.y.toFixed(1)},${f.bg.w.toFixed(1)},${f.bg.h.toFixed(1)}` : '-');
+  let stop = rec.length - 1;
+  while (stop > 0 && shapeKey(rec[stop - 1]) === shapeKey(rec[stop])) stop -= 1;
+  const after = newY.filter((e) => e.f.t >= rec[stop].t).map((e) => e.i.first.y);
+  const driftAfter = after.length ? Math.max(...after) - Math.min(...after) : 0;
+  const readableDrift = ys.length ? Math.max(...ys.map(Math.abs)) : 0;
+  console.log(`hand-off: ${both} frames with old and new content both readable, ${pillOver} with the pill's content over the old; new content drifts ${readableDrift.toFixed(1)} px while readable (steps away ${yBack.toFixed(2)} px), ${driftAfter.toFixed(2)} px after the shape stops; readable ${newY.length && from >= 0 ? (newY[0].f.t - rec[from].t).toFixed(0) : '-'} ms after the click`);
   console.log(`max per-frame sideways move: card centre ${maxBg.toFixed(2)} px (edge stepping back ${back.toFixed(2)} px), content ${maxContent.toFixed(2)} px (${where})`);
-  return { maxBg, maxContent, pillBack, edgeBack };
+  return { maxBg, maxContent, pillBack, edgeBack, both, pillOver, readableDrift, driftAfter };
 }
 
 const a = report('click on a grown hover card', await run(true));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan } from '../src/core/grow';
+import { arrivalOpacity, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan } from '../src/core/grow';
 import { defaultSettings, growsChoices, growsOf, migrate } from '../src/core/settings';
 import type { SheetView } from '../src/core/sheet';
 import { tileCard } from '../src/core/tilecard';
@@ -187,5 +187,19 @@ describe('a card widening on whole device pixels (125%)', () => {
     const a = snapSpan(454 + 1e-7, 372, k).x + contentLeft(454 + 1e-7, 372, 372, k);
     const b = snapSpan(454 - 1e-7, 372, k).x + contentLeft(454 - 1e-7, 372, 372, k);
     expect(a).toBe(b);
+  });
+});
+
+describe('the island opening from a grown card', () => {
+  it('shows its content only as the card lands under the pill, and fully before it stops', () => {
+    expect(arrivalOpacity(1)).toBe(0);
+    expect(arrivalOpacity(0.15)).toBe(0);
+    expect(arrivalOpacity(0.02)).toBe(1);
+    expect(arrivalOpacity(0)).toBe(1);
+    let last = 0;
+    for (let m = 1; m >= 0; m -= 0.01) {
+      expect(arrivalOpacity(m)).toBeGreaterThanOrEqual(last);
+      last = arrivalOpacity(m);
+    }
   });
 });
