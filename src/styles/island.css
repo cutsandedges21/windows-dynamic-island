@@ -1459,7 +1459,8 @@ button.hp { cursor: pointer; }
 .tile.k-hub .hp .hpi { flex: none; width: 28px; height: 28px; padding: 6px; box-sizing: border-box; border-radius: 50%; background: rgba(var(--ink), 0.12); }
 .tile.k-hub .hp.on { background: var(--fg); color: var(--cut); }
 .tile.k-hub button.hp.on:hover { background: color-mix(in srgb, var(--fg) 88%, transparent); }
-.tile.k-hub .hp.on .hpi { background: var(--info); color: #fff; }
+/* On: the icon in the pill's own dark ink, no coloured circle (blue stood out from the grey grid; Justin). */
+.tile.k-hub .hp.on .hpi { background: color-mix(in srgb, var(--cut) 10%, transparent); color: var(--cut); }
 .tile.k-hub .hpt { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .tile.k-hub .hpl { font: 600 12px/1.15 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile.k-hub .hps { font: 500 10.5px/1.15 var(--font); opacity: 0.66; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
