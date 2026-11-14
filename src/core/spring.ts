@@ -30,6 +30,19 @@ export const springs = {
   drag: { response: 0.14, damping: 0.95 },
 } satisfies Record<string, SpringConfig>;
 
+/**
+ * How the pill's shape and its content move to a new layout. Opening and closing the island
+ * (`calm`), the content slides on the shape's own spring: started together, both are the same
+ * fraction of the way at every frame, so the leading icon keeps its spot against the pill's edge
+ * from where it was to where it lands. On a faster spring of its own it ran past the edge and came
+ * back (it read as the pill swinging sideways as it opened).
+ */
+export function pillMotion(travelling: boolean, calm: boolean): { shell: SpringConfig; content: SpringConfig } {
+  if (travelling) return { shell: springs.travel, content: springs.content };
+  if (calm) return { shell: springs.open, content: springs.open };
+  return { shell: springs.shell, content: springs.content };
+}
+
 /** Displacement and velocity of a spring `t` seconds after (x0, v0), relative to its target. */
 export function solve(x0: number, v0: number, cfg: SpringConfig, t: number): [number, number] {
   const w0 = (2 * Math.PI) / Math.max(cfg.response, 1e-3);

@@ -29,7 +29,7 @@ import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type Block, type SheetChip, type SheetView, type Tile } from './sheet';
 import { chatView, flatView, hoverGrows, hoverView } from './grow';
 import { tileCard } from './tilecard';
-import { springs } from './spring';
+import { pillMotion } from './spring';
 import { WheelGesture } from './wheel';
 import { workspaceEngine } from '../workspaces/engine';
 import { clip, timeOfDay } from './format';
@@ -768,7 +768,8 @@ export class Island {
     // so it is kept for as long as that motion runs.
     if (this.lastLevel !== null && (level === 'maximum') !== (this.lastLevel === 'maximum')) this.calmUntil = now + CALM_MS;
     this.lastLevel = level;
-    this.renderer.setShell(target, { config: travelling ? springs.travel : now < this.calmUntil ? springs.open : springs.shell, immediate });
+    const motion = pillMotion(travelling, now < this.calmUntil);
+    this.renderer.setShell(target, { config: motion.shell, immediate });
     this.lastAnchor = anchor;
     this.lastOrientation = orient;
     // The bot stays beside where the pill rests, even while the idle pill is tucked away; it goes
@@ -800,7 +801,7 @@ export class Island {
     const bump = this.pendingBump;
     if (sig !== this.lastSig) {
       this.lastSig = sig;
-      this.renderer.render(placed, w, h, { swap: swap && this.lastPrimary !== undefined, immediate });
+      this.renderer.render(placed, w, h, { swap: swap && this.lastPrimary !== undefined, immediate, move: motion.content });
     }
     this.lastPrimary = primary;
     this.lastViewKey = viewKey;

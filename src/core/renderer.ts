@@ -223,7 +223,10 @@ export class PillRenderer {
    * Lays out `placed` for a pill of size (w, h). `swap` means the content is a
    * different activity: leaving nodes go first and new ones arrive a beat later.
    */
-  render(placed: Placed[], w: number, h: number, opts: { swap?: boolean; immediate?: boolean } = {}): void {
+  render(placed: Placed[], w: number, h: number, opts: { swap?: boolean; immediate?: boolean; move?: SpringConfig } = {}): void {
+    // How content already in the pill slides to its new spot (the shape's own spring while the
+    // island opens or closes, see pillMotion).
+    const move = opts.move ?? springs.content;
     const vert = this.orientation === 'vertical';
     const pad = innerPadding(vert ? w : h);
     const fx = vert ? h / 2 : fixedPointX(this.anchor, w);
@@ -246,7 +249,7 @@ export class PillRenderer {
         else setTimeout(() => node && !node.leaving && node.set.set({ o: 1, s: 1, b: 0 }, { config: { x: springs.content, w: springs.content, o: springs.fade, s: springs.bouncy, b: springs.fade } }), delay);
       } else {
         this.patch(node, p.seg);
-        node.set.set({ x, w: p.w }, { config: springs.content, immediate: opts.immediate });
+        node.set.set({ x, w: p.w }, { config: move, immediate: opts.immediate });
       }
     }
     for (const node of this.nodes.values()) if (!seen.has(node.key) && !node.leaving) this.remove(node, !opts.immediate);
