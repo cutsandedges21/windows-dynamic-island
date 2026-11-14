@@ -269,3 +269,23 @@ describe('the right-click menu, arranged in Settings', () => {
     expect(normalizeMenuOrder(null)).toEqual(DEFAULT_MENU_ORDER);
   });
 });
+
+describe("Settings' gear", () => {
+  const gear = (look = DEFAULT_MENU_LOOK) => menuSegments(FULL_MENU, { anchor: 'top', dnd: false, reminders: true, mac: false } as MenuState, look).find((s) => s.key === 'menu/settings');
+
+  it('is a bare gear as it always was, and can show its name; it stays last either way', () => {
+    expect(gear()).toMatchObject({ t: 'button', icon: 'settings', tip: 'Settings' });
+    expect(gear() && 'label' in gear()! ? (gear() as { label?: string }).label : undefined).toBeUndefined();
+    const named = gear({ ...DEFAULT_MENU_LOOK, settingsIconOnly: false });
+    expect(named).toMatchObject({ label: 'Settings', icon: 'settings' });
+    const segs = menuSegments(FULL_MENU, { anchor: 'top', dnd: false, reminders: true, mac: false } as MenuState, { ...DEFAULT_MENU_LOOK, settingsIconOnly: false });
+    expect(segs.at(-1)?.key).toBe('menu/settings');
+  });
+
+  it('older settings load with the bare gear', () => {
+    const raw = defaultSettings() as unknown as Record<string, any>;
+    delete raw.island.menuSettingsIconOnly;
+    expect(migrate(raw).island.menuSettingsIconOnly).toBe(true);
+    expect(defaultSettings().island.menuSettingsIconOnly).toBe(true);
+  });
+});

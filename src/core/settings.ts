@@ -103,10 +103,12 @@ export interface Settings {
     faded: boolean;
     /** What the right-click menu shows (src/core/menu.ts); Settings is always in it. */
     menu: MenuShown;
-    /** The right-click menu's order (Settings › Behavior › Right-click menu, by dragging); Settings stays last. */
+    /** The right-click menu's order (Settings ï¿½ Behavior ï¿½ Right-click menu, by dragging); Settings stays last. */
     menuOrder: MenuItemId[];
     /** Which of its items show only their icon, their name in a tip. */
     menuIconOnly: MenuIconOnly;
+    /** Settings' gear in the menu: icon only (as it came) or with its name. */
+    menuSettingsIconOnly: boolean;
   };
   activities: {
     order: string[];
@@ -210,6 +212,7 @@ export function defaultSettings(): Settings {
       menu: { ...FULL_MENU },
       menuOrder: [...DEFAULT_MENU_ORDER],
       menuIconOnly: { ...DEFAULT_ICON_ONLY },
+      menuSettingsIconOnly: true,
     },
     activities: { order: CATALOG.map((m) => m.id), config },
     general: {
@@ -356,6 +359,7 @@ export function migrate(saved: unknown): Settings {
   // The menu's order and icon-only choices came after 0.4.2: missing (older settings) means the menu as it always was.
   out.island.menuOrder = normalizeMenuOrder(isObj(saved.island) ? saved.island.menuOrder : null);
   out.island.menuIconOnly = normalizeIconOnly(isObj(saved.island) ? saved.island.menuIconOnly : null);
+  if (typeof out.island.menuSettingsIconOnly !== 'boolean') out.island.menuSettingsIconOnly = true;
 
   // Version 2: orange is Claude's alone (the old default accent goes), and Claude no
   // longer holds the pill at rest; it shows when a chat works, finishes or needs you.

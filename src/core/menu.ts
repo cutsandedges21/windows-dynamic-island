@@ -39,6 +39,8 @@ export const DEFAULT_MENU_ORDER: MenuItemId[] = MENU_ITEMS.map((m) => m.id);
 export interface MenuLook {
   order: readonly MenuItemId[];
   iconOnly: MenuIconOnly;
+  /** Settings' gear without its name (it is always there and always last; only this can change). */
+  settingsIconOnly?: boolean;
 }
 
 export const DEFAULT_MENU_LOOK: MenuLook = { order: DEFAULT_MENU_ORDER, iconOnly: DEFAULT_ICON_ONLY };
@@ -150,7 +152,8 @@ export function menuSegments(shown: MenuShown, st: MenuState, look: MenuLook = D
         break;
     }
   });
-  segs.push({ t: 'button', key: 'menu/settings', icon: 'settings', action: 'island:app', arg: 'settings', side: 'end', style: 'ghost', tip: 'Settings', prio: 1 });
+  const gearOnly = look.settingsIconOnly !== false;
+  segs.push({ t: 'button', key: 'menu/settings', icon: 'settings', ...(gearOnly ? {} : { label: 'Settings' }), action: 'island:app', arg: 'settings', side: 'end', style: 'ghost', tip: 'Settings', prio: 1 });
   return segs;
 }
 

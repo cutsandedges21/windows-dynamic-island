@@ -730,7 +730,7 @@ export class Island {
         viewKey = 'hide';
       } else if (this.view === 'menu') {
         const state = { anchor, dnd: this.settings.general.dnd, mac: platform === 'macos', reminders: this.running.has('reminders'), faded: s.faded };
-        const look = { order: s.menuOrder, iconOnly: s.menuIconOnly };
+        const look = { order: s.menuOrder, iconOnly: s.menuIconOnly, settingsIconOnly: s.menuSettingsIconOnly };
         segs = menuSegments(s.menu, state, look);
         viewKey = 'menu';
         // The menu pill is only as long as the items the user keeps in it.
