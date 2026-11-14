@@ -231,8 +231,11 @@ describe('a grown card carried on into the open island (and back)', () => {
     }
     expect(minSum).toBeGreaterThanOrEqual(0.8);
     expect(both).toBeLessThanOrEqual(0.5);
-    expect(carryFades(0)).toEqual({ old: 1, new: 0, pill: 0 });
-    expect(carryFades(1)).toEqual({ old: 0, new: 1, pill: 1 });
+    expect(carryFades(0)).toEqual({ old: 1, new: 0, pill: 0, glass: 0 });
+    expect(carryFades(1)).toEqual({ old: 0, new: 1, pill: 1, glass: 1 });
+    // The pill's glass is gone on the click frame and back a little before its content.
+    expect(carryFades(0.3).glass).toBe(0);
+    expect(carryFades(0.6).glass).toBeGreaterThan(carryFades(0.6).pill);
     // The pill's content stays out until the card has mostly slid off it, and the old content is gone first.
     expect(carryFades(0.5).pill).toBe(0);
     expect(carryFades(0.5).old).toBe(0);

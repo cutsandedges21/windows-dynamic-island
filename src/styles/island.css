@@ -511,6 +511,9 @@ html[data-pill='glass'] .pill.covered { box-shadow: none; }
 /* A grown card carried on into the open island's card (or back): the pill is drawn again beside it,
    its content fading locked to the card's move (sheet.ts place sets --pill-in). */
 .pill.uncover > .pill-content { opacity: var(--pill-in, 1); filter: none; transition: none; }
+/* Its glass too, a little ahead of the content (carryFades), so it never shows through the card on the click frame. */
+.pill.uncover > :is(.pill-bg, .pill-glow) { opacity: var(--pill-glass, 1); transition: none; }
+.pill.uncover { box-shadow: none; }
 .pill.cover-out > .pill-content {
   opacity: 0;
   filter: blur(4px);

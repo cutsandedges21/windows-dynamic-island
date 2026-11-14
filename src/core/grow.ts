@@ -66,8 +66,11 @@ const smooth = (r: number, a: number, b: number): number => {
  * empty (together never under 0.8); the pill's content comes back over the last part, once the
  * card has slid off it. Played backwards (into a grown card) it is the same at 1 − r.
  */
-export function carryFades(r: number): { old: number; new: number; pill: number } {
-  return { old: 1 - smooth(r, 0, 0.42), new: smooth(r, 0.05, 0.47), pill: smooth(r, 0.55, 1) };
+export function carryFades(r: number): { old: number; new: number; pill: number; glass: number } {
+  // The pill's glass (its dark shape) comes back a little before its content, and only once the card
+  // has started sliding off it: drawn at once, it showed through the glass card as a pale bar on the
+  // click frame (Justin's real-screen test, 2026-11-14).
+  return { old: 1 - smooth(r, 0, 0.42), new: smooth(r, 0.05, 0.47), pill: smooth(r, 0.55, 1), glass: smooth(r, 0.4, 0.75) };
 }
 
 /**

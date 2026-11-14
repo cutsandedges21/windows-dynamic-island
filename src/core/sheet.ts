@@ -748,6 +748,7 @@ export class SheetRenderer {
     this.carryOld = null;
     this.inner.style.opacity = '';
     document.documentElement.style.removeProperty('--pill-in');
+    document.documentElement.style.removeProperty('--pill-glass');
     if (uncover && this.cover === 'uncovering') this.setCover('off');
   }
 
@@ -825,6 +826,7 @@ export class SheetRenderer {
     cancelAnimationFrame(this.closeFrame);
     this.closeT = 0;
     document.documentElement.style.removeProperty('--pill-in');
+    document.documentElement.style.removeProperty('--pill-glass');
   }
 
   /** Grows a card out of the pill to its full size, in a fixed time (the close's mirror). */
@@ -963,8 +965,9 @@ export class SheetRenderer {
         old.style.transform = kw < 0.999 ? `scale(${kw.toFixed(4)})` : '';
       }
       this.inner.style.opacity = String(f.new);
-      const pill = this.carry === 'open' ? f.pill : carryFades(1 - this.carryR).pill;
-      document.documentElement.style.setProperty('--pill-in', pill.toFixed(3));
+      const back = this.carry === 'open' ? f : carryFades(1 - this.carryR);
+      document.documentElement.style.setProperty('--pill-in', back.pill.toFixed(3));
+      document.documentElement.style.setProperty('--pill-glass', back.glass.toFixed(3));
     }
     const span = snapSpan(x, w, k);
     x = span.x;
