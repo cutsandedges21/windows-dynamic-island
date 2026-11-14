@@ -35,7 +35,7 @@ export const DEFAULT_ICON_ONLY: MenuIconOnly = { position: false, quiet: false, 
 /** As the menu always came: MENU_ITEMS' order. */
 export const DEFAULT_MENU_ORDER: MenuItemId[] = MENU_ITEMS.map((m) => m.id);
 
-/** How the user arranged the menu (Settings › Behavior › Right-click menu): their order, and which are icons only. */
+/** How the user arranged the menu (Settings ï¿½ Behavior ï¿½ Right-click menu): their order, and which are icons only. */
 export interface MenuLook {
   order: readonly MenuItemId[];
   iconOnly: MenuIconOnly;
@@ -136,7 +136,7 @@ export function menuSegments(shown: MenuShown, st: MenuState, look: MenuLook = D
         segs.push(
           st.faded
             ? { t: 'button', key: 'menu/fade', icon: 'eye', ...named('Show', 'Bring the island back'), action: 'island:fade', style: 'primary', side, prio: 2 }
-            : { t: 'button', key: 'menu/fade', icon: 'eye-off', ...named('Fade', 'Fade the island and let clicks through, until you right-click it and press Show'), action: 'island:fade', style: 'ghost', side, prio: 2 },
+            : { t: 'button', key: 'menu/fade', icon: 'fade', ...named('Fade', 'Fade the island and let clicks through, until you right-click it and press Show'), action: 'island:fade', style: 'ghost', side, prio: 2 },
         );
         break;
       case 'reminders':

@@ -22,7 +22,7 @@ describe('the menu\'s Fade', () => {
   it('says Fade while the island shows, and Show (eye, primary) while it is faded; both toggle it', () => {
     const off = fadeButton(false);
     expect(off.label).toBe('Fade');
-    expect(off.icon).toBe('eye-off');
+    expect(off.icon).toBe('fade');
     expect(off.style).toBe('ghost');
     expect(off.tip).toBe('Fade the island and let clicks through, until you right-click it and press Show');
     expect(off.action).toBe('island:fade');

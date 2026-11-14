@@ -94,6 +94,8 @@ const P: Record<string, string> = {
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.5h.01"/>',
   power: '<path d="M12 3v8.5M6.8 6.3a8 8 0 1010.4 0"/>',
   eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+  /** Fade: a dashed ring, the island half there (Hide keeps the crossed eye). */
+  fade: '<circle cx="12" cy="12" r="8.5" stroke-dasharray="2.2 2.6"/><circle cx="12" cy="12" r="3.2"/>',
   'eye-off': '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/><path d="M4 4l16 16"/>',
   code: '<path d="M8.5 7l-5 5 5 5M15.5 7l5 5-5 5M13.5 4.5l-3 15"/>',
   branch: '<circle cx="6.5" cy="5.5" r="2"/><circle cx="6.5" cy="18.5" r="2"/><circle cx="17.5" cy="7.5" r="2"/><path d="M6.5 7.5v9M17.5 9.5a6 6 0 01-6 6h-5"/>',
