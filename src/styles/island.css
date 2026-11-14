@@ -513,6 +513,14 @@ html[data-pill='glass'] .pill.covered { box-shadow: none; }
   filter: blur(4px);
   transition: opacity 0.22s ease-in-out, filter 0.22s ease-in;
 }
+/* The pill's art (Music's album cover, a screenshot) is not faded with the rest: the card has its
+   own, bigger copy of it, and the two side by side read as a ghost of the art for a few frames
+   (Justin's recording). It goes at once as the card grows, and on the way back comes in only once
+   the card's content has gone: the card's content is out at closeT 0.85, which is --pill-in 0.74
+   (sheet.ts placeGrown: 1 - ease(0.1, 0.85) and ease(0.55, 1)), so it fades in over --pill-in 0.74 → 1. */
+.pill.cover-out > .pill-content .seg-art { background-color: transparent; }
+.pill.cover-out > .pill-content .seg-art > * { opacity: 0; transition: none; }
+.pill.covered:not(.cover-out) > .pill-content .seg-art > * { opacity: clamp(0, calc((var(--pill-in, 1) - 0.74) / 0.26), 1); }
 html.reduce .pill.covered > .pill-content { transition: none; }
 @media (prefers-reduced-motion: reduce) {
   .pill.covered > .pill-content { transition: none; }
