@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backSlide, carryCurve, carryFades, slideCurve, uncarryPill, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
+import { carryApart, carryCurve, carryFades, carryShape, pillFades, pillReveal, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
 import { defaultSettings, growsChoices, growsOf, migrate } from '../src/core/settings';
 import type { SheetView } from '../src/core/sheet';
 import { tileCard } from '../src/core/tilecard';
@@ -231,45 +231,87 @@ describe('a grown card carried on into the open island (and back)', () => {
     }
     expect(minSum).toBeGreaterThanOrEqual(0.8);
     expect(both).toBeLessThanOrEqual(0.5);
-    expect(carryFades(0)).toEqual({ old: 1, new: 0, pill: 0, glass: 0 });
-    expect(carryFades(1)).toEqual({ old: 0, new: 1, pill: 1, glass: 1 });
-    // The pill's glass is gone on the click frame and back a little before its content.
-    expect(carryFades(0.3).glass).toBe(0);
-    expect(carryFades(0.6).glass).toBeGreaterThan(carryFades(0.6).pill);
-    // The pill's content stays out until the card has mostly slid off it, and the old content is gone first.
-    expect(carryFades(0.35).pill).toBe(0);
-    expect(slideCurve(0.35)).toBeGreaterThan(0.8);
+    expect(carryFades(0)).toEqual({ old: 1, new: 0 });
+    expect(carryFades(1)).toEqual({ old: 0, new: 1 });
     expect(carryFades(0.5).old).toBe(0);
-    // The bar's glass is never there on its own for long: its content is on its way in by the time the glass is a third back.
-    for (let r = 0; r <= 1.0001; r += 0.01) if (carryFades(r).glass < 0.999) expect(carryFades(r).glass - carryFades(r).pill).toBeLessThan(0.4);
   });
 
-  it('slides the carried card off the pill ahead of its size, done once the new content is in', () => {
-    expect(slideCurve(0)).toBe(0);
-    expect(slideCurve(1)).toBe(1);
-    let last = 0;
+  // The island at the top: the resting pill 36 high at y 8, the open pill bar 48 high, the gap 8.
+  const bar = { x: 400, y: 8, w: 480, h: 48 };
+  const grown = { x: 454, y: 8, w: 372, h: 174 };
+  const open = { x: 352, y: 64, w: 576, h: 436 };
+
+  it('moves all four edges of the shape at one pace, each one way only, and lands on the card', () => {
+    expect(carryShape(grown, open, 0)).toEqual(grown);
+    expect(carryShape(grown, open, 1)).toEqual(open);
+    let last = grown;
     for (let r = 0; r <= 1.0001; r += 0.01) {
-      const m = slideCurve(r);
-      expect(m).toBeGreaterThanOrEqual(r - 1e-9);
-      expect(m).toBeGreaterThanOrEqual(last);
-      last = m;
+      const s = carryShape(grown, open, r);
+      expect(s.x).toBeLessThanOrEqual(last.x + 1e-9);
+      expect(s.y).toBeGreaterThanOrEqual(last.y - 1e-9);
+      expect(s.x + s.w).toBeGreaterThanOrEqual(last.x + last.w - 1e-9);
+      expect(s.y + s.h).toBeGreaterThanOrEqual(last.y + last.h - 1e-9);
+      last = s;
     }
-    // Where the new content is all there (carryFades' `new` at 1), the card is where it stays.
-    expect(carryFades(0.6).new).toBe(1);
-    expect(slideCurve(0.6)).toBe(1);
+    const half = carryShape(grown, open, 0.5);
+    expect(half.y).toBeCloseTo(36);
+    expect(half.w).toBeCloseTo(474);
   });
 
-  it('carried back, the pill is gone before the card has slid up over it', () => {
-    expect(uncarryPill(0)).toEqual({ pill: 1, glass: 1 });
-    expect(uncarryPill(1)).toEqual({ pill: 0, glass: 0 });
-    // Half gone before the card has moved a few pixels; gone while it is under half way over.
-    expect(uncarryPill(0.1).pill).toBeLessThanOrEqual(0.5);
-    expect(slideCurve(backSlide(0.1))).toBeLessThan(0.1);
-    expect(uncarryPill(0.2)).toEqual({ pill: 0, glass: expect.any(Number) });
-    expect(slideCurve(backSlide(0.2))).toBeLessThan(0.5);
-    expect(slideCurve(backSlide(0.7))).toBe(1);
-    const r = 0.4;
-    expect(slideCurve(r)).toBeGreaterThan(0.85);
-    expect(uncarryPill(r)).toEqual({ pill: 0, glass: 0 });
+  it('splits one shape in two: the pill shows only where the card has drawn back, across a seam that opens from nothing', () => {
+    // Over the pill: nothing of it shows, the two are one shape.
+    expect(carryApart(bar, grown, 'top', 8)).toBe(0);
+    expect(pillReveal(bar, grown, 'top', 8)).toBeNull();
+    // Apart: all of it, the clip past its ends (the card is wider than the pill).
+    expect(carryApart(bar, open, 'top', 8)).toBe(1);
+    const whole = pillReveal(bar, open, 'top', 8)!;
+    expect(whole.top).toBe(0);
+    expect(whole.bottom).toBeCloseTo(0, 9);
+    expect(whole.left).toBeLessThan(0);
+    expect(whole.right).toBeLessThan(0);
+    // On the way: what shows of the pill never reaches the card (the seam), grows steadily, and the
+    // seam itself only ever widens, from nothing to the gap.
+    let shown = 0;
+    let seam = 0;
+    for (let r = 0.01; r <= 1.0001; r += 0.01) {
+      const card = carryShape(grown, open, r);
+      const cut = pillReveal(bar, card, 'top', 8);
+      const h = cut ? bar.h - cut.bottom : 0;
+      const gap = card.y - (bar.y + h);
+      expect(gap).toBeGreaterThanOrEqual(-1e-9);
+      expect(gap).toBeLessThanOrEqual(8 + 1e-9);
+      expect(h).toBeGreaterThanOrEqual(shown - 1e-9);
+      expect(gap).toBeGreaterThanOrEqual(seam - 1e-9);
+      shown = h;
+      seam = gap;
+      // While the card is narrower than the pill, the part that shows is only as wide as the card.
+      if (cut && card.w < bar.w && r <= 0.5) expect(cut.left).toBeCloseTo(card.x - bar.x, 6);
+    }
+    // A card that ends up narrower than the pill still leaves all of the pill showing.
+    const narrow = pillReveal(bar, { x: 440, y: 64, w: 400, h: 300 }, 'top', 8)!;
+    expect(narrow.left).toBe(0);
+    expect(narrow.right).toBe(0);
+    expect(shown).toBeCloseTo(48, 6);
+    expect(seam).toBeCloseTo(8, 6);
+  });
+
+  it('works the same from every screen edge', () => {
+    const pillB = { x: 400, y: 664, w: 480, h: 48 };
+    expect(carryApart(pillB, { x: 352, y: 220, w: 576, h: 436 }, 'bottom', 8)).toBe(1);
+    expect(carryApart(pillB, { x: 454, y: 538, w: 372, h: 174 }, 'bottom', 8)).toBe(0);
+    const side = { x: 8, y: 200, w: 48, h: 300 };
+    expect(carryApart(side, { x: 64, y: 150, w: 380, h: 400 }, 'left', 8)).toBe(1);
+    expect(pillReveal(side, { x: 36, y: 150, w: 380, h: 400 }, 'left', 8)!.right).toBeGreaterThan(0);
+    const sideR = { x: 1224, y: 200, w: 48, h: 300 };
+    expect(carryApart(sideR, { x: 836, y: 150, w: 380, h: 400 }, 'right', 8)).toBe(1);
+    expect(pillReveal(sideR, { x: 864, y: 150, w: 380, h: 400 }, 'right', 8)!.left).toBeGreaterThan(0);
+  });
+
+  it('brings the pill’s content in as the seam uncovers it, and its light only once it is whole', () => {
+    expect(pillFades(0)).toEqual({ content: 0, ring: 0 });
+    expect(pillFades(1)).toEqual({ content: 1, ring: 1 });
+    expect(pillFades(0.25).content).toBe(0);
+    expect(pillFades(0.75).content).toBe(1);
+    expect(pillFades(0.75).ring).toBe(0);
   });
 });

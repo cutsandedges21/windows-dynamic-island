@@ -7,7 +7,7 @@
 
 import { CATALOG_BY_ID } from '../activities/catalog';
 import type { Activity, ActivityContext, ActivityStatus, RenderEnv, SheetEnv, SurfaceOptions } from './activity';
-import { setReducedMotion } from './animator';
+import { reducedMotion, setReducedMotion } from './animator';
 import { pillBeam } from './beam';
 import { BubbleView } from './bubble';
 import { ChatBar, type ChatAction, type ChatView } from './chat';
@@ -27,7 +27,7 @@ import { applyGlass } from './glass';
 import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type Block, type SheetChip, type SheetView, type Tile } from './sheet';
-import { chatView, flatView, hoverGrows, hoverView } from './grow';
+import { chatView, flatView, GROW_MS, hoverGrows, hoverView } from './grow';
 import { tileCard } from './tilecard';
 import { pillMotion } from './spring';
 import { WheelGesture } from './wheel';
@@ -768,15 +768,23 @@ export class Island {
     // Opening and closing (the menu too) change the pill most: no overshoot for the whole motion,
     // or a few pixels of it visibly settle back. A spring takes the config of every retarget,
     // so it is kept for as long as that motion runs.
+    // Out of a grown card, or back into one (the pointer still on the pill), the card carries on in
+    // one move (sheet.ts unmorph/remorph) and the pill does not move at all while it can be seen.
+    // Opening: it is at once where it will be and what it will show, unseen under the card, which
+    // then uncovers it. Closing: it is held as it is till the card has covered it (see below).
+    let carryOpen = false;
+    let carryBack = false;
     if (this.lastLevel !== null && (level === 'maximum') !== (this.lastLevel === 'maximum')) {
       this.calmUntil = now + CALM_MS;
-      // Out of a grown card (or back into one, the pointer still on the pill), the card carries on
-      // in one move (sheet.ts unmorph/remorph): the pill grows (or shrinks) on that move's curve.
-      this.carriedUntil = this.sheet.grown || morphing ? now + CALM_MS : 0;
+      const moving = !immediate && !reducedMotion();
+      carryOpen = moving && level === 'maximum' && (this.sheet.grown || this.sheet.carrying === 'back');
+      carryBack = moving && level !== 'maximum' && morphing && this.sheet.visible && !this.sheet.grown;
+      this.carriedUntil = carryOpen ? now + GROW_MS + 60 : 0;
     }
     this.lastLevel = level;
-    const motion = pillMotion(travelling, now < this.calmUntil, now < this.carriedUntil);
-    this.renderer.setShell(target, { config: motion.shell, immediate });
+    const motion = pillMotion(travelling, now < this.calmUntil);
+    if (carryOpen) this.renderer.release();
+    this.renderer.setShell(target, { config: motion.shell, immediate: immediate || carryOpen });
     this.sheet.pillTo = target;
     this.lastAnchor = anchor;
     this.lastOrientation = orient;
@@ -804,6 +812,9 @@ export class Island {
     if (chatView && this.chatOpen) this.chat.render(chatView);
     this.syncPet(now, chatView);
 
+    // Closing back into a grown card: the pill bar stays as it is, shape and content, while the card
+    // comes back over it, and is the resting pill only once covered.
+    if (carryBack && picked?.view.morph) this.renderer.hold(GROW_MS + 40);
     const swap = primary !== this.lastPrimary || viewKey !== this.lastViewKey || reshaped;
     const sig = `${orient}|${viewKey}|${w}|${h}|${signature(placed)}`;
     const bump = this.pendingBump;

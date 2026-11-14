@@ -53,37 +53,98 @@ export function carryCurve(u: number, s = 0): number {
   return (growCurve(from + (1 - from) * Math.max(0, Math.min(1, u))) - q0) / (1 - q0);
 }
 
-/**
- * How far a carried card has slid off the pill (0 → 1) when the carry is `r` of the way: ahead of
- * its size, done by the time the new content is in, so that content arrives where it stays. Slid
- * on the size's own pace, the new content sank some 40 px under a pill bar growing in above it
- * after it was fully there (Justin's recording, 2026-11-14: "still some shaking").
- */
-export function slideCurve(r: number): number {
-  const q = Math.max(0, Math.min(1, r / 0.6));
-  return 1 - (1 - q) * (1 - q);
-}
-
 const smooth = (r: number, a: number, b: number): number => {
   const u = Math.max(0, Math.min(1, (r - a) / (b - a)));
   return u * u * (3 - 2 * u);
 };
 
+/** A rectangle on screen. */
+export interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** The screen edge the island sits on, which is also the side of a card that faces the pill. */
+export type Side = 'top' | 'bottom' | 'left' | 'right';
+
 /**
- * A grown card carried on into the open island's card (or back), `r` of the way: the opacity of
- * the content it had (`old`), of the content it takes on (`new`) and of the pill's own content
- * (`pill`), all locked to how far the shape got. The old fades a little ahead of the new, so the
- * two are never both more than half there, and close enough behind it that the card is never
- * empty (together never under 0.8); the pill's content comes back over the last part, once the
- * card has slid off it. Played backwards (into a grown card) it is the same at 1 − r.
+ * A carried card (a grown card turning into the open island's card, or back) `r` of the way: its
+ * shape. All four edges go at the one pace, so they set off together and land together; nothing
+ * inside it moves (sheet.ts placeCarry keeps both contents where they are on screen).
  */
-export function carryFades(r: number): { old: number; new: number; pill: number; glass: number } {
-  // The pill's glass (its dark shape) comes back a little before its content, and only once the card
-  // has started sliding off it: drawn at once, it showed through the glass card as a pale bar on the
-  // click frame (Justin's real-screen test, 2026-11-14).
-  // The bar's glass and its content come back close together: the glass on its own read as an empty
-  // bar popping in above the card for a frame or two.
-  return { old: 1 - smooth(r, 0, 0.42), new: smooth(r, 0.05, 0.47), pill: smooth(r, 0.35, 0.8), glass: smooth(r, 0.35, 0.7) };
+export function carryShape(from: Box, to: Box, r: number): Box {
+  const t = Math.max(0, Math.min(1, r));
+  const x = from.x + (to.x - from.x) * t;
+  const y = from.y + (to.y - from.y) * t;
+  const right = from.x + from.w + (to.x + to.w - from.x - from.w) * t;
+  const bottom = from.y + from.h + (to.y + to.h - from.y - from.h) * t;
+  return { x, y, w: right - x, h: bottom - y };
+}
+
+/**
+ * How far a carried card stands off the pill, 0 (over it: one shape) → 1 (beside it, across the
+ * gap), from where its edge facing the pill is. `reach` is how far that edge travels: the pill's
+ * depth plus the gap.
+ */
+export function carryApart(pill: Box, card: Box, side: Side, gap: number): number {
+  const depth = side === 'top' || side === 'bottom' ? pill.h : pill.w;
+  const moved = side === 'top' ? card.y - pill.y : side === 'bottom' ? pill.y + pill.h - (card.y + card.h) : side === 'left' ? card.x - pill.x : pill.x + pill.w - (card.x + card.w);
+  return Math.max(0, Math.min(1, moved / Math.max(1, depth + gap)));
+}
+
+/**
+ * The part of the pill a carried card has uncovered, as the pill's own clip (insets from its box,
+ * top right bottom left; a negative one reaches past the box): from its outer edge to a seam just
+ * short of the card, as wide as the card. The seam opens from nothing to the full gap over the first
+ * third of the way, so the one shape splits in two along a line that widens: the outline of the
+ * whole never steps. Null when none of the pill shows yet.
+ */
+export function pillReveal(pill: Box, card: Box, side: Side, gap: number): { top: number; right: number; bottom: number; left: number } | null {
+  const apart = carryApart(pill, card, side, gap);
+  const seam = gap * smooth(apart, 0, 0.35);
+  const along = side === 'top' || side === 'bottom';
+  // Across the pill: as wide as the card (past the pill's own ends once the card is wider than it).
+  // Should the card end up the narrower one, the pill's ends come out over the second half of the
+  // way: apart, all of the pill shows.
+  const ease = (v: number) => (v > 0 ? v * (1 - smooth(apart, 0.5, 1)) : v);
+  const a0 = ease(along ? card.x - pill.x : card.y - pill.y);
+  const a1 = ease(along ? pill.x + pill.w - (card.x + card.w) : pill.y + pill.h - (card.y + card.h));
+  // Along the way the card goes: from the pill's outer edge to the seam.
+  const depth = along ? pill.h : pill.w;
+  const shown = side === 'top' ? card.y - seam - pill.y : side === 'bottom' ? pill.y + pill.h - (card.y + card.h + seam) : side === 'left' ? card.x - seam - pill.x : pill.x + pill.w - (card.x + card.w + seam);
+  if (shown <= 0.01) return null;
+  const cut = Math.max(0, depth - shown);
+  switch (side) {
+    case 'top':
+      return { top: 0, right: a1, bottom: cut, left: a0 };
+    case 'bottom':
+      return { top: cut, right: a1, bottom: 0, left: a0 };
+    case 'left':
+      return { top: a0, right: cut, bottom: a1, left: 0 };
+    case 'right':
+      return { top: a0, right: 0, bottom: a1, left: cut };
+  }
+}
+
+/**
+ * A carried card `r` of the way: the opacity of the content it had (`old`) and of the content it
+ * takes on (`new`), locked to how far the shape got. The old fades a little ahead of the new, so the
+ * two are never both more than half there, and close enough behind it that the card is never empty
+ * (together never under 0.8).
+ */
+export function carryFades(r: number): { old: number; new: number } {
+  return { old: 1 - smooth(r, 0, 0.42), new: smooth(r, 0.05, 0.47) };
+}
+
+/**
+ * The pill's own content and the light round it while a carried card stands `apart` (carryApart)
+ * from it: the content fades in as the seam uncovers it (and out as the card comes back over it),
+ * the light only once the pill is all but whole.
+ */
+export function pillFades(apart: number): { content: number; ring: number } {
+  return { content: smooth(apart, 0.3, 0.7), ring: smooth(apart, 0.8, 1) };
 }
 
 /**
@@ -175,18 +236,4 @@ export function snapSpan(x: number, w: number, scale: number): { x: number; w: n
 export function contentLeft(x: number, w: number, innerW: number, scale: number): number {
   const snap = devicePixels(scale);
   return snap(x + w / 2 - innerW / 2) - snap(x);
-}
-
-/**
- * Carried back into a grown card, `r` of the way: the pill's content and its glass go before the card
- * slides up over them (slideCurve), so neither shows through or over it. Played as the opening's
- * mirror, the pill stayed till the card had covered it and the card crept up after its content was in.
- */
-export function uncarryPill(r: number): { pill: number; glass: number } {
-  return { pill: 1 - smooth(r, 0, 0.2), glass: 1 - smooth(r, 0.02, 0.25) };
-}
-
-/** How far a card carried back into a grown card has got on its slide (for slideCurve): a moment after the pill starts going. */
-export function backSlide(r: number): number {
-  return Math.max(0, (r - 0.08) / 0.92);
 }

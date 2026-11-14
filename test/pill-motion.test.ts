@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { GROW_SPRING } from '../src/core/grow';
 import { pillMotion, solve, springs } from '../src/core/spring';
 
 describe('the pill opening and closing', () => {
@@ -17,13 +16,6 @@ describe('the pill opening and closing', () => {
       last = icon - edge;
     }
     expect(last).toBeCloseTo(18, 3);
-  });
-
-  it('opening from a grown card, grows on that card’s curve, content and shape together', () => {
-    const m = pillMotion(false, true, true);
-    expect(m.shell).toEqual(GROW_SPRING);
-    expect(m.content).toBe(m.shell);
-    expect(pillMotion(true, true, true).shell).toBe(springs.travel);
   });
 
   it('keeps the usual springs otherwise', () => {
