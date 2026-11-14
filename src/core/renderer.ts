@@ -230,7 +230,7 @@ export class PillRenderer {
    * Lays out `placed` for a pill of size (w, h). `swap` means the content is a
    * different activity: leaving nodes go first and new ones arrive a beat later.
    */
-  render(placed: Placed[], w: number, h: number, opts: { swap?: boolean; immediate?: boolean; move?: SpringConfig } = {}): void {
+  render(placed: Placed[], w: number, h: number, opts: { swap?: boolean; immediate?: boolean; move?: SpringConfig; carried?: boolean } = {}): void {
     // How content already in the pill slides to its new spot (the shape's own spring while the
     // island opens or closes, see pillMotion).
     const move = opts.move ?? springs.content;
@@ -252,14 +252,17 @@ export class PillRenderer {
         node = this.create(p.seg, x, p.w);
         const delay = opts.immediate ? 0 : (opts.swap ? 90 : 30) + Math.min(entering, 6) * 22;
         entering += 1;
-        if (opts.immediate) node.set.set({ o: 1, s: 1, b: 0 }, { immediate: true });
+        // Carried in with a grown card (sheet.ts unmorph/remorph): there all at once, its fade the
+        // carry's own (--pill-in). Each part on its own delay and spring left the bar empty for a
+        // few frames, then filled it piece by piece (Justin's recording, 2026-11-14).
+        if (opts.immediate || opts.carried) node.set.set({ o: 1, s: 1, b: 0 }, { immediate: true });
         else setTimeout(() => node && !node.leaving && node.set.set({ o: 1, s: 1, b: 0 }, { config: { x: springs.content, w: springs.content, o: springs.fade, s: springs.bouncy, b: springs.fade } }), delay);
       } else {
         this.patch(node, p.seg);
         node.set.set({ x, w: p.w }, { config: move, immediate: opts.immediate });
       }
     }
-    for (const node of this.nodes.values()) if (!seen.has(node.key) && !node.leaving) this.remove(node, !opts.immediate);
+    for (const node of this.nodes.values()) if (!seen.has(node.key) && !node.leaving) this.remove(node, !opts.immediate && !opts.carried);
   }
 
   focusedInput(): HTMLInputElement | null {

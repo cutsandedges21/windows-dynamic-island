@@ -809,7 +809,7 @@ export class Island {
     const bump = this.pendingBump;
     if (sig !== this.lastSig) {
       this.lastSig = sig;
-      this.renderer.render(placed, w, h, { swap: swap && this.lastPrimary !== undefined, immediate, move: motion.content });
+      this.renderer.render(placed, w, h, { swap: swap && this.lastPrimary !== undefined, immediate, move: motion.content, carried: now < this.carriedUntil });
     }
     this.lastPrimary = primary;
     this.lastViewKey = viewKey;
