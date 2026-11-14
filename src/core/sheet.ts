@@ -629,6 +629,8 @@ export class SheetRenderer {
       this.shown = true;
       for (const a of this.inner.getAnimations()) a.cancel();
       this.inner.style.opacity = '';
+
+      this.inner.style.filter = '';
       if (morph) {
         // Grown out of the pill it starts as the pill itself, solid, and from here it is the pill:
         // the pill's own glass goes, its content fades out.
@@ -747,6 +749,7 @@ export class SheetRenderer {
     this.carryOld?.remove();
     this.carryOld = null;
     this.inner.style.opacity = '';
+    this.inner.style.filter = '';
     document.documentElement.style.removeProperty('--pill-in');
     document.documentElement.style.removeProperty('--pill-glass');
     if (uncover && this.cover === 'uncovering') this.setCover('off');
@@ -773,6 +776,8 @@ export class SheetRenderer {
       this.clear();
       for (const a of this.inner.getAnimations()) a.cancel();
       this.inner.style.opacity = '';
+
+      this.inner.style.filter = '';
       this.morph = false;
       this.el.classList.remove('morph');
       this.unstyleGrown();
@@ -960,11 +965,15 @@ export class SheetRenderer {
       const old = this.carryOld;
       if (old) {
         old.style.opacity = String(f.old * this.carryFrom);
+        // Blurred as it goes (as the island always blurs what leaves), so in the frames where both
+        // contents are partly there, the leaving one can't be read over the arriving one.
+        old.style.filter = f.old < 0.999 ? `blur(${(6 * (1 - f.old)).toFixed(2)}px)` : '';
         const iw = parseFloat(old.style.width);
         const kw = this.carry === 'open' && iw > 0 && (this.anchor === 'top' || this.anchor === 'bottom') ? Math.min(1, w / iw) : 1;
         old.style.transform = kw < 0.999 ? `scale(${kw.toFixed(4)})` : '';
       }
       this.inner.style.opacity = String(f.new);
+      this.inner.style.filter = f.new < 0.999 ? `blur(${(4 * (1 - f.new)).toFixed(2)}px)` : '';
       const back = this.carry === 'open' ? f : carryFades(1 - this.carryR);
       document.documentElement.style.setProperty('--pill-in', back.pill.toFixed(3));
       document.documentElement.style.setProperty('--pill-glass', back.glass.toFixed(3));
