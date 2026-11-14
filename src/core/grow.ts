@@ -183,5 +183,10 @@ export function contentLeft(x: number, w: number, innerW: number, scale: number)
  * mirror, the pill stayed till the card had covered it and the card crept up after its content was in.
  */
 export function uncarryPill(r: number): { pill: number; glass: number } {
-  return { pill: 1 - smooth(r, 0, 0.35), glass: 1 - smooth(r, 0.05, 0.4) };
+  return { pill: 1 - smooth(r, 0, 0.2), glass: 1 - smooth(r, 0.02, 0.25) };
+}
+
+/** How far a card carried back into a grown card has got on its slide (for slideCurve): a moment after the pill starts going. */
+export function backSlide(r: number): number {
+  return Math.max(0, (r - 0.08) / 0.92);
 }

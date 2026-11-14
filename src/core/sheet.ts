@@ -13,7 +13,7 @@
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
-import { carryCurve, carryFades, uncarryPill, closeCurve, contentLeft, GROW_MS, GROW_SPRING, handOff, slideCurve, snapSpan, tweenShape, type Shape } from './grow';
+import { backSlide, carryCurve, carryFades, uncarryPill, closeCurve, contentLeft, GROW_MS, GROW_SPRING, handOff, slideCurve, snapSpan, tweenShape, type Shape } from './grow';
 import { buildPlayer, patchPlayer, type PlayerBlock } from './player';
 import { springAnimate, wheelDelta, type PillCover } from './renderer';
 import type { Tone } from './segments';
@@ -857,7 +857,8 @@ export class SheetRenderer {
       if (this.carry) this.carryR = r;
       const shape = tweenShape({ w: o.w0, h: o.h0, m: o.m0 }, { w: o.w1, h: o.h1, m: o.m1 }, r);
       // Carried, it slides off the pill (or back over it) ahead of its size: either way its new content is in where it stays.
-      if (this.carry) shape.m = o.m0 + (o.m1 - o.m0) * slideCurve(r);
+      // Back over the pill it waits for the pill to start going (uncarryPill): over it while still there, the two read as a double bar.
+      if (this.carry) shape.m = o.m0 + (o.m1 - o.m0) * slideCurve(this.carry === 'open' ? r : backSlide(r));
       this.springs.set(shape, { immediate: true });
       if (u < 1) {
         this.openFrame = requestAnimationFrame(step);

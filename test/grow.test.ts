@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carryCurve, carryFades, slideCurve, uncarryPill, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
+import { backSlide, carryCurve, carryFades, slideCurve, uncarryPill, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
 import { defaultSettings, growsChoices, growsOf, migrate } from '../src/core/settings';
 import type { SheetView } from '../src/core/sheet';
 import { tileCard } from '../src/core/tilecard';
@@ -262,6 +262,12 @@ describe('a grown card carried on into the open island (and back)', () => {
   it('carried back, the pill is gone before the card has slid up over it', () => {
     expect(uncarryPill(0)).toEqual({ pill: 1, glass: 1 });
     expect(uncarryPill(1)).toEqual({ pill: 0, glass: 0 });
+    // Half gone before the card has moved a few pixels; gone while it is under half way over.
+    expect(uncarryPill(0.1).pill).toBeLessThanOrEqual(0.5);
+    expect(slideCurve(backSlide(0.1))).toBeLessThan(0.1);
+    expect(uncarryPill(0.2)).toEqual({ pill: 0, glass: expect.any(Number) });
+    expect(slideCurve(backSlide(0.2))).toBeLessThan(0.5);
+    expect(slideCurve(backSlide(0.7))).toBe(1);
     const r = 0.4;
     expect(slideCurve(r)).toBeGreaterThan(0.85);
     expect(uncarryPill(r)).toEqual({ pill: 0, glass: 0 });
