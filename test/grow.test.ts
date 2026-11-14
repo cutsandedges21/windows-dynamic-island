@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatView, closeCurve, flatView, growCurve, handOff, hoverGrows, hoverView } from '../src/core/grow';
+import { chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan } from '../src/core/grow';
 import { defaultSettings, growsChoices, growsOf, migrate } from '../src/core/settings';
 import type { SheetView } from '../src/core/sheet';
 import { tileCard } from '../src/core/tilecard';
@@ -150,5 +150,42 @@ describe('grows settings', () => {
     expect(s.activities.config.music.grows).toBeUndefined();
     expect(s.activities.config.weather.grows).toBeUndefined();
     expect(migrate({ activities: { config: { claude: { grows: 'more' } } } }).activities.config.claude.grows).toBe('more');
+  });
+});
+
+describe('a card widening on whole device pixels (125%)', () => {
+  const k = 1.25;
+  const onPixel = (v: number) => Math.abs(v * k - Math.round(v * k)) < 1e-9;
+
+  it('rounds each edge on its own, so a widening card never steps an edge back', () => {
+    let left = Infinity;
+    let right = -Infinity;
+    for (let w = 372; w <= 576; w += 0.37) {
+      const x = 640 - w / 2;
+      const s = snapSpan(x, w, k);
+      expect(onPixel(s.x) && onPixel(s.x + s.w)).toBe(true);
+      expect(s.x).toBeLessThanOrEqual(left);
+      expect(s.x + s.w).toBeGreaterThanOrEqual(right);
+      left = s.x;
+      right = s.x + s.w;
+    }
+  });
+
+  it('keeps content of a fixed width at one spot on screen while the card around it widens', () => {
+    const spots = new Set<number>();
+    for (let w = 372; w <= 576; w += 0.37) {
+      const x = 640 - w / 2;
+      spots.add(snapSpan(x, w, k).x + contentLeft(x, w, 372, k));
+    }
+    expect(spots.size).toBe(1);
+    // Where the grown card drew it: its own box, centred on the pill, on a whole device pixel.
+    expect([...spots][0]).toBeCloseTo(Math.round((640 - 186) * k) / k, 9);
+  });
+
+  it('does not flip a spot on a half device pixel back and forth with spring noise', () => {
+    // 454 CSS px is 567.5 device px at 125%.
+    const a = snapSpan(454 + 1e-7, 372, k).x + contentLeft(454 + 1e-7, 372, 372, k);
+    const b = snapSpan(454 - 1e-7, 372, k).x + contentLeft(454 - 1e-7, 372, 372, k);
+    expect(a).toBe(b);
   });
 });

@@ -88,3 +88,33 @@ export function handOff(now: { shown: boolean; morph: boolean; closing: boolean 
   if (!morph) return 'appear';
   return now.closing && !instant ? 'regrow' : 'grow';
 }
+
+/**
+ * Rounds to whole device pixels. Spring noise is dropped first (to a thousandth of a pixel): a spot
+ * that sits on a half device pixel (a centred card at 125%) would otherwise round one way on one
+ * frame and the other way on the next.
+ */
+function devicePixels(scale: number): (v: number) => number {
+  return (v) => Math.round(Math.round(v * scale * 1000) / 1000) / scale;
+}
+
+/**
+ * A card's box at `x`, `w` wide, on whole device pixels (`scale` of them per CSS px): each edge
+ * rounded on its own, so as the card widens each edge only ever moves outward. Rounding the left
+ * edge and the width apart let the right edge step back and forth by part of a pixel.
+ */
+export function snapSpan(x: number, w: number, scale: number): { x: number; w: number } {
+  const snap = devicePixels(scale);
+  const left = snap(x);
+  return { x: left, w: snap(x + w) - left };
+}
+
+/**
+ * Where content `innerW` wide sits inside that box (from its left edge), centred on the card's
+ * unrounded centre and on a whole device pixel of its own: the card's rounding changes from frame
+ * to frame as it widens, the content's spot does not (no half-pixel wobble of the text).
+ */
+export function contentLeft(x: number, w: number, innerW: number, scale: number): number {
+  const snap = devicePixels(scale);
+  return snap(x + w / 2 - innerW / 2) - snap(x);
+}

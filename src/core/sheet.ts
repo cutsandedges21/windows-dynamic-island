@@ -13,7 +13,7 @@
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
-import { closeCurve, GROW_MS, GROW_SPRING, growCurve, handOff } from './grow';
+import { closeCurve, contentLeft, GROW_MS, GROW_SPRING, growCurve, handOff, snapSpan } from './grow';
 import { buildPlayer, patchPlayer, type PlayerBlock } from './player';
 import { springAnimate, wheelDelta, type PillCover } from './renderer';
 import type { Tone } from './segments';
@@ -628,8 +628,10 @@ export class SheetRenderer {
     // springs with the pill instead of jumping in one frame.
     else this.springs.set({ w: this.width }, { config: morph ? GROW_SPRING : springs.open, immediate: geo.immediate });
     let changed = false;
-    if (view.key !== this.viewKey) {
-      if (!appearing && this.viewKey !== null) this.crossFade();
+    // Out of a grown card the content always crosses over: the old one keeps the grown card's
+    // layout where it is and fades, the new one comes in laid out for the open island.
+    if (view.key !== this.viewKey || step === 'unmorph') {
+      if (!appearing && this.viewKey !== null) this.crossFade(step === 'unmorph');
       else this.clear();
       this.viewKey = view.key;
       changed = true;
@@ -640,7 +642,7 @@ export class SheetRenderer {
     // In without a bounce: an overshooting scale reads as a shake as the island opens.
     if (appearing && !morph) this.springs.set({ o: 1, s: 1, b: 0 }, { config: { o: springs.fade, s: springs.snappy, b: springs.fade }, immediate: geo.immediate });
     // New content gets its whole-pixel spot now, not on the next frame the springs happen to move.
-    if (this.morph) this.place();
+    this.place();
   }
 
   // ---------------------------------------------------------------- placement
@@ -654,6 +656,9 @@ export class SheetRenderer {
   private unmorph(): void {
     // Opened mid-grow: the card carries on from where it got to.
     this.stopGrow();
+    // Its content stays exactly as it was drawn (a grown card pads it differently) while it fades:
+    // dropping the grown look first nudged it sideways inside the card the moment of the click.
+    this.inner.style.padding = getComputedStyle(this.inner).padding;
     this.morph = false;
     this.el.classList.remove('morph');
     // Its box is the shape again; the pill is drawn again; the card, still over it, uncovers it as it slides off.
@@ -798,7 +803,7 @@ export class SheetRenderer {
     // shrinks (into the menu) would otherwise show its content off the card, with no glass under it.
     const back = this.cover === 'shrinking';
     const h = snapPx(Math.max(0, back ? Math.max(v.h, p.h) : v.h));
-    const w = Math.max(0, Math.round(back ? Math.max(v.w, p.w) : v.w));
+    let w = Math.max(0, Math.round(back ? Math.max(v.w, p.w) : v.w));
     const { width: W, height: H } = this.area;
     const clampX = (x: number) => Math.max(EDGE, Math.min(W - w - EDGE, x));
     const clampY = (y: number) => Math.max(EDGE, Math.min(H - h - EDGE, y));
@@ -838,7 +843,16 @@ export class SheetRenderer {
     } else if (this.el.style.borderRadius) this.el.style.borderRadius = '';
     // On whole screen pixels: the card is its own layer, and once it stops resizing, moving it by a
     // fraction of a pixel (following the pill as it settles) stretches what was drawn and blurs it.
-    x = snapPx(x);
+    // Each edge on its own pixel, and the content on one of its own about the card's true centre, so
+    // a card widening (a grown card turning into the open island's) moves neither by a part of a pixel.
+    const k = window.devicePixelRatio || 1;
+    for (const inner of this.el.querySelectorAll<HTMLElement>(':scope > .sheet-inner')) {
+      const iw = parseFloat(inner.style.width);
+      if (iw > 0) inner.style.left = `${contentLeft(x, w, iw, k)}px`;
+    }
+    const span = snapSpan(x, w, k);
+    x = span.x;
+    w = span.w;
     y = snapPx(y);
     const st = this.el.style;
     st.transform = `translate3d(${x}px, ${y}px, 0) scale(${v.s})`;
@@ -946,7 +960,8 @@ export class SheetRenderer {
     bg.height = '';
     this.shadow.style.display = 'none';
     this.inner.style.transform = '';
-    this.pinInner(this.inner, this.width);
+    // At the width it was laid out at, not the new one (the open island's): its text stays put.
+    this.pinInner(this.inner, parseFloat(this.inner.style.width) || this.width);
     this.boxX = null;
     this.boxY = null;
   }
@@ -963,14 +978,15 @@ export class SheetRenderer {
   }
 
   /** The old content blurs out in place while the new content builds up. */
-  private crossFade(): void {
+  private crossFade(fromGrown = false): void {
     this.drag?.abort();
     const old = this.inner;
     old.classList.add('leaving');
     old.style.pointerEvents = 'none';
     const gone = () => old.remove();
-    // A grown card swaps with a plain fade: blurring text that size reads as a wobble.
-    const blur = this.morph ? 0 : 5;
+    // A grown card swaps with a plain fade (and so does one turning into the open island's card):
+    // blurring text that size reads as a wobble.
+    const blur = this.morph || fromGrown ? 0 : 5;
     const anim = springAnimate(old, [{ opacity: 1, filter: 'blur(0px)' }, { opacity: 0, filter: `blur(${blur}px)` }], springs.fade, { fill: 'forwards' });
     if (anim) anim.finished.then(gone, gone);
     else gone();
