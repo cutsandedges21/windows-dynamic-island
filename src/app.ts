@@ -1034,7 +1034,7 @@ function menuRow(i: Settings['island']): HTMLElement {
     preview.replaceChildren(near, far);
   };
   const label = (id: MenuItemId) => MENU_ITEMS.find((m) => m.id === id)?.label ?? id;
-  const iconOf: Record<MenuItemId, IconName> = { position: 'pos-top', quiet: 'moon', hide: 'eye-off', reminders: 'bell', workspaces: 'grid', activities: 'pulse' };
+  const iconOf: Record<MenuItemId, IconName> = { position: 'pos-top', quiet: 'moon', hide: 'eye-off', fade: 'eye-off', reminders: 'bell', workspaces: 'grid', activities: 'pulse' };
   const list = h('div', { class: 'menu-editor', role: 'list' });
   const commit = () => {
     i.menuOrder = normalizeMenuOrder([...list.children].map((r) => (r as HTMLElement).dataset.id));

@@ -7,7 +7,7 @@ import type { Anchor } from './layout';
 import { measureText, naturalRun, verticalRun, type Measure, type Seg } from './segments';
 
 /** What the menu can hold besides Settings, which always stays: it leads back to this choice. */
-export type MenuItemId = 'position' | 'quiet' | 'hide' | 'reminders' | 'workspaces' | 'activities';
+export type MenuItemId = 'position' | 'quiet' | 'hide' | 'fade' | 'reminders' | 'workspaces' | 'activities';
 
 /** Which of them the menu shows. */
 export type MenuShown = Record<MenuItemId, boolean>;
@@ -17,19 +17,20 @@ export const MENU_ITEMS: ReadonlyArray<{ id: MenuItemId; label: string }> = [
   { id: 'position', label: 'Position' },
   { id: 'quiet', label: 'Quiet' },
   { id: 'hide', label: 'Hide' },
+  { id: 'fade', label: 'Fade' },
   { id: 'reminders', label: 'Reminders' },
   { id: 'workspaces', label: 'Workspaces' },
   { id: 'activities', label: 'Activities' },
 ];
 
 /** The whole menu, as it comes. */
-export const FULL_MENU: MenuShown = { position: true, quiet: true, hide: true, reminders: true, workspaces: true, activities: true };
+export const FULL_MENU: MenuShown = { position: true, quiet: true, hide: true, fade: true, reminders: true, workspaces: true, activities: true };
 
 /** Which items show just their icon (the name in a tip on hover) instead of icon and name. */
 export type MenuIconOnly = Record<MenuItemId, boolean>;
 
 /** As the menu always came: only Activities is a bare icon. */
-export const DEFAULT_ICON_ONLY: MenuIconOnly = { position: false, quiet: false, hide: false, reminders: false, workspaces: false, activities: true };
+export const DEFAULT_ICON_ONLY: MenuIconOnly = { position: false, quiet: false, hide: false, fade: false, reminders: false, workspaces: false, activities: true };
 
 /** As the menu always came: MENU_ITEMS' order. */
 export const DEFAULT_MENU_ORDER: MenuItemId[] = MENU_ITEMS.map((m) => m.id);
@@ -42,12 +43,24 @@ export interface MenuLook {
 
 export const DEFAULT_MENU_LOOK: MenuLook = { order: DEFAULT_MENU_ORDER, iconOnly: DEFAULT_ICON_ONLY };
 
-/** A saved order made whole: known ids once each, in their saved order, then any missing ones in MENU_ITEMS' order. */
+/** Items added after menus were first saved, and the item each comes in beside when a saved order lacks it. */
+const ADDED_AFTER: Partial<Record<MenuItemId, MenuItemId>> = { fade: 'hide' };
+
+/**
+ * A saved order made whole: known ids once each, in their saved order, then any missing ones in MENU_ITEMS' order
+ * (an item added later, like Fade, comes in right after the one it was added beside: Fade after Hide).
+ */
 export function normalizeMenuOrder(saved: unknown): MenuItemId[] {
   const known = new Set<string>(DEFAULT_MENU_ORDER);
-  const order = Array.isArray(saved) ? saved.filter((id): id is MenuItemId => typeof id === 'string' && known.has(id)) : [];
-  for (const id of DEFAULT_MENU_ORDER) if (!order.includes(id)) order.push(id);
-  return [...new Set(order)];
+  const order = [...new Set(Array.isArray(saved) ? saved.filter((id): id is MenuItemId => typeof id === 'string' && known.has(id)) : [])];
+  for (const id of DEFAULT_MENU_ORDER) {
+    if (order.includes(id)) continue;
+    const beside = ADDED_AFTER[id];
+    const at = beside ? order.indexOf(beside) : -1;
+    if (at >= 0) order.splice(at + 1, 0, id);
+    else order.push(id);
+  }
+  return order;
 }
 
 /** A saved icon-only choice made whole: true or false for every item, the default where it is missing. */
@@ -70,6 +83,8 @@ export interface MenuState {
   mac: boolean;
   /** The Reminders activity is on (its button opens its card). */
   reminders: boolean;
+  /** The island is faded and lets clicks through (the menu's Fade): its button says Show. */
+  faded?: boolean;
 }
 
 /**
@@ -114,6 +129,15 @@ export function menuSegments(shown: MenuShown, st: MenuState, look: MenuLook = D
       }
       case 'hide':
         segs.push({ t: 'button', key: 'menu/hide', icon: 'eye-off', ...named('Hide', 'Hide the island for a while'), action: 'island:hide-menu', style: 'ghost', side, prio: 2 });
+        break;
+      case 'fade':
+        // Like tapping Ctrl over the island (it fades, clicks go through), but it stays that way until Show:
+        // right-click the faded island and the menu comes back with this button saying Show (Justin's old Hide).
+        segs.push(
+          st.faded
+            ? { t: 'button', key: 'menu/fade', icon: 'eye', ...named('Show', 'Bring the island back'), action: 'island:fade', style: 'primary', side, prio: 2 }
+            : { t: 'button', key: 'menu/fade', icon: 'eye-off', ...named('Fade', 'Fade the island and let clicks through, until you right-click it and press Show'), action: 'island:fade', style: 'ghost', side, prio: 2 },
+        );
         break;
       case 'reminders':
         segs.push({ t: 'button', key: 'menu/reminders', icon: 'bell', ...named('Reminders', 'Reminders and notes'), action: 'island:reminders', side, style: 'secondary', prio: 1 });
