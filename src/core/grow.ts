@@ -83,7 +83,7 @@ export function carryFades(r: number): { old: number; new: number; pill: number;
   // click frame (Justin's real-screen test, 2026-11-14).
   // The bar's glass and its content come back close together: the glass on its own read as an empty
   // bar popping in above the card for a frame or two.
-  return { old: 1 - smooth(r, 0, 0.42), new: smooth(r, 0.05, 0.47), pill: smooth(r, 0.4, 0.85), glass: smooth(r, 0.35, 0.7) };
+  return { old: 1 - smooth(r, 0, 0.42), new: smooth(r, 0.05, 0.47), pill: smooth(r, 0.35, 0.8), glass: smooth(r, 0.35, 0.7) };
 }
 
 /**

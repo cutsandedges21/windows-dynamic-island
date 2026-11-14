@@ -237,8 +237,8 @@ describe('a grown card carried on into the open island (and back)', () => {
     expect(carryFades(0.3).glass).toBe(0);
     expect(carryFades(0.6).glass).toBeGreaterThan(carryFades(0.6).pill);
     // The pill's content stays out until the card has mostly slid off it, and the old content is gone first.
-    expect(carryFades(0.4).pill).toBe(0);
-    expect(slideCurve(0.4)).toBeGreaterThan(0.85);
+    expect(carryFades(0.35).pill).toBe(0);
+    expect(slideCurve(0.35)).toBeGreaterThan(0.8);
     expect(carryFades(0.5).old).toBe(0);
     // The bar's glass is never there on its own for long: its content is on its way in by the time the glass is a third back.
     for (let r = 0; r <= 1.0001; r += 0.01) if (carryFades(r).glass < 0.999) expect(carryFades(r).glass - carryFades(r).pill).toBeLessThan(0.4);
