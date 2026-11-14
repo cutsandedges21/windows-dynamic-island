@@ -199,7 +199,7 @@ export class Island {
       },
     );
     // The light is drawn above the pill and the card, not inside them, so it can spill over their edges.
-    this.pillGlow = new BorderGlow(stage);
+    this.pillGlow = new BorderGlow(stage, null, 'of-pill');
     this.bubble = new BubbleView(stage, { interactive: true, onClick: () => this.handleAction('island:bot', null, this.bubble.el) });
     this.chat = new ChatBar(stage, (action, arg) => this.chatAction(action, arg), () => this.publishHit(this.renderer.rect, true));
     this.cardGlow = new BorderGlow(stage, 24);

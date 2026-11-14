@@ -68,9 +68,10 @@ export class BorderGlow {
   constructor(
     layer: HTMLElement,
     private readonly radius: number | null = null,
+    kind = '',
   ) {
     this.el = document.createElement('div');
-    this.el.className = 'glow';
+    this.el.className = kind ? `glow ${kind}` : 'glow';
     this.el.setAttribute('aria-hidden', 'true');
     this.el.style.display = 'none';
     this.halo = this.ring('halo', HALO_W);

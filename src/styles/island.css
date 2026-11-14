@@ -894,6 +894,10 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
   mask-composite: exclude;
 }
 .glow .halo { inset: calc(var(--w) * -0.6); opacity: 0.4; filter: blur(1.5px); }
+/* The pill's ring comes back with the pill's glass as a grown card carries on into the open island
+   (sheet.ts carryFades): on at once, it drew an empty pill outline over the card on the click frame. */
+.glow.of-pill .core { opacity: var(--pill-glass, 1); }
+.glow.of-pill .halo { opacity: calc(0.4 * var(--pill-glass, 1)); }
 
 /* the turning cone: bright head, tail fading out behind it */
 .glow .ring i {
