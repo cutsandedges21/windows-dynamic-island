@@ -239,6 +239,16 @@ body {
 .ph-stage .sb-head .hb .sbtn { height: 38px; border-radius: 19px; padding: 0 16px; font-size: 14px; }
 .ph-stage .sb-buttons .sbtn.icon-only,
 .ph-stage .sb-head .hb .sbtn.icon-only { width: 38px; padding: 0; }
+/* Arranging Control Center: the grid fills the card and a finger on a tile carries it, so the card
+   can't be scrolled down to Done. Reset layout and Done stay at the card's foot, over the grid. */
+.ph-stage .sb-tiles.editing ~ .sb-buttons { position: sticky; bottom: 0; z-index: 2; }
+.ph-stage .sb-tiles.editing ~ .sb-buttons .sbtn { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); }
+.ph-stage .sb-tiles.editing ~ .sb-buttons .sbtn.style-ghost {
+  background: color-mix(in srgb, var(--cut) 86%, transparent);
+  color: var(--fg);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
 .ph-stage .sb-input .ib { height: 44px; border-radius: 22px; }
 .ph-stage .sb-input .send { width: 36px; height: 36px; border-radius: 18px; }
 /* iOS zooms into any field under 16 px */
