@@ -1660,14 +1660,33 @@ export class SheetRenderer {
     if (!dots.length) return;
     const at = this.visiblePage(host);
     dots.forEach((d, i) => d.classList.toggle('on', i === at));
+    // The arrows beside the dots: none before the first page, none after the last.
+    const prev = host.querySelector<HTMLButtonElement>('.pg-prev');
+    const next = host.querySelector<HTMLButtonElement>('.pg-next');
+    if (prev) prev.disabled = at <= 0;
+    if (next) next.disabled = at >= dots.length - 1;
   }
 
-  /** One dot per page, when there is more than one. */
+  /** One dot per page, when there is more than one, between a ‹ and a › that turn the page. */
   private syncDots(host: HTMLElement, pages: number): void {
     const dotsEl = host.querySelector<HTMLElement>('.dots')!;
     const want = pages > 1 ? pages : 0;
-    if (dotsEl.children.length !== want) {
+    if (dotsEl.querySelectorAll('.dot').length !== want) {
       dotsEl.replaceChildren();
+      const arrow = (dir: -1 | 1) => {
+        const b = make('button', dir < 0 ? 'pg pg-prev' : 'pg pg-next');
+        b.type = 'button';
+        b.title = dir < 0 ? 'Previous page' : 'Next page';
+        b.setAttribute('aria-label', b.title);
+        b.innerHTML = icon(dir < 0 ? 'chevron-left' : 'chevron-right');
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const to = this.visiblePage(host) + dir;
+          if (to >= 0 && to < want) this.goToPage(host, to);
+        });
+        return b;
+      };
+      if (want) dotsEl.append(arrow(-1));
       for (let i = 0; i < want; i++) {
         const dot = make('button', 'dot');
         dot.type = 'button';
@@ -1678,6 +1697,7 @@ export class SheetRenderer {
         });
         dotsEl.append(dot);
       }
+      if (want) dotsEl.append(arrow(1));
     }
     this.markPage(host);
   }

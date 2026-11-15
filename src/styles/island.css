@@ -1358,7 +1358,14 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
   gap: 8px;
   align-content: start;
 }
-.sb-tiles .dots { display: flex; justify-content: center; gap: 6px; height: 8px; }
+.sb-tiles .dots { display: flex; justify-content: center; align-items: center; gap: 6px; height: 18px; }
+/* ‹ and › either side of the dots: turn the page with a click (Justin). */
+.sb-tiles .pg { width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: rgba(var(--ink), 0.55); display: grid; place-items: center; cursor: pointer; transition: color 0.15s ease, background-color 0.15s ease, opacity 0.15s ease; }
+.sb-tiles .pg .ico { width: 13px; height: 13px; }
+.sb-tiles .pg-prev { margin-right: 4px; }
+.sb-tiles .pg-next { margin-left: 4px; }
+.sb-tiles .pg:hover:not(:disabled) { color: var(--fg); background: rgba(var(--ink), 0.1); }
+.sb-tiles .pg:disabled { opacity: 0.25; cursor: default; }
 .sb-tiles .dots:empty { display: none; }
 .sb-tiles .dot {
   width: 6px;
