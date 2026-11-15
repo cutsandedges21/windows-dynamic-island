@@ -197,7 +197,7 @@ export class ExternalActivity extends BaseActivity {
     return {
       active: true,
       weight: urgent || running || Date.now() - top.at < 15000 ? 'foreground' : 'background',
-      urgent: urgent ? { key: this.urgentKey(urgent), level: 'expanded' } : null,
+      urgent: urgent ? { key: this.urgentKey(urgent), level: 'expanded', ask: urgent.ask !== null } : null,
       summary: clip(top.text ? `${top.title}: ${top.text}` : top.title, 60),
     };
   }

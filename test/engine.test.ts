@@ -228,6 +228,9 @@ describe('priority', () => {
     expect(choosePrimary([music, battery], { selected: null, surfaces, now: 1000, dnd: true }).primary).toBe('music');
     const noInterrupt = cand('timer', { urgent: { key: 'done', level: 'maximum' } }, 'low', 5, { interrupt: false });
     expect(choosePrimary([music, noInterrupt], { selected: null, surfaces: [], now: 1000, dnd: false }).urgent).toBe(false);
+    // A program waiting on the card's buttons (island-hook ask) takes the island all the same.
+    const asking = cand('external', { urgent: { key: 'ext:fw:1', level: 'expanded', ask: true } }, 'low', 5, { interrupt: false });
+    expect(choosePrimary([music, asking], { selected: null, surfaces: [], now: 1000, dnd: false })).toMatchObject({ primary: 'external', urgent: true });
   });
 });
 

@@ -55,14 +55,12 @@ export function choosePrimary(
   const surfacedIds = new Set(surfaces.map((s) => s.id));
   // Busy activities that are not persistent still show, as a chip beside the pill's
   // own content; only persistent ones (or events, urgency, a pick) take the pill itself.
-  const visible = byRank.filter(
-    (c) => c.config.persistent || surfacedIds.has(c.id) || (c.status.urgent && c.config.interrupt) || c.status.weight === 'foreground',
-  );
+  const visible = byRank.filter((c) => c.config.persistent || surfacedIds.has(c.id) || interrupts(c) || c.status.weight === 'foreground');
 
   // A chip-only activity (Land's icon) is a chip whatever has the pill: scrolling never lands on it.
   const ranked = visible.filter((c) => !c.status.chipOnly).map((c) => c.id);
 
-  const urgent = byRank.find((c) => c.status.urgent && c.config.interrupt);
+  const urgent = byRank.find(interrupts);
   if (urgent) return { primary: urgent.id, surfaced: null, urgent: true, visible: order(visible, urgent.id), ranked };
 
   const newest = [...surfaces].sort((a, b) => b.at - a.at)[0];
@@ -75,6 +73,11 @@ export function choosePrimary(
   // A chip-only activity (Land's icon) never takes the pill: it sits beside whatever does, or alone.
   const top = visible.find((c) => c.config.persistent && !c.status.chipOnly);
   return { primary: top?.id ?? null, surfaced: null, urgent: false, visible: order(visible, top?.id ?? null), ranked };
+}
+
+/** Urgent and allowed to take the island: Interrupt on, or a program waiting on its buttons (urgent.ask). */
+function interrupts(c: Candidate): boolean {
+  return !!c.status.urgent && (c.config.interrupt || c.status.urgent.ask === true);
 }
 
 function order(list: Candidate[], first: string | null): string[] {

@@ -18,8 +18,12 @@ export interface ActivityStatus {
   active: boolean;
   /** foreground: happening right now (music playing, Claude working). background: present but quiet. */
   weight?: 'foreground' | 'background';
-  /** Wants the island now (a permission request, a finished timer). */
-  urgent?: { key: string; level?: Level } | null;
+  /**
+   * Wants the island now (a permission request, a finished timer). It takes it when the activity's
+   * Interrupt is on; `ask`: a program is waiting for a button on this card (the activity API's
+   * `island-hook.exe ask`), so it takes it with Interrupt off too.
+   */
+  urgent?: { key: string; level?: Level; ask?: boolean } | null;
   /** One line for the overflow list, chips and the tray. */
   summary?: string;
   /**

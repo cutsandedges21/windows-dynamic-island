@@ -175,11 +175,12 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
     let _ = app.emit_to(ISLAND, if ask { "external-activity" } else { "hook" }, payload);
 
     // Claude Code may stop waiting first (Esc, an answer typed in the terminal,
-    // its own timeout): island-hook dies, the pipe closes, and the card must go.
+    // its own timeout), and so may an ask's sender (it ends its island-hook): island-hook
+    // dies, the pipe closes, and the card must go.
     let answer = tokio::select! {
         a = wait_for_answer(&id, &mut rx, limit, window) => a,
         _ = closed_by_client(&mut pipe) => {
-            crate::log::line(format!("hook id={id}: Claude Code stopped waiting"));
+            crate::log::line(format!("hook id={id}: {} stopped waiting", if ask { "the sender" } else { "Claude Code" }));
             None
         }
     };

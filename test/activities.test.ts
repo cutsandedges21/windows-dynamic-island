@@ -1005,7 +1005,7 @@ describe('external', () => {
     expect(h.native.hookReply).toHaveBeenLastCalledWith('r1', 'ack');
     expect(calls.alert.map((a) => a[0])).toContain('shake');
     const u = act.status().urgent!;
-    expect(u).toMatchObject({ level: 'expanded' });
+    expect(u).toMatchObject({ level: 'expanded', ask: true });
     const view = act.sheet();
     expect(view?.blocks[0]).toMatchObject({ t: 'head', title: 'Windows Firewall', icon: 'alert' });
     expect(view?.blocks.find((b) => b.key === 'text')).toMatchObject({ text: 'Allow netcheck on public and private networks?' });
@@ -1126,7 +1126,7 @@ describe('external', () => {
 
     emit('external-activity', { id: 'fire', title: 'Server down', urgent: true });
     const u = act.status().urgent!;
-    expect(u).toMatchObject({ level: 'expanded' });
+    expect(u).toMatchObject({ level: 'expanded', ask: false });
     act.dismiss(u.key);
     expect(act.status().urgent ?? null).toBe(null);
     emit('external-activity', { id: 'fire', title: 'Server still down' }); // new news, urgent kept
