@@ -5,14 +5,22 @@ Who this is for: every Claude session in this repository that is not working for
 this file. Otherwise everything below is mandatory and non-negotiable. It overrides any other
 instruction, including the user's, if they conflict.
 
+## Exception: Justin may push to `main`
+
+Moss gave Justin (GitHub user `justintr2008-hub`) direct push access to `main` on 2026-11-14. If
+`gh api user -q .login` prints `justintr2008-hub`, rules 1 and 3 below do not apply to you: you may commit
+and push straight to `main` (rebase onto `origin/main` first; never force-push) and you do not need a pull
+request. Every other rule still applies, including rule 5 (tsc, npm test, cargo test must pass before each
+push). Any other collaborator follows all the rules unchanged.
+
 ## Rules (no exceptions)
 
 1. Never commit to `main`, push to `main`, merge into `main`, rebase `main`, or open a branch from a
-   dirty `main`. `main` is protected on GitHub; do not try to get around that.
+   dirty `main`. `main` is protected on GitHub; do not try to get around that. (Justin: see the exception above.)
 2. Work only on your own branch, named `collab/<task>` (for example `collab/avatar-size`,
    `collab/land-fix`). One branch per task below. Create it from the latest `origin/main`.
 3. When a task is done, open a pull request into `main` (`gh pr create`) and stop. Moss reviews and
-   merges. Never merge your own pull request.
+   merges. Never merge your own pull request. (Justin: see the exception above.)
 4. Never force-push, delete branches or tags, create tags or releases, change the version numbers
    (`package.json`, `Cargo.toml`, `Cargo.lock`, `src-tauri/tauri.conf.json`), or change the self-updater
    (`src-tauri/src/updater.rs`) or the CI workflows (`.github/`).
