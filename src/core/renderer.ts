@@ -216,14 +216,17 @@ export class PillRenderer {
     this.holdTimer = setTimeout(() => this.release(), ms);
   }
 
-  /** Lets a held pill go: it is at once what it was last asked to be. */
-  release(): void {
+  /**
+   * Lets a held pill go: it is what it was last asked to be, at once (`seen` false: it is under a
+   * card) or on its usual springs (it is in plain sight).
+   */
+  release(seen = false): void {
     clearTimeout(this.holdTimer);
     const held = this.held;
     if (!held) return;
     this.held = null;
-    if (held.shell) this.setShell(held.shell, { immediate: true });
-    if (held.render) this.render(...held.render, { immediate: true });
+    if (held.shell) this.setShell(held.shell, { immediate: !seen });
+    if (held.render) this.render(...held.render, { immediate: !seen });
   }
 
   /** A card grown out of the pill stands in for it (see PillCover); the styles do the fading. */
@@ -232,6 +235,10 @@ export class PillRenderer {
     this.pill.classList.toggle('covered', cover === 'grown' || cover === 'shrinking');
     this.pill.classList.toggle('cover-out', cover === 'grown');
     this.pill.classList.toggle('uncover', cover === 'uncovering');
+    // Held for a carry back into a grown card: let go the moment that carry is over, not on the
+    // clock. Covered by the card by then, it is at once what it should be (the card may already be
+    // going back into it: the pointer left). Cut short with the pill in plain sight, it springs there.
+    if (was && cover !== 'uncovering') this.release(cover === 'off');
     if (was && cover === 'off') {
       // Whole again after a carry: its shadow fades back in (island.css .pill.settle).
       this.pill.classList.add('settle');
