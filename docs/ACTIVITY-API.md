@@ -57,3 +57,21 @@ A typical job is three messages with the same `id`:
 - `ms` counts from the message that carries it; a message without `ms` leaves the running timer alone.
 - Up to 10 items are kept. The most recently updated one is shown, with a `+N` for the others. The oldest is dropped past 10.
 - Invalid JSON, a missing `id` and unsafe `url` values are ignored without an error.
+
+## Asking with buttons
+
+`island-hook.exe ask` takes the same JSON plus `buttons`, shows a card with them that holds the island open (it shakes, like `urgent`), and waits. When a button is pressed, on the PC or on a paired phone, it prints that button's `id` on one line and exits 0. It prints nothing and exits 0 when nobody answers within 30 minutes, when the item is ended (`state: end` under the same `id`), or when Island is closed. Bad JSON or bad buttons: exit code 2.
+
+```powershell
+'{"id":"deploy","title":"Deploy to production?","text":"12 files changed","icon":"cloud","buttons":[{"id":"no","label":"Not now"},{"id":"go","label":"Deploy","primary":true}]}' |
+  & "$env:LOCALAPPDATA\Island\bin\island-hook.exe" ask
+```
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `buttons` | array | 1 to 3 `{ "id", "label", "primary" }`. `id`: letters, digits, `-` and `_`, up to 40, each different. `label`: up to 24 characters. `primary: true` (one button at most) draws it as the main button. |
+
+- To take the question back (it was answered somewhere else), end the `island-hook.exe ask` process: its card goes at once.
+- Tapping the card away only lets the island close: the question still waits, and its card shows again when you point at the item.
+- Asking again under the same `id` replaces the question; the earlier `ask` prints nothing.
+- The primary button counts as an Allow: while Windows Hello is asked before Allow (Claude's options), a phone neither sees nor presses it, as with Claude's Allow.

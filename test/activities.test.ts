@@ -29,7 +29,7 @@ import { CallsActivity } from '../src/activities/calls';
 import { ClipboardActivity } from '../src/activities/clipboard';
 import { DevicesActivity } from '../src/activities/devices';
 import { DownloadsActivity } from '../src/activities/downloads';
-import { ExternalActivity } from '../src/activities/external';
+import { ExternalActivity, readButtons } from '../src/activities/external';
 import { NetworkActivity } from '../src/activities/network';
 import { QuickActivity } from '../src/activities/quick';
 import { ScreenshotsActivity } from '../src/activities/screenshots';
@@ -970,6 +970,106 @@ describe('devices', () => {
 });
 
 describe('external', () => {
+  const fw = (over: Record<string, unknown> = {}) => ({
+    island: 'ask',
+    request_id: 'r1',
+    id: 'fw',
+    title: 'Windows Firewall',
+    text: 'Allow netcheck on public and private networks?',
+    icon: 'alert',
+    buttons: [
+      { id: 'cancel', label: 'Cancel' },
+      { id: 'allow', label: 'Allow', primary: true },
+    ],
+    ...over,
+  });
+  const answerButtons = (v: ReturnType<ExternalActivity['sheet']>) => v?.blocks.find((b) => b.key === 'answer');
+
+  it('reads 1 to 3 named buttons with one primary at most', () => {
+    expect(readButtons([{ id: 'a', label: 'A', primary: true }, { id: 'b', label: 'B', primary: true }])).toEqual([
+      { id: 'a', label: 'A', primary: true },
+      { id: 'b', label: 'B', primary: false },
+    ]);
+    expect(readButtons([])).toBe(null);
+    expect(readButtons([{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }, { id: 'd', label: 'D' }])).toBe(null);
+    expect(readButtons([{ id: 'a b', label: 'A' }])).toBe(null);
+    expect(readButtons([{ id: 'a', label: '  ' }])).toBe(null);
+    expect(readButtons([{ id: 'a', label: 'A' }, { id: 'a', label: 'B' }])).toBe(null);
+    expect(readButtons('allow')).toBe(null);
+  });
+
+  it('holds the island open on a question and sends back the button pressed', async () => {
+    h.native.hookReply = vi.fn(async () => true);
+    const { act, calls } = await boot(new ExternalActivity());
+    emit('external-activity', fw());
+    expect(h.native.hookReply).toHaveBeenLastCalledWith('r1', 'ack');
+    expect(calls.alert.map((a) => a[0])).toContain('shake');
+    const u = act.status().urgent!;
+    expect(u).toMatchObject({ level: 'expanded' });
+    const view = act.sheet();
+    expect(view?.blocks[0]).toMatchObject({ t: 'head', title: 'Windows Firewall', icon: 'alert' });
+    expect(view?.blocks.find((b) => b.key === 'text')).toMatchObject({ text: 'Allow netcheck on public and private networks?' });
+    expect(answerButtons(view)).toMatchObject({
+      t: 'buttons',
+      items: [
+        { key: 'cancel', label: 'Cancel', action: 'answer', arg: { id: 'fw', button: 'cancel' }, style: 'secondary' },
+        { key: 'allow', label: 'Allow', action: 'confirm', arg: { id: 'fw', button: 'allow' }, style: 'primary' },
+      ],
+    });
+    smoke(act, 'external');
+
+    // Allow only as `confirm` (what a phone's Windows Hello guard blocks), and only buttons it was given.
+    act.action('answer', { id: 'fw', button: 'allow' });
+    act.action('confirm', { id: 'fw', button: 'cancel' });
+    act.action('confirm', { id: 'fw', button: 'rm' });
+    expect(h.native.hookReply).toHaveBeenCalledTimes(1);
+    act.action('confirm', { id: 'fw', button: 'allow' });
+    expect(h.native.hookReply).toHaveBeenLastCalledWith('r1', JSON.stringify({ kind: 'button', id: 'allow' }));
+    expect(act.sheet()).toBe(null);
+    expect(act.status().active).toBe(false);
+  });
+
+  it('lets a question go when its sender stops asking, ends it, or asks again', async () => {
+    h.native.hookReply = vi.fn(async () => true);
+    const { act } = await boot(new ExternalActivity());
+    emit('external-activity', fw());
+    emit('hook-expired', { request_id: 'someone-else' });
+    expect(act.sheet()).not.toBe(null);
+    emit('hook-expired', { request_id: 'r1' });
+    expect(act.sheet()).toBe(null);
+    expect(act.status().active).toBe(false);
+
+    emit('external-activity', fw({ request_id: 'r2' }));
+    emit('external-activity', fw({ request_id: 'r3', text: 'Again' }));
+    expect(h.native.hookReply).toHaveBeenCalledWith('r2', 'decline');
+    expect(act.sheet()?.key).toBe('ext-ask:r3');
+    emit('external-activity', { id: 'fw', state: 'end' });
+    expect(h.native.hookReply).toHaveBeenLastCalledWith('r3', 'decline');
+    expect(act.sheet()).toBe(null);
+
+    // Bad buttons: no card, and the sender stops waiting at once.
+    emit('external-activity', fw({ request_id: 'r4', buttons: [] }));
+    expect(h.native.hookReply).toHaveBeenLastCalledWith('r4', 'decline');
+    expect(act.status().active).toBe(false);
+    // A plain item never has a card.
+    emit('external-activity', { id: 'build', title: 'Build' });
+    expect(act.sheet()).toBe(null);
+  });
+
+  it('keeps a tapped-away question waiting, and its card one hover away', async () => {
+    h.native.hookReply = vi.fn(async () => true);
+    const { act } = await boot(new ExternalActivity());
+    emit('external-activity', fw());
+    act.dismiss(act.status().urgent!.key);
+    expect(act.status().urgent ?? null).toBe(null);
+    expect(act.status().active).toBe(true);
+    expect(answerButtons(act.sheet())).toBeTruthy();
+    expect(act.claimsHover()).toBe(true);
+    act.action('answer', { id: 'fw', button: 'cancel' });
+    expect(h.native.hookReply).toHaveBeenLastCalledWith('r1', JSON.stringify({ kind: 'button', id: 'cancel' }));
+    expect(act.claimsHover()).toBe(false);
+  });
+
   it('keeps items by id, merges updates, validates fields and expires', async () => {
     const { act, calls } = await boot(new ExternalActivity());
     emit('external-activity', { island: 'activity', id: 'build', title: 'Build', text: 'Compiling', icon: 'hourglass', progress: null, url: 'https://ci.example.com/1' });

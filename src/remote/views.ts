@@ -7,8 +7,11 @@ import type { ActivityStatus } from '../core/activity';
 import type { MirrorFrame } from '../core/mirror';
 import type { Block, HubMenuRow, HubPill, SheetButton, SheetRow, SheetView, TileBody } from '../core/sheet';
 
-/** Claude's Allow: with Windows Hello asked before Allow, phones never get it or press it. */
-export const HELLO_GUARDED: readonly string[] = ['act:claude:allow'];
+/**
+ * Allow buttons: Claude's, and an activity API question's primary button (Popup Alert's Allow on
+ * Windows Firewall's prompt). With Windows Hello asked before Allow, phones never get them or press them.
+ */
+export const HELLO_GUARDED: readonly string[] = ['act:claude:allow', 'act:external:confirm'];
 
 /**
  * Buttons that only make sense at the PC: System Controls' Screenshot and Record open Snipping

@@ -4,6 +4,7 @@
 //!   island-hook <EventName>      hook mode: JSON on stdin → \\.\pipe\island-<sid>
 //!   island-hook inject <pid>     types stdin + Enter into that process's console
 //!   island-hook activity         forwards a JSON activity (stdin) to the island
+//!   island-hook ask              the same with buttons; prints the id of the one pressed
 //!
 //! Hard rule: never block Claude Code.
 //! * No pipe (Island is closed) → exit 0 at once with nothing on stdout.
@@ -31,6 +32,10 @@ const DECISION_BUDGET: Duration = Duration::from_secs(110);
 /// installer gives the Stop hook 300 s, so we always let go first.
 const REPLY_BUDGET: Duration = Duration::from_secs(290);
 const MAX_REPLY_LEN: usize = 8_000;
+/// Ceiling for an activity API question (`ask`); the island lets go a few seconds sooner.
+const ASK_BUDGET: Duration = Duration::from_secs(30 * 60);
+/// An ask carries this many buttons at most.
+const MAX_BUTTONS: usize = 3;
 /// ERROR_PIPE_BUSY: every instance is serving someone else; the one error worth retrying.
 const ERROR_PIPE_BUSY: i32 = 231;
 /// Pointless to forward and possibly enormous.
@@ -96,8 +101,62 @@ fn main() {
             }
             std::process::exit(0);
         }
+        Some("ask") => {
+            let mut raw = String::new();
+            let _ = std::io::stdin().read_to_string(&mut raw);
+            let Some((line, buttons)) = ask_line(&raw) else { std::process::exit(2) };
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(talk(&line, true));
+            });
+            // Killing this process (the question no longer stands) takes the card off the island.
+            if let Ok(Some(answer)) = rx.recv_timeout(ASK_BUDGET) {
+                if let Some(id) = pressed(&answer, &buttons) {
+                    let mut out = std::io::stdout();
+                    let _ = writeln!(out, "{id}");
+                    let _ = out.flush();
+                }
+            }
+            std::process::exit(0);
+        }
         _ => hook_mode(),
     }
+}
+
+/// `ask`'s stdin made into the pipe line, with the ids of its buttons. None (exit 2): not a JSON
+/// object with an `id` and 1 to 3 buttons, each with an `id` (letters, digits, - and _) and a label.
+fn ask_line(raw: &str) -> Option<(String, Vec<String>)> {
+    let mut v = serde_json::from_str::<Value>(raw.trim_start_matches('\u{feff}')).ok()?;
+    let map = v.as_object_mut()?;
+    map.get("id").and_then(Value::as_str).filter(|s| !s.trim().is_empty())?;
+    let list = map.get("buttons").and_then(Value::as_array)?;
+    if list.is_empty() || list.len() > MAX_BUTTONS {
+        return None;
+    }
+    let mut ids = Vec::new();
+    for b in list {
+        let id = b.get("id").and_then(Value::as_str)?;
+        let label = b.get("label").and_then(Value::as_str)?;
+        let ok = !id.is_empty() && id.len() <= 40 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        if !ok || label.trim().is_empty() || ids.iter().any(|x| x == id) {
+            return None;
+        }
+        ids.push(id.to_string());
+    }
+    map.insert("island".into(), Value::String("ask".into()));
+    let mut line = v.to_string();
+    line.push('\n');
+    Some((line, ids))
+}
+
+/// The island's answer to an ask, {"kind":"button","id":…}, as the id of a button it was given.
+fn pressed(answer: &str, buttons: &[String]) -> Option<String> {
+    let v = serde_json::from_str::<Value>(answer.trim()).ok()?;
+    if v.get("kind").and_then(Value::as_str) != Some("button") {
+        return None;
+    }
+    let id = v.get("id").and_then(Value::as_str)?;
+    buttons.iter().find(|b| b.as_str() == id).cloned()
 }
 
 fn hook_mode() {
@@ -366,6 +425,31 @@ mod tests {
         let s = v["tool_input"]["content"].as_str().unwrap();
         assert!(s.len() <= MAX_FIELD_LEN + 4);
         assert!(s.ends_with('…'));
+    }
+
+    #[test]
+    fn an_ask_needs_an_id_and_named_buttons() {
+        let (line, ids) = ask_line(r#"{"id":"fw","title":"Allow?","buttons":[{"id":"allow","label":"Allow","primary":true},{"id":"cancel","label":"Cancel"}]}"#).unwrap();
+        assert_eq!(ids, vec!["allow", "cancel"]);
+        assert!(line.ends_with('\n') && line.trim().lines().count() == 1);
+        assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["island"], "ask");
+        assert!(ask_line("\u{feff}{\"id\":\"a\",\"buttons\":[{\"id\":\"ok\",\"label\":\"OK\"}]}").is_some());
+        assert!(ask_line(r#"{"id":"fw","buttons":[]}"#).is_none());
+        assert!(ask_line(r#"{"buttons":[{"id":"ok","label":"OK"}]}"#).is_none());
+        assert!(ask_line(r#"{"id":"fw","buttons":[{"id":"o k","label":"OK"}]}"#).is_none());
+        assert!(ask_line(r#"{"id":"fw","buttons":[{"id":"ok","label":" "}]}"#).is_none());
+        assert!(ask_line(r#"{"id":"fw","buttons":[{"id":"ok","label":"A"},{"id":"ok","label":"B"}]}"#).is_none());
+        assert!(ask_line(r#"{"id":"fw","buttons":[{"id":"a","label":"A"},{"id":"b","label":"B"},{"id":"c","label":"C"},{"id":"d","label":"D"}]}"#).is_none());
+        assert!(ask_line("not json").is_none());
+    }
+
+    #[test]
+    fn only_a_given_button_is_printed() {
+        let ids = vec!["allow".to_string(), "cancel".to_string()];
+        assert_eq!(pressed(r#"{"kind":"button","id":"cancel"}"#, &ids).as_deref(), Some("cancel"));
+        assert_eq!(pressed(r#"{"kind":"button","id":"rm-rf"}"#, &ids), None);
+        assert_eq!(pressed("allow", &ids), None);
+        assert_eq!(pressed(r#"{"kind":"reply","text":"allow"}"#, &ids), None);
     }
 
     #[test]

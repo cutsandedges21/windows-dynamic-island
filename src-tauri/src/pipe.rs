@@ -4,7 +4,8 @@
 // forwarded to the island as `hook`; lines marked {"island":"activity"} become
 // `external-activity` (the activity API for other programs). PermissionRequest,
 // Stop and AskUserQuestion's PreToolUse keep their connection open until the
-// island answers.
+// island answers, and so does {"island":"ask"} (the activity API's question with
+// buttons, `island-hook ask`), which also goes to the island as `external-activity`.
 //
 // Claude Code is never blocked by us:
 //   * island-hook gives the connection 300 ms and exits cleanly if we are closed;
@@ -39,6 +40,8 @@ const DECISION_TIMEOUT: Duration = Duration::from_secs(108);
 const REPLY_MAX: Duration = Duration::from_secs(280);
 /// Reply window when the island acknowledges a Stop without naming one.
 const REPLY_DEFAULT: Duration = Duration::from_secs(45);
+/// An activity API question waits this long at most (island-hook's ask gives up at 30 min).
+const ASK_TIMEOUT: Duration = Duration::from_secs(29 * 60 + 50);
 /// How long the island gets to say "the card is up".
 const ACK_TIMEOUT: Duration = Duration::from_millis(900);
 const MAX_PAYLOAD: usize = 1 << 20;
@@ -143,32 +146,33 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
     if !payload.is_object() {
         return;
     }
-    if payload.get("island").and_then(Value::as_str) == Some("activity") {
+    let island = payload.get("island").and_then(Value::as_str).unwrap_or_default().to_string();
+    if island == "activity" {
         let _ = app.emit_to(ISLAND, "external-activity", payload);
         let _ = pipe.disconnect();
         return;
     }
+    let ask = island == "ask";
     let event = payload.get("hook_event_name").and_then(Value::as_str).unwrap_or_default().to_string();
     let session: String = payload.get("session_id").and_then(Value::as_str).unwrap_or("").chars().take(8).collect();
     let tool = payload.get("tool_name").and_then(Value::as_str).unwrap_or_default().to_string();
-    let (limit, window) = match (event.as_str(), tool.as_str()) {
-        // A question waits in the island before Claude Code asks it (see island-hook's waits_for).
-        ("PermissionRequest", _) | ("PreToolUse", "AskUserQuestion") => (DECISION_TIMEOUT, DECISION_TIMEOUT),
-        ("Stop", _) => (REPLY_MAX, REPLY_DEFAULT),
-        _ => {
-            crate::log::line(format!("hook {event} session={session}"));
-            let _ = app.emit_to(ISLAND, "hook", payload);
-            let _ = pipe.disconnect();
-            return;
-        }
+    let Some((limit, window)) = waits(&island, &event, &tool) else {
+        crate::log::line(format!("hook {event} session={session}"));
+        let _ = app.emit_to(ISLAND, "hook", payload);
+        let _ = pipe.disconnect();
+        return;
     };
 
     let id = format!("{}-{}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
     let (tx, mut rx) = mpsc::channel::<Reply>(16);
     app.state::<Pending>().0.lock().unwrap().insert(id.clone(), tx);
     payload["request_id"] = json!(id);
-    crate::log::line(format!("hook {event} id={id} session={session} tool={}", payload.get("tool_name").and_then(Value::as_str).unwrap_or("-")));
-    let _ = app.emit_to(ISLAND, "hook", payload);
+    if ask {
+        crate::log::line(format!("ask id={id} item={}", payload.get("id").and_then(Value::as_str).unwrap_or("-")));
+    } else {
+        crate::log::line(format!("hook {event} id={id} session={session} tool={}", payload.get("tool_name").and_then(Value::as_str).unwrap_or("-")));
+    }
+    let _ = app.emit_to(ISLAND, if ask { "external-activity" } else { "hook" }, payload);
 
     // Claude Code may stop waiting first (Esc, an answer typed in the terminal,
     // its own timeout): island-hook dies, the pipe closes, and the card must go.
@@ -191,6 +195,21 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
         }
     }
     let _ = pipe.disconnect();
+}
+
+/// How long a connection may wait for the island's answer (the whole limit, and the window an
+/// `ack` without a length gives), or None when nothing waits: the line is only news.
+/// A question waits in the island before Claude Code asks it (see island-hook's waits_for);
+/// an activity API question (`island-hook ask`) waits as long as its sender keeps asking.
+fn waits(island: &str, event: &str, tool: &str) -> Option<(Duration, Duration)> {
+    if island == "ask" {
+        return Some((ASK_TIMEOUT, ASK_TIMEOUT));
+    }
+    match (event, tool) {
+        ("PermissionRequest", _) | ("PreToolUse", "AskUserQuestion") => Some((DECISION_TIMEOUT, DECISION_TIMEOUT)),
+        ("Stop", _) => Some((REPLY_MAX, REPLY_DEFAULT)),
+        _ => None,
+    }
 }
 
 /// Resolves when island-hook's end of the pipe goes away. It sends nothing
@@ -306,6 +325,18 @@ pub fn hook_reply(app: AppHandle, request_id: String, reply: String) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_questions_keep_their_connection() {
+        assert_eq!(waits("ask", "", ""), Some((ASK_TIMEOUT, ASK_TIMEOUT)));
+        assert_eq!(waits("", "PermissionRequest", "Bash"), Some((DECISION_TIMEOUT, DECISION_TIMEOUT)));
+        assert_eq!(waits("", "PreToolUse", "AskUserQuestion"), Some((DECISION_TIMEOUT, DECISION_TIMEOUT)));
+        assert_eq!(waits("", "Stop", ""), Some((REPLY_MAX, REPLY_DEFAULT)));
+        assert_eq!(waits("", "PreToolUse", "Bash"), None);
+        assert_eq!(waits("", "Notification", ""), None);
+        // A button's answer comes back as one JSON line.
+        assert!(matches!(parse_reply(r#"{"kind":"button","id":"allow"}"#), Reply::Answer(ref a) if a.contains("\"button\"")));
+    }
 
     #[test]
     fn replies_parse_into_island_words() {

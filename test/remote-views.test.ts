@@ -105,6 +105,26 @@ describe('Allow held back from phones', () => {
     expect(stripActions(card, new Set())).toBe(card);
   });
 
+  it("takes an activity API question's Allow (its primary button) and leaves its Cancel", () => {
+    const ask: SheetView = {
+      key: 'ext-ask:r1',
+      blocks: [
+        { t: 'head', key: 'h', title: 'Windows Firewall' },
+        {
+          t: 'buttons',
+          key: 'answer',
+          items: [
+            { key: 'cancel', label: 'Cancel', action: 'act:external:answer', arg: { id: 'fw', button: 'cancel' } },
+            { key: 'allow', label: 'Allow', action: 'act:external:confirm', arg: { id: 'fw', button: 'allow' } },
+          ],
+        },
+      ],
+    };
+    const out = JSON.stringify(stripActions(ask, blocked));
+    expect(out).not.toContain('act:external:confirm');
+    expect(out).toContain('act:external:answer');
+  });
+
   it('leaves tiles and rows in place, not pressable', () => {
     const grid: SheetView = {
       key: 'g',
