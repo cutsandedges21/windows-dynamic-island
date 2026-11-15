@@ -3,7 +3,8 @@
 // BubbleView for the bot beside it (above it, upright), and SheetRenderer for the card or Control Center under it,
 // riding the pill's springs. The differences are a phone's: the pill is laid out for the
 // phone's width (pill-fit.ts), it always sits at the top, a hidden island shows faintly instead
-// of leaving (there is no edge to wake it from), and holding a tile never starts arranging.
+// of leaving (there is no edge to wake it from), and holding a tile arranges the phone's own copy
+// of Control Center in place (src/remote/grid-edit.ts GridDraft); Done sends it to the PC.
 
 import { setReducedMotion } from '../../../src/core/animator';
 import { BubbleView } from '../../../src/core/bubble';
@@ -15,6 +16,7 @@ import { PillRenderer } from '../../../src/core/renderer';
 import type { Tone } from '../../../src/core/segments';
 import { SheetRenderer, type SheetView } from '../../../src/core/sheet';
 import { springs } from '../../../src/core/spring';
+import { draftAct, draftLayout, draftOf, draftView, layoutOf, rebaseDraft, type GridDraft, type PhoneLayout } from '../../../src/remote/grid-edit';
 import type { BotState } from '../../../src/remote/protocol';
 import { maxPillWidth, phonePill, placePill } from './pill-fit';
 
@@ -22,8 +24,6 @@ export type ActionSink = (action: string, arg: unknown, source: HTMLElement) => 
 
 /** A card is this far from the screen's sides. */
 export const CARD_MARGIN = 6;
-/** Holding a tile this long would start arranging the grid on the PC (450 ms): it is cut off first. */
-const HOLD_CUTOFF_MS = 380;
 
 export class IslandView {
   readonly stage: HTMLElement;
@@ -43,8 +43,15 @@ export class IslandView {
   private lookTimer: ReturnType<typeof setTimeout> | undefined;
   /** Where the card is drawn, every frame it moves (null once it is gone). */
   onCard: (r: Rect | null) => void = () => {};
-  /** A tile in Control Center was held: the phone opens its own Edit Control Center. */
-  onHoldGrid: () => void = () => {};
+  /** Control Center arranged here: Done (or Reset layout) sends this to the PC. */
+  onSaveGrid: (l: PhoneLayout) => void = () => {};
+  /** Control Center being arranged (a tile was held), drawn instead of the PC's grid until Done. */
+  private draft: GridDraft | null = null;
+  /** Reset layout was sent: the next grid from the PC is the new starting point. */
+  private rebase = false;
+  private redrawQueued = false;
+  /** The finger now down began on a tile while arranging: the page must not scroll under it. */
+  private onTile = false;
 
   constructor(host: HTMLElement, onAction: ActionSink) {
     this.stage = document.createElement('div');
@@ -52,7 +59,8 @@ export class IslandView {
     host.append(this.stage);
     // The island's order: pill, card, the pill's light, the bot, the card's light.
     this.renderer = new PillRenderer(this.stage, onAction);
-    this.sheet = new SheetRenderer(this.stage, onAction, () => this.cardMoved());
+    // The grid's arranging actions stay on the phone (its draft); every other action goes to the PC.
+    this.sheet = new SheetRenderer(this.stage, (action, arg, source) => (action.startsWith('island:grid-') ? this.gridAction(action, arg) : onAction(action, arg, source)), () => this.cardMoved());
     this.glow = new BorderGlow(this.stage);
     this.bubble = new BubbleView(this.stage, { interactive: false });
     this.cardGlow = new BorderGlow(this.stage, 24);
@@ -61,7 +69,7 @@ export class IslandView {
       this.sheet.follow(r);
     });
     this.stage.addEventListener('pointerdown', (e) => this.lookAt(e), { passive: true });
-    this.guardHold();
+    this.guardScroll();
     this.measure();
   }
 
@@ -140,12 +148,19 @@ export class IslandView {
   /** What goes under the pill, from `{t:'view'}`; `urgent` lights its edge in the tone given. */
   drawView(view: SheetView | null, urgent: Tone | null): void {
     this.view = view;
+    if (this.draft) {
+      if (this.rebase) {
+        // After Reset layout: arranging goes on from the PC's fresh layout.
+        this.rebase = false;
+        this.draft = draftOf(view);
+      } else if (!rebaseDraft(this.draft, view)) this.draft = null;
+    }
     this.urgent = view ? urgent : null;
     this.showView(false);
   }
 
   private showView(immediate: boolean): void {
-    const v = this.view;
+    const v = this.draft ? draftView(this.draft, true) : this.view;
     const width = Math.max(200, Math.min(v?.width ?? Infinity, this.room.width - CARD_MARGIN * 2));
     const top = this.pillAt.y + this.pillAt.h + 8;
     const room = Math.max(160, this.room.height - top - this.reserve - CARD_MARGIN);
@@ -178,27 +193,72 @@ export class IslandView {
     this.lookTimer = setTimeout(() => this.bubble.lookAt(null), 1400);
   }
 
+  /** Whether Control Center is being arranged. */
+  get arranging(): boolean {
+    return this.draft !== null;
+  }
+
   /**
-   * Holding a tile arranges the grid on the PC (sheet.ts wireGrid): never on a phone. The hold is
-   * cut off just before it would start, so the press stays a tap or a scroll.
+   * The grid's own arranging (sheet.ts wireGrid and its edit controls), run on the phone's draft as
+   * the island runs it on its grid: holding a tile starts it, Done sends the layout, Reset layout
+   * asks the PC for its default one.
    */
-  private guardHold(): void {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+  private gridAction(action: string, arg: unknown): void {
+    if (action === 'island:grid-edit' && !this.draft) {
+      if (this.view?.key !== 'island/grid') return;
+      this.draft = draftOf(this.view);
+      this.rebase = false;
+      this.redraw();
+      return;
+    }
+    const d = this.draft;
+    if (!d) return;
+    const did = draftAct(d, action, arg);
+    if (did === 'done') {
+      const layout = draftLayout(d);
+      this.draft = null;
+      // Shown as arranged until the PC's saved layout comes back.
+      this.view = draftView(d, false);
+      this.onSaveGrid(layout);
+    } else if (did === 'reset') {
+      this.rebase = true;
+      this.onSaveGrid({ ...layoutOf(this.view), reset: true });
+    }
+    if (did) this.redraw();
+  }
+
+  /** The grid redrawn on the next frame, as the island redraws after an action (a drop lands on it). */
+  private redraw(): void {
+    if (this.redrawQueued) return;
+    this.redrawQueued = true;
+    requestAnimationFrame(() => {
+      this.redrawQueued = false;
+      this.showView(false);
+    });
+  }
+
+  /**
+   * While arranging, a finger that went down on a tile carries it (or its corner resizes it): the
+   * card must not scroll or swipe pages under it, or the browser would take the touch away
+   * (pointercancel). The hold that starts arranging is covered too: its next moves carry the tile.
+   */
+  private guardScroll(): void {
     this.stage.addEventListener(
       'pointerdown',
       (e) => {
-        const grid = (e.target as HTMLElement).closest<HTMLElement>('.sb-tiles');
-        clearTimeout(timer);
-        if (!grid) return;
-        timer = setTimeout(() => {
-          grid.dispatchEvent(new PointerEvent('pointercancel', { pointerId: e.pointerId, bubbles: true }));
-          // The PC's edit mode would start here; the phone opens its own (screens/grid-edit.ts).
-          if (this.view?.key === 'island/grid') this.onHoldGrid();
-        }, HOLD_CUTOFF_MS);
+        const t = e.target as HTMLElement;
+        this.onTile = Boolean(t.closest('.sb-tiles .tile:not(.hidden-tile)')) && !t.closest('.tile-x, .tile-add');
       },
-      { capture: true },
+      { capture: true, passive: true },
     );
-    for (const ev of ['pointerup', 'pointercancel']) this.stage.addEventListener(ev, () => clearTimeout(timer), { capture: true });
+    this.stage.addEventListener(
+      'touchmove',
+      (e) => {
+        if (this.draft && this.onTile && e.cancelable) e.preventDefault();
+      },
+      { passive: false },
+    );
+    for (const ev of ['pointerup', 'pointercancel']) this.stage.addEventListener(ev, () => (this.onTile = false), { capture: true, passive: true });
   }
 
   destroy(): void {

@@ -550,6 +550,32 @@ describe('phone ↔ PC', () => {
     expect(r.last('toast')?.text).toBe('Control Center saved');
   });
 
+  it('saves pages and sizes the tiles were offered, refuses others, and passes Reset layout on', async () => {
+    const { r, f } = await setup([phone()]);
+    const g = grid();
+    const b = g.blocks[0];
+    if (b.t === 'tiles') {
+      b.items[0].sizes = [[2, 1], [2, 2]];
+      b.items[1].sizes = [[1, 1], [2, 1]];
+    }
+    f.grid = g;
+    r.line({ t: 'nav', open: 'grid' });
+    await flush();
+    r.line({ t: 'grid-set', order: ['music/m'], hidden: ['land/land'], sizes: { 'music/m': '1x1' } });
+    r.line({ t: 'grid-set', order: ['music/m'], hidden: ['land/land'], sizes: { 'land/land': '2x1' } });
+    r.line({ t: 'grid-set', order: ['music/m', 'land/land'], hidden: [], pages: [['music/m']] });
+    await flush();
+    expect(f.layouts).toEqual([]);
+    r.line({ t: 'grid-set', order: ['land/land', 'music/m'], hidden: [], pages: [['land/land', null], ['music/m']], sizes: { 'music/m': '2x2' } });
+    r.line({ t: 'grid-set', order: ['music/m', 'land/land'], hidden: [], reset: true });
+    await flush();
+    expect(f.layouts).toEqual([
+      { order: ['land/land', 'music/m'], hidden: [], pages: [['land/land', null], ['music/m']], sizes: { 'music/m': '2x2' } },
+      { order: ['music/m', 'land/land'], hidden: [], reset: true },
+    ]);
+    expect(r.last('toast')?.text).toBe('Control Center reset');
+  });
+
   it('refuses a layout naming a tile it was never shown, or leaving one out', async () => {
     const { r, f } = await setup([phone()]);
     r.line({ t: 'nav', open: 'grid' });

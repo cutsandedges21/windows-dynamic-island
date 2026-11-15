@@ -11,7 +11,6 @@ import { IslandView } from '../island-view';
 import type { LinkState } from '../link/api';
 import { onTap } from '../tap';
 import { button, h, ico, spinner } from '../ui';
-import { openGridEditor } from './grid-edit';
 
 type PillMsg = Extract<IslandMsg, { t: 'pill' }>;
 type ViewMsg = Extract<IslandMsg, { t: 'view' }>;
@@ -60,7 +59,6 @@ export class IslandScreen {
   private hasPill = false;
   private glowTone: Tone | null = null;
   private back = false;
-  private lastView: ViewMsg['view'] = null;
   private noteText = '';
   private ticker: ReturnType<typeof setInterval> | undefined;
   private readonly onResize = () => this.view.measure();
@@ -77,7 +75,7 @@ export class IslandScreen {
     this.hint = h('div', { class: 'ph-hint', text: 'Tap the island for Control Center' });
     this.overlay = h('div', { class: 'ph-overlay' });
     this.view.onCard = (r) => this.placeUnderCard(r);
-    this.view.onHoldGrid = () => openGridEditor(this.lastView, (l) => hooks.saveGrid(l));
+    this.view.onSaveGrid = (l) => hooks.saveGrid(l);
     this.main.append(this.hint, this.backBtn, this.note, this.overlay);
 
     const item = (label: string, iconName: string, fn: () => void, needsLink: boolean) => {
@@ -135,7 +133,6 @@ export class IslandScreen {
   draw(m: ViewMsg, back: boolean): void {
     const tone: Tone | null = m.urgent ? (m.urgent === 'claude' ? claudeUrgentTone(m.view) : (this.glowTone ?? 'accent')) : null;
     this.back = back && m.view !== null && !m.urgent;
-    this.lastView = m.view;
     this.view.drawView(m.view, tone);
     this.hint.classList.toggle('on', m.view === null && this.hasPill);
     this.layoutExtras();

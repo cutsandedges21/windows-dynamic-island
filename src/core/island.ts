@@ -1251,7 +1251,8 @@ export class Island {
       return slot ? [{ ...t, page: slot.page, col: slot.col, row: slot.row, w: slot.w, h: slot.h }] : [];
     });
     // A phone always gets the tray, to arrange from its own copy (the hub never lets it press these).
-    const tray: Tile[] = editing || !live ? sized.filter((t) => isHidden(t.key)).map((t) => ({ ...t, w: 1, h: 1, hidden: true, sizes: undefined })) : [];
+    // A phone's copy keeps each tray tile's sizes: put back there, it may be resized before Done.
+    const tray: Tile[] = editing || !live ? sized.filter((t) => isHidden(t.key)).map((t) => ({ ...t, w: 1, h: 1, hidden: true, sizes: live ? undefined : t.sizes })) : [];
     // The card is only as tall as the rows the tiles reach; editing opens every row to drag into.
     const rows = editing ? geo.rows : rowsUsed(slots);
 
@@ -1661,12 +1662,21 @@ export class Island {
       view: (nav, width) => this.phoneView(nav, width),
       act: (phone, action, arg) => this.phoneAction(phone, action, arg),
       setGrid: (l) => {
-        // The phone's tiles in its order, flowed onto pages as the grid fits them; tiles it
-        // wasn't shown (an activity off now) stay as they were.
+        // Reset layout on the phone: as on this screen (gridAction 'island:grid-reset').
+        if (l.reset) {
+          this.settings.island.grid = { order: [], sizes: {}, hidden: [], pages: [] };
+          this.saveSettings();
+          return;
+        }
+        // The phone's pages (or its tiles in order, flowed onto pages as the grid fits them) and
+        // the sizes it changed; tiles it wasn't shown (an activity off now) stay hidden as they were.
+        // An activity hidden whole ('sound') is hidden tile by tile now: the phone saw each of its tiles.
         const grid = this.settings.island.grid;
         const touched = new Set([...l.order, ...l.hidden]);
-        grid.hidden = [...grid.hidden.filter((k) => !touched.has(k)), ...l.hidden];
-        grid.pages = [l.order];
+        const touchedIds = new Set([...touched].map((k) => k.split('/')[0]));
+        grid.hidden = [...grid.hidden.filter((k) => !touched.has(k) && !(!k.includes('/') && touchedIds.has(k))), ...l.hidden];
+        grid.pages = l.pages ?? [l.order];
+        for (const [k, size] of Object.entries(l.sizes ?? {})) grid.sizes[k] = size;
         this.saveSettings();
       },
       facts: () => ({

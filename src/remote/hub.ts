@@ -9,7 +9,7 @@ import type { RemoteFile, RemotePhone } from '../core/native';
 import type { Settings } from '../core/settings';
 import type { SheetView } from '../core/sheet';
 import { MAX_VIEWS_PER_S, PHONE_ISLAND_ACTIONS, PROTOCOL_V, readPhoneMsg, type BotState, type HelloFacts, type IslandMsg, type Nav, type PrefActivity, type PrefRow, type PrefValue } from './protocol';
-import { gridSetAllowed, shownGridKeys, withoutTray, type PhoneLayout } from './grid-edit';
+import { gridSetAllowed, shownGridKeys, shownGridSizes, withoutTray, type PhoneLayout } from './grid-edit';
 import { heldPush, PhoneOutbox, setPhoneHolder, type HeldItem } from './outbox';
 import { HELLO_GUARDED, mayPress, PC_ONLY, pressables, stripActions, stripPill, type Pressables } from './views';
 
@@ -149,6 +149,8 @@ interface Session {
   viewPress: Pressables;
   /** The Control Center tiles it was last shown (grid and tray): the only ones it may arrange. */
   gridKeys: Set<string>;
+  /** The sizes each of those tiles was offered: the only ones a phone may give it. */
+  gridSizes: Map<string, Set<string>>;
   /** The last pill sent (its key and frame), and what it offered to press. */
   pillKey: string;
   pillFrame: MirrorFrame | null;
@@ -318,6 +320,7 @@ export class PhoneHub {
       viewJson: '',
       viewPress: new Map(),
       gridKeys: new Set(),
+      gridSizes: new Map(),
       pillKey: '',
       pillFrame: null,
       pillPress: new Map(),
@@ -427,6 +430,7 @@ export class PhoneHub {
     // Tiles taken off the grid are shown to put back, never to press.
     s.viewPress = pressables(withoutTray(view));
     s.gridKeys = shownGridKeys(view);
+    s.gridSizes = shownGridSizes(view);
     this.send(s, msg);
   }
 
@@ -464,7 +468,7 @@ export class PhoneHub {
       case 'sleep':
         return this.sleep(s);
       case 'grid-set':
-        return this.gridSet(s, { order: m.order, hidden: m.hidden });
+        return this.gridSet(s, { order: m.order, hidden: m.hidden, ...(m.pages ? { pages: m.pages } : {}), ...(m.sizes ? { sizes: m.sizes } : {}), ...(m.reset ? { reset: true } : {}) });
     }
   }
 
@@ -529,15 +533,15 @@ export class PhoneHub {
     this.toast(s, 'Locked', 'good');
   }
 
-  /** Control Center arranged on the phone: saved only if it names exactly the tiles it was shown. */
+  /** Control Center arranged on the phone: saved only if it names exactly the tiles it was shown, at sizes they were offered. */
   private gridSet(s: Session, l: PhoneLayout): void {
-    if (!gridSetAllowed(s.gridKeys, l)) {
+    if (!gridSetAllowed(s.gridKeys, l, s.gridSizes)) {
       this.native.log(`phone: refused a layout from ${s.name}`);
       this.toast(s, 'Control Center changed meanwhile; try again', 'bad');
       return;
     }
     this.hooks.setGrid(l);
-    this.toast(s, 'Control Center saved', 'good');
+    this.toast(s, l.reset ? 'Control Center reset' : 'Control Center saved', 'good');
   }
 
   /** Sleep: said first, since the link drops with the PC. Waking it takes the PC itself. */
