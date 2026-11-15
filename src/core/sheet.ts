@@ -630,7 +630,6 @@ export class SheetRenderer {
       return;
     }
     this.width = Math.round(geo.width);
-    this.inner.style.setProperty('--cols', this.width >= 520 ? '4' : '2');
 
     // Out of a card grown from the pill (the island opening from it): the same card carries on.
     // Into one (the island closing with the pointer on the pill): it carries on back the same way.
@@ -638,6 +637,9 @@ export class SheetRenderer {
     const morph = view.morph === true;
     const nowMorph = this.carry === 'back' || this.morph;
     const step = handOff({ shown: this.shown, morph: nowMorph, closing: this.cover === 'shrinking' }, morph, geo.immediate === true || reducedMotion());
+    // The columns for the new width: not on content a carry is about to fade out (it keeps the
+    // layout it has; the content that takes over gets its own in crossFade()).
+    if (step !== 'unmorph' && step !== 'remorph') this.inner.style.setProperty('--cols', this.width >= 520 ? '4' : '2');
     if (step === 'unmorph') this.unmorph();
     else if (step === 'remorph') this.remorph();
     else if (step === 'replace') this.hide(true);
@@ -1084,11 +1086,14 @@ export class SheetRenderer {
    * it once there, the card's box then, and the spot its content has in it, all on screen.
    */
   private carryGoal(): { shape: Rect; radius: number; box: { x: number; y: number }; inner: { x: number; y: number } } {
-    // Where the pill will be, not where its spring has got to.
-    const p = this.pillTo ?? this.pill;
+    const back = this.carry === 'back';
+    // Opening, the pill is already where it will be (island.ts puts it there at the click). Back
+    // into a grown card it is held as it was, so the card goes by where the pill will be; a grown
+    // card sits by the pill's centre and outer edge, which are the same for both, so a carry that
+    // turns round half way (a second click) does not shift what it was drawing.
+    const p = back ? (this.pillTo ?? this.pill) : this.pill;
     const { width: W, height: H } = this.area;
     const k = window.devicePixelRatio || 1;
-    const back = this.carry === 'back';
     const w = Math.max(0, this.width);
     const h = snapPx(Math.max(0, this.fitH));
     const clampX = (x: number) => Math.max(EDGE, Math.min(W - w - EDGE, x));

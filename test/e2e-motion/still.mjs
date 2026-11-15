@@ -19,7 +19,7 @@ const STILL = Number(process.env.STILL ?? 0.5);
 
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 
-async function run({ hover = true, opened = false, midGrow = false, leave = false, scale = 1.25 } = {}) {
+async function run({ hover = true, opened = false, midGrow = false, leave = false, flip = 0, scale = 1.25 } = {}) {
   const page = await browser.newPage({ deviceScaleFactor: scale, viewport: { width: 1280, height: 720 } });
   await page.goto(`${base}/`);
   await sleep(4000);
@@ -103,13 +103,18 @@ async function run({ hover = true, opened = false, midGrow = false, leave = fals
   await sleep(120);
   await page.mouse.click(at.x, at.y);
   if (leave) await page.mouse.move(40, 710, { steps: 2 });
+  // A second click while the first is still on its way: it turns round from where it got to.
+  if (flip) {
+    await sleep(flip);
+    await page.mouse.click(at.x, at.y);
+  }
   await sleep(1700);
   const rec = await page.evaluate(() => window.__still);
   await page.close();
   return rec;
 }
 
-function report(label, rec) {
+function report(label, rec, turns = false) {
   const frames = rec.frames.filter((f) => f.clicked);
   console.log(`\n== ${label}: ${frames.length} frames after the click`);
   const rows = [];
@@ -156,7 +161,9 @@ function report(label, rec) {
     worst = Math.max(worst, back);
     parts.push(`${k} ${xs[0]?.toFixed(1)}→${xs.at(-1)?.toFixed(1)} back ${back.toFixed(2)}`);
   }
-  console.log(`${worst <= 0.5 ? 'PASS' : 'FAIL'} shape edges one way only: ${parts.join(', ')}`);
+  // (A carry that turns round takes its edges back the way they came: not judged.)
+  if (turns) worst = 0;
+  else console.log(`${worst <= 0.5 ? 'PASS' : 'FAIL'} shape edges one way only: ${parts.join(', ')}`);
   // The two contents crossing over: never both clearly there (a double image), never an empty card.
   let both = 0;
   let empty = 0;
@@ -174,12 +181,14 @@ function report(label, rec) {
   return { moved: moved.length, worst: moved[0]?.span ?? 0, edge: worst, both, empty };
 }
 
-const which = (process.env.ONLY ?? 'open,midGrow,closeOn,closeOff,plain').split(',');
+const which = (process.env.ONLY ?? 'open,midGrow,closeOn,flipOpen,flipClose,closeOff,plain').split(',');
 const out = {};
 if (which.includes('open')) out.open = report('click on a grown hover card (opens the island)', await run());
 if (which.includes('midGrow')) out.midGrow = report('click while the hover card is still growing', await run({ midGrow: true }));
 if (which.includes('closeOn')) out.closeOn = report('click to close, pointer stays on the pill', await run({ opened: true }));
 if (which.includes('closeOff')) out.closeOff = report('click to close, pointer leaves', await run({ opened: true, leave: true }));
+if (which.includes('flipOpen')) out.flipOpen = report('click to open, then again 150 ms later (turns back)', await run({ flip: 150 }), true);
+if (which.includes('flipClose')) out.flipClose = report('click to close, then again 150 ms later (opens again)', await run({ opened: true, flip: 150 }), true);
 if (which.includes('plain')) out.plain = report('click with no hover card', await run({ hover: false }));
 await browser.close();
 console.log('\nSUMMARY (pieces that move | worst px | shape edge step back px | double-content frames | empty frames)');
