@@ -27,7 +27,7 @@ import { applyGlass } from './glass';
 import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type Block, type SheetChip, type SheetView, type Tile } from './sheet';
-import { chatView, flatView, GROW_MS, hoverGrows, hoverView } from './grow';
+import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
 import { tileCard } from './tilecard';
 import { pillMotion } from './spring';
 import { WheelGesture } from './wheel';
@@ -1193,8 +1193,8 @@ export class Island {
    * player, Phone's list), else Claude's stats when Settings › Hover card says so, else whatever
    * is pointed at.
    */
-  private hoverOwner(): string | null {
-    const pointed = this.ownerOf(this.hoverKey);
+  private hoverOwner(key = this.hoverKey): string | null {
+    const pointed = this.ownerOf(key);
     if (pointed && this.claims(pointed)) return pointed;
     if (this.settings.island.hoverCard === 'claude' && this.running.has('claude')) return 'claude';
     return pointed;
@@ -1807,11 +1807,23 @@ export class Island {
       if (view) return { nav, view, urgent: id };
     }
     if (nav.open === 'none') return { nav, view: null, urgent: null };
+    if (nav.open === 'hover') return { nav, view: this.phoneHover(nav.key, now, width), urgent: null };
     if (nav.open === 'card') {
       const view = card(nav.id, 'open') ?? card(nav.id, 'hover');
       if (view) return { nav, view, urgent: null };
     }
     return { nav: { open: 'grid' }, view: this.phoneGrid(now, width), urgent: null };
+  }
+
+  /**
+   * The pill held on a phone: the card pointing at `key` shows here (Settings › Hover card counted),
+   * grown out of the pill whatever the activity's Grows (grow.ts phoneHoverView). Null: that
+   * activity has no card of either kind.
+   */
+  private phoneHover(key: string | null, now: number, width: number): SheetView | null {
+    const owner = this.hoverOwner(key);
+    if (!owner) return null;
+    return phoneHoverView(this.askSheet(owner, 'hover', now, width - 28, false, null)?.view ?? null, () => this.tileCardOf(owner, now, false));
   }
 
   /** Control Center on a phone: four columns across its card, the user's pages and sizes, never arranging. */

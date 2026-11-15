@@ -49,6 +49,12 @@ describe("a phone's lines", () => {
     expect(readPhoneMsg({ t: 'nav', open: 'card', id: 'music' })).toEqual({ t: 'nav', open: 'card', id: 'music' });
     expect(readPhoneMsg({ t: 'nav', open: 'card' })).toBeNull();
     expect(readPhoneMsg({ t: 'nav', open: 'grid', width: 5 })).toEqual({ t: 'nav', open: 'grid' });
+    // The pill held: the segment under the finger, or none.
+    expect(readPhoneMsg({ t: 'nav', open: 'hover', key: 'music/art', width: 378 })).toEqual({ t: 'nav', open: 'hover', key: 'music/art', width: 378 });
+    expect(readPhoneMsg({ t: 'nav', open: 'hover', key: null })).toEqual({ t: 'nav', open: 'hover', key: null });
+    expect(readPhoneMsg({ t: 'nav', open: 'hover' })).toBeNull();
+    expect(readPhoneMsg({ t: 'nav', open: 'hover', key: '' })).toBeNull();
+    expect(readPhoneMsg({ t: 'nav', open: 'hover', key: 'x'.repeat(129) })).toBeNull();
     expect(readPhoneMsg({ t: 'act', action: 'act:music:toggle' })).toEqual({ t: 'act', action: 'act:music:toggle' });
     expect(readPhoneMsg({ t: 'act', action: 'act:timer:start', arg: { min: 25 } })).toEqual({ t: 'act', action: 'act:timer:start', arg: { min: 25 } });
     expect(readPhoneMsg({ t: 'act', action: '' })).toBeNull();

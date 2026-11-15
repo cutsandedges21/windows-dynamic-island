@@ -3,7 +3,8 @@
 // with `{t:'nav'}`; every `{t:'view'}` carries the nav the island has for this phone. A view that
 // answers an older nav (it was on its way when the user tapped) is dropped until the answer to
 // the new one arrives or NAV_SETTLE_MS pass. With nothing pending the island's word wins: an
-// action pressed on the phone can open its card there. No DOM.
+// action pressed on the phone can open its card there. Holding the pill asks for its hover card
+// (`hold`), and closing that card brings back what showed before (`unhold`). No DOM.
 
 import type { Nav, PhoneMsg } from '../../../src/remote/protocol';
 
@@ -13,14 +14,16 @@ export const NAV_SETTLE_MS = 2500;
 export const NAV_LEFT_MS = NAV_SETTLE_MS * 4;
 
 export function sameNav(a: Nav, b: Nav): boolean {
-  if (a.open !== b.open) return false;
-  return a.open !== 'card' || (b.open === 'card' && a.id === b.id);
+  if (a.open === 'card') return b.open === 'card' && a.id === b.id;
+  if (a.open === 'hover') return b.open === 'hover' && a.key === b.key;
+  return a.open === b.open;
 }
 
 /** The line that asks for `nav`, with the width the phone has for a card (CSS px). */
 export function navMsg(nav: Nav, width?: number): PhoneMsg {
   const w = width !== undefined && Number.isFinite(width) ? Math.round(Math.max(200, Math.min(2000, width))) : undefined;
   if (nav.open === 'card') return w === undefined ? { t: 'nav', open: 'card', id: nav.id } : { t: 'nav', open: 'card', id: nav.id, width: w };
+  if (nav.open === 'hover') return w === undefined ? { t: 'nav', open: 'hover', key: nav.key } : { t: 'nav', open: 'hover', key: nav.key, width: w };
   return w === undefined ? { t: 'nav', open: nav.open } : { t: 'nav', open: nav.open, width: w };
 }
 
@@ -28,6 +31,8 @@ export class NavKeeper {
   private wanted: Nav;
   /** The ask waiting for its answer, and what was showing when the user asked (`from`). */
   private pending: { nav: Nav; at: number; since: number; from: Nav | null } | null = null;
+  /** What showed before the pill was held: it comes back when the held card closes. */
+  private beforeHover: Nav | null = null;
 
   /** Control Center by default: a phone is opened to do something. */
   constructor(initial: Nav = { open: 'grid' }) {
@@ -52,8 +57,27 @@ export class NavKeeper {
     return nav;
   }
 
-  /** A tap on the pill: Control Center, or closed again when it is showing. */
+  /** The pill's hover card shows (or is asked for). */
+  get holding(): boolean {
+    return this.wanted.open === 'hover';
+  }
+
+  /** The pill held on `key` (its segment under the finger): that hover card, over what shows now. */
+  hold(key: string | null, now: number): Nav {
+    if (this.wanted.open !== 'hover') this.beforeHover = this.wanted;
+    return this.go({ open: 'hover', key }, now);
+  }
+
+  /** The held card closes (a tap away, or on the pill): what showed before it comes back. */
+  unhold(now: number): Nav {
+    const back = this.beforeHover ?? { open: 'none' };
+    this.beforeHover = null;
+    return this.go(back, now);
+  }
+
+  /** A tap on the pill: Control Center, or closed again when it is showing; a held card closes. */
   toggle(now: number): Nav {
+    if (this.wanted.open === 'hover') return this.unhold(now);
     return this.go(this.wanted.open === 'grid' ? { open: 'none' } : { open: 'grid' }, now);
   }
 
@@ -96,6 +120,8 @@ export class NavKeeper {
       this.pending = null;
     }
     this.wanted = nav;
+    // The island moved on from the held card by itself (a press in it opened its activity's card).
+    if (nav.open !== 'hover') this.beforeHover = null;
     return true;
   }
 }

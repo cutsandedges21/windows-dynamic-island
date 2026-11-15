@@ -196,6 +196,17 @@ export function hoverView(grows: Grows, own: SheetView | null, tile: () => Sheet
 }
 
 /**
+ * What holding a phone's pill shows: the activity's own hover card, or else one made from its
+ * Control Center tile (`tile`, asked only then), always grown out of the pill. A phone has no
+ * pointer, so no card hangs below it and no pill widens instead: Music's player still shows with
+ * Player on hover off, and Claude's stats with Hang below.
+ */
+export function phoneHoverView(own: SheetView | null, tile: () => SheetView | null): SheetView | null {
+  const view = own ?? tile();
+  return view ? { ...view, morph: true } : null;
+}
+
+/**
  * How `id` grows when pointed at, from its Grows (`grows`) and its options. Music with "Player on
  * hover" off has no player to grow into, so the pill widens (Sideways) rather than growing its
  * tile's card; with it on, its Grows stands.

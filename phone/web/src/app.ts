@@ -4,7 +4,7 @@
 // (routing.ts, nav.ts).
 
 import { INBOX_OPEN, type IslandMsg, type Nav, type PairPayload, type TermInfo } from '../../../src/remote/protocol';
-import { NavKeeper, navMsg } from './nav';
+import { NavKeeper, navMsg, sameNav } from './nav';
 import { deniedText, pairErrorText, phoneName } from './pairing';
 import { pushFlag, pushOff, pushOn, pushResend, pushState } from './push';
 import { actMsg, INBOX_READY_MS, inboxReady, routeAction } from './routing';
@@ -56,6 +56,8 @@ export class App {
   private lastPill: Extract<IslandMsg, { t: 'pill' }> | null = null;
   private lastView: Extract<IslandMsg, { t: 'view' }> | null = null;
   private readonly nav = new NavKeeper();
+  /** What showed when the pill was held, drawn again the moment its card closes. */
+  private beforeHold: Extract<IslandMsg, { t: 'view' }> | null = null;
   private pairing = false;
   private clip: ClipSheet | null = null;
   /** The PC's Activities or Settings, while that sheet is open. */
@@ -196,6 +198,9 @@ export class App {
       saveGrid: (l) => {
         if (!this.link.send({ t: 'grid-set', ...l })) toast('Not connected', 'bad');
       },
+      hold: (key) => this.hold(key),
+      unhold: () => this.unhold(),
+      holding: () => this.nav.holding,
     });
     s.setName(this.hello?.name || island.name);
     this.mount(s);
@@ -273,6 +278,11 @@ export class App {
           if (this.nav.overdue(Date.now())) this.sendNav(this.nav.resend(Date.now()));
           return;
         }
+        // Held on something with no card to show: what showed before comes back.
+        if (!m.urgent && m.nav.open === 'hover' && !m.view) {
+          this.unhold();
+          return;
+        }
         this.lastView = m;
         s?.draw(m, m.nav.open === 'card');
         return;
@@ -334,6 +344,26 @@ export class App {
       case 'none':
         return;
     }
+  }
+
+  /** The pill held: the PC's hover card for that segment, over whatever shows now (it folds away meanwhile). */
+  private hold(key: string | null): void {
+    if (this.state.s !== 'online' || this.islandScreen?.arranging) return;
+    if (!this.nav.holding) this.beforeHold = this.lastView;
+    this.go(this.nav.hold(key, Date.now()));
+  }
+
+  /** The held card closes: what showed before it comes back, at once (the island's fresh copy follows). */
+  private unhold(): void {
+    if (!this.nav.holding) return;
+    const back = this.nav.unhold(Date.now());
+    const was = this.beforeHold;
+    this.beforeHold = null;
+    if (was && !was.urgent && back.open !== 'none' && sameNav(was.nav, back)) {
+      this.lastView = was;
+      this.islandScreen?.draw(was, was.nav.open === 'card');
+    }
+    this.go(back);
   }
 
   /** Asks the island for `nav`; nothing under the pill shows at once. */

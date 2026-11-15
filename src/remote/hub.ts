@@ -449,7 +449,7 @@ export class PhoneHub {
     if (!m) return this.native.log(`phone: ${s.name} sent a line the island doesn't read`);
     switch (m.t) {
       case 'nav':
-        s.nav = m.open === 'card' ? { open: 'card', id: m.id } : { open: m.open };
+        s.nav = m.open === 'card' ? { open: 'card', id: m.id } : m.open === 'hover' ? { open: 'hover', key: m.key } : { open: m.open };
         if (m.width) s.width = m.width;
         s.view.now();
         return;

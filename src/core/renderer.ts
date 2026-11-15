@@ -148,6 +148,11 @@ export class PillRenderer {
     this.pill.addEventListener('pointerleave', release);
   }
 
+  /** Back from a press (pressed in on pointerdown); `immediate`: at once, for a pill no one sees. */
+  unpress(immediate = false): void {
+    this.shell.set({ s: 1 }, { config: springs.snappy, immediate });
+  }
+
   /** Called on every shell frame with the drawn rect (for hit testing). */
   onFrame(cb: (r: Rect) => void): void {
     this.onShellFrame = cb;

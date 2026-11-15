@@ -247,7 +247,7 @@ export class FakeLink implements Link {
         this.terms.kill(m.id);
         return;
       case 'nav':
-        this.nav = m.open === 'card' ? { open: 'card', id: m.id } : { open: m.open };
+        this.nav = m.open === 'card' ? { open: 'card', id: m.id } : m.open === 'hover' ? { open: 'hover', key: m.key } : { open: m.open };
         if (m.width) this.width = m.width;
         this.push(true);
         return;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carryApart, carryCard, carryCurve, carryFades, carryShape, carrySplit, pillSlice, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
+import { carryApart, carryCard, carryCurve, carryFades, carryShape, carrySplit, pillSlice, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, phoneHoverView, snapSpan, tweenShape } from '../src/core/grow';
 import { defaultSettings, growsChoices, growsOf, migrate } from '../src/core/settings';
 import type { SheetView } from '../src/core/sheet';
 import { tileCard } from '../src/core/tilecard';
@@ -30,6 +30,16 @@ describe('growing out of the pill', () => {
     expect(hoverView('card', stats, weatherTile)).toMatchObject({ key: 'claude/hover', morph: true });
     expect(hoverView('card', null, weatherTile)).toMatchObject({ key: 'weather/tile-card', morph: true });
     expect(hoverView('card', null, () => null)).toBeNull();
+  });
+
+  it("a phone's held pill grows its own hover card, else its tile's, out of the pill whatever its Grows", () => {
+    let asked = false;
+    expect(phoneHoverView(stats, () => ((asked = true), weatherTile()))).toMatchObject({ key: 'claude/hover', morph: true });
+    expect(asked).toBe(false);
+    // Music's player with Player on hover off (Sideways on the PC) still grows on a phone.
+    expect(phoneHoverView(player, weatherTile)).toMatchObject({ key: 'music/player', morph: true });
+    expect(phoneHoverView(null, weatherTile)).toMatchObject({ key: 'weather/tile-card', morph: true });
+    expect(phoneHoverView(null, () => null)).toBeNull();
   });
 
   it('Sideways widens the pill: a card that only grows out of it goes, one that hangs below stays', () => {

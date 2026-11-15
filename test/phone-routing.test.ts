@@ -100,6 +100,42 @@ describe("the phone's navigation", () => {
     expect(n.accept({ open: 'grid' }, 10)).toBe(true);
   });
 
+  it('holding the pill asks for its hover card; closing it brings back what showed before', () => {
+    const n = new NavKeeper({ open: 'grid' });
+    expect(n.hold('music/art', 0)).toEqual({ open: 'hover', key: 'music/art' });
+    expect(n.holding).toBe(true);
+    expect(navMsg(n.want, 378)).toEqual({ t: 'nav', open: 'hover', key: 'music/art', width: 378 });
+    expect(n.accept({ open: 'hover', key: 'music/art' }, 60)).toBe(true);
+    // Held again on another segment: still Control Center to go back to.
+    expect(n.hold('chip/claude', 100)).toEqual({ open: 'hover', key: 'chip/claude' });
+    expect(sameNav({ open: 'hover', key: 'music/art' }, { open: 'hover', key: 'chip/claude' })).toBe(false);
+    expect(n.accept({ open: 'hover', key: 'chip/claude' }, 160)).toBe(true);
+    // A tap on the pill (or the card where the pill is) closes it, like a tap away.
+    expect(n.toggle(200)).toEqual({ open: 'grid' });
+    expect(n.holding).toBe(false);
+    expect(n.accept({ open: 'grid' }, 260)).toBe(true);
+  });
+
+  it('a held card closes back into the pill when nothing showed under it', () => {
+    const n = new NavKeeper({ open: 'none' });
+    n.hold(null, 0);
+    expect(n.unhold(10)).toEqual({ open: 'none' });
+    // A second close (tap away and tap on the pill at once) asks for nothing more.
+    expect(n.holding).toBe(false);
+    expect(n.toggle(20)).toEqual({ open: 'grid' });
+  });
+
+  it('forgets what showed before once the island moves on from the held card by itself', () => {
+    const n = new NavKeeper({ open: 'none' });
+    n.hold('music/art', 0);
+    expect(n.accept({ open: 'hover', key: 'music/art' }, 60)).toBe(true);
+    // A press in the card opened its activity's card on this phone.
+    expect(n.accept({ open: 'card', id: 'music' }, 500)).toBe(true);
+    expect(n.holding).toBe(false);
+    n.hold('music/art', 600);
+    expect(n.unhold(700)).toEqual({ open: 'card', id: 'music' });
+  });
+
   it('follows the island when nothing is pending (an action opened a card on this phone)', () => {
     const n = new NavKeeper();
     expect(n.accept({ open: 'card', id: 'claude' }, 0)).toBe(true);

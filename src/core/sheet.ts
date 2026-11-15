@@ -535,6 +535,12 @@ export class SheetRenderer {
     private readonly onAction: SheetAction,
     private readonly onMove: () => void,
     private readonly onCover: (cover: PillCover) => void = () => {},
+    /**
+     * `still`: a card grown out of the pill keeps its content where it ends up from the first frame
+     * (it fades in and out there while only the shape grows and shrinks) instead of scaling it with
+     * the shape. The phone's held pill uses it (Justin: content must not move).
+     */
+    private readonly opts: { still?: boolean } = {},
   ) {
     this.el = make('div', 'sheet');
     this.bg = make('div', 'sheet-bg');
@@ -715,8 +721,9 @@ export class SheetRenderer {
         this.springs.set({ h: from.h, o: 1, s: 1, b: 0, w: from.w, m: 1 }, { immediate: true });
         if (geo.immediate || reducedMotion()) this.springs.set({ w: this.width }, { immediate: true });
         else this.grow(from.w, from.h);
-        // The content grows with the shape (placeGrown scales it) and fades in with it.
-        springAnimate(this.inner, [{ opacity: faded }, { opacity: 1 }], springs.fade);
+        // The content grows with the shape (placeGrown scales it) and fades in with it; held still,
+        // it fades in where it ends up, uncovered by the shape.
+        springAnimate(this.inner, [{ opacity: this.opts.still && !regrow ? 0 : faded }, { opacity: 1 }], springs.fade);
       } else this.springs.set({ h: SLIVER, o: 0, s: 0.94, b: 8, w: this.width, m: 0 }, { immediate: true });
     } else if (this.opening) this.opening.w1 = this.width;
     // A new width (the hover card turning into the Control Center as the pill opens)
@@ -1357,7 +1364,7 @@ export class SheetRenderer {
     const vertical = this.anchor === 'left' || this.anchor === 'right';
     const k = clamp01(vertical ? vh / Math.max(1, fh) : vw / Math.max(1, fw));
     this.inner.style.transformOrigin = { top: '50% 0', bottom: '50% 100%', left: '0 50%', right: '100% 50%' }[this.anchor];
-    this.inner.style.transform = k < 0.999 ? `scale(${k.toFixed(4)})` : '';
+    this.inner.style.transform = k < 0.999 && !this.opts.still ? `scale(${k.toFixed(4)})` : '';
     if (this.cover === 'shrinking') {
       // The card's content fades over most of the way back and the pill's own content fades in
       // over the last part (island.css, --pill-in), both locked to the shape, not to a clock.

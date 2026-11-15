@@ -373,6 +373,12 @@ export function demoView(d: DemoState, nav: Nav, width: number, now: number): Ex
   if (d.ask) return { t: 'view', nav, view: permissionCard(d), urgent: 'claude' };
   let view: SheetView | null = null;
   if (nav.open === 'grid') view = gridView(d, now, width);
+  else if (nav.open === 'hover') {
+    // The pill held: the card pointing at that segment shows, grown out of the pill.
+    const id = nav.key?.startsWith('chip/') ? nav.key.slice(5) : (nav.key?.split('/')[0] ?? 'music');
+    const card = id === 'claude' ? claudeCard(d) : id === 'timer' && d.timer ? plainCard('timer', `${d.timer.label} ${clock(timerLeft(d, now) / 1000)}`, 'Counting down on your PC.') : musicCard(d, now);
+    view = { ...card, morph: true };
+  }
   else if (nav.open === 'card') {
     if (nav.id === 'claude') view = claudeCard(d);
     else if (nav.id === 'music') view = musicCard(d, now);

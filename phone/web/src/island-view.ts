@@ -5,6 +5,7 @@
 // phone's width (pill-fit.ts), it always sits at the top, a hidden island shows faintly instead
 // of leaving (there is no edge to wake it from), and holding a tile arranges the phone's own copy
 // of Control Center in place (src/remote/grid-edit.ts GridDraft); Done sends it to the PC.
+// Holding the pill grows the PC's hover card out of it (SheetView.morph, its content held still).
 
 import { setReducedMotion } from '../../../src/core/animator';
 import { BubbleView } from '../../../src/core/bubble';
@@ -12,18 +13,32 @@ import { applyGlass } from '../../../src/core/glass';
 import { BorderGlow } from '../../../src/core/glow';
 import type { Rect } from '../../../src/core/layout';
 import type { MirrorFrame } from '../../../src/core/mirror';
-import { PillRenderer } from '../../../src/core/renderer';
+import { PillRenderer, type PillCover } from '../../../src/core/renderer';
 import type { Tone } from '../../../src/core/segments';
 import { SheetRenderer, type SheetView } from '../../../src/core/sheet';
 import { springs } from '../../../src/core/spring';
 import { draftAct, draftLayout, draftOf, draftView, layoutOf, rebaseDraft, type GridDraft, type PhoneLayout } from '../../../src/remote/grid-edit';
 import type { BotState } from '../../../src/remote/protocol';
 import { maxPillWidth, phonePill, placePill } from './pill-fit';
+import { isTap, type Point } from './tap';
 
 export type ActionSink = (action: string, arg: unknown, source: HTMLElement) => void;
 
 /** A card is this far from the screen's sides. */
 export const CARD_MARGIN = 6;
+
+/** How long a finger rests on the pill before it is held, not tapped (about an iPhone's long press). */
+export const HOLD_MS = 450;
+/** How long after a held finger lifts its click is still the hold's (not a tap). */
+const HOLD_CLICK_MS = 600;
+/**
+ * After a hold the pill comes back from its press (PillRenderer's 97 %) in the first frame its
+ * content is out of sight under the card, at once, so it is never seen growing back; or, when no
+ * card came to cover it, this long after the finger lifted, on its usual spring.
+ */
+const PRESS_KEEP_MS = 900;
+/** Out of sight: the pill's content is at most this opaque. */
+const UNSEEN = 0.02;
 
 export class IslandView {
   readonly stage: HTMLElement;
@@ -52,6 +67,29 @@ export class IslandView {
   private redrawQueued = false;
   /** The finger now down began on a tile while arranging: the page must not scroll under it. */
   private onTile = false;
+  /** The pill was held (`key`: the segment under the finger, null for none): its hover card is asked for. */
+  onHold: (key: string | null) => void = () => {};
+  /** A tap away from the held card (not on it, not on the pill): it closes. */
+  onAway: () => void = () => {};
+  /** Whether the held card shows (or is asked for). */
+  holding: () => boolean = () => false;
+  private holdTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The finger on the pill that may become a hold. */
+  private holdDown: (Point & { id: number }) | null = null;
+  /** A held finger is down (Infinity) or lifted until then: its click is swallowed. */
+  private swallowUntil = 0;
+  /** The pill keeps its press after a hold till its content is out of sight under the card (letPressGo). */
+  private pressKept = false;
+  private pressFrame = 0;
+  /** When the held finger lifted (null: still down). */
+  private liftedAt: number | null = null;
+  /** A finger that went down away from the held card. */
+  private awayDown: (Point & { id: number }) | null = null;
+  /** The pill's light, kept while a card grown out of the pill covers it. */
+  private pillGlow: Parameters<BorderGlow['set']>[0] = null;
+  private covered = false;
+  /** Takes the window's listeners away with the view. */
+  private readonly gone = new AbortController();
 
   constructor(host: HTMLElement, onAction: ActionSink) {
     this.stage = document.createElement('div');
@@ -60,7 +98,13 @@ export class IslandView {
     // The island's order: pill, card, the pill's light, the bot, the card's light.
     this.renderer = new PillRenderer(this.stage, onAction);
     // The grid's arranging actions stay on the phone (its draft); every other action goes to the PC.
-    this.sheet = new SheetRenderer(this.stage, (action, arg, source) => (action.startsWith('island:grid-') ? this.gridAction(action, arg) : onAction(action, arg, source)), () => this.cardMoved());
+    this.sheet = new SheetRenderer(
+      this.stage,
+      (action, arg, source) => (action.startsWith('island:grid-') ? this.gridAction(action, arg) : onAction(action, arg, source)),
+      () => this.cardMoved(),
+      (cover) => this.coverPill(cover),
+      { still: true },
+    );
     this.glow = new BorderGlow(this.stage);
     this.bubble = new BubbleView(this.stage, { interactive: false });
     this.cardGlow = new BorderGlow(this.stage, 24);
@@ -70,6 +114,7 @@ export class IslandView {
     });
     this.stage.addEventListener('pointerdown', (e) => this.lookAt(e), { passive: true });
     this.guardScroll();
+    this.watchHold();
     this.measure();
   }
 
@@ -114,11 +159,38 @@ export class IslandView {
     this.bubble.colour(frame.accent);
     if (bot) this.bubble.show(bot.look, bot.play, bot.strength);
     this.layoutPill(frame, false);
-    if (frame.speed === 'off' || frame.hidden || !frame.glow) this.glow.set(null);
+    if (frame.speed === 'off' || frame.hidden || !frame.glow) this.pillGlow = null;
     else {
       this.glow.setSpeed(frame.speed);
-      this.glow.set(frame.glow);
+      this.pillGlow = frame.glow;
     }
+    this.glow.set(this.covered ? null : this.pillGlow);
+  }
+
+  /** A card grown out of the pill stands in for it: the pill fades under it and its light goes till it is back. */
+  private coverPill(cover: PillCover): void {
+    this.renderer.setCover(cover);
+    this.covered = cover !== 'off';
+    this.glow.set(this.covered ? null : this.pillGlow);
+  }
+
+  /** A held pill's press goes (see PRESS_KEEP_MS): looked for every frame from when the finger lifts. */
+  private letPressGo(): void {
+    cancelAnimationFrame(this.pressFrame);
+    const step = () => {
+      const lifted = this.liftedAt;
+      if (!this.pressKept || lifted === null) return;
+      const content = this.renderer.pill.querySelector<HTMLElement>('.pill-content');
+      const unseen = content !== null && Number(getComputedStyle(content).opacity) <= UNSEEN;
+      if (unseen || performance.now() - lifted >= PRESS_KEEP_MS) {
+        this.pressKept = false;
+        this.liftedAt = null;
+        this.renderer.unpress(unseen);
+        return;
+      }
+      this.pressFrame = requestAnimationFrame(step);
+    };
+    step();
   }
 
   private layoutPill(frame: MirrorFrame, immediate: boolean): void {
@@ -261,8 +333,101 @@ export class IslandView {
     for (const ev of ['pointerup', 'pointercancel']) this.stage.addEventListener(ev, () => (this.onTile = false), { capture: true, passive: true });
   }
 
+  /**
+   * Holding the pill: a finger that rests on it for HOLD_MS without travelling asks for its hover
+   * card (onHold), and the click that ends it is not a tap. While the card shows, a tap anywhere
+   * but on it closes it (onAway); a tap on it, or on the pill, is the pill's (island:tap closes it).
+   */
+  private watchHold(): void {
+    const pill = this.renderer.pill;
+    const signal = this.gone.signal;
+    pill.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || (e.target as HTMLElement).closest('input')) return;
+      const key = (e.target as HTMLElement).closest<HTMLElement>('[data-key]')?.dataset.key ?? null;
+      this.holdDown = { x: e.clientX, y: e.clientY, id: e.pointerId };
+      clearTimeout(this.holdTimer);
+      this.holdTimer = setTimeout(() => {
+        this.holdDown = null;
+        this.swallowUntil = Infinity;
+        this.pressKept = true;
+        this.liftedAt = null;
+        this.onHold(key);
+      }, HOLD_MS);
+    });
+    // The pill's press (PillRenderer: pressed in on the way down, back out on the way up) stays in
+    // after a hold, till the card has covered it: let go of at once, the pill content grew back by
+    // some pixels while it was still fading under the card.
+    for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
+      this.stage.addEventListener(
+        type,
+        (e) => {
+          if (this.pressKept && e.isTrusted && pill.contains(e.target as Node)) e.stopPropagation();
+        },
+        { capture: true, signal },
+      );
+    }
+    window.addEventListener(
+      'pointerdown',
+      (e) => {
+        const t = e.target as HTMLElement;
+        this.awayDown = this.holding() && !this.sheet.el.contains(t) && !pill.contains(t) ? { x: e.clientX, y: e.clientY, id: e.pointerId } : null;
+      },
+      { capture: true, signal },
+    );
+    window.addEventListener(
+      'pointermove',
+      (e) => {
+        const d = this.holdDown;
+        if (d && d.id === e.pointerId && !isTap(d, { x: e.clientX, y: e.clientY })) this.stopHold();
+      },
+      { capture: true, signal },
+    );
+    window.addEventListener(
+      'pointerup',
+      (e) => {
+        this.stopHold();
+        const away = this.awayDown;
+        this.awayDown = null;
+        if (away && away.id === e.pointerId && isTap(away, { x: e.clientX, y: e.clientY }) && this.holding()) this.onAway();
+      },
+      { capture: true, signal },
+    );
+    window.addEventListener(
+      'pointercancel',
+      () => {
+        this.stopHold();
+        this.awayDown = null;
+      },
+      { capture: true, signal },
+    );
+    // The click that ends a hold (on the pill, or on the card that grew over it) is no tap.
+    this.stage.addEventListener(
+      'click',
+      (e) => {
+        if (performance.now() >= this.swallowUntil) return;
+        this.swallowUntil = 0;
+        e.stopPropagation();
+        e.preventDefault();
+      },
+      { capture: true, signal },
+    );
+  }
+
+  /** The finger on the pill lifted or travelled: no hold now; a held one's click is still swallowed for a moment. */
+  private stopHold(): void {
+    clearTimeout(this.holdTimer);
+    this.holdDown = null;
+    if (this.swallowUntil !== Infinity) return;
+    this.swallowUntil = performance.now() + HOLD_CLICK_MS;
+    this.liftedAt = performance.now();
+    this.letPressGo();
+  }
+
   destroy(): void {
     clearTimeout(this.lookTimer);
+    clearTimeout(this.holdTimer);
+    cancelAnimationFrame(this.pressFrame);
+    this.gone.abort();
     this.bubble.destroy();
     this.glow.destroy();
     this.cardGlow.destroy();

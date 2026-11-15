@@ -30,6 +30,12 @@ export interface IslandHooks {
   retry(): void;
   /** Control Center arranged on the phone: sent to the PC. */
   saveGrid(l: PhoneLayout): void;
+  /** The pill was held on `key` (its segment under the finger): its hover card grows out of it. */
+  hold(key: string | null): void;
+  /** A tap away from the held card: it shrinks back into the pill. */
+  unhold(): void;
+  /** Whether the held card shows (or was asked for). */
+  holding(): boolean;
 }
 
 /** Room under a card for the Back button. */
@@ -76,6 +82,9 @@ export class IslandScreen {
     this.overlay = h('div', { class: 'ph-overlay' });
     this.view.onCard = (r) => this.placeUnderCard(r);
     this.view.onSaveGrid = (l) => hooks.saveGrid(l);
+    this.view.onHold = (key) => hooks.hold(key);
+    this.view.onAway = () => hooks.unhold();
+    this.view.holding = () => hooks.holding();
     this.main.append(this.hint, this.backBtn, this.note, this.overlay);
 
     const item = (label: string, iconName: string, fn: () => void, needsLink: boolean) => {
@@ -100,6 +109,11 @@ export class IslandScreen {
     window.visualViewport?.addEventListener('resize', this.onResize);
     requestAnimationFrame(() => this.view.measure());
     this.render();
+  }
+
+  /** Control Center is being arranged here (a held tile): the pill can't be held meanwhile. */
+  get arranging(): boolean {
+    return this.view.arranging;
   }
 
   setName(name: string): void {

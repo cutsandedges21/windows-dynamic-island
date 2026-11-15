@@ -118,6 +118,8 @@ body {
 .ph-stage.ph-urgent::before { opacity: 1; }
 /* hidden on the PC (idle tucked away, hidden for a while): faint here, still there to tap */
 .ph-stage .pill.ph-tucked { opacity: 0.42; }
+/* Held for its hover card: no text selection or magnifier under the finger. */
+.ph-stage .pill { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .ph-main.ph-dim .ph-stage { opacity: 0.3; filter: saturate(0.4); pointer-events: none; }
 
 .ph-hint {

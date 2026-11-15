@@ -76,8 +76,11 @@ export interface PairPayload {
   name: string;
 }
 
-/** What a phone shows under its pill. */
-export type Nav = { open: 'grid' } | { open: 'none' } | { open: 'card'; id: string };
+/**
+ * What a phone shows under its pill. `hover`: the pill was held, so the card the PC shows when the
+ * island is pointed at grows out of it (`key`: the pill's segment under the finger, as a hover-key).
+ */
+export type Nav = { open: 'grid' } | { open: 'none' } | { open: 'card'; id: string } | { open: 'hover'; key: string | null };
 
 /** The bot beside the pill, as `BubbleView.show(look, play, strength)` takes it. */
 export interface BotState {
@@ -96,6 +99,7 @@ export interface PushSub {
 export type PhoneMsg =
   | { t: 'nav'; open: 'grid' | 'none'; width?: number }
   | { t: 'nav'; open: 'card'; id: string; width?: number }
+  | { t: 'nav'; open: 'hover'; key: string | null; width?: number }
   | { t: 'act'; action: string; arg?: unknown }
   | { t: 'text'; text: string }
   | { t: 'clip-get' }
@@ -327,6 +331,7 @@ export function readPhoneMsg(v: unknown): PhoneMsg | null {
     case 'nav':
       if (v.open === 'grid' || v.open === 'none') return width === undefined ? { t: 'nav', open: v.open } : { t: 'nav', open: v.open, width };
       if (v.open === 'card' && short(v.id, 64) && v.id) return width === undefined ? { t: 'nav', open: 'card', id: v.id } : { t: 'nav', open: 'card', id: v.id, width };
+      if (v.open === 'hover' && (v.key === null || (short(v.key, 128) && v.key))) return width === undefined ? { t: 'nav', open: 'hover', key: v.key } : { t: 'nav', open: 'hover', key: v.key, width };
       return null;
     case 'act':
       return short(v.action, MAX_ACTION) && v.action ? ('arg' in v ? { t: 'act', action: v.action, arg: v.arg } : { t: 'act', action: v.action }) : null;

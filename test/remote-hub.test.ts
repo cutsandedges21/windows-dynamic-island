@@ -82,6 +82,7 @@ function fakeIsland() {
       f.widths.push(width);
       if (f.urgent) return { nav, view: f.urgent.view, urgent: f.urgent.id };
       if (nav.open === 'none') return { nav, view: null, urgent: null };
+      if (nav.open === 'hover') return { nav, view: nav.key === 'music/art' ? { key: 'music/player', morph: true, blocks: [] } : null, urgent: null };
       if (nav.open === 'card' && f.cards[nav.id]) return { nav, view: f.cards[nav.id], urgent: null };
       return { nav: { open: 'grid' }, view: f.grid, urgent: null };
     },
@@ -271,6 +272,17 @@ describe('what goes to a phone', () => {
     await flush();
     expect(r.last('view')).toMatchObject({ nav: { open: 'grid' }, view: { key: 'island/grid' } });
     expect(f.widths.at(-1)).toBe(360);
+  });
+
+  it("asks the island for the hover card of the segment a phone holds, grown out of the pill", async () => {
+    const { r } = await setup([phone()]);
+    r.line({ t: 'nav', open: 'hover', key: 'music/art', width: 378 });
+    await flush();
+    expect(r.last('view')).toEqual({ t: 'view', nav: { open: 'hover', key: 'music/art' }, view: { key: 'music/player', morph: true, blocks: [] }, urgent: null });
+    // Nothing to show for that one: the phone hears so (and puts back what it showed).
+    r.line({ t: 'nav', open: 'hover', key: null });
+    await flush();
+    expect(r.last('view')).toEqual({ t: 'view', nav: { open: 'hover', key: null }, view: null, urgent: null });
   });
 
   it('puts an urgent card first, whatever the phone was on', async () => {
