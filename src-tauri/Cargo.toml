@@ -89,6 +89,10 @@ features = [
   "Data_Xml_Dom",
   # Wi-Fi and Bluetooth radios and the Wi-Fi network name (src/radios.rs).
   "Devices_Radios",
+  # Control Center's hold menus: Wi-Fi networks in reach, and connecting
+  # Bluetooth audio through its driver (src/radiomenu.rs).
+  "Win32_NetworkManagement_WiFi",
+  "Win32_Media_KernelStreaming",
   "Networking_Connectivity",
   "UI_Shell",
   "Win32_Foundation",

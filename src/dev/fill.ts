@@ -22,6 +22,23 @@ export async function fillPreview(island: Island, native: typeof Native, emit: t
     powerState: async () => ({ hasBattery: true, percent: 72, ac: true, charging: true, saver: false, secondsLeft: 1500 }),
     audioState: async () => ({ volume: 0.42, muted: false, device: 'Speakers (Realtek(R) Audio)', deviceId: 'spk', micMuted: false, micDevice: 'Microphone' }),
     brightnessGet: async () => 62,
+    // Control Center's Wi-Fi and Bluetooth pills, and what their hold menus list (Justin's iPhone screenshots).
+    radiosState: async () => ({ wifi: true, bluetooth: true, network: 'zwift' }),
+    btBatteries: async () => [{ name: 'AirPods Pro de Justin', percent: 80, connected: true }],
+    wifiNetworks: async () => ({
+      denied: false,
+      networks: [
+        { ssid: 'DIRECT-8A-HP OfficeJet Pro 6970', secure: true, connected: false, known: false, signal: 40 },
+        { ssid: 'zwift', secure: true, connected: true, known: true, signal: 90 },
+      ],
+    }),
+    btDevices: async () =>
+      ['AirPods Max de Nicolle', 'AirPods Pro de Justin', 'BMW 52348', 'CAR-1c34', 'JBL Go 4', 'JBL Xtreme 2', 'justin’s airpods pro 2', 'TECH1 RAGE'].map((name, i) => ({
+        id: `dev${i}`,
+        name,
+        connected: i === 1,
+        audio: true,
+      })),
     mediaState: async () => ({
       available: true, app: 'Spotify', appId: 'Spotify.exe', title: 'Roman to Integer - LeetCode #13', artist: 'CodingNinja', album: 'LeetCode',
       status: 'playing', position: 120, duration: 300, updatedAt: Date.now(), canPlay: true, canPause: true, canNext: true, canPrev: true, thumbnail: ART,

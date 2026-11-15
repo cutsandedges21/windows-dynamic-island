@@ -1501,6 +1501,7 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 }
 button.hp { cursor: pointer; }
 .tile.k-hub button.hp:hover { background: rgba(var(--ink), 0.13); }
+.tile.k-hub .hp { -webkit-touch-callout: none; }
 .tile.k-hub .hp .hpi { flex: none; width: 28px; height: 28px; padding: 6px; box-sizing: border-box; border-radius: 50%; background: rgba(var(--ink), 0.12); }
 .tile.k-hub .hp.on { background: var(--fg); color: var(--cut); }
 .tile.k-hub button.hp.on:hover { background: color-mix(in srgb, var(--fg) 88%, transparent); }
@@ -1529,6 +1530,72 @@ button.hp { cursor: pointer; }
 .tile.k-hub .hs .hf { position: absolute; left: 0; right: 0; bottom: 0; height: 100%; background: var(--fg); transform-origin: 50% 100%; transform: scaleY(var(--v)); transition: transform 0.18s ease; }
 .tile.k-hub .hs.dragging .hf { transition: none; }
 .tile.k-hub .hs .hsi { position: absolute; left: 50%; bottom: 8px; width: 16px; height: 16px; transform: translateX(-50%); color: var(--muted); mix-blend-mode: difference; }
+
+/* Holding the hub tile's Wi-Fi or Bluetooth pill (sheet.ts openHubMenu): Control Center blurs and a
+   glass menu grows out of the pill, laid out like Justin's iPhone screenshots. */
+.hub-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--pill) 30%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.hub-menu {
+  position: absolute;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  border-radius: 22px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 16%, color-mix(in srgb, var(--pill) 72%, transparent));
+  -webkit-backdrop-filter: blur(28px) saturate(1.5);
+  backdrop-filter: blur(28px) saturate(1.5);
+  box-shadow: inset 0 0 0 0.5px rgba(var(--ink), 0.14);
+  color: var(--fg);
+  font: 500 14px/1.25 var(--font);
+  text-shadow: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.hub-menu .hm-in { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.hub-menu .hm-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; padding: 6px 0; }
+.hub-menu .hm-list::-webkit-scrollbar { display: none; }
+.hub-menu .hm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 16px 9px 18px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.hub-menu.with-icons .hm-row { padding-left: 12px; }
+.hub-menu .hm-row.act { cursor: pointer; }
+.hub-menu .hm-row.act:hover { background: rgba(var(--ink), 0.08); }
+.hub-menu .hm-row.act:active { background: rgba(var(--ink), 0.14); }
+.hub-menu .hm-check { display: none; flex: none; width: 16px; height: 16px; }
+.hub-menu.with-icons .hm-check { display: block; }
+.hub-menu .hm-ci { display: block; width: 16px; height: 16px; }
+.hub-menu .hm-ico { position: relative; flex: none; width: 22px; height: 22px; }
+.hub-menu .hm-ii { display: block; width: 22px; height: 22px; }
+.hub-menu .hm-lock { position: absolute; right: -3px; bottom: -2px; width: 11px; height: 11px; padding: 1px; border-radius: 3px; background: color-mix(in srgb, var(--pill) 55%, transparent); }
+.hub-menu .hm-tx { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+/* A long name (a printer's network) wraps onto as many lines as it takes, as on the iPhone. */
+.hub-menu .hm-l { white-space: normal; overflow-wrap: anywhere; }
+.hub-menu .hm-s { font-size: 12.5px; color: var(--muted); }
+.hub-menu .hm-empty { padding: 10px 18px; color: var(--muted); }
+.hub-menu .hm-div { flex: none; height: 1px; background: rgba(var(--ink), 0.12); }
+.hub-menu .hm-more { flex: none; padding-top: 12px; padding-bottom: 12px; }
+/* Wi-Fi Settings… lines up with the networks' icons, past the check column. */
+.hub-menu.with-icons .hm-more { padding-left: 38px; }
 
 /* now playing */
 .tile.k-media { gap: 8px; }

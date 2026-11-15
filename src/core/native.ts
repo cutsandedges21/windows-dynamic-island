@@ -214,6 +214,29 @@ export interface BtBattery {
   percent: number;
   connected: boolean;
 }
+/** A Wi-Fi network in reach, for Control Center's Wi-Fi hold menu (src-tauri/src/radiomenu.rs). */
+export interface WifiNet {
+  ssid: string;
+  secure: boolean;
+  connected: boolean;
+  /** Windows has a profile for it: joining needs no password. */
+  known: boolean;
+  signal: number;
+}
+/** The networks in reach; `denied`: Windows hides them from apps without location access. */
+export interface WifiList {
+  networks: WifiNet[];
+  denied: boolean;
+}
+/** A paired Bluetooth device, for Control Center's Bluetooth hold menu. */
+export interface BtDevice {
+  /** Its address: what connecting it takes. */
+  id: string;
+  name: string;
+  connected: boolean;
+  /** Earbuds or a speaker: Island can connect and disconnect it. */
+  audio: boolean;
+}
 /** Wi-Fi and Bluetooth (src-tauri/src/radios.rs): on, off, or null without that radio. */
 export interface RadiosState {
   wifi: boolean | null;
@@ -800,6 +823,16 @@ export const native = {
   radiosState: () => call<RadiosState | null>('radios_state', {}, null),
   /** Switches the Wi-Fi or Bluetooth radio; true when Windows did it. */
   radioSet: (kind: 'wifi' | 'bluetooth', on: boolean) => call<boolean>('radio_set', { kind, on }, false),
+  /** The Wi-Fi networks in reach (Windows' last scan); null where it can't say (a Mac). */
+  wifiNetworks: () => call<WifiList | null>('wifi_networks', {}, null),
+  /** Asks Windows for a fresh Wi-Fi scan; the next wifiNetworks() has it. */
+  wifiScan: () => call<boolean>('wifi_scan', {}, false),
+  /** Joins a network Windows has a profile for; false when it has none. */
+  wifiJoin: (ssid: string) => call<boolean>('wifi_join', { ssid }, false),
+  /** The paired Bluetooth devices, one per name, sorted by name. */
+  btDevices: () => call<BtDevice[] | null>('bt_devices', {}, null),
+  /** Connects or disconnects paired Bluetooth earbuds or a speaker; false when Windows can't from here. */
+  btConnect: (id: string, connect: boolean) => call<boolean>('bt_connect', { id, connect }, false),
   /** Battery of paired Bluetooth earbuds, headphones and the like (src-tauri/src/btbattery.rs). */
   btBatteries: () => call<BtBattery[]>('bt_batteries', {}, []),
   sysSample: (withTop: boolean) => call<SysSample | null>('sys_sample', { withTop }, null),

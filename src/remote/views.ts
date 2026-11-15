@@ -5,7 +5,7 @@
 
 import type { ActivityStatus } from '../core/activity';
 import type { MirrorFrame } from '../core/mirror';
-import type { Block, SheetButton, SheetRow, SheetView, TileBody } from '../core/sheet';
+import type { Block, HubMenuRow, HubPill, SheetButton, SheetRow, SheetView, TileBody } from '../core/sheet';
 
 /** Claude's Allow: with Windows Hello asked before Allow, phones never get it or press it. */
 export const HELLO_GUARDED: readonly string[] = ['act:claude:allow'];
@@ -16,7 +16,14 @@ export const HELLO_GUARDED: readonly string[] = ['act:claude:allow'];
  * Windows Settings there. Phones never get them or press them. (Battery saver itself switches
  * Energy saver, so a phone may press it; why it didn't switch comes back as a toast.)
  */
-export const PC_ONLY: readonly string[] = ['act:system-controls:screenshot', 'act:system-controls:record', 'act:system-controls:saver-settings'];
+export const PC_ONLY: readonly string[] = [
+  'act:system-controls:screenshot',
+  'act:system-controls:record',
+  'act:system-controls:saver-settings',
+  // The Wi-Fi and Bluetooth hold menus' last row opens Windows Settings at the PC.
+  'act:system-controls:wifi-settings',
+  'act:system-controls:bt-settings',
+];
 
 /** Every action shown, with the arguments it was shown with (as JSON); ANY for typed text and seeking. */
 export type Pressables = Map<string, Set<string>>;
@@ -65,6 +72,8 @@ export function pressables(value: unknown, out: Pressables = new Map()): Pressab
     } else if (o.k === 'hub' && Array.isArray(o.sliders)) {
       // A hub tile's sliders send where they were dragged to (System Controls checks it is 0-1).
       for (const x of o.sliders as Array<{ action?: unknown }>) add(x?.action, ANY);
+      // A pill's hold menu says it opened (its rows and last row are walked below like any other).
+      if (Array.isArray(o.pills)) for (const p of o.pills as Array<{ menu?: { open?: unknown } }>) add(p?.menu?.open, argKey(null));
     } else if ('action' in o) add(o.action, argKey(o.arg));
     // Music's tile: its art is pressed with no argument.
     if (o.k === 'media') add(o.open, argKey(null));
@@ -86,9 +95,17 @@ export function stripActions(view: SheetView, blocked: ReadonlySet<string>): She
   const ok = (a: string | undefined) => !a || !blocked.has(a);
   const buttons = (list: SheetButton[]) => list.filter((b) => ok(b.action));
   const row = (r: SheetRow): SheetRow => ({ ...r, action: ok(r.action) ? r.action : undefined, button: r.button && ok(r.button.action) ? r.button : undefined });
+  // A hold menu keeps its rows (they do nothing when blocked); a blocked last row goes, divider and all.
+  const hubPill = (p: HubPill): HubPill => {
+    const m = p.menu;
+    if (!m) return p;
+    const item = (r: HubMenuRow): HubMenuRow => (ok(r.action) ? r : { ...r, action: undefined, arg: undefined });
+    return { ...p, action: ok(p.action) ? p.action : undefined, menu: { ...m, rows: m.rows.map(item), more: m.more?.action && ok(m.more.action) ? m.more : undefined, open: ok(m.open) ? m.open : undefined } };
+  };
   const body = (b: TileBody): TileBody => {
     if (b.k === 'media') return { ...b, buttons: buttons(b.buttons), open: ok(b.open) ? b.open : undefined };
     if (b.k === 'actions' || (b.k === 'stat' && b.buttons)) return { ...b, buttons: buttons(b.buttons!) };
+    if (b.k === 'hub') return { ...b, pills: b.pills.map(hubPill), buttons: buttons(b.buttons) };
     return b.k === 'list' ? { ...b, rows: b.rows.map(row) } : b;
   };
   const blocks = view.blocks.flatMap((b): Block[] => {

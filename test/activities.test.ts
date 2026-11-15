@@ -78,6 +78,11 @@ function resetNative() {
     radiosState: vi.fn(async () => null),
     radioSet: vi.fn(async () => true),
     btBatteries: vi.fn(async () => []),
+    wifiNetworks: vi.fn(async () => null),
+    wifiScan: vi.fn(async () => true),
+    wifiJoin: vi.fn(async () => true),
+    btDevices: vi.fn(async () => null),
+    btConnect: vi.fn(async () => true),
     screenCapture: vi.fn(async () => true),
   });
 }
@@ -504,6 +509,95 @@ describe('system controls: the parts together', () => {
     expect(body.k === 'hub' && body.pills).toEqual([]);
     await act.action!('wifi', null);
     expect(h.native.radioSet).not.toHaveBeenCalled();
+  });
+
+  describe('the Wi-Fi and Bluetooth hold menus', () => {
+    const radios = () => {
+      h.native.radiosState = vi.fn(async () => ({ wifi: true, bluetooth: true, network: 'zwift' }));
+      h.native.wifiNetworks = vi.fn(async () => ({
+        denied: false,
+        networks: [
+          { ssid: 'cafe', secure: false, connected: false, known: true, signal: 50 },
+          { ssid: 'DIRECT-HP', secure: true, connected: false, known: false, signal: 40 },
+          { ssid: 'zwift', secure: true, connected: true, known: true, signal: 90 },
+        ],
+      }));
+      h.native.btDevices = vi.fn(async () => [
+        { id: 'aa', name: 'AirPods', connected: false, audio: true },
+        { id: 'mm', name: 'Mouse', connected: true, audio: false },
+      ]);
+    };
+    const menus = async () => {
+      const { act, calls } = await boot(new SystemControlsActivity());
+      act.tiles(tileEnv);
+      await tick(10);
+      return { act, calls };
+    };
+
+    it('the pills carry what Windows says: the networks in reach and the paired devices', async () => {
+      radios();
+      const { act } = await menus();
+      const body = act.tiles(tileEnv).find((t) => t.key === 'hub')!.body;
+      if (body.k !== 'hub') throw new Error('not a hub');
+      expect(body.pills[0].menu?.rows.map((r) => [r.label, r.check ?? false])).toEqual([
+        ['cafe', false],
+        ['DIRECT-HP', false],
+        ['zwift', true],
+      ]);
+      expect(body.pills[1].menu?.rows.map((r) => [r.label, r.sub])).toEqual([
+        ['AirPods', 'Not Connected'],
+        ['Mouse', 'Connected'],
+      ]);
+    });
+
+    it('opening the Wi-Fi menu asks for a fresh scan; a known network joins with no questions', async () => {
+      radios();
+      const { act, calls } = await menus();
+      await act.action!('wifi-menu', null);
+      expect(h.native.wifiScan).toHaveBeenCalledTimes(1);
+      await act.action!('wifi-join', 'cafe');
+      expect(h.native.wifiJoin).toHaveBeenLastCalledWith('cafe');
+      expect(h.native.open).not.toHaveBeenCalled();
+      expect(calls.close).toBe(0);
+      // The one it is on does nothing.
+      await act.action!('wifi-join', 'zwift');
+      expect(h.native.wifiJoin).toHaveBeenCalledTimes(1);
+    });
+
+    it("a new network opens Windows' network list for its password (a phone is told to type it at the PC)", async () => {
+      radios();
+      const { act, calls } = await menus();
+      await expect(act.action!('wifi-join', 'DIRECT-HP')).rejects.toThrow('Type the password for DIRECT-HP on the PC');
+      expect(h.native.wifiJoin).not.toHaveBeenCalled();
+      expect(calls.close).toBe(1);
+      expect(h.native.open).toHaveBeenLastCalledWith('ms-availablenetworks:');
+    });
+
+    it('earbuds connect and disconnect from the menu; anything else opens Bluetooth settings', async () => {
+      radios();
+      const { act, calls } = await menus();
+      await act.action!('bt-device', 'aa');
+      expect(h.native.btConnect).toHaveBeenLastCalledWith('aa', true);
+      // Shown connected at once, before Windows says so.
+      const body = act.tiles(tileEnv).find((t) => t.key === 'hub')!.body;
+      expect(body.k === 'hub' && body.pills[1].menu?.rows[0].sub).toBe('Connected');
+      await act.action!('bt-device', 'aa');
+      expect(h.native.btConnect).toHaveBeenLastCalledWith('aa', false);
+      await expect(act.action!('bt-device', 'mm')).rejects.toThrow('Connect Mouse from Bluetooth settings on the PC');
+      expect(h.native.btConnect).toHaveBeenCalledTimes(2);
+      expect(calls.close).toBe(1);
+      expect(h.native.open).toHaveBeenLastCalledWith('ms-settings:bluetooth');
+    });
+
+    it('the last rows open Windows Settings', async () => {
+      radios();
+      const { act, calls } = await menus();
+      await act.action!('wifi-settings', null);
+      expect(h.native.open).toHaveBeenLastCalledWith('ms-settings:network-wifi');
+      await act.action!('bt-settings', null);
+      expect(h.native.open).toHaveBeenLastCalledWith('ms-settings:bluetooth');
+      expect(calls.close).toBe(2);
+    });
   });
 
   it('Screenshot and Record close the card, then open Snipping Tool', async () => {

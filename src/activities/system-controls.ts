@@ -8,7 +8,7 @@
 
 import type { ActivityStatus, RenderEnv, SheetEnv } from '../core/activity';
 import { clip } from '../core/format';
-import { native, type PowerState, type RadiosState } from '../core/native';
+import { native, type BtDevice, type PowerState, type RadiosState, type WifiList } from '../core/native';
 import type { MomentId } from '../core/pet';
 import { platform } from '../core/platform';
 import type { Seg } from '../core/segments';
@@ -16,7 +16,7 @@ import type { Block, SheetButton, SheetRow, SheetView, Tile } from '../core/shee
 import { PhoneError } from '../remote/hub';
 import { BaseActivity } from './base';
 import { Brightness } from './brightness';
-import { hubTile, saverTip, sliderPct } from './control-hub';
+import { BT_SETTINGS, hubTile, saverTip, sliderPct, WIFI_LIST, WIFI_SETTINGS } from './control-hub';
 import { Keys } from './keys';
 import { Sound } from './sound';
 
@@ -83,6 +83,9 @@ export class SystemControlsActivity extends BaseActivity {
   private power: PowerState | null = null;
   private radios: RadiosState | null = null;
   private btDevices: number | null = null;
+  /** What the Wi-Fi and Bluetooth hold menus list, read with the radios. */
+  private networks: WifiList | null = null;
+  private paired: BtDevice[] | null = null;
   /** Why Energy saver last didn't switch, while it shows (SAVER_NOTE_MS). */
   private saverNote: string | null = null;
   private saverNoteAt = 0;
@@ -109,21 +112,29 @@ export class SystemControlsActivity extends BaseActivity {
     });
   }
 
-  /** Wi-Fi, Bluetooth, the network and how many Bluetooth devices are connected; redraws on a change. */
+  /**
+   * Wi-Fi, Bluetooth, the network, how many Bluetooth devices are connected, and what the hold
+   * menus list (the networks in reach, the paired devices); redraws on a change.
+   */
   private async readRadios(): Promise<void> {
     this.radiosAt = Date.now();
     let r: RadiosState | null;
     let bt: Array<{ connected: boolean }>;
+    let networks: WifiList | null;
+    let paired: BtDevice[] | null;
     try {
-      [r, bt] = await Promise.all([native.radiosState(), native.btBatteries()]);
+      [r, bt, networks, paired] = await Promise.all([native.radiosState(), native.btBatteries(), native.wifiNetworks(), native.btDevices()]);
     } catch {
       return;
     }
     if (!this.alive) return;
     const devices = bt.filter((d) => d.connected).length;
-    const changed = JSON.stringify([r, devices]) !== JSON.stringify([this.radios, this.btDevices]);
+    const now = [r, devices, networks, paired];
+    const changed = JSON.stringify(now) !== JSON.stringify([this.radios, this.btDevices, this.networks, this.paired]);
     this.radios = r;
     this.btDevices = devices;
+    this.networks = networks;
+    this.paired = paired;
     if (changed) this.ctx.update();
   }
 
@@ -197,7 +208,7 @@ export class SystemControlsActivity extends BaseActivity {
     this.tilesAt = Date.now();
     if (Date.now() - this.radiosAt >= RADIOS_POLL_MS) void this.readRadios();
     const a = this.sound.state();
-    const hub = hubTile({ radios: this.radios, btDevices: this.btDevices, volume: a?.volume ?? null, muted: a?.muted ?? false, brightness: this.brightness.state(), saver: this.saver(), saverNote: this.note() }, env.interactive);
+    const hub = hubTile({ radios: this.radios, btDevices: this.btDevices, networks: this.networks, paired: this.paired, volume: a?.volume ?? null, muted: a?.muted ?? false, brightness: this.brightness.state(), saver: this.saver(), saverNote: this.note() }, env.interactive);
     if (hub) out.push(hub);
     const sound = this.sound.tile(env);
     if (sound) out.push(sound);
@@ -277,6 +288,7 @@ export class SystemControlsActivity extends BaseActivity {
       this.later(1500, () => void this.readRadios());
       return;
     }
+    if (await this.menuAction(name, arg)) return;
     if (await this.sound.action(name)) return;
     if (name === 'card') this.ctx.openCard?.();
     else if ((name === 'screenshot' || name === 'record') && CAPTURE_HERE) {
@@ -289,6 +301,62 @@ export class SystemControlsActivity extends BaseActivity {
       this.ctx.close();
       await native.open(SAVER_SETTINGS);
     }
+  }
+
+  /**
+   * The Wi-Fi and Bluetooth hold menus: opening one reads them again (Wi-Fi asks Windows for a
+   * fresh scan first), and their rows join a network or connect a device. True when it was one.
+   */
+  private async menuAction(name: string, arg: unknown): Promise<boolean> {
+    switch (name) {
+      case 'wifi-menu':
+        void native.wifiScan();
+        void this.readRadios();
+        // A scan takes a few seconds; the list fills in as it comes.
+        this.later(2500, () => void this.readRadios());
+        this.later(6000, () => void this.readRadios());
+        return true;
+      case 'bt-menu':
+        void this.readRadios();
+        return true;
+      case 'wifi-join': {
+        const net = typeof arg === 'string' ? this.networks?.networks.find((n) => n.ssid === arg) : undefined;
+        if (!net || net.connected) return true;
+        if (net.known && (await native.wifiJoin(net.ssid))) {
+          this.later(1500, () => void this.readRadios());
+          this.later(4000, () => void this.readRadios());
+          return true;
+        }
+        // New to Windows: its password goes in Windows' own network list, in front on the PC.
+        this.ctx.close();
+        await native.open(WIFI_LIST);
+        throw new PhoneError(`Type the password for ${net.ssid} on the PC`);
+      }
+      case 'bt-device': {
+        const dev = typeof arg === 'string' ? this.paired?.find((d) => d.id === arg) : undefined;
+        if (!dev) return true;
+        if (dev.audio) {
+          const want = !dev.connected;
+          // Shown as asked at once; the next reads say how it went (connecting takes a few seconds).
+          if (await native.btConnect(dev.id, want)) {
+            this.paired = (this.paired ?? []).map((d) => (d.id === dev.id ? { ...d, connected: want } : d));
+            this.ctx.update();
+            for (const ms of [2000, 5000, 9000]) this.later(ms, () => void this.readRadios());
+            return true;
+          }
+        }
+        // Only Windows' own settings connect a mouse, a keyboard or a phone.
+        this.ctx.close();
+        await native.open(BT_SETTINGS);
+        throw new PhoneError(`Connect ${dev.name} from Bluetooth settings on the PC`);
+      }
+      case 'wifi-settings':
+      case 'bt-settings':
+        this.ctx.close();
+        await native.open(name === 'wifi-settings' ? WIFI_SETTINGS : BT_SETTINGS);
+        return true;
+    }
+    return false;
   }
 
   /** Why Energy saver last didn't switch, while that still shows. */

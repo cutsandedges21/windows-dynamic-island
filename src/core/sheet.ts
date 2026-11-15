@@ -193,6 +193,34 @@ export interface HubPill {
   on: boolean;
   action?: string;
   tip?: string;
+  /** Holding the pill opens this menu over Control Center, as an iPhone's Wi-Fi and Bluetooth do. */
+  menu?: HubMenu;
+}
+
+/** A hub pill's hold menu: a list of rows, a divider, and `more` pinned at the bottom ("Wi-Fi Settings…"). */
+export interface HubMenu {
+  rows: HubMenuRow[];
+  more?: HubMenuRow;
+  /** Said in place of the rows when there are none. */
+  empty?: string;
+  /** Sent (with no argument) when the menu opens: a fresh Wi-Fi scan, say. */
+  open?: string;
+}
+
+/**
+ * One row of a hold menu: `label` wraps onto as many lines as it takes; `sub` is a dimmer second
+ * line; `icon` (with a small lock when `lock`) sits left of the label, and a check left of that
+ * when `check`. A tap sends `action` with `arg` and closes the menu.
+ */
+export interface HubMenuRow {
+  key: string;
+  label: string;
+  sub?: string;
+  icon?: string;
+  lock?: boolean;
+  check?: boolean;
+  action?: string;
+  arg?: unknown;
 }
 
 /** A tall slider in a hub tile, 0-1. Dragging sends `action` with the new value (0-1) as its arg. */
@@ -278,6 +306,16 @@ export function textClass(b: Extract<Block, { t: 'text' }>): string {
   return `sb sb-text sz-${b.size ?? 'md'} tone-${b.tone ?? 'default'}${b.bubble ? ' boxed' : ''}`;
 }
 
+/** A hub pill with its own action and its hold menu's rewritten. */
+function hubPillActions(p: HubPill, fn: (action: string) => string): HubPill {
+  const out: HubPill = p.action ? { ...p, action: fn(p.action) } : { ...p };
+  const m = p.menu;
+  if (!m) return out;
+  const row = (r: HubMenuRow): HubMenuRow => (r.action ? { ...r, action: fn(r.action) } : r);
+  out.menu = { ...m, rows: m.rows.map(row), more: m.more ? row(m.more) : undefined, open: m.open ? fn(m.open) : undefined };
+  return out;
+}
+
 /** Rewrites every action in a view (the island namespaces them per activity). */
 export function mapActions(blocks: Block[], fn: (action: string) => string): Block[] {
   const btn = (b: SheetButton): SheetButton => ({ ...b, action: fn(b.action) });
@@ -289,7 +327,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
     if (b.k === 'stat' && b.buttons) return { ...b, buttons: b.buttons.map(btn) };
     if (b.k === 'list') return { ...b, rows: b.rows.map(row) };
     // Control Center's Wi-Fi / Bluetooth / sliders tile: every press is its activity's.
-    if (b.k === 'hub') return { ...b, pills: b.pills.map((p) => (p.action ? { ...p, action: fn(p.action) } : p)), sliders: b.sliders.map((h) => (h.action ? { ...h, action: fn(h.action) } : h)), buttons: b.buttons.map(btn) };
+    if (b.k === 'hub') return { ...b, pills: b.pills.map((p) => hubPillActions(p, fn)), sliders: b.sliders.map((h) => (h.action ? { ...h, action: fn(h.action) } : h)), buttons: b.buttons.map(btn) };
     return b;
   };
   return blocks.map((b): Block => {
@@ -352,6 +390,13 @@ const SLIVER = 26;
 const EDGE = 8;
 /** Holding a tile this long starts arranging the grid. */
 const LONG_PRESS_MS = 450;
+/** Holding a hub pill this long opens its menu (Wi-Fi's networks, Bluetooth's devices). */
+const MENU_HOLD_MS = 450;
+/** A hold menu: its corners, its gap to the card's edges, and how long it takes to grow out of the pill and back. */
+const MENU_RADIUS = 22;
+const MENU_PAD = 8;
+const MENU_OPEN_MS = 320;
+const MENU_CLOSE_MS = 220;
 /** A tile carried this close to the card's side (or past it)... */
 const EDGE_ZONE = 30;
 /** ...and held there this long turns the page; past the last page it makes a new one. */
@@ -411,6 +456,10 @@ export class SheetRenderer {
   private viewKey: string | null = null;
   /** A long-press just opened edit mode: the click that ends it must not run the tile's action. */
   private swallowClick = false;
+  /** Every hub pill's hold menu as last drawn, by `tile/pill`. */
+  private readonly hubMenus = new Map<string, HubMenu>();
+  /** The hold menu open over the card, if any (see openHubMenu). */
+  private hubMenu: { tile: string; pill: string; box: HTMLElement; scrim: HTMLElement; sig: string; openedAt: number; pressedAt: number; closing: boolean } | null = null;
   private swallowTimer: ReturnType<typeof setTimeout> | undefined;
   /** The tile being carried or resized right now: `abort` ends it unsaved, `rescan` re-aims it after a page turn. */
   private drag: { key: string; mode: 'move' | 'resize'; host: HTMLElement; abort: () => void; rescan: () => void } | null = null;
@@ -878,6 +927,7 @@ export class SheetRenderer {
       this.setCover('off');
     }
     this.drag?.abort();
+    this.closeHubMenu(true);
     this.shown = false;
     this.viewKey = null;
     this.engagedInput = null;
@@ -1962,6 +2012,7 @@ export class SheetRenderer {
       this.tileSigs.delete(el);
     }
     this.syncGhosts(pagesEl, editing);
+    this.syncHubMenu();
 
     // Anything that moved slides from where it was drawn.
     for (const el of host.querySelectorAll<HTMLElement>('.tile')) {
@@ -2185,15 +2236,27 @@ export class SheetRenderer {
       }
       if (!tile && !target.closest('.page')) return;
       cancel();
+      // Holding Wi-Fi or Bluetooth opens its menu; held anywhere else, the tile is arranged (as on an iPhone).
+      const held = target.closest<HTMLElement>('.hp[data-menu]');
+      if (held && key && held.dataset.key) {
+        const pill = held.dataset.key;
+        press = {
+          x: e.clientX,
+          y: e.clientY,
+          timer: setTimeout(() => {
+            press = null;
+            this.swallowNextClick();
+            this.openHubMenu(key, pill);
+          }, MENU_HOLD_MS),
+        };
+        return;
+      }
       press = {
         x: e.clientX,
         y: e.clientY,
         timer: setTimeout(() => {
           press = null;
-          this.swallowClick = true;
-          clearTimeout(this.swallowTimer);
-          // If no click follows (the pointer was lifted elsewhere), stop swallowing.
-          this.swallowTimer = setTimeout(() => (this.swallowClick = false), 700);
+          this.swallowNextClick();
           this.onAction('island:grid-edit', key, tile ?? host);
           if (key) this.startDrag(host, key, e, 'move');
         }, LONG_PRESS_MS),
@@ -2229,6 +2292,191 @@ export class SheetRenderer {
         this.goToPage(host, Math.max(0, Math.min(pages.children.length - 1, this.currentPage(host) + step)));
       },
       { passive: false },
+    );
+  }
+
+  /** The click that ends a long-press must not press what is under it. */
+  private swallowNextClick(): void {
+    this.swallowClick = true;
+    clearTimeout(this.swallowTimer);
+    // If no click follows (the pointer was lifted elsewhere), stop swallowing.
+    this.swallowTimer = setTimeout(() => (this.swallowClick = false), 700);
+  }
+
+  // ---------------------------------------------------------------- hub pills' hold menus
+
+  /** The pill a hold menu belongs to, while it is drawn and still has its menu. */
+  private hubPillEl(tile: string, pill: string): HTMLElement | null {
+    return this.el.querySelector<HTMLElement>(`.tile[data-k="${CSS.escape(tile)}"] .hp[data-key="${CSS.escape(pill)}"][data-menu]`);
+  }
+
+  /**
+   * Holding Wi-Fi or Bluetooth (Justin's iPhone screenshots): a glass menu grows out of the pill
+   * over Control Center, which blurs behind it. Only its shape grows: the rows sit where they
+   * end up from the first frame and fade in there, so nothing in it moves. A tap on a row sends
+   * its action and closes it; a tap beside it, Esc, or the card closing closes it.
+   */
+  private openHubMenu(tile: string, pill: string): void {
+    const pillEl = this.hubPillEl(tile, pill);
+    const menu = this.hubMenus.get(`${tile}/${pill}`);
+    if (!pillEl || !menu || !this.shown) return;
+    this.closeHubMenu(true);
+    const scrim = make('div', 'hub-scrim');
+    const box = make('div', 'hub-menu');
+    this.fillHubMenu(box, menu);
+    this.el.append(scrim, box);
+    const now = performance.now();
+    const state = { tile, pill, box, scrim, sig: JSON.stringify(menu), openedAt: now, pressedAt: 0, closing: false };
+    this.hubMenu = state;
+    const from = this.placeHubMenu(box, pillEl, true);
+
+    // A tap beside the menu closes it, and goes no further.
+    scrim.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      this.closeHubMenu(false);
+    });
+    scrim.addEventListener('click', (e) => e.stopPropagation());
+    box.addEventListener('pointerdown', () => (state.pressedAt = performance.now()));
+    box.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // The finger that held the pill lifts over the menu: only a press made on the menu itself counts.
+      if (state.pressedAt <= state.openedAt || state.closing) return;
+      const row = (e.target as HTMLElement).closest<HTMLElement>('.hm-row[data-action]');
+      if (!row) return;
+      this.onAction(row.dataset.action!, args.get(row), row);
+      this.closeHubMenu(false);
+    });
+
+    box.animate(
+      [{ clipPath: `inset(${from.t}px ${from.r}px ${from.b}px ${from.l}px round ${from.radius}px)` }, { clipPath: `inset(0px 0px 0px 0px round ${MENU_RADIUS}px)` }],
+      { duration: MENU_OPEN_MS, easing: 'cubic-bezier(0.2, 0.9, 0.25, 1)' },
+    );
+    box.querySelector('.hm-in')?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay: 40, easing: 'ease-out', fill: 'backwards' });
+    scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
+    document.addEventListener('keydown', this.hubMenuKey, true);
+    if (menu.open) this.onAction(menu.open, null, pillEl);
+  }
+
+  private readonly hubMenuKey = (e: KeyboardEvent): void => {
+    if (e.key !== 'Escape' || !this.hubMenu) return;
+    e.stopPropagation();
+    e.preventDefault();
+    this.closeHubMenu(false);
+  };
+
+  /**
+   * Sizes and places the menu over the card: as wide as 1.6 pills, its top and left at the pill's
+   * (kept inside the card), as tall as its rows up to the card's height (then the rows scroll and
+   * the last row stays pinned). Returns the pill's rect as insets of the menu, where it grows from.
+   */
+  private placeHubMenu(box: HTMLElement, pillEl: HTMLElement, fresh: boolean): { t: number; r: number; b: number; l: number; radius: number } {
+    const card = this.el.getBoundingClientRect();
+    const scale = this.el.offsetWidth ? card.width / this.el.offsetWidth : 1;
+    const elW = this.el.offsetWidth;
+    const elH = this.el.offsetHeight;
+    const pr = pillEl.getBoundingClientRect();
+    const p = { x: (pr.left - card.left) / scale, y: (pr.top - card.top) / scale, w: pr.width / scale, h: pr.height / scale };
+    const w = Math.max(0, Math.min(Math.max(p.w * 1.6, 230), elW - MENU_PAD * 2));
+    const left = Math.round(Math.max(MENU_PAD, Math.min(p.x - 4, elW - MENU_PAD - w)));
+    box.style.width = `${w}px`;
+    box.style.height = '';
+    box.style.maxHeight = `${Math.max(0, elH - MENU_PAD * 2)}px`;
+    const h = box.offsetHeight;
+    const prevTop = parseFloat(box.style.top);
+    const want = fresh || Number.isNaN(prevTop) ? p.y : prevTop;
+    const top = Math.round(Math.max(MENU_PAD, Math.min(want, elH - MENU_PAD - h)));
+    box.style.left = `${left}px`;
+    box.style.top = `${top}px`;
+    const clamp = (v: number) => Math.max(0, v);
+    return { t: clamp(p.y - top), r: clamp(left + w - (p.x + p.w)), b: clamp(top + h - (p.y + p.h)), l: clamp(p.x - left), radius: p.h / 2 };
+  }
+
+  /** The menu's rows (the list scrolls), a divider, and its last row pinned under them. */
+  private fillHubMenu(box: HTMLElement, menu: HubMenu): void {
+    const scroll = box.querySelector<HTMLElement>('.hm-list')?.scrollTop ?? 0;
+    box.replaceChildren();
+    const inner = make('div', 'hm-in');
+    // Wi-Fi's rows have a check and an icon in front; Bluetooth's are names only (as on the iPhone).
+    box.classList.toggle('with-icons', menu.rows.some((r) => r.icon || r.check));
+    const list = make('div', 'hm-list');
+    for (const r of menu.rows) list.append(this.hubMenuRow(r));
+    if (!menu.rows.length && menu.empty) list.append(make('div', 'hm-empty', menu.empty));
+    inner.append(list);
+    if (menu.more) inner.append(make('div', 'hm-div'), this.hubMenuRow(menu.more, 'hm-more'));
+    box.append(inner);
+    list.scrollTop = scroll;
+  }
+
+  private hubMenuRow(r: HubMenuRow, extra = ''): HTMLElement {
+    const e = make(r.action ? 'button' : 'div', `hm-row${extra ? ` ${extra}` : ''}${r.action ? ' act' : ''}`);
+    if (e instanceof HTMLButtonElement) e.type = 'button';
+    if (r.action) {
+      e.dataset.action = r.action;
+      args.set(e, r.arg);
+    }
+    if (!extra) {
+      const check = make('span', 'hm-check');
+      if (r.check) check.append(iconEl('check', 'hm-ci'));
+      e.append(check);
+      if (r.icon) {
+        const ico = make('span', 'hm-ico');
+        ico.append(iconEl(r.icon, 'hm-ii'));
+        if (r.lock) ico.append(iconEl('lock', 'hm-lock'));
+        e.append(ico);
+      }
+    }
+    const tx = make('span', 'hm-tx');
+    tx.append(make('span', 'hm-l', r.label));
+    if (r.sub) tx.append(make('span', 'hm-s', r.sub));
+    e.append(tx);
+    return e;
+  }
+
+  /** The tiles were drawn again: the open menu shows what its pill's menu says now, or closes with it. */
+  private syncHubMenu(): void {
+    const m = this.hubMenu;
+    if (!m || m.closing) return;
+    const pillEl = this.hubPillEl(m.tile, m.pill);
+    const menu = this.hubMenus.get(`${m.tile}/${m.pill}`);
+    if (!pillEl || !menu) return this.closeHubMenu(false);
+    const sig = JSON.stringify(menu);
+    if (sig === m.sig) return;
+    m.sig = sig;
+    this.fillHubMenu(m.box, menu);
+    this.placeHubMenu(m.box, pillEl, false);
+  }
+
+  /** Back into the pill it grew from (or gone at once): the shape shrinks while the rows fade where they are. */
+  private closeHubMenu(immediate: boolean): void {
+    const m = this.hubMenu;
+    if (!m) return;
+    this.hubMenu = null;
+    document.removeEventListener('keydown', this.hubMenuKey, true);
+    m.closing = true;
+    const gone = () => {
+      m.box.remove();
+      m.scrim.remove();
+    };
+    const pillEl = this.hubPillEl(m.tile, m.pill);
+    if (immediate || !pillEl || !this.shown) return gone();
+    const box = m.box.getBoundingClientRect();
+    const pr = pillEl.getBoundingClientRect();
+    const scale = this.el.offsetWidth ? this.el.getBoundingClientRect().width / this.el.offsetWidth : 1;
+    const c = (v: number) => Math.max(0, v / scale);
+    const to = `inset(${c(pr.top - box.top)}px ${c(box.right - pr.right)}px ${c(box.bottom - pr.bottom)}px ${c(pr.left - box.left)}px round ${pr.height / scale / 2}px)`;
+    m.box.style.pointerEvents = 'none';
+    m.scrim.style.pointerEvents = 'none';
+    const shape = m.box.animate([{ clipPath: `inset(0px 0px 0px 0px round ${MENU_RADIUS}px)` }, { clipPath: to }], { duration: MENU_CLOSE_MS, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+    m.box.animate([{ opacity: 1 }, { opacity: 0 }], { duration: MENU_CLOSE_MS * 0.6, delay: MENU_CLOSE_MS * 0.4, easing: 'ease-in', fill: 'forwards' });
+    m.box.querySelector('.hm-in')?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, easing: 'ease-in', fill: 'forwards' });
+    m.scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: MENU_CLOSE_MS, easing: 'ease-in', fill: 'forwards' });
+    const fallback = setTimeout(gone, MENU_CLOSE_MS + 400);
+    shape.finished.then(
+      () => {
+        clearTimeout(fallback);
+        gone();
+      },
+      () => {},
     );
   }
 
@@ -2493,8 +2741,13 @@ export class SheetRenderer {
     const was = this.tileSigs.get(el);
     const prev = was ? (JSON.parse(was.split('|')[0]) as Tile) : null;
     if (!prev || prev.body.k !== 'hub' || t.body.k !== 'hub') return false;
-    const flat = (x: Tile) => this.tileSig({ ...x, body: { ...x.body, sliders: (x.body as { sliders: HubSlider[] }).sliders.map((h) => ({ ...h, value: 0 })) } } as Tile, false);
+    // Only what shows on the tile counts: the sliders' levels slide, and the pills' hold menus are kept aside.
+    const flat = (x: Tile) => {
+      const hb = x.body as { sliders: HubSlider[]; pills: HubPill[] };
+      return this.tileSig({ ...x, body: { ...x.body, sliders: hb.sliders.map((h) => ({ ...h, value: 0 })), pills: hb.pills.map((p) => ({ ...p, menu: undefined })) } } as Tile, false);
+    };
     if (flat(prev) !== flat(t)) return false;
+    for (const p of t.body.pills) if (p.menu) this.hubMenus.set(`${t.key}/${p.key}`, p.menu);
     for (const h of t.body.sliders) {
       const track = el.querySelector<HTMLElement>(`.hs[data-key="${h.key}"]`);
       if (track && !track.classList.contains('dragging')) track.style.setProperty('--v', String(clamp01(h.value)));
@@ -2854,6 +3107,10 @@ export class SheetRenderer {
         for (const p of b.pills) {
           const pill = make(live && p.action ? 'button' : 'div', `hp${p.on ? ' on' : ''}`);
           if (pill instanceof HTMLButtonElement) pill.type = 'button';
+          pill.dataset.key = p.key;
+          if (p.menu) this.hubMenus.set(`${t.key}/${p.key}`, p.menu);
+          // Held, it opens its menu (wireGrid); arranging the grid leaves it a plain pill.
+          if (p.menu && live) pill.dataset.menu = '1';
           if (live) this.bind(pill, p.action, undefined);
           if (p.tip && live) pill.title = p.tip;
           const tx = make('div', 'hpt');
