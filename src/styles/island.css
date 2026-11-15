@@ -1596,6 +1596,15 @@ button.hp { cursor: pointer; }
 .hub-menu .hm-more { flex: none; padding-top: 12px; padding-bottom: 12px; }
 /* Wi-Fi Settings… lines up with the networks' icons, past the check column. */
 .hub-menu.with-icons .hm-more { padding-left: 38px; }
+/* Glass: --pill is a stack of gradients there (color-mix can't take it, so the menu went clear and
+   white text sat on the light blur; Justin's screenshot). A smoked glass of its own instead. */
+html[data-pill='glass'] .hub-scrim { background: rgba(10, 12, 16, 0.32); }
+html[data-pill='glass'] .hub-menu {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02)), rgba(22, 24, 30, 0.66);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+html[data-pill='glass'] .hub-menu .hm-lock { background: rgba(22, 24, 30, 0.8); }
 
 /* now playing */
 .tile.k-media { gap: 8px; }
