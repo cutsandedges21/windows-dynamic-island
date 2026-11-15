@@ -13,7 +13,7 @@
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
-import { carryCard, carryCurve, carryFades, carryShape, carrySplit, closeCurve, contentLeft, GROW_MS, GROW_SPRING, handOff, pillSlice, snapSpan, tweenShape, type Shape, type Side } from './grow';
+import { carryApart, carryCard, carryCurve, carryFades, carryShape, carrySplit, closeCurve, contentLeft, GROW_MS, GROW_SPRING, handOff, pillSlice, snapSpan, tweenShape, type Shape, type Side } from './grow';
 import { buildPlayer, patchPlayer, type PlayerBlock } from './player';
 import { springAnimate, wheelDelta, type PillCover } from './renderer';
 import type { Tone } from './segments';
@@ -1145,10 +1145,10 @@ export class SheetRenderer {
     const goal = this.carryGoal();
     const r = this.carryR;
     const side: Side = this.anchor;
-    const body = carryShape(from, goal.shape, r);
+    const body = carryShape(from, goal.shape, r, side);
     const radius = mix(this.carryRadius, goal.radius, r);
     this.carryRadiusNow = radius;
-    const k = mix(this.carrySplit0, way === 'open' ? 1 : 0, r);
+    const k = carryApart(this.carrySplit0, way, r);
     this.carrySplitNow = k;
     const split = carrySplit(k);
     const p = this.pill;

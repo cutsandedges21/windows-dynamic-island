@@ -71,16 +71,35 @@ export type Side = 'top' | 'bottom' | 'left' | 'right';
 
 /**
  * A carried card (a grown card turning into the open island's card, or back) `r` of the way: its
- * shape. Its edges go at the one pace, so they set off together and land together; nothing inside
- * it moves (sheet.ts placeCarry keeps both contents where they are on screen).
+ * shape. Nothing inside it moves (sheet.ts placeCarry keeps both contents where they are on screen),
+ * so its edges uncover the content it takes on. The edge away from the pill goes at the carry's own
+ * pace. The two beside it, where they go outward (the card widening), are there by half way: the
+ * new content is all in by then, and at the carry's pace they were still cutting through its outer
+ * tiles and the pill bar's end icons while those could be read. Going inward they keep the pace
+ * (the content they close over is fading out ahead of them).
  */
-export function carryShape(from: Box, to: Box, r: number): Box {
+export function carryShape(from: Box, to: Box, r: number, side: Side = 'top'): Box {
   const t = Math.max(0, Math.min(1, r));
-  const x = from.x + (to.x - from.x) * t;
-  const y = from.y + (to.y - from.y) * t;
-  const right = from.x + from.w + (to.x + to.w - from.x - from.w) * t;
-  const bottom = from.y + from.h + (to.y + to.h - from.y - from.h) * t;
+  const ahead = Math.min(1, t / 0.5);
+  const along = side === 'top' || side === 'bottom';
+  // An edge and how far it has got: `out` is the way that is outward for it (-1: towards 0).
+  const edge = (a: number, b: number, out: number, beside: boolean) => a + (b - a) * (beside && (b - a) * out > 0 ? ahead : t);
+  const x = edge(from.x, to.x, -1, along);
+  const y = edge(from.y, to.y, -1, !along);
+  const right = edge(from.x + from.w, to.x + to.w, 1, along);
+  const bottom = edge(from.y + from.h, to.y + to.h, 1, !along);
   return { x, y, w: right - x, h: bottom - y };
+}
+
+/**
+ * How far apart the card and the pill bar are (for carrySplit) `r` of the way through a carry that
+ * set off `from` apart. Opening, they part over the whole of it. Joining back, they are one by a
+ * little past half way: at the carry's own pace the last of it (the bar's glass giving its part
+ * back to the card) took the long tail of the curve, a darker band left across the grown card.
+ */
+export function carryApart(from: number, way: 'open' | 'back', r: number): number {
+  const t = Math.max(0, Math.min(1, r));
+  return way === 'open' ? from + (1 - from) * t : from * (1 - Math.min(1, t / 0.6));
 }
 
 /** The pill's edges along the way a card hangs from it: its outer one, the one facing the card, and which way the card lies. */

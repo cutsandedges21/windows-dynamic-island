@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carryCard, carryCurve, carryFades, carryShape, carrySplit, pillSlice, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
+import { carryApart, carryCard, carryCurve, carryFades, carryShape, carrySplit, pillSlice, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
 import { defaultSettings, growsChoices, growsOf, migrate } from '../src/core/settings';
 import type { SheetView } from '../src/core/sheet';
 import { tileCard } from '../src/core/tilecard';
@@ -241,7 +241,7 @@ describe('a grown card carried on into the open island (and back)', () => {
   const grown = { x: 454, y: 8, w: 372, h: 174 };
   const open = { x: 352, y: 64, w: 576, h: 436 };
 
-  it('moves all four edges of the shape at one pace, each one way only, and lands on the card', () => {
+  it('moves the shape’s edges each one way only, and lands on the card', () => {
     expect(carryShape(grown, open, 0)).toEqual(grown);
     expect(carryShape(grown, open, 1)).toEqual(open);
     let last = grown;
@@ -253,9 +253,36 @@ describe('a grown card carried on into the open island (and back)', () => {
       expect(s.y + s.h).toBeGreaterThanOrEqual(last.y + last.h - 1e-9);
       last = s;
     }
+    // Its bottom at the carry's pace; its sides, going outward, there by half way (the new content
+    // is all in by then: carryFades), so they do not cut through content that can be read.
     const half = carryShape(grown, open, 0.5);
-    expect(half.y).toBeCloseTo(36);
-    expect(half.w).toBeCloseTo(474);
+    expect(half.y + half.h).toBeCloseTo((182 + 500) / 2);
+    expect(half.x).toBeCloseTo(open.x);
+    expect(half.w).toBeCloseTo(open.w);
+    expect(carryFades(0.5).new).toBe(1);
+    expect(carryShape(grown, open, 0.25).w).toBeCloseTo(474);
+    // Back, the sides go inward: at the carry's pace, like the rest.
+    const back = carryShape(open, grown, 0.5);
+    expect(back.w).toBeCloseTo(474);
+    expect(back.y + back.h).toBeCloseTo((182 + 500) / 2);
+    // On a side edge of the screen the card hangs sideways: its top and bottom are the ones beside.
+    const tall = carryShape({ x: 8, y: 250, w: 380, h: 200 }, { x: 64, y: 150, w: 380, h: 400 }, 0.5, 'left');
+    expect(tall.y).toBeCloseTo(150);
+    expect(tall.h).toBeCloseTo(400);
+    expect(tall.x + tall.w).toBeCloseTo((388 + 444) / 2);
+  });
+
+  it('parts over the whole carry, and joins back by a little past half way', () => {
+    expect(carryApart(0, 'open', 0)).toBe(0);
+    expect(carryApart(0, 'open', 0.5)).toBe(0.5);
+    expect(carryApart(0, 'open', 1)).toBe(1);
+    expect(carryApart(1, 'back', 0)).toBe(1);
+    expect(carryApart(1, 'back', 0.6)).toBe(0);
+    expect(carryApart(1, 'back', 1)).toBe(0);
+    // Cut short and turned round, it goes on from where it was.
+    expect(carryApart(0.4, 'back', 0)).toBe(0.4);
+    expect(carryApart(0.4, 'open', 0)).toBe(0.4);
+    expect(carryApart(0.4, 'open', 1)).toBe(1);
   });
 
   it('splits one shape in two where the pill bar ends: the bar takes over its part in place, then a seam opens', () => {
