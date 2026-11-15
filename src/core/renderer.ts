@@ -208,9 +208,9 @@ export class PillRenderer {
     clearTimeout(this.holdTimer);
     if (!this.held) {
       const target = this.targetRect;
-      // Its press too: let go of mid-press, it would ease back to full size for a quarter of a
-      // second, its content creeping a pixel or two with it.
-      this.shell.set({ x: this.shell.get('x'), y: this.shell.get('y'), w: this.shell.get('w'), h: this.shell.get('h'), s: 1 }, { immediate: true });
+      // (Not its press: let go of, it eases back to full size as after any click. Snapped back, the
+      // bar's ends jumped out by some pixels in one frame.)
+      this.shell.set({ x: this.shell.get('x'), y: this.shell.get('y'), w: this.shell.get('w'), h: this.shell.get('h') }, { immediate: true });
       this.held = { shell: target };
     }
     this.holdTimer = setTimeout(() => this.release(), ms);
