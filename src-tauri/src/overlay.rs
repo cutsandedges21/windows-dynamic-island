@@ -74,6 +74,9 @@ pub struct Overlay {
     mirrors: Mutex<Vec<String>>,
     /// Peek behind (a setting): tapping Ctrl over the pill lets clicks through it.
     peek_enabled: AtomicBool,
+    /// The menu's Fade: the island stays faded and click-through, like a peek that never ends,
+    /// until the page lets go (Show) or a right click on it (which opens the menu, with Show).
+    held: AtomicBool,
 }
 
 impl Overlay {
@@ -82,6 +85,7 @@ impl Overlay {
             rects: Mutex::new(Vec::new()),
             ignoring: AtomicBool::new(false),
             peek_enabled: AtomicBool::new(false),
+            held: AtomicBool::new(false),
             visible: AtomicBool::new(true),
             previous_fg: AtomicIsize::new(0),
             monitor_id: Mutex::new(String::new()),
@@ -482,6 +486,7 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
         let mut ctrl_combo = false;
         // Peek behind: the island fades and lets the mouse through until the pointer leaves it.
         let mut peeking = false;
+        let mut was_held = false;
         // A pointer far from the island cannot reach it within a frame or two, so
         // the loop idles at 10 Hz out there and only runs hot near the island.
         let mut period = Duration::from_millis(FAR_POLL_MS);
@@ -608,10 +613,13 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
                     let _ = app.emit_to(LABEL, "peek", true);
                 }
             }
-            if peeking && (!peek_on || gap > PEEK_LEAVE_PX) {
-                peeking = false;
-                let _ = app.emit_to(LABEL, "peek", false);
+            // The menu's Fade holds the peek, whatever the pointer does and with or without the setting.
+            let held = state.held.load(Ordering::Relaxed);
+            if peek_step(peeking, held, was_held, peek_on, gap) != peeking {
+                peeking = !peeking;
+                let _ = app.emit_to(LABEL, "peek", peeking);
             }
+            was_held = held;
             was_ctrl = ctrl;
 
             let accept = on_island && !peeking;
@@ -627,6 +635,12 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
             let ((left, left_hit), (right, right_hit)) = clicks.poll();
             if !accept && (left_hit || right_hit || (left && !was_left) || (right && !was_right)) {
                 let _ = app.emit_to(LABEL, "pointer-outside", PointerOutside { button: if left { "left" } else { "right" } });
+            }
+            // A right click on the faded island lets go of the hold and brings its menu, so Show is at hand
+            // (the page holds again if the menu closes without Show).
+            if held && on_island && (right_hit || (right && !was_right)) {
+                state.held.store(false, Ordering::Relaxed);
+                let _ = app.emit_to(LABEL, "hold-menu", ());
             }
             was_left = left;
             was_right = right;
@@ -684,6 +698,25 @@ pub fn mirror_hello(app: AppHandle, window: WebviewWindow) -> Option<Placement> 
 #[tauri::command]
 pub fn island_set_hit(state: tauri::State<'_, Arc<Overlay>>, rects: Vec<HitRect>) {
     *state.rects.lock().unwrap() = rects;
+}
+
+/// The menu's Fade, from the page: hold the island faded and click-through, or let go.
+#[tauri::command]
+pub fn island_set_hold(state: tauri::State<'_, Arc<Overlay>>, held: bool) {
+    state.held.store(held, Ordering::Relaxed);
+}
+
+/// Whether the island peeks after this tick, given whether it did. A hold (the menu's Fade) keeps it
+/// peeking wherever the pointer is; when the hold ends the peek ends with it; otherwise a peek ends once
+/// the setting is off or the pointer leaves the island. Starting a peek with Ctrl is decided before this.
+fn peek_step(peeking: bool, held: bool, was_held: bool, peek_on: bool, gap: f64) -> bool {
+    if held {
+        return true;
+    }
+    if !peeking {
+        return false;
+    }
+    !(was_held || !peek_on || gap > PEEK_LEAVE_PX)
 }
 
 #[tauri::command]
@@ -756,6 +789,20 @@ pub fn island_set_focusable(app: AppHandle, state: tauri::State<'_, Arc<Overlay>
 mod tests {
     use super::*;
     use windows::Win32::UI::WindowsAndMessaging::{WS_EX_LAYERED, WS_EX_TOPMOST, WS_EX_TRANSPARENT};
+
+    #[test]
+    fn fade_holds_the_peek_until_let_go() {
+        // Held: peeks wherever the pointer is, with the Peek setting off too.
+        assert!(peek_step(false, true, false, false, 500.0));
+        assert!(peek_step(true, true, true, false, 500.0));
+        // Let go (Show, or a right click): the peek ends even with the pointer on the island.
+        assert!(!peek_step(true, false, true, true, 0.0));
+        // A Ctrl peek still ends when the pointer leaves or the setting goes off, and not before.
+        assert!(peek_step(true, false, false, true, 0.0));
+        assert!(!peek_step(true, false, false, true, PEEK_LEAVE_PX + 1.0));
+        assert!(!peek_step(true, false, false, false, 0.0));
+        assert!(!peek_step(false, false, false, true, 0.0));
+    }
 
     #[test]
     fn the_island_stays_a_tool_window_that_takes_no_focus() {

@@ -1020,7 +1020,7 @@ function menuRow(i: Settings['island']): HTMLElement {
     const state = { anchor: i.anchor, dnd: settings.general.dnd, mac: platform === 'macos', reminders: true };
     const near = h('div', { class: 'mp-end-group' });
     const far = h('div', { class: 'mp-end-group mp-far' });
-    for (const seg of menuSegments(i.menu, state, { order: i.menuOrder, iconOnly: i.menuIconOnly })) {
+    for (const seg of menuSegments(i.menu, state, { order: i.menuOrder, iconOnly: i.menuIconOnly, settingsIconOnly: i.menuSettingsIconOnly })) {
       const into = seg.side === 'end' ? far : near;
       if (seg.t === 'sep') into.append(h('span', { class: 'mp-sep' }));
       else if (seg.t === 'text') into.append(h('span', { class: 'mp-label', text: seg.text }));
@@ -1034,7 +1034,7 @@ function menuRow(i: Settings['island']): HTMLElement {
     preview.replaceChildren(near, far);
   };
   const label = (id: MenuItemId) => MENU_ITEMS.find((m) => m.id === id)?.label ?? id;
-  const iconOf: Record<MenuItemId, IconName> = { position: 'pos-top', quiet: 'moon', hide: 'eye-off', reminders: 'bell', workspaces: 'grid', activities: 'pulse' };
+  const iconOf: Record<MenuItemId, IconName> = { position: 'pos-top', quiet: 'moon', hide: 'eye-off', fade: 'fade', reminders: 'bell', workspaces: 'grid', activities: 'pulse' };
   const list = h('div', { class: 'menu-editor', role: 'list' });
   const commit = () => {
     i.menuOrder = normalizeMenuOrder([...list.children].map((r) => (r as HTMLElement).dataset.id));
@@ -1110,10 +1110,16 @@ function menuRow(i: Settings['island']): HTMLElement {
     });
     list.append(r);
   }
-  // Settings: always there and always last, so it is shown but cannot be moved or hidden.
+  // Settings: always there and always last, so it cannot be moved or hidden; its name can show.
   const gear = h('span', { class: 'me-ico' });
   gear.innerHTML = icon('settings');
-  list.append(h('div', { class: 'me-row fixed', role: 'listitem' }, [h('span', { class: 'me-grip' }), gear, h('span', { class: 'me-name', text: 'Settings' }), h('span', { class: 'muted', text: 'Always last, icon only' })]));
+  const gearLook = segmented(i.menuSettingsIconOnly ? 'icon' : 'both', [['both', 'Icon and name'], ['icon', 'Icon only']], (v) => {
+    i.menuSettingsIconOnly = v === 'icon';
+    for (const b of gearLook.querySelectorAll('button')) b.classList.toggle('on', b.textContent === (v === 'icon' ? 'Icon only' : 'Icon and name'));
+    paint();
+    save(true);
+  });
+  list.append(h('div', { class: 'me-row fixed', role: 'listitem' }, [h('span', { class: 'me-grip' }), gear, h('span', { class: 'me-name', text: 'Settings' }), gearLook, h('span', { class: 'muted', text: 'Always last' })]));
   paint();
   return stacked(row('Right-click menu', 'What the island shows when you right-click it, as it will look. Drag the handles to reorder; turn off what you never use and the menu gets shorter by that much. Settings always stays.', h('div', { class: 'menu-edit-wrap' }, [preview, list])));
 }

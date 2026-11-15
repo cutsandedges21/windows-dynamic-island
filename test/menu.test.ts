@@ -31,15 +31,15 @@ describe('the right-click menu', () => {
   it('shows everything it always did, in the same order, until the user takes something out', () => {
     expect(keys(menuSegments(FULL_MENU, st))).toEqual([
       'menu/label', 'menu/top', 'menu/right', 'menu/bottom', 'menu/left', 'menu/sep',
-      'menu/dnd', 'menu/hide', 'menu/reminders', 'menu/workspaces', 'menu/activities', 'menu/settings',
+      'menu/dnd', 'menu/hide', 'menu/fade', 'menu/reminders', 'menu/workspaces', 'menu/activities', 'menu/settings',
     ]);
     expect(defaultSettings().island.menu).toEqual(FULL_MENU);
-    expect(MENU_ITEMS.map((m) => m.id)).toEqual(['position', 'quiet', 'hide', 'reminders', 'workspaces', 'activities']);
+    expect(MENU_ITEMS.map((m) => m.id)).toEqual(['position', 'quiet', 'hide', 'fade', 'reminders', 'workspaces', 'activities']);
   });
 
   it('drops Position as a whole: its label, its four buttons and the line after them', () => {
     const segs = keys(menuSegments(without('position'), st));
-    expect(segs).toEqual(['menu/dnd', 'menu/hide', 'menu/reminders', 'menu/workspaces', 'menu/activities', 'menu/settings']);
+    expect(segs).toEqual(['menu/dnd', 'menu/hide', 'menu/fade', 'menu/reminders', 'menu/workspaces', 'menu/activities', 'menu/settings']);
   });
 
   it('keeps the line after Position, whatever follows it', () => {
@@ -51,7 +51,7 @@ describe('the right-click menu', () => {
   });
 
   it('keeps Settings whatever is turned off', () => {
-    const none = without('position', 'quiet', 'hide', 'reminders', 'workspaces', 'activities');
+    const none = without('position', 'quiet', 'hide', 'fade', 'reminders', 'workspaces', 'activities');
     expect(keys(menuSegments(none, st))).toEqual(['menu/settings']);
     for (const m of MENU_ITEMS) expect(keys(menuSegments(without(m.id), st))).toContain('menu/settings');
   });
@@ -59,7 +59,7 @@ describe('the right-click menu', () => {
   it('takes out only the item turned off', () => {
     expect(keys(menuSegments(without('workspaces'), st))).toEqual([
       'menu/label', 'menu/top', 'menu/right', 'menu/bottom', 'menu/left', 'menu/sep',
-      'menu/dnd', 'menu/hide', 'menu/reminders', 'menu/activities', 'menu/settings',
+      'menu/dnd', 'menu/hide', 'menu/fade', 'menu/reminders', 'menu/activities', 'menu/settings',
     ]);
   });
 
@@ -148,7 +148,7 @@ describe('how long the menu is', () => {
       expect(split(m.placed)).toBe(GAP + MENU_SPLIT);
     }
     // Position's line ending it: the line parts the two ends, as far from each.
-    for (const shown of [without('quiet', 'hide', 'workspaces', 'activities'), without('quiet', 'hide')]) {
+    for (const shown of [without('quiet', 'hide', 'fade', 'workspaces', 'activities'), without('quiet', 'hide', 'fade')]) {
       const m = menuPill(shown);
       expect(m.placed).toHaveLength(m.segs.length);
       expect(m.inner).toBe(naturalRun(m.segs, 50, measure));
@@ -171,13 +171,13 @@ describe('how long the menu is', () => {
   });
 
   it('in the pill: Workspaces, Activities and Settings alone hug the pill', () => {
-    const ends = menuPill(without('position', 'quiet', 'hide'));
+    const ends = menuPill(without('position', 'quiet', 'hide', 'fade'));
     expect(ends.placed[0].x).toBe(0);
     expect(ends.inner).toBe(naturalRun(ends.segs, 50, measure));
   });
 
   it('in the pill: Settings alone is a small round-ended pill', () => {
-    const lone = menuPill(without('position', 'quiet', 'hide', 'reminders', 'workspaces', 'activities'));
+    const lone = menuPill(without('position', 'quiet', 'hide', 'fade', 'reminders', 'workspaces', 'activities'));
     expect(lone.placed.map((p) => p.seg.key)).toEqual(['menu/settings']);
     expect(lone.main).toBeGreaterThanOrEqual(50);
     expect(lone.main).toBeLessThan(100);
@@ -212,7 +212,7 @@ describe('the right-click menu, arranged in Settings', () => {
     expect(menuSegments(FULL_MENU, st, DEFAULT_MENU_LOOK)).toEqual(menuSegments(FULL_MENU, st));
     expect(keys(menuSegments(FULL_MENU, st, look([...DEFAULT_MENU_ORDER])))).toEqual([
       'menu/label', 'menu/top', 'menu/right', 'menu/bottom', 'menu/left', 'menu/sep',
-      'menu/dnd', 'menu/hide', 'menu/reminders', 'menu/workspaces', 'menu/activities', 'menu/settings',
+      'menu/dnd', 'menu/hide', 'menu/fade', 'menu/reminders', 'menu/workspaces', 'menu/activities', 'menu/settings',
     ]);
     const segs = menuSegments(FULL_MENU, st);
     const by = (k: string) => segs.find((x) => x.key === k) as Extract<Seg, { t: 'button' }>;
@@ -227,9 +227,9 @@ describe('the right-click menu, arranged in Settings', () => {
   });
 
   it('follows the saved order, Settings still last', () => {
-    const segs = menuSegments(FULL_MENU, st, look(['activities', 'hide', 'quiet', 'workspaces', 'reminders', 'position']));
+    const segs = menuSegments(FULL_MENU, st, look(['activities', 'hide', 'fade', 'quiet', 'workspaces', 'reminders', 'position']));
     expect(keys(segs)).toEqual([
-      'menu/activities', 'menu/hide', 'menu/dnd', 'menu/workspaces', 'menu/reminders',
+      'menu/activities', 'menu/hide', 'menu/fade', 'menu/dnd', 'menu/workspaces', 'menu/reminders',
       'menu/sep-before', 'menu/label', 'menu/top', 'menu/right', 'menu/bottom', 'menu/left', 'menu/sep', 'menu/settings',
     ]);
     // Moved in front, Activities stays in front instead of going to the far end.
@@ -264,8 +264,28 @@ describe('the right-click menu, arranged in Settings', () => {
 
   it('a saved arrangement loads back; unknown or repeated ids are dropped and missing ones come back', () => {
     const s = migrate({ version: 6, island: { menuOrder: ['hide', 'nope', 'hide', 'quiet', 4], menuIconOnly: { hide: true, quiet: 'yes' } } });
-    expect(s.island.menuOrder).toEqual(['hide', 'quiet', 'position', 'reminders', 'workspaces', 'activities']);
+    expect(s.island.menuOrder).toEqual(['hide', 'fade', 'quiet', 'position', 'reminders', 'workspaces', 'activities']);
     expect(s.island.menuIconOnly).toEqual({ ...DEFAULT_ICON_ONLY, hide: true });
     expect(normalizeMenuOrder(null)).toEqual(DEFAULT_MENU_ORDER);
+  });
+});
+
+describe("Settings' gear", () => {
+  const gear = (look = DEFAULT_MENU_LOOK) => menuSegments(FULL_MENU, { anchor: 'top', dnd: false, reminders: true, mac: false } as MenuState, look).find((s) => s.key === 'menu/settings');
+
+  it('is a bare gear as it always was, and can show its name; it stays last either way', () => {
+    expect(gear()).toMatchObject({ t: 'button', icon: 'settings', tip: 'Settings' });
+    expect(gear() && 'label' in gear()! ? (gear() as { label?: string }).label : undefined).toBeUndefined();
+    const named = gear({ ...DEFAULT_MENU_LOOK, settingsIconOnly: false });
+    expect(named).toMatchObject({ label: 'Settings', icon: 'settings' });
+    const segs = menuSegments(FULL_MENU, { anchor: 'top', dnd: false, reminders: true, mac: false } as MenuState, { ...DEFAULT_MENU_LOOK, settingsIconOnly: false });
+    expect(segs.at(-1)?.key).toBe('menu/settings');
+  });
+
+  it('older settings load with the bare gear', () => {
+    const raw = defaultSettings() as unknown as Record<string, any>;
+    delete raw.island.menuSettingsIconOnly;
+    expect(migrate(raw).island.menuSettingsIconOnly).toBe(true);
+    expect(defaultSettings().island.menuSettingsIconOnly).toBe(true);
   });
 });

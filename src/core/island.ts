@@ -160,6 +160,8 @@ export class Island {
   private fileDrag: { owner: string; hint: string } | null = null;
   /** The window is hidden because the user hid the island for a while (`island.hiddenUntil`). */
   private windowHidden = false;
+  /** Whether Rust holds the menu's Fade right now (it lets go for a right click, which opens the menu). */
+  private holdOn = false;
   /** Island on your phone: what phones see of this island and what their taps do (src/remote/hub.ts). */
   private hub: PhoneHub | null = null;
   /** The pill as last composed, and the bot as last shown, for phones (also with no Duplicate copies). */
@@ -225,6 +227,13 @@ export class Island {
     await on<{ monitor: string; fullscreen: string | null; pid: number }>('foreground', (fg) => this.onForeground(fg));
     await on('pointer-outside', () => this.dismiss());
     await on<boolean>('peek', (on) => this.onPeek(on));
+    // A right click on the faded island (Rust let go of the hold): its menu, where Fade says Show.
+    await on('hold-menu', () => {
+      this.holdOn = false;
+      this.view = 'menu';
+      this.open = false;
+      this.schedule();
+    });
     // Ctrl+V while the pointer rests on Land's icon: Land opens with what was copied.
     await on('land-paste', () => {
       const land = this.running.get('land');
@@ -344,6 +353,31 @@ export class Island {
     void native.show(!hide);
     if (!hide) this.pendingBump = true;
     this.schedule();
+  }
+
+  // ---------------------------------------------------------------- fading (the menu's Fade)
+
+  /**
+   * The menu's Fade, and its Show: like tapping Ctrl over the island (it fades, clicks go through to
+   * what is under it), but it stays that way until Show. Kept in settings, so it lasts across restarts.
+   */
+  private setFaded(on: boolean): void {
+    this.view = 'main';
+    this.open = false;
+    if (this.settings.island.faded === on) return;
+    this.settings.island.faded = on;
+    this.saveSettings();
+    native.log(on ? 'faded' : 'unfaded');
+    this.syncHold();
+  }
+
+  /** Rust holds the fade while faded, except while the menu it was right-clicked open for shows (then Show is at hand). */
+  private syncHold(): void {
+    const want = this.settings.island.faded && this.view !== 'menu';
+    if (want === this.holdOn) return;
+    // The menu's own Show lets go here; a right click already let go in Rust.
+    this.holdOn = want;
+    void native.setHold(want);
   }
 
   /** How to bring a hidden island back. */
@@ -613,6 +647,7 @@ export class Island {
 
   private compose(immediate: boolean): void {
     if (!this.settings) return;
+    this.syncHold();
     const now = Date.now();
     const s = this.settings.island;
     const statuses = this.statuses();
@@ -694,8 +729,8 @@ export class Island {
         segs = this.hideSegments(vertical);
         viewKey = 'hide';
       } else if (this.view === 'menu') {
-        const state = { anchor, dnd: this.settings.general.dnd, mac: platform === 'macos', reminders: this.running.has('reminders') };
-        const look = { order: s.menuOrder, iconOnly: s.menuIconOnly };
+        const state = { anchor, dnd: this.settings.general.dnd, mac: platform === 'macos', reminders: this.running.has('reminders'), faded: s.faded };
+        const look = { order: s.menuOrder, iconOnly: s.menuIconOnly, settingsIconOnly: s.menuSettingsIconOnly };
         segs = menuSegments(s.menu, state, look);
         viewKey = 'menu';
         // The menu pill is only as long as the items the user keeps in it.
@@ -1538,6 +1573,10 @@ export class Island {
       case 'island:hide':
         if (HIDE_CHOICES.some((c) => c.id === arg)) this.hide(arg as HideChoice);
         return;
+      case 'island:fade':
+        // Fade and Show are the same button.
+        this.setFaded(!this.settings.island.faded);
+        break;
       case 'island:menu':
         this.view = this.view === 'menu' ? 'main' : 'menu';
         break;
@@ -1943,6 +1982,12 @@ export class Island {
       this.unhide();
       return;
     }
+    // Faded: the toggle key brings it back, as it does a hidden island.
+    if (id === 'island.toggle' && this.settings.island.faded) {
+      this.setFaded(false);
+      this.schedule();
+      return;
+    }
     if (id === 'island.toggle') {
       this.open = !this.open;
       this.view = 'main';
@@ -1985,6 +2030,7 @@ export class Island {
     menu.push(
       ...(this.windowHidden ? [] : [{ id: 'island:toggle', label: this.open ? 'Close island' : 'Open island' }]),
       hideItem,
+      ...(this.windowHidden ? [] : [{ id: 'island:fade', label: this.settings.island.faded ? 'Show island' : 'Fade island' }]),
       {
         label: 'Position',
         items: (['top', 'right', 'bottom', 'left'] as Anchor[]).map((x) => ({ id: `island:anchor:${x}`, label: x[0].toUpperCase() + x.slice(1), checked: a === x })),
@@ -2012,6 +2058,7 @@ export class Island {
     }
     if (id === 'island:toggle') this.open = !this.open;
     else if (id === 'island:unhide') this.unhide();
+    else if (id === 'island:fade') this.setFaded(!this.settings.island.faded);
     else if (id.startsWith('island:hide:')) {
       const choice = id.slice('island:hide:'.length);
       if (HIDE_CHOICES.some((c) => c.id === choice)) this.hide(choice as HideChoice);

@@ -99,12 +99,16 @@ export interface Settings {
     grid: GridLayout;
     /** The island is off the screen until this time (epoch ms); 0: shown. HIDE_UNTIL_SHOWN: until the user brings it back. */
     hiddenUntil: number;
+    /** Faded from the right-click menu's Fade: see-through and click-through until Show (kept across restarts). */
+    faded: boolean;
     /** What the right-click menu shows (src/core/menu.ts); Settings is always in it. */
     menu: MenuShown;
-    /** The right-click menu's order (Settings › Behavior › Right-click menu, by dragging); Settings stays last. */
+    /** The right-click menu's order (Settings ï¿½ Behavior ï¿½ Right-click menu, by dragging); Settings stays last. */
     menuOrder: MenuItemId[];
     /** Which of its items show only their icon, their name in a tip. */
     menuIconOnly: MenuIconOnly;
+    /** Settings' gear in the menu: icon only (as it came) or with its name. */
+    menuSettingsIconOnly: boolean;
   };
   activities: {
     order: string[];
@@ -204,9 +208,11 @@ export function defaultSettings(): Settings {
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       hiddenUntil: 0,
+      faded: false,
       menu: { ...FULL_MENU },
       menuOrder: [...DEFAULT_MENU_ORDER],
       menuIconOnly: { ...DEFAULT_ICON_ONLY },
+      menuSettingsIconOnly: true,
     },
     activities: { order: CATALOG.map((m) => m.id), config },
     general: {
@@ -347,10 +353,13 @@ export function migrate(saved: unknown): Settings {
   out.island.displayIds = strings(isObj(saved.island) ? saved.island.displayIds : null);
   if (!Number.isFinite(out.island.hiddenUntil) || out.island.hiddenUntil < 0) out.island.hiddenUntil = 0;
   out.island.hiddenUntil = Math.min(out.island.hiddenUntil, HIDE_UNTIL_SHOWN);
+  // Fade came after 0.4.2: missing (older settings) or junk means not faded.
+  if (typeof out.island.faded !== 'boolean') out.island.faded = false;
   if (!['primary', 'cursor', 'active', 'specific', 'duplicate'].includes(out.island.display)) out.island.display = 'primary';
   // The menu's order and icon-only choices came after 0.4.2: missing (older settings) means the menu as it always was.
   out.island.menuOrder = normalizeMenuOrder(isObj(saved.island) ? saved.island.menuOrder : null);
   out.island.menuIconOnly = normalizeIconOnly(isObj(saved.island) ? saved.island.menuIconOnly : null);
+  if (typeof out.island.menuSettingsIconOnly !== 'boolean') out.island.menuSettingsIconOnly = true;
 
   // Version 2: orange is Claude's alone (the old default accent goes), and Claude no
   // longer holds the pill at rest; it shows when a chat works, finishes or needs you.
