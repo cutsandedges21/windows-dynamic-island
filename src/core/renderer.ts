@@ -34,7 +34,13 @@ const args = new WeakMap<HTMLElement, unknown>();
  * shadow are gone under the card's, its content fades out on top of the card. `shrinking`: the
  * card goes back, the content fades in again. `off`: the pill is itself again.
  */
-export type PillCover = 'off' | 'grown' | 'shrinking';
+/**
+ * What a card grown out of the pill means for the pill: nothing ('off'); standing in for it
+ * ('grown', the pill's glass and content go); on its way back into it ('shrinking', the pill's
+ * content fades in as it lands); or carried on into the open island's card, or back from it, as the
+ * pill is drawn beside it ('uncovering': the pill's glass is there, its content fades locked to the card).
+ */
+export type PillCover = 'off' | 'grown' | 'shrinking' | 'uncovering';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, html?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -88,6 +94,10 @@ export class PillRenderer {
   private orientation: Orientation = 'horizontal';
   private onShellFrame: ((r: Rect) => void) | null = null;
   private focusInput: HTMLInputElement | null = null;
+  /** Held still (see hold()): what the pill was last asked to be, drawn once it is let go. */
+  private held: { shell?: Rect; render?: [Placed[], number, number] } | null = null;
+  private holdTimer: ReturnType<typeof setTimeout> | undefined;
+  private settleTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(stage: HTMLElement, private readonly onAction: ActionHandler) {
     this.pill = el('div', 'pill');
@@ -181,13 +191,60 @@ export class PillRenderer {
   }
 
   setShell(r: Rect, opts: { config?: SpringConfig; immediate?: boolean } = {}): void {
+    if (this.held) {
+      this.held.shell = r;
+      return;
+    }
     this.shell.set({ x: r.x, y: r.y, w: r.w, h: r.h }, { config: opts.config ?? springs.shell, immediate: opts.immediate });
+  }
+
+  /**
+   * Holds the pill as it is drawn now for `ms`: its shape and its content stay put, and what it is
+   * asked to be meanwhile is drawn, at once, when the time is up. For the island closing back into a
+   * grown card (sheet.ts remorph): the card comes back over the pill bar, which must not shrink or
+   * swap its content under the card's edge; by the end the card covers it, so the jump is not seen.
+   */
+  hold(ms: number): void {
+    clearTimeout(this.holdTimer);
+    if (!this.held) {
+      const target = this.targetRect;
+      // (Not its press: let go of, it eases back to full size as after any click. Snapped back, the
+      // bar's ends jumped out by some pixels in one frame.)
+      this.shell.set({ x: this.shell.get('x'), y: this.shell.get('y'), w: this.shell.get('w'), h: this.shell.get('h') }, { immediate: true });
+      this.held = { shell: target };
+    }
+    this.holdTimer = setTimeout(() => this.release(), ms);
+  }
+
+  /**
+   * Lets a held pill go: it is what it was last asked to be, at once (`seen` false: it is under a
+   * card) or on its usual springs (it is in plain sight).
+   */
+  release(seen = false): void {
+    clearTimeout(this.holdTimer);
+    const held = this.held;
+    if (!held) return;
+    this.held = null;
+    if (held.shell) this.setShell(held.shell, { immediate: !seen });
+    if (held.render) this.render(...held.render, { immediate: !seen });
   }
 
   /** A card grown out of the pill stands in for it (see PillCover); the styles do the fading. */
   setCover(cover: PillCover): void {
-    this.pill.classList.toggle('covered', cover !== 'off');
+    const was = this.pill.classList.contains('uncover');
+    this.pill.classList.toggle('covered', cover === 'grown' || cover === 'shrinking');
     this.pill.classList.toggle('cover-out', cover === 'grown');
+    this.pill.classList.toggle('uncover', cover === 'uncovering');
+    // Held for a carry back into a grown card: let go the moment that carry is over, not on the
+    // clock. Covered by the card by then, it is at once what it should be (the card may already be
+    // going back into it: the pointer left). Cut short with the pill in plain sight, it springs there.
+    if (was && cover !== 'uncovering') this.release(cover === 'off');
+    if (was && cover === 'off') {
+      // Whole again after a carry: its shadow fades back in (island.css .pill.settle).
+      this.pill.classList.add('settle');
+      clearTimeout(this.settleTimer);
+      this.settleTimer = setTimeout(() => this.pill.classList.remove('settle'), 400);
+    }
   }
 
   /** A sideways wobble: the island shaking its head (alerts, failed actions). */
@@ -223,7 +280,14 @@ export class PillRenderer {
    * Lays out `placed` for a pill of size (w, h). `swap` means the content is a
    * different activity: leaving nodes go first and new ones arrive a beat later.
    */
-  render(placed: Placed[], w: number, h: number, opts: { swap?: boolean; immediate?: boolean } = {}): void {
+  render(placed: Placed[], w: number, h: number, opts: { swap?: boolean; immediate?: boolean; move?: SpringConfig; carried?: boolean } = {}): void {
+    // How content already in the pill slides to its new spot (the shape's own spring while the
+    // island opens or closes, see pillMotion).
+    if (this.held) {
+      this.held.render = [placed, w, h];
+      return;
+    }
+    const move = opts.move ?? springs.content;
     const vert = this.orientation === 'vertical';
     const pad = innerPadding(vert ? w : h);
     const fx = vert ? h / 2 : fixedPointX(this.anchor, w);
@@ -235,21 +299,32 @@ export class PillRenderer {
       const x = pad + p.x - fx;
       let node = this.nodes.get(key);
       if (node && (node.leaving || node.seg.t !== p.seg.t)) {
-        this.remove(node, true);
+        this.remove(node, !opts.carried);
         node = undefined;
       }
       if (!node) {
         node = this.create(p.seg, x, p.w);
         const delay = opts.immediate ? 0 : (opts.swap ? 90 : 30) + Math.min(entering, 6) * 22;
         entering += 1;
-        if (opts.immediate) node.set.set({ o: 1, s: 1, b: 0 }, { immediate: true });
+        // Carried in with a grown card (sheet.ts unmorph): there all at once and where it stays, its
+        // fade the carry's own (--pill-in). Each part on its own delay and spring left the bar empty
+        // for a few frames, then filled it piece by piece (Justin's recording, 2026-11-14).
+        if (opts.immediate || opts.carried) node.set.set({ o: 1, s: 1, b: 0 }, { immediate: true });
         else setTimeout(() => node && !node.leaving && node.set.set({ o: 1, s: 1, b: 0 }, { config: { x: springs.content, w: springs.content, o: springs.fade, s: springs.bouncy, b: springs.fade } }), delay);
       } else {
         this.patch(node, p.seg);
-        node.set.set({ x, w: p.w }, { config: springs.content, immediate: opts.immediate });
+        node.set.set({ x, w: p.w }, { config: move, immediate: opts.immediate || opts.carried });
+        // Carried: a part still popping in from an earlier change is in at once, too.
+        if (opts.carried) node.set.set({ o: 1, s: 1, b: 0 }, { immediate: true });
       }
     }
-    for (const node of this.nodes.values()) if (!seen.has(node.key) && !node.leaving) this.remove(node, !opts.immediate);
+    for (const node of this.nodes.values()) if (!seen.has(node.key) && !node.leaving) this.remove(node, !opts.immediate && !opts.carried);
+    if (opts.carried) {
+      // And nothing of an earlier change is left fading and shrinking out under the new content.
+      const live = new Set<Element>();
+      for (const node of this.nodes.values()) live.add(node.el);
+      for (const e of [...this.content.children]) if (!live.has(e)) e.remove();
+    }
   }
 
   focusedInput(): HTMLInputElement | null {

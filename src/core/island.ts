@@ -7,7 +7,7 @@
 
 import { CATALOG_BY_ID } from '../activities/catalog';
 import type { Activity, ActivityContext, ActivityStatus, RenderEnv, SheetEnv, SurfaceOptions } from './activity';
-import { setReducedMotion } from './animator';
+import { reducedMotion, setReducedMotion } from './animator';
 import { pillBeam } from './beam';
 import { BubbleView } from './bubble';
 import { ChatBar, type ChatAction, type ChatView } from './chat';
@@ -27,9 +27,9 @@ import { applyGlass } from './glass';
 import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type Block, type SheetChip, type SheetView, type Tile } from './sheet';
-import { chatView, flatView, hoverGrows, hoverView } from './grow';
+import { chatView, flatView, GROW_MS, hoverGrows, hoverView } from './grow';
 import { tileCard } from './tilecard';
-import { springs } from './spring';
+import { pillMotion } from './spring';
 import { WheelGesture } from './wheel';
 import { workspaceEngine } from '../workspaces/engine';
 import { clip, timeOfDay } from './format';
@@ -90,6 +90,8 @@ export class Island {
   /** The level last composed, and until when the pill's shape moves without overshoot (opening, closing). */
   private lastLevel: Level | null = null;
   private calmUntil = 0;
+  /** Opening from a grown card, or closing back into one: the pill moves on the card's curve till then. */
+  private carriedUntil = 0;
   private lastOrientation: Orientation | null = null;
   private scheduled = false;
   private fullscreenOn: string | null = null;
@@ -195,15 +197,15 @@ export class Island {
       (cover) => {
         this.renderer.setCover(cover);
         // The card is back in the pill (or the island opened from it): the pill's light comes back to the pill.
-        if (cover === 'off') this.schedule();
+        if (cover === 'off' || cover === 'uncovering') this.schedule();
       },
     );
     // The light is drawn above the pill and the card, not inside them, so it can spill over their edges.
-    this.pillGlow = new BorderGlow(stage);
+    this.pillGlow = new BorderGlow(stage, null, 'of-pill');
     this.bubble = new BubbleView(stage, { interactive: true, onClick: () => this.handleAction('island:bot', null, this.bubble.el) });
     this.chat = new ChatBar(stage, (action, arg) => this.chatAction(action, arg), () => this.publishHit(this.renderer.rect, true));
     this.cardGlow = new BorderGlow(stage, 24);
-    this.grownGlow = new BorderGlow(stage, 34);
+    this.grownGlow = new BorderGlow(stage, 34, 'of-grown');
     this.renderer.onFrame((r) => {
       this.sheet.follow(r);
       this.pillGlow.place(r);
@@ -801,9 +803,24 @@ export class Island {
     // Opening and closing (the menu too) change the pill most: no overshoot for the whole motion,
     // or a few pixels of it visibly settle back. A spring takes the config of every retarget,
     // so it is kept for as long as that motion runs.
-    if (this.lastLevel !== null && (level === 'maximum') !== (this.lastLevel === 'maximum')) this.calmUntil = now + CALM_MS;
+    // Out of a grown card, or back into one (the pointer still on the pill), the card carries on in
+    // one move (sheet.ts unmorph/remorph) and the pill does not move at all while it can be seen.
+    // Opening: it is at once where it will be and what it will show, unseen under the card, which
+    // then uncovers it. Closing: it is held as it is till the card has covered it (see below).
+    let carryOpen = false;
+    let carryBack = false;
+    if (this.lastLevel !== null && (level === 'maximum') !== (this.lastLevel === 'maximum')) {
+      this.calmUntil = now + CALM_MS;
+      const moving = !immediate && !reducedMotion();
+      carryOpen = moving && level === 'maximum' && (this.sheet.grown || this.sheet.carrying === 'back');
+      carryBack = moving && level !== 'maximum' && morphing && this.sheet.visible && !this.sheet.grown;
+      this.carriedUntil = carryOpen ? now + GROW_MS + 60 : 0;
+    }
     this.lastLevel = level;
-    this.renderer.setShell(target, { config: travelling ? springs.travel : now < this.calmUntil ? springs.open : springs.shell, immediate });
+    const motion = pillMotion(travelling, now < this.calmUntil);
+    if (carryOpen) this.renderer.release();
+    this.renderer.setShell(target, { config: motion.shell, immediate: immediate || carryOpen });
+    this.sheet.pillTo = target;
     this.lastAnchor = anchor;
     this.lastOrientation = orient;
     // The bot stays beside where the pill rests, even while the idle pill is tucked away; it goes
@@ -830,12 +847,15 @@ export class Island {
     if (chatView && this.chatOpen) this.chat.render(chatView);
     this.syncPet(now, chatView);
 
+    // Closing back into a grown card: the pill bar stays as it is, shape and content, while the card
+    // comes back over it, and is the resting pill only once covered.
+    if (carryBack && picked?.view.morph) this.renderer.hold(GROW_MS + 40);
     const swap = primary !== this.lastPrimary || viewKey !== this.lastViewKey || reshaped;
     const sig = `${orient}|${viewKey}|${w}|${h}|${signature(placed)}`;
     const bump = this.pendingBump;
     if (sig !== this.lastSig) {
       this.lastSig = sig;
-      this.renderer.render(placed, w, h, { swap: swap && this.lastPrimary !== undefined, immediate });
+      this.renderer.render(placed, w, h, { swap: swap && this.lastPrimary !== undefined, immediate, move: motion.content, carried: now < this.carriedUntil });
     }
     this.lastPrimary = primary;
     this.lastViewKey = viewKey;

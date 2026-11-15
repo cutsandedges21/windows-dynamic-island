@@ -102,6 +102,7 @@ html[data-pill='glass'] {
 html[data-pill='glass'] .pill { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.14); }
 html[data-pill='glass'] .sheet { box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.14); }
 html[data-pill='glass'] .sheet-shadow { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.14); }
+html[data-pill='glass'] .sheet-shadow.card { box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.14); }
 html[data-pill='glass'] :is(.pill-bg, .sheet-bg, .bubble-bg, .chat-bar, .chat-card) {
   box-shadow:
     inset 0 0 14px rgba(255, 255, 255, 0.1),
@@ -508,6 +509,16 @@ html[data-pill='glass'] .pill.covered { box-shadow: none; }
 /* On the card's way back the pill's content fades in as the shape lands, locked to how far it got
    (sheet.ts placeGrown sets --pill-in), so it and the card's fading content barely overlap. */
 .pill.covered:not(.cover-out) > .pill-content { opacity: var(--pill-in, 1); filter: none; transition: none; }
+/* A grown card carried on into the open island's card (or back): the pill is drawn again, where it
+   will be, as the part of the one shape that lies over it (sheet.ts placeCarry sets --pill-clip: as
+   wide as the card, the shape's corners). Its glass takes over from the card's there (--pill-glass)
+   and its content fades in with the card's new content (--pill-in), then a seam opens between the
+   two. One shape splits in two; the pill itself never moves. */
+.pill.uncover > .pill-content { opacity: var(--pill-in, 1); filter: none; transition: none; }
+.pill.uncover > .pill-bg { opacity: var(--pill-glass, 1); }
+.pill.uncover { box-shadow: none; clip-path: var(--pill-clip, none); }
+/* whole again: its shadow comes back softly, not in one frame */
+.pill.settle { transition: box-shadow 0.3s ease; }
 .pill.cover-out > .pill-content {
   opacity: 0;
   filter: blur(4px);
@@ -896,6 +907,14 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
   mask-composite: exclude;
 }
 .glow .halo { inset: calc(var(--w) * -0.6); opacity: 0.4; filter: blur(1.5px); }
+/* The pill's ring comes back once the pill is whole again, as a grown card carries on into the open
+   island (sheet.ts placeCarry, --pill-ring): on at once, it drew an empty pill outline over the card. */
+.glow.of-pill .core { opacity: var(--pill-ring, 1); }
+.glow.of-pill .halo { opacity: calc(0.4 * var(--pill-ring, 1)); }
+/* A grown card's ring goes as the card starts to split (--grown-ring): left to its own slow fade, it
+   stayed round a shape that was no longer one. */
+.glow.of-grown .core { opacity: var(--grown-ring, 1); }
+.glow.of-grown .halo { opacity: calc(0.4 * var(--grown-ring, 1)); }
 
 /* the turning cone: bright head, tail fading out behind it */
 .glow .ring i {
@@ -950,6 +969,10 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
    the pill's, so the two swap unseen. */
 .sheet.morph { border-radius: 34px; box-shadow: none; overflow: visible; }
 .sheet.morph .sheet-bg { inset: auto; }
+/* Carried on into the open island's card, or back (sheet.ts placeCarry): the same, the box staying
+   where it was all the way so nothing in it moves. */
+.sheet.carry { box-shadow: none; overflow: visible; }
+.sheet.carry .sheet-bg { inset: auto; }
 .sheet-shadow {
   position: absolute;
   left: 0;
@@ -960,6 +983,13 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
     0 14px 34px -10px rgba(0, 0, 0, 0.62),
     0 3px 10px rgba(0, 0, 0, 0.32);
   will-change: transform, width, height, opacity;
+  /* a carried card's shadow turns from a grown card's into an ordinary card's (.card), or back */
+  transition: box-shadow 0.3s ease;
+}
+.sheet-shadow.card {
+  box-shadow:
+    0 18px 40px -12px rgba(0, 0, 0, 0.66),
+    0 3px 10px rgba(0, 0, 0, 0.34);
 }
 
 .sheet-bg {

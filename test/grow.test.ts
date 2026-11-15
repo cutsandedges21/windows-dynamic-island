@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatView, closeCurve, flatView, growCurve, handOff, hoverGrows, hoverView } from '../src/core/grow';
+import { carryApart, carryCard, carryCurve, carryFades, carryShape, carrySplit, pillSlice, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, snapSpan, tweenShape } from '../src/core/grow';
 import { defaultSettings, growsChoices, growsOf, migrate } from '../src/core/settings';
 import type { SheetView } from '../src/core/sheet';
 import { tileCard } from '../src/core/tilecard';
@@ -90,8 +90,10 @@ describe('growing out of the pill', () => {
     expect(handOff({ shown: true, morph: true, closing: false }, false, false)).toBe('unmorph');
     // Without motion (reduce motion, a jump) it is simply replaced.
     expect(handOff({ shown: true, morph: true, closing: false }, false, true)).toBe('replace');
-    // An ordinary card turning into a grown one starts afresh from the pill.
-    expect(handOff({ shown: true, morph: false, closing: false }, true, false)).toBe('replace');
+    // An ordinary card turning into a grown one (the island closing with the pointer on the pill)
+    // carries on back into it; without motion it is replaced.
+    expect(handOff({ shown: true, morph: false, closing: false }, true, false)).toBe('remorph');
+    expect(handOff({ shown: true, morph: false, closing: false }, true, true)).toBe('replace');
     expect(handOff({ shown: true, morph: true, closing: false }, true, false)).toBe('update');
   });
 
@@ -150,5 +152,218 @@ describe('grows settings', () => {
     expect(s.activities.config.music.grows).toBeUndefined();
     expect(s.activities.config.weather.grows).toBeUndefined();
     expect(migrate({ activities: { config: { claude: { grows: 'more' } } } }).activities.config.claude.grows).toBe('more');
+  });
+});
+
+describe('a card widening on whole device pixels (125%)', () => {
+  const k = 1.25;
+  const onPixel = (v: number) => Math.abs(v * k - Math.round(v * k)) < 1e-9;
+
+  it('rounds each edge on its own, so a widening card never steps an edge back', () => {
+    let left = Infinity;
+    let right = -Infinity;
+    for (let w = 372; w <= 576; w += 0.37) {
+      const x = 640 - w / 2;
+      const s = snapSpan(x, w, k);
+      expect(onPixel(s.x) && onPixel(s.x + s.w)).toBe(true);
+      expect(s.x).toBeLessThanOrEqual(left);
+      expect(s.x + s.w).toBeGreaterThanOrEqual(right);
+      left = s.x;
+      right = s.x + s.w;
+    }
+  });
+
+  it('keeps content of a fixed width at one spot on screen while the card around it widens', () => {
+    const spots = new Set<number>();
+    for (let w = 372; w <= 576; w += 0.37) {
+      const x = 640 - w / 2;
+      spots.add(snapSpan(x, w, k).x + contentLeft(x, w, 372, k));
+    }
+    expect(spots.size).toBe(1);
+    // Where the grown card drew it: its own box, centred on the pill, on a whole device pixel.
+    expect([...spots][0]).toBeCloseTo(Math.round((640 - 186) * k) / k, 9);
+  });
+
+  it('does not flip a spot on a half device pixel back and forth with spring noise', () => {
+    // 454 CSS px is 567.5 device px at 125%.
+    const a = snapSpan(454 + 1e-7, 372, k).x + contentLeft(454 + 1e-7, 372, 372, k);
+    const b = snapSpan(454 - 1e-7, 372, k).x + contentLeft(454 - 1e-7, 372, 372, k);
+    expect(a).toBe(b);
+  });
+});
+
+describe('a grown card carried on into the open island (and back)', () => {
+  it('moves width, height and m together, on one curve', () => {
+    const from = { w: 372, h: 174, m: 1 };
+    const to = { w: 576, h: 436, m: 0 };
+    expect(tweenShape(from, to, 0)).toEqual(from);
+    expect(tweenShape(from, to, 1)).toEqual(to);
+    const half = tweenShape(from, to, 0.5);
+    expect(half.w).toBeCloseTo(474);
+    expect(half.h).toBeCloseTo(305);
+    expect(half.m).toBeCloseTo(0.5);
+  });
+
+  it('carries a grow on from where it got to, without stopping, and lands on 1', () => {
+    expect(carryCurve(0)).toBe(0);
+    expect(carryCurve(1)).toBeCloseTo(1, 9);
+    // From rest it is the grow's own curve.
+    for (const u of [0.1, 0.3, 0.7]) expect(carryCurve(u)).toBeCloseTo(growCurve(u), 9);
+    // Carried on mid-grow it is already moving at the start (the grow's speed, not a restart from rest).
+    const dt = 0.01;
+    expect(carryCurve(dt, 0.4) / dt).toBeGreaterThan(carryCurve(dt, 0) / dt);
+    expect(carryCurve(1, 0.4)).toBeCloseTo(1, 9);
+    let last = 0;
+    for (let u = 0; u <= 1.0001; u += 0.01) {
+      const r = carryCurve(u, 0.4);
+      expect(r).toBeGreaterThanOrEqual(last - 1e-12);
+      last = r;
+    }
+  });
+
+  it('crosses the content over with no empty card and never both clearly there', () => {
+    let minSum = 9;
+    let both = 0;
+    for (let r = 0; r <= 1.0001; r += 0.001) {
+      const f = carryFades(r);
+      minSum = Math.min(minSum, f.old + f.new);
+      both = Math.max(both, Math.min(f.old, f.new));
+    }
+    expect(minSum).toBeGreaterThanOrEqual(0.8);
+    expect(both).toBeLessThanOrEqual(0.5);
+    expect(carryFades(0)).toEqual({ old: 1, new: 0 });
+    expect(carryFades(1)).toEqual({ old: 0, new: 1 });
+    expect(carryFades(0.5).old).toBe(0);
+  });
+
+  // The island at the top: the resting pill 36 high at y 8, the open pill bar 48 high, the gap 8.
+  const bar = { x: 400, y: 8, w: 480, h: 48 };
+  const grown = { x: 454, y: 8, w: 372, h: 174 };
+  const open = { x: 352, y: 64, w: 576, h: 436 };
+
+  it('moves the shape’s edges each one way only, and lands on the card', () => {
+    expect(carryShape(grown, open, 0)).toEqual(grown);
+    expect(carryShape(grown, open, 1)).toEqual(open);
+    let last = grown;
+    for (let r = 0; r <= 1.0001; r += 0.01) {
+      const s = carryShape(grown, open, r);
+      expect(s.x).toBeLessThanOrEqual(last.x + 1e-9);
+      expect(s.y).toBeGreaterThanOrEqual(last.y - 1e-9);
+      expect(s.x + s.w).toBeGreaterThanOrEqual(last.x + last.w - 1e-9);
+      expect(s.y + s.h).toBeGreaterThanOrEqual(last.y + last.h - 1e-9);
+      last = s;
+    }
+    // Its bottom at the carry's pace; its sides, going outward, there by half way (the new content
+    // is all in by then: carryFades), so they do not cut through content that can be read.
+    const half = carryShape(grown, open, 0.5);
+    expect(half.y + half.h).toBeCloseTo((182 + 500) / 2);
+    expect(half.x).toBeCloseTo(open.x);
+    expect(half.w).toBeCloseTo(open.w);
+    expect(carryFades(0.5).new).toBe(1);
+    expect(carryShape(grown, open, 0.25).w).toBeCloseTo(474);
+    // Back, the sides go inward: at the carry's pace, like the rest.
+    const back = carryShape(open, grown, 0.5);
+    expect(back.w).toBeCloseTo(474);
+    expect(back.y + back.h).toBeCloseTo((182 + 500) / 2);
+    // On a side edge of the screen the card hangs sideways: its top and bottom are the ones beside.
+    const tall = carryShape({ x: 8, y: 250, w: 380, h: 200 }, { x: 64, y: 150, w: 380, h: 400 }, 0.5, 'left');
+    expect(tall.y).toBeCloseTo(150);
+    expect(tall.h).toBeCloseTo(400);
+    expect(tall.x + tall.w).toBeCloseTo((388 + 444) / 2);
+  });
+
+  it('parts over the whole carry, and joins back by a little past half way', () => {
+    expect(carryApart(0, 'open', 0)).toBe(0);
+    expect(carryApart(0, 'open', 0.5)).toBe(0.5);
+    expect(carryApart(0, 'open', 1)).toBe(1);
+    expect(carryApart(1, 'back', 0)).toBe(1);
+    expect(carryApart(1, 'back', 0.6)).toBe(0);
+    expect(carryApart(1, 'back', 1)).toBe(0);
+    // Cut short and turned round, it goes on from where it was.
+    expect(carryApart(0.4, 'back', 0)).toBe(0.4);
+    expect(carryApart(0.4, 'open', 0)).toBe(0.4);
+    expect(carryApart(0.4, 'open', 1)).toBe(1);
+  });
+
+  it('splits one shape in two where the pill bar ends: the bar takes over its part in place, then a seam opens', () => {
+    // One shape (the grown card): the card's glass is the whole of it, the bar's not in yet.
+    const one = carryCard(bar, grown, 'top', 8, 0);
+    expect(one.outer).toEqual(grown);
+    expect(one.glass).toEqual(grown);
+    expect(one.handed).toBe(false);
+    expect(one.over).toBe(1);
+    expect(one.depth).toBe(48);
+    // Apart: the card's glass starts across the gap from the bar; the outline of the whole still
+    // starts at the bar's top.
+    const two = carryCard(bar, open, 'top', 8, 1);
+    expect(two.handed).toBe(true);
+    expect(two.glass).toEqual(open);
+    expect(two.outer.y).toBe(bar.y);
+    expect(two.outer.y + two.outer.h).toBe(open.y + open.h);
+    // On the way: the outline's top never moves; the card's glass hands the bar its part with no
+    // step (see-through there by exactly as much as the bar's glass is in, the seam still shut),
+    // and from then on its top edge only goes down, by the gap and no more.
+    let top = bar.y;
+    let seam = 0;
+    for (let r = 0; r <= 1.0001; r += 0.005) {
+      const body = carryShape(grown, open, r);
+      const c = carryCard(bar, body, 'top', 8, r);
+      const s = carrySplit(r);
+      expect(c.outer.y).toBe(bar.y);
+      expect(c.outer.x).toBeCloseTo(body.x, 9);
+      expect(c.outer.w).toBeCloseTo(body.w, 9);
+      if (!c.handed) {
+        expect(c.glass).toEqual(c.outer);
+        expect(c.over).toBeCloseTo(1 - s.glass, 9);
+        expect(s.seam).toBe(0);
+      } else {
+        expect(s.glass).toBe(1);
+        expect(c.glass.y).toBeCloseTo(bar.y + bar.h + 8 * s.seam, 9);
+        expect(c.glass.y + c.glass.h).toBeCloseTo(body.y + body.h, 9);
+      }
+      expect(c.glass.y).toBeGreaterThanOrEqual(top === bar.y ? bar.y : top - 1e-9);
+      expect(s.seam).toBeGreaterThanOrEqual(seam);
+      top = c.glass.y;
+      seam = s.seam;
+    }
+    expect(top).toBeCloseTo(open.y, 9);
+    expect(carrySplit(0)).toEqual({ glass: 0, seam: 0, ring: 0 });
+    expect(carrySplit(1)).toEqual({ glass: 1, seam: 1, ring: 1 });
+    // The light round the pill comes back last.
+    expect(carrySplit(0.75).ring).toBe(0);
+  });
+
+  it('gives the bar the part of the shape over the pill, as wide as the card', () => {
+    // The grown card is narrower than the bar: the bar shows only as wide as the card.
+    expect(pillSlice(bar, grown, 'top', 0)).toEqual({ top: 0, right: 54, bottom: 0, left: 54 });
+    // The open card is wider: all of the bar, the clip past its ends.
+    const whole = pillSlice(bar, open, 'top', 1);
+    expect(whole.left).toBeLessThan(0);
+    expect(whole.right).toBeLessThan(0);
+    // A card that ends up narrower than the pill still leaves all of the pill showing.
+    expect(pillSlice(bar, { x: 440, y: 64, w: 400, h: 300 }, 'top', 1)).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
+    // Never cut along the way the card hangs: the bar is whole from its top to the seam.
+    for (let r = 0; r <= 1.0001; r += 0.05) {
+      const s = pillSlice(bar, carryShape(grown, open, r), 'top', r);
+      expect(s.top).toBe(0);
+      expect(s.bottom).toBe(0);
+    }
+  });
+
+  it('works the same from every screen edge', () => {
+    const pillB = { x: 400, y: 664, w: 480, h: 48 };
+    const cardB = carryCard(pillB, { x: 352, y: 220, w: 576, h: 436 }, 'bottom', 8, 1);
+    expect(cardB.glass).toEqual({ x: 352, y: 220, w: 576, h: 436 });
+    expect(cardB.outer.y + cardB.outer.h).toBe(712);
+    const side = { x: 8, y: 200, w: 48, h: 300 };
+    const cardL = carryCard(side, { x: 64, y: 150, w: 380, h: 400 }, 'left', 8, 1);
+    expect(cardL.glass.x).toBe(64);
+    expect(cardL.outer.x).toBe(8);
+    expect(cardL.depth).toBe(48);
+    expect(pillSlice(side, { x: 8, y: 250, w: 380, h: 200 }, 'left', 0)).toEqual({ top: 50, right: 0, bottom: 50, left: 0 });
+    const sideR = { x: 1224, y: 200, w: 48, h: 300 };
+    const cardR = carryCard(sideR, { x: 836, y: 150, w: 380, h: 400 }, 'right', 8, 1);
+    expect(cardR.glass.x + cardR.glass.w).toBe(1216);
+    expect(cardR.outer.x + cardR.outer.w).toBe(1272);
   });
 });
