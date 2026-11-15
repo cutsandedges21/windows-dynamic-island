@@ -13,7 +13,7 @@
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
 import type { Anchor, Area, Rect } from './layout';
-import { carryApart, carryCurve, carryFades, carryShape, closeCurve, contentLeft, GROW_MS, GROW_SPRING, handOff, pillFades, pillReveal, snapSpan, tweenShape, type Shape } from './grow';
+import { carryCard, carryCurve, carryFades, carryShape, carrySplit, closeCurve, contentLeft, GROW_MS, GROW_SPRING, handOff, pillSlice, snapSpan, tweenShape, type Shape, type Side } from './grow';
 import { buildPlayer, patchPlayer, type PlayerBlock } from './player';
 import { springAnimate, wheelDelta, type PillCover } from './renderer';
 import type { Tone } from './segments';
@@ -464,6 +464,12 @@ export class SheetRenderer {
   /** Its corner radius where it set off, and now. */
   private carryRadius = MORPH_RADIUS;
   private carryRadiusNow = MORPH_RADIUS;
+  /** How far apart the card and the pill bar are (carrySplit): where the carry set off, and now. */
+  private carrySplit0 = 0;
+  private carrySplitNow = 0;
+  /** The pill's own content: how much of it showed where the carry set off, and now. */
+  private carryPill0 = 0;
+  private carryPillNow = 0;
   /** Where the card's box is on screen (it stays there all through a carry). */
   private elAt = { x: 0, y: 0 };
   /** Going back into the pill: how far, 0 → 1, and the frame request driving it. */
@@ -721,6 +727,11 @@ export class SheetRenderer {
   private startCarry(way: 'open' | 'back', s: number): void {
     const from = this.drawn ?? { x: this.elAt.x, y: this.elAt.y, w: this.springs.get('w'), h: this.springs.get('h') };
     const radius = this.carry ? this.carryRadiusNow : this.morph ? MORPH_RADIUS : CARD_RADIUS;
+    // A grown card is one shape with the pill; an ordinary card stands apart from it, the pill whole.
+    this.carrySplit0 = this.carry ? this.carrySplitNow : this.morph ? 0 : 1;
+    this.carryPill0 = this.carry ? this.carryPillNow : this.morph ? 0 : 1;
+    this.carrySplitNow = this.carrySplit0;
+    this.carryPillNow = this.carryPill0;
     cancelAnimationFrame(this.openFrame);
     // A carry cut short by this one: what it was fading out goes now.
     this.carryOld?.remove();
@@ -818,6 +829,8 @@ export class SheetRenderer {
     bg.top = '';
     bg.width = '';
     bg.height = '';
+    bg.maskImage = '';
+    bg.webkitMaskImage = '';
     const sh = this.shadow;
     sh.style.display = 'none';
     sh.style.borderRadius = '';
@@ -835,8 +848,10 @@ export class SheetRenderer {
   private pillWhole(): void {
     const root = document.documentElement.style;
     root.removeProperty('--pill-in');
+    root.removeProperty('--pill-glass');
     root.removeProperty('--pill-ring');
     root.removeProperty('--pill-clip');
+    root.removeProperty('--grown-ring');
   }
 
   private setCover(cover: PillCover): void {
@@ -1111,21 +1126,33 @@ export class SheetRenderer {
 
   /**
    * A carried card: a grown card turning into the open island's card, or back. Nothing a reader
-   * can see moves: the box stays where it was, the content it had stays in it and fades, the content
-   * it takes on sits where it will stay from the first frame and fades in, and only the shape goes
-   * (a clip, the background and the shadow, as for a grown card), all four edges at one pace. The
-   * pill bar is not moved either: it shows in what the card's edge has uncovered, up to a seam that
-   * opens between the two, so one shape splits into two (or the two join into one). Content that
-   * slid with the card read as a shake however the slide was timed (Justin, 2026-11-14).
+   * can see moves, and the outline of the whole never steps:
+   * - The card's box stays where it was. The content it had stays in it and fades; the content it
+   *   takes on sits where it will stay from the first frame and fades in. Only the shape goes (a
+   *   clip, the background and the shadow, as for a grown card), its edges at one pace.
+   * - The pill bar is not moved, and not uncovered bit by bit: the part of the shape over the pill
+   *   simply becomes the bar. Its glass takes over from the card's there (a cross-fade in place),
+   *   its content fades in as the card's old content fades out, and then a seam opens between bar
+   *   and card and their new corners round off (carrySplit). One shape splits in two; joining back
+   *   is the same backwards.
+   * Content that slid with the card read as a shake however the slide was timed, and a bar
+   * uncovered from its top edge down had its text cut through on the way (Justin, 2026-11-14).
    */
   private placeCarry(v: { o: number; b: number }): void {
     const from = this.carryRect;
-    if (!from) return;
+    const way = this.carry;
+    if (!from || !way) return;
     const goal = this.carryGoal();
     const r = this.carryR;
-    const shape = carryShape(from, goal.shape, r);
+    const side: Side = this.anchor;
+    const body = carryShape(from, goal.shape, r);
     const radius = mix(this.carryRadius, goal.radius, r);
     this.carryRadiusNow = radius;
+    const k = mix(this.carrySplit0, way === 'open' ? 1 : 0, r);
+    this.carrySplitNow = k;
+    const split = carrySplit(k);
+    const p = this.pill;
+    const card = carryCard(p, body, side, GAP, k);
     const at = this.elAt;
     // The content it takes on: where it will stay.
     const ns = this.inner.style;
@@ -1144,42 +1171,59 @@ export class SheetRenderer {
     }
     ns.opacity = String(f.new);
     ns.filter = f.new < 0.999 ? `blur(${(4 * (1 - f.new)).toFixed(2)}px)` : '';
+    // Four corner radii, clockwise from the top left: `near` for the two on the side facing the pill.
+    const corners = (near: number, far: number): string => {
+      const n = `${near.toFixed(2)}px`;
+      const o = `${far.toFixed(2)}px`;
+      return { top: `${n} ${n} ${o} ${o}`, bottom: `${o} ${o} ${n} ${n}`, left: `${n} ${o} ${o} ${n}`, right: `${o} ${n} ${n} ${o}` }[side];
+    };
     if (this.cover === 'uncovering') {
-      // The pill: what the card's edge has uncovered of it, its content and its light with that.
-      const p = this.pill;
-      const apart = carryApart(p, shape, this.anchor, GAP);
-      const cut = pillReveal(p, shape, this.anchor, GAP);
-      const fades = pillFades(apart);
-      // The uncovered part's outer corners are the card's (it is the card's top until the seam opens).
-      const c = (radius * (1 - clamp01((apart - 0.7) / 0.3))).toFixed(2);
-      const round = { top: `${c}px ${c}px 0 0`, bottom: `0 0 ${c}px ${c}px`, left: `${c}px 0 0 ${c}px`, right: `0 ${c}px ${c}px 0` }[this.anchor];
+      // The pill bar's part of the shape: as wide as the card, its outer corners the shape's, the
+      // ones on the seam rounding as it opens. Its content comes with the card's new content (or
+      // goes with the old), from however much of it showed.
+      const slice = pillSlice(p, body, side, k);
+      const own = Math.min(p.w, p.h) / 2;
+      const shown = way === 'open' ? this.carryPill0 + (1 - this.carryPill0) * f.new : this.carryPill0 * f.old;
+      this.carryPillNow = shown;
+      // Its own round ends take over from the shape's corners once the two are apart. (For the
+      // pill the seam's corners are the far ones of a card's: the pill lies on the other side of it.)
+      const outerR = radius * (1 - clamp01((k - 0.7) / 0.3));
+      const pillCorners = corners(outerR, own * split.seam);
       const root = document.documentElement.style;
-      root.setProperty('--pill-in', fades.content.toFixed(3));
-      root.setProperty('--pill-ring', fades.ring.toFixed(3));
-      root.setProperty('--pill-clip', cut ? `inset(${cut.top.toFixed(2)}px ${cut.right.toFixed(2)}px ${cut.bottom.toFixed(2)}px ${cut.left.toFixed(2)}px round ${round})` : 'inset(50%)');
+      root.setProperty('--pill-in', shown.toFixed(3));
+      root.setProperty('--pill-glass', split.glass.toFixed(3));
+      root.setProperty('--pill-ring', split.ring.toFixed(3));
+      root.setProperty('--grown-ring', (1 - split.glass).toFixed(3));
+      root.setProperty('--pill-clip', `inset(${slice.top.toFixed(2)}px ${slice.right.toFixed(2)}px ${slice.bottom.toFixed(2)}px ${slice.left.toFixed(2)}px round ${pillCorners})`);
     }
-    // Its shape: a clip on the box that stays, with the background and the shadow at the shape.
-    const lx = shape.x - at.x;
-    const ly = shape.y - at.y;
+    // The shape: a clip on the box that stays (the whole outline, so neither content is cut where
+    // the bar is), the card's own glass, and the shadow round the whole.
     const op = String(clamp01(v.o));
     const st = this.el.style;
     st.opacity = op;
     st.filter = v.b > 0.08 ? `blur(${v.b.toFixed(2)}px)` : '';
-    st.borderRadius = `${radius.toFixed(2)}px`;
-    st.clipPath = `xywh(${lx.toFixed(2)}px ${ly.toFixed(2)}px ${shape.w.toFixed(2)}px ${shape.h.toFixed(2)}px round ${radius.toFixed(2)}px)`;
+    const o = card.outer;
+    st.clipPath = `xywh(${(o.x - at.x).toFixed(2)}px ${(o.y - at.y).toFixed(2)}px ${o.w.toFixed(2)}px ${o.h.toFixed(2)}px round ${radius.toFixed(2)}px)`;
+    // Its glass: over the whole shape while the bar's takes over its part (see-through there by as
+    // much as the bar's is in), then from across the seam, its corners there rounding as it opens.
+    st.borderRadius = corners(card.handed ? radius * split.seam : radius, radius);
+    const g = card.glass;
     const bg = this.bg.style;
-    bg.left = `${lx}px`;
-    bg.top = `${ly}px`;
-    bg.width = `${shape.w}px`;
-    bg.height = `${shape.h}px`;
+    bg.left = `${g.x - at.x}px`;
+    bg.top = `${g.y - at.y}px`;
+    bg.width = `${g.w}px`;
+    bg.height = `${g.h}px`;
+    const mask = card.handed || card.over >= 0.999 ? '' : `linear-gradient(to ${{ top: 'bottom', bottom: 'top', left: 'right', right: 'left' }[side]}, rgba(0, 0, 0, ${card.over.toFixed(3)}) ${card.depth.toFixed(2)}px, #000 ${card.depth.toFixed(2)}px)`;
+    bg.maskImage = mask;
+    bg.webkitMaskImage = mask;
     const sh = this.shadow.style;
     sh.display = '';
-    sh.transform = `translate3d(${shape.x}px, ${shape.y}px, 0)`;
-    sh.width = `${shape.w}px`;
-    sh.height = `${shape.h}px`;
+    sh.transform = `translate3d(${o.x}px, ${o.y}px, 0)`;
+    sh.width = `${o.w}px`;
+    sh.height = `${o.h}px`;
     sh.borderRadius = `${radius.toFixed(2)}px`;
     sh.opacity = op;
-    this.drawn = { x: shape.x, y: shape.y, w: shape.w, h: shape.h };
+    this.drawn = { x: g.x, y: g.y, w: g.w, h: g.h };
     this.onMove();
   }
 

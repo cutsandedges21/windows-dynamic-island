@@ -208,7 +208,9 @@ export class PillRenderer {
     clearTimeout(this.holdTimer);
     if (!this.held) {
       const target = this.targetRect;
-      this.shell.set({ x: this.shell.get('x'), y: this.shell.get('y'), w: this.shell.get('w'), h: this.shell.get('h') }, { immediate: true });
+      // Its press too: let go of mid-press, it would ease back to full size for a quarter of a
+      // second, its content creeping a pixel or two with it.
+      this.shell.set({ x: this.shell.get('x'), y: this.shell.get('y'), w: this.shell.get('w'), h: this.shell.get('h'), s: 1 }, { immediate: true });
       this.held = { shell: target };
     }
     this.holdTimer = setTimeout(() => this.release(), ms);
@@ -290,7 +292,7 @@ export class PillRenderer {
       const x = pad + p.x - fx;
       let node = this.nodes.get(key);
       if (node && (node.leaving || node.seg.t !== p.seg.t)) {
-        this.remove(node, true);
+        this.remove(node, !opts.carried);
         node = undefined;
       }
       if (!node) {
@@ -305,9 +307,17 @@ export class PillRenderer {
       } else {
         this.patch(node, p.seg);
         node.set.set({ x, w: p.w }, { config: move, immediate: opts.immediate || opts.carried });
+        // Carried: a part still popping in from an earlier change is in at once, too.
+        if (opts.carried) node.set.set({ o: 1, s: 1, b: 0 }, { immediate: true });
       }
     }
     for (const node of this.nodes.values()) if (!seen.has(node.key) && !node.leaving) this.remove(node, !opts.immediate && !opts.carried);
+    if (opts.carried) {
+      // And nothing of an earlier change is left fading and shrinking out under the new content.
+      const live = new Set<Element>();
+      for (const node of this.nodes.values()) live.add(node.el);
+      for (const e of [...this.content.children]) if (!live.has(e)) e.remove();
+    }
   }
 
   focusedInput(): HTMLInputElement | null {

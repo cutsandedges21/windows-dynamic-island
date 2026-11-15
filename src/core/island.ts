@@ -203,7 +203,7 @@ export class Island {
     this.bubble = new BubbleView(stage, { interactive: true, onClick: () => this.handleAction('island:bot', null, this.bubble.el) });
     this.chat = new ChatBar(stage, (action, arg) => this.chatAction(action, arg), () => this.publishHit(this.renderer.rect, true));
     this.cardGlow = new BorderGlow(stage, 24);
-    this.grownGlow = new BorderGlow(stage, 34);
+    this.grownGlow = new BorderGlow(stage, 34, 'of-grown');
     this.renderer.onFrame((r) => {
       this.sheet.follow(r);
       this.pillGlow.place(r);

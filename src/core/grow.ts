@@ -71,8 +71,8 @@ export type Side = 'top' | 'bottom' | 'left' | 'right';
 
 /**
  * A carried card (a grown card turning into the open island's card, or back) `r` of the way: its
- * shape. All four edges go at the one pace, so they set off together and land together; nothing
- * inside it moves (sheet.ts placeCarry keeps both contents where they are on screen).
+ * shape. Its edges go at the one pace, so they set off together and land together; nothing inside
+ * it moves (sheet.ts placeCarry keeps both contents where they are on screen).
  */
 export function carryShape(from: Box, to: Box, r: number): Box {
   const t = Math.max(0, Math.min(1, r));
@@ -83,49 +83,71 @@ export function carryShape(from: Box, to: Box, r: number): Box {
   return { x, y, w: right - x, h: bottom - y };
 }
 
-/**
- * How far a carried card stands off the pill, 0 (over it: one shape) → 1 (beside it, across the
- * gap), from where its edge facing the pill is. `reach` is how far that edge travels: the pill's
- * depth plus the gap.
- */
-export function carryApart(pill: Box, card: Box, side: Side, gap: number): number {
-  const depth = side === 'top' || side === 'bottom' ? pill.h : pill.w;
-  const moved = side === 'top' ? card.y - pill.y : side === 'bottom' ? pill.y + pill.h - (card.y + card.h) : side === 'left' ? card.x - pill.x : pill.x + pill.w - (card.x + card.w);
-  return Math.max(0, Math.min(1, moved / Math.max(1, depth + gap)));
+/** The pill's edges along the way a card hangs from it: its outer one, the one facing the card, and which way the card lies. */
+function pillEdges(pill: Box, side: Side): { far: number; near: number; sign: number; depth: number } {
+  switch (side) {
+    case 'top':
+      return { far: pill.y, near: pill.y + pill.h, sign: 1, depth: pill.h };
+    case 'bottom':
+      return { far: pill.y + pill.h, near: pill.y, sign: -1, depth: pill.h };
+    case 'left':
+      return { far: pill.x, near: pill.x + pill.w, sign: 1, depth: pill.w };
+    case 'right':
+      return { far: pill.x + pill.w, near: pill.x, sign: -1, depth: pill.w };
+  }
+}
+
+/** `box` with its edge on `side` moved to `v`, the opposite edge staying. */
+function withEdge(box: Box, side: Side, v: number): Box {
+  switch (side) {
+    case 'top':
+      return { x: box.x, y: v, w: box.w, h: box.y + box.h - v };
+    case 'bottom':
+      return { x: box.x, y: box.y, w: box.w, h: v - box.y };
+    case 'left':
+      return { x: v, y: box.y, w: box.x + box.w - v, h: box.h };
+    case 'right':
+      return { x: box.x, y: box.y, w: v - box.x, h: box.h };
+  }
 }
 
 /**
- * The part of the pill a carried card has uncovered, as the pill's own clip (insets from its box,
- * top right bottom left; a negative one reaches past the box): from its outer edge to a seam just
- * short of the card, as wide as the card. The seam opens from nothing to the full gap over the first
- * third of the way, so the one shape splits in two along a line that widens: the outline of the
- * whole never steps. Null when none of the pill shows yet.
+ * A grown card splitting into the pill bar and the open island's card, `k` of the way apart (0 =
+ * one shape, the grown card; 1 = the two): first the bar's own glass takes over its part of the
+ * shape from the card's (`glass`, a cross-fade in place), then a seam opens between the two and
+ * their new corners round off (`seam`), and last the light round the pill comes back (`ring`).
+ * Joining back is the same at falling `k`.
  */
-export function pillReveal(pill: Box, card: Box, side: Side, gap: number): { top: number; right: number; bottom: number; left: number } | null {
-  const apart = carryApart(pill, card, side, gap);
-  const seam = gap * smooth(apart, 0, 0.35);
-  const along = side === 'top' || side === 'bottom';
-  // Across the pill: as wide as the card (past the pill's own ends once the card is wider than it).
-  // Should the card end up the narrower one, the pill's ends come out over the second half of the
-  // way: apart, all of the pill shows.
-  const ease = (v: number) => (v > 0 ? v * (1 - smooth(apart, 0.5, 1)) : v);
-  const a0 = ease(along ? card.x - pill.x : card.y - pill.y);
-  const a1 = ease(along ? pill.x + pill.w - (card.x + card.w) : pill.y + pill.h - (card.y + card.h));
-  // Along the way the card goes: from the pill's outer edge to the seam.
-  const depth = along ? pill.h : pill.w;
-  const shown = side === 'top' ? card.y - seam - pill.y : side === 'bottom' ? pill.y + pill.h - (card.y + card.h + seam) : side === 'left' ? card.x - seam - pill.x : pill.x + pill.w - (card.x + card.w + seam);
-  if (shown <= 0.01) return null;
-  const cut = Math.max(0, depth - shown);
-  switch (side) {
-    case 'top':
-      return { top: 0, right: a1, bottom: cut, left: a0 };
-    case 'bottom':
-      return { top: cut, right: a1, bottom: 0, left: a0 };
-    case 'left':
-      return { top: a0, right: cut, bottom: a1, left: 0 };
-    case 'right':
-      return { top: a0, right: 0, bottom: a1, left: cut };
-  }
+export function carrySplit(k: number): { glass: number; seam: number; ring: number } {
+  return { glass: smooth(k, 0, 0.25), seam: smooth(k, 0.25, 0.8), ring: smooth(k, 0.8, 1) };
+}
+
+/**
+ * A carried card `k` apart from the pill bar (carrySplit), with `body` its growing shape
+ * (carryShape; its edge facing the pill is not used: that edge does not travel). `outer` is the
+ * whole shape, from the pill's outer edge: what the content is clipped to and the shadow follows,
+ * its outline never stepping. `glass` is the card's own background: the whole shape while the
+ * bar's glass takes over the part over the pill (`depth` deep, the card's showing `over` of itself
+ * there), then from across the seam (`handed`).
+ */
+export function carryCard(pill: Box, body: Box, side: Side, gap: number, k: number): { outer: Box; glass: Box; handed: boolean; over: number; depth: number } {
+  const e = pillEdges(pill, side);
+  const s = carrySplit(k);
+  const outer = withEdge(body, side, e.far);
+  const handed = s.glass >= 1;
+  return { outer, glass: handed ? withEdge(body, side, e.near + e.sign * gap * s.seam) : outer, handed, over: 1 - s.glass, depth: e.depth };
+}
+
+/**
+ * The part of the pill bar that belongs to the shape while a carried card is `k` apart from it, as
+ * the pill's own clip (insets from its box: top, right, bottom, left; a negative one reaches past
+ * the box): all of its depth, as wide as the card's `body`. Should the card end up the narrower
+ * one, the pill's ends come out over the second half of the way: apart, all of the pill shows.
+ */
+export function pillSlice(pill: Box, body: Box, side: Side, k: number): { top: number; right: number; bottom: number; left: number } {
+  const ease = (v: number) => (v > 0 ? v * (1 - smooth(k, 0.5, 1)) : v);
+  if (side === 'top' || side === 'bottom') return { top: 0, right: ease(pill.x + pill.w - (body.x + body.w)), bottom: 0, left: ease(body.x - pill.x) };
+  return { top: ease(body.y - pill.y), right: 0, bottom: ease(pill.y + pill.h - (body.y + body.h)), left: 0 };
 }
 
 /**
@@ -136,15 +158,6 @@ export function pillReveal(pill: Box, card: Box, side: Side, gap: number): { top
  */
 export function carryFades(r: number): { old: number; new: number } {
   return { old: 1 - smooth(r, 0, 0.42), new: smooth(r, 0.05, 0.47) };
-}
-
-/**
- * The pill's own content and the light round it while a carried card stands `apart` (carryApart)
- * from it: the content fades in as the seam uncovers it (and out as the card comes back over it),
- * the light only once the pill is all but whole.
- */
-export function pillFades(apart: number): { content: number; ring: number } {
-  return { content: smooth(apart, 0.3, 0.7), ring: smooth(apart, 0.8, 1) };
 }
 
 /**
