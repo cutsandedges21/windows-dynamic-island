@@ -519,6 +519,12 @@ export class SheetRenderer {
         const typing = (e.target as HTMLElement).closest('.sb-input');
         const selecting = Boolean(window.getSelection()?.toString());
         if (this.morph && this.shown && !typing && !selecting) this.onAction('island:tap', null, this.el);
+        // Carried, the one shape still lies over the pill bar: a click there is the pill's (a
+        // second click straight after the first closes the island again, or opens it again).
+        else if (this.carry && this.shown) {
+          const p = this.pill;
+          if (e.clientX >= p.x && e.clientX <= p.x + p.w && e.clientY >= p.y && e.clientY <= p.y + p.h) this.onAction('island:tap', null, this.el);
+        }
         return;
       }
       e.stopPropagation();
