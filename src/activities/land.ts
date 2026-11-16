@@ -30,6 +30,11 @@ export interface Live extends LandTransfer {
   ended: number | null;
 }
 
+/** What a send from here carried: the text, or the files as they were staged. */
+type Resend = { text: string } | { staged: LandStaged[] };
+/** Sends remembered for Send again (the card shows far fewer rows: KEEP_MAX). */
+const SENT_MAX = 40;
+
 /** A finished transfer stays on the pill this long. */
 export const ENDED_MS = 6000;
 /** The card keeps finished transfers this long, and this many. */
@@ -104,6 +109,8 @@ export class LandActivity extends BaseActivity {
   /** Devices picked to send to. */
   private readonly picked = new Set<string>();
   private readonly transfers = new Map<string, Live>();
+  /** What each send from here carried (by transfer id), so its row can send it again. */
+  private readonly sent = new Map<string, Resend>();
   /** Friends on other networks (src-tauri/src/anywhere.rs). */
   private friends: LandFriend[] = [];
   /** Which friends answered the last check; null before the first. */
@@ -926,6 +933,8 @@ export class LandActivity extends BaseActivity {
     // Cancel and Decline stay in sight: a touch screen (or a phone driving the PC) has no pointing at a row.
     if (t.state === 'asking') row.button = { key: 'no', icon: 'x', action: 'decline', arg: t.id, style: 'ghost', tip: 'Decline', shown: true };
     else if (active) row.button = { key: 'stop', icon: 'x', action: 'cancel', arg: t.id, style: 'ghost', tip: 'Cancel', shown: true };
+    // A send from here that is over (sent, failed, declined, cancelled): the same again, to the same one.
+    else if (t.dir === 'out' && this.sent.has(t.id)) row.button = { key: 'again', icon: 'refresh', action: 'resend', arg: t.id, style: 'ghost', tip: `Send again to ${t.peer.name}`, shown: true };
     else if (t.dir === 'in' && t.state === 'done' && t.saved.length) {
       row.action = 'show';
       row.arg = t.saved[0];
@@ -1081,6 +1090,9 @@ export class LandActivity extends BaseActivity {
       case 'cancel':
         if (!native.demo) await native.landCancel(id);
         break;
+      case 'resend':
+        await this.resend(id);
+        break;
       case 'befriend': {
         if (!id || this.befriending.has(id)) return;
         this.befriending.add(id);
@@ -1128,16 +1140,16 @@ export class LandActivity extends BaseActivity {
   private async send(): Promise<void> {
     const to = this.targets();
     if (this.stagedText) return this.sendText(to, this.stagedText);
-    const paths = this.staged.filter((s) => !s.error).map((s) => s.path);
-    if (!to.length || !paths.length) return;
+    const staged = this.staged.filter((s) => !s.error);
+    if (!to.length || !staged.length) return;
     if (native.demo) {
-      for (const p of to) this.demoSend(p, this.staged);
+      for (const p of to) this.remember(this.demoSend(p, staged), { staged });
       this.staged = [];
       return;
     }
     const failures: string[] = [];
     for (const p of to) {
-      const r = isPhone(p.id) ? await this.sendToPhone(p) : await native.landSend(p.id, paths);
+      const r = await this.sendFiles(p, staged);
       if (!r.ok) failures.push(to.length > 1 ? `${p.name}: ${r.error}` : r.error);
     }
     if (!this.alive) return;
@@ -1145,11 +1157,55 @@ export class LandActivity extends BaseActivity {
     if (failures.length < to.length) this.staged = [];
   }
 
+  /** Files to one computer or phone; each send it starts remembers them for Send again. */
+  private async sendFiles(p: LandPeer, staged: LandStaged[]): Promise<Tried<null>> {
+    if (isPhone(p.id)) return this.sendToPhone(p, staged);
+    const r = await native.landSend(
+      p.id,
+      staged.map((s) => s.path),
+    );
+    if (!r.ok) return r;
+    this.remember(r.value, { staged });
+    return { ok: true, value: null };
+  }
+
+  /** Text to one computer or phone, remembered for Send again. */
+  private async textTo(p: LandPeer, text: string): Promise<Tried<null>> {
+    if (isPhone(p.id)) return this.textToPhone(p, text);
+    const r = await native.landSendText(p.id, text);
+    if (!r.ok) return r;
+    this.remember(r.value, { text });
+    return { ok: true, value: null };
+  }
+
+  private remember(id: string | null | undefined, what: Resend): void {
+    if (!id) return;
+    this.sent.set(id, what);
+    for (const old of this.sent.keys()) {
+      if (this.sent.size <= SENT_MAX) break;
+      this.sent.delete(old);
+    }
+  }
+
+  /** A row's Send again: the same text or files to the same computer or phone, as a new send. */
+  private async resend(id: string): Promise<void> {
+    const t = this.transfers.get(id);
+    const what = this.sent.get(id);
+    if (!t || !what || t.dir !== 'out' || ACTIVE.has(t.state)) return;
+    if (native.demo) {
+      if ('staged' in what) this.remember(this.demoSend(t.peer, what.staged), what);
+      return;
+    }
+    const r = 'text' in what ? await this.textTo(t.peer, what.text) : await this.sendFiles(t.peer, what.staged);
+    if (!this.alive) return;
+    if (!r.ok) this.note = { text: r.error, at: Date.now() };
+  }
+
   private async sendText(to: LandPeer[], text: string): Promise<void> {
     if (!to.length || native.demo) return;
     const failures: string[] = [];
     for (const p of to) {
-      const r = isPhone(p.id) ? await this.textToPhone(p, text) : await native.landSendText(p.id, text);
+      const r = await this.textTo(p, text);
       if (!r.ok) failures.push(to.length > 1 ? `${p.name}: ${r.error}` : r.error);
     }
     if (!this.alive) return;
@@ -1160,8 +1216,8 @@ export class LandActivity extends BaseActivity {
   // ---------------------------------------------------------------- your phones (Island on your phone)
 
   /** Each file to a paired phone on its own stream (src-tauri/src/remote); its avatar circles until the phone has it. */
-  private async sendToPhone(p: LandPeer): Promise<Tried<null>> {
-    const all = this.staged.filter((s) => !s.error);
+  private async sendToPhone(p: LandPeer, staged: LandStaged[]): Promise<Tried<null>> {
+    const all = staged.filter((s) => !s.error);
     const files = all.filter((s) => !s.dir);
     if (!files.length) return { ok: false, error: 'A phone takes files, not folders.' };
     if (!this.phonesLive.has(p.id)) return this.holdFiles(p, files);
@@ -1171,6 +1227,7 @@ export class LandActivity extends BaseActivity {
       // The row first: the call returns only once the phone has the file, and Rust's
       // remote-file-sent comes before that, so a row made after it would say Sending for ever.
       const id = `phone-out-${++this.phoneSeq}`;
+      this.remember(id, { staged: [f] });
       this.onTransfer({ id, dir: 'out', peer: p, state: 'waiting', done: 0, total: f.size, count: 1, items: [{ name: f.name, size: f.size, files: 1, dir: false }], error: null, saved: [], folder: null, expires: null });
       const r = await native.remoteSendFile(p.id.slice(PHONE.length), f.path);
       if (!this.alive) break;
@@ -1198,6 +1255,7 @@ export class LandActivity extends BaseActivity {
       const settle = (end: HeldEnd) => void (end === 'dropped' && this.heldGone(id));
       if (!holdForPhone(p.id.slice(PHONE.length), { kind: 'file', path: f.path, name: f.name, size: f.size, settle })) continue;
       held++;
+      this.remember(id, { staged: [f] });
       this.onTransfer({ id, dir: 'out', peer: p, state: 'queued', done: 0, total: f.size, count: 1, items: [{ name: f.name, size: f.size, files: 1, dir: false }], error: null, saved: [], folder: null, expires: null });
     }
     return held ? { ok: true, value: null } : { ok: false, error: `${p.name} isn't connected right now.` };
@@ -1220,12 +1278,15 @@ export class LandActivity extends BaseActivity {
         else if (this.alive && t?.state === 'queued') this.onTransfer({ ...t, state: 'done', done: text.length });
       };
       if (!holdForPhone(p.id.slice(PHONE.length), { kind: 'text', text, from, settle })) return { ok: false, error: `${p.name} isn't connected right now.` };
+      this.remember(id, { text });
       this.onTransfer({ id, dir: 'out', peer: p, state: 'queued', done: 0, total: text.length, count: 0, items: [], error: null, saved: [], folder: null, expires: null, text });
       return { ok: true, value: null };
     }
     const ok = await native.remoteSend(p.id.slice(PHONE.length), { t: 'text', text, from: this.computerName() ?? (platform === 'macos' ? 'Mac' : 'PC') });
     if (!ok) return { ok: false, error: `${p.name} isn't connected right now.` };
-    this.onTransfer({ id: `phone-out-${++this.phoneSeq}`, dir: 'out', peer: p, state: 'done', done: text.length, total: text.length, count: 0, items: [], error: null, saved: [], folder: null, expires: null, text });
+    const id = `phone-out-${++this.phoneSeq}`;
+    this.remember(id, { text });
+    this.onTransfer({ id, dir: 'out', peer: p, state: 'done', done: text.length, total: text.length, count: 0, items: [], error: null, saved: [], folder: null, expires: null, text });
     return { ok: true, value: null };
   }
 
@@ -1261,7 +1322,8 @@ export class LandActivity extends BaseActivity {
 
   // ---------------------------------------------------------------- browser preview
 
-  private demoSend(p: LandPeer, staged: LandStaged[]): void {
+  private demoSend(p: LandPeer, staged: LandStaged[]): string {
+
     const id = `demo-${Date.now()}-${p.id}`;
     const total = staged.reduce((n, s) => n + (s.size || 2_400_000), 0);
     const base: LandTransfer = {
@@ -1282,6 +1344,7 @@ export class LandActivity extends BaseActivity {
     const later = (ms: number, t: Partial<LandTransfer>) => this.demoTimers.push(setTimeout(() => this.alive && this.onTransfer({ ...base, ...t }), ms));
     for (let i = 1; i <= 10; i++) later(1500 + i * 300, { state: 'sending', done: (total * i) / 10 });
     later(5000, { state: 'done', done: total });
+    return id;
   }
 
   private demoAnswer(id: string, accept: boolean): void {

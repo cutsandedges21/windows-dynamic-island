@@ -702,6 +702,69 @@ describe('text and links', () => {
     expect(what({ items: [], count: 0, text: 'dinner at 7' })).toBe('a note');
   });
 
+  it('a finished send has Send again: the same files to the same computer, the card left as it was', async () => {
+    const { act } = await boot();
+    emit('land-peers', [MAC, LAB]);
+    act.drop(['C:\\x\\photo.jpg']);
+    await tick(0);
+    await act.action('pick', MAC.id);
+    await act.action('send');
+    expect(h.native.landSend.mock.calls).toEqual([[MAC.id, ['C:\\x\\photo.jpg']]]);
+    const id = `out-${MAC.id}`;
+    // While it goes: Cancel, not Send again.
+    emit('land-transfer', transfer({ id, state: 'sending', done: 5_000_000 }));
+    let row = block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items[0];
+    expect(row.button).toMatchObject({ action: 'cancel', arg: id });
+    emit('land-transfer', transfer({ id, state: 'done', done: 10_000_000 }));
+    row = block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items[0];
+    expect(row.button).toMatchObject({ key: 'again', icon: 'refresh', action: 'resend', arg: id, shown: true, tip: "Send again to Moss's MacBook Air" });
+    // Something new waiting to go is not sent, nor emptied, by Send again.
+    act.drop(['C:\\x\\other.pdf']);
+    await tick(0);
+    await act.action('resend', id);
+    expect(h.native.landSend.mock.calls).toEqual([
+      [MAC.id, ['C:\\x\\photo.jpg']],
+      [MAC.id, ['C:\\x\\photo.jpg']],
+    ]);
+    expect(block(act.sheet(sheetEnv('open')), 'rows', 'files')!.items.map((r) => r.title)).toEqual(['other.pdf']);
+  });
+
+  it('a failed send has Send again too; text goes again as text', async () => {
+    const { act } = await boot();
+    emit('land-peers', [MAC, LAB]);
+    await act.action('stage-text', 'https://example.com/recipe');
+    await act.action('pick', LAB.id);
+    await act.action('send');
+    const id = `text-${LAB.id}`;
+    emit('land-transfer', transfer({ id, peer: LAB, state: 'failed', error: 'LAB-DESKTOP-07 went away', count: 0, total: 26, items: [], text: 'https://example.com/recipe' }));
+    const row = block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items[0];
+    expect(row.button).toMatchObject({ action: 'resend', arg: id });
+    await act.action('resend', id);
+    expect(h.native.landSendText.mock.calls).toEqual([
+      [LAB.id, 'https://example.com/recipe'],
+      [LAB.id, 'https://example.com/recipe'],
+    ]);
+    expect(h.native.landSend).not.toHaveBeenCalled();
+  });
+
+  it('what came in has no Send again, and a send Send again cannot reach says why', async () => {
+    const { act } = await boot();
+    emit('land-transfer', transfer({ id: 'in-f', dir: 'in', state: 'done', done: 10_000_000, saved: ['C:\\Downloads\\a.txt'] }));
+    expect(block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items[0].button).toBeUndefined();
+    // Not sent from here (another island's report): nothing to send again.
+    emit('land-transfer', transfer({ id: 'out-elsewhere', state: 'done', done: 10_000_000 }));
+    expect(block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items.find((r) => r.key === 'out-elsewhere')!.button).toBeUndefined();
+    emit('land-peers', [MAC]);
+    act.drop(['C:\\x\\photo.jpg']);
+    await tick(0);
+    await act.action('pick', MAC.id);
+    await act.action('send');
+    emit('land-transfer', transfer({ id: `out-${MAC.id}`, state: 'done', done: 10_000_000 }));
+    h.native.landSend = vi.fn(async () => ({ ok: false, error: 'That device is gone. Try again when it shows up.' }));
+    await act.action('resend', `out-${MAC.id}`);
+    expect(block(act.sheet(sheetEnv('open')), 'text', 'note')!.text).toContain('That device is gone');
+  });
+
   it('a link pasted in the card goes to the computer picked, and the card empties', async () => {
     const { act } = await boot();
     emit('land-peers', [MAC, LAB]);
