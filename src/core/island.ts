@@ -141,6 +141,8 @@ export class Island {
   private pointerOnPill = false;
   /** Pointed at, this activity grows into a card but had none to show: the pill widens for it instead. */
   private hoverBare: string | null = null;
+  /** The card on screen is a chat's own (it finished, it needs you), grown out of the pill: pointing at it keeps the pill resting under it. */
+  private raisedCard = false;
   /** Rust holds Ctrl+V for Land (the pointer rests on its icon). */
   private pasteArmed = false;
   /** Light on the pill's edge and on an urgent card's, in the tone of whatever is happening. */
@@ -700,7 +702,8 @@ export class Island {
     // A chat's card grown out of the pill (it finished, it needs you) covers it: the pill rests under
     // it, so when the card shrinks back there is no raised layout to swap out for a split second.
     // Under a hover card the pill stays as it is, so it is as it was when the card goes back.
-    const underCard = this.sheet.grown && !morphing;
+    // Pointing at that chat's card changes nothing: the pill stays resting, so the card keeps its size.
+    const underCard = this.sheet.grown && (!morphing || this.raisedCard);
     if (surf && !underCard) level = atLeast(level, surf.level);
     if (this.hover && s.hoverExpand && primary && !this.open && !morphing) level = atLeast(level, 'expanded');
     if (this.open || this.view !== 'main') level = 'maximum';
@@ -883,7 +886,7 @@ export class Island {
     }
     this.composeSheet(picked, orient, w, immediate);
     // The pill rests under a chat's grown card (see underCard): compose once more when that changes.
-    if (this.sheet.grown && !morphing !== underCard) this.schedule();
+    if (this.sheet.grown && (!morphing || this.raisedCard) !== underCard) this.schedule();
     const beam: ActivityStatus['beam'] = this.fileDrag ? { tone: 'accent', motion: 'pulse' } : pillBeam(primary, [...choice.visible, ...this.settings.activities.order], statuses);
     this.syncGlow(hidden ? null : beam, !hidden && choice.urgent && this.sheet.visible, morph !== null || this.sheet.covering);
     // Every frame is kept for phones, whether or not Duplicate copies run.
@@ -1087,6 +1090,7 @@ export class Island {
   }
 
   private pickSheet(choice: Picked, statuses: Map<string, ActivityStatus>, now: number, orient: Orientation, pillW: number): { owner: string; view: SheetView } | null {
+    this.raisedCard = false;
     if (this.view === 'hide' && !this.previewLevel) return this.hideSheet(now);
     if (this.view !== 'main' || this.previewLevel) return null;
     const vertical = orient === 'vertical';
@@ -1097,7 +1101,10 @@ export class Island {
     const chat = (card: { owner: string; view: SheetView } | null) => card && { ...card, view: chatView(card.owner, this.grows(card.owner), card.view) };
     if (primary && choice.urgent && pStatus?.urgent && !this.dismissedUrgent.has(`${primary}:${pStatus.urgent.key}`)) {
       const card = chat(ask(primary, 'urgent'));
-      if (card) return card;
+      if (card) {
+        this.raisedCard = Boolean(card.view.morph);
+        return card;
+      }
     }
     if (this.open) {
       // An activity asked for its own card (Land after a drop); its card, or the grid when it has none.
@@ -1107,7 +1114,11 @@ export class Island {
     }
     if (primary && choice.surfaced) {
       const card = chat(ask(primary, 'surfaced'));
-      if (card) return card;
+      if (card) {
+        this.raisedCard = Boolean(card.view.morph);
+        return card;
+      }
+
     }
     if (this.hover) {
       const owner = this.hoverOwner();
