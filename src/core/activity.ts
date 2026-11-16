@@ -93,6 +93,8 @@ export interface SurfaceOptions {
   key?: string;
   /** Nod the island when it arrives. Default true. */
   bump?: boolean;
+  /** While the pointer is on the island (pill or card) it stays, past `ms`; it goes a moment after the pointer leaves. */
+  hoverHolds?: boolean;
 }
 
 export interface ActivityContext {

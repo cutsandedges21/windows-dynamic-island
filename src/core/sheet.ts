@@ -73,6 +73,8 @@ export interface SheetRow {
   tip?: string;
   /** A small button at the row's end (shown on hover), e.g. hide. */
   button?: SheetButton;
+  /** A right-click on the row runs this action, with the row's `arg` (a Claude chat's reply box). */
+  context?: string;
   /** A thin bar under the title, 0..1, with a figure beside it (a chat's context). */
   meter?: { value: number; text?: string; tone?: Tone; tip?: string };
 }
@@ -158,6 +160,8 @@ export interface Tile {
   tip?: string;
   /** Taken off the grid by the user: only shown while editing, to be put back. */
   hidden?: boolean;
+  /** A stand-in holding a placed tile's spot while its activity has nothing to show (island.ts restingTile). */
+  resting?: boolean;
   /** Sizes (columns, rows) its corner can be dragged to while editing. */
   sizes?: Array<[number, number]>;
   body: TileBody;
@@ -319,7 +323,7 @@ function hubPillActions(p: HubPill, fn: (action: string) => string): HubPill {
 /** Rewrites every action in a view (the island namespaces them per activity). */
 export function mapActions(blocks: Block[], fn: (action: string) => string): Block[] {
   const btn = (b: SheetButton): SheetButton => ({ ...b, action: fn(b.action) });
-  const row = (r: SheetRow): SheetRow => ({ ...r, action: r.action ? fn(r.action) : undefined, button: r.button ? btn(r.button) : undefined });
+  const row = (r: SheetRow): SheetRow => ({ ...r, action: r.action ? fn(r.action) : undefined, button: r.button ? btn(r.button) : undefined, context: r.context ? fn(r.context) : undefined });
   const body = (b: TileBody): TileBody => {
     if (b.k === 'actions' && b.dial) return { ...b, buttons: b.buttons.map(btn), dial: { ...b.dial, action: fn(b.dial.action), start: btn(b.dial.start) } };
     if (b.k === 'media') return { ...b, buttons: b.buttons.map(btn), open: b.open ? fn(b.open) : undefined };
@@ -411,6 +415,8 @@ const MORPH_RADIUS = 34;
 const CARD_RADIUS = 24;
 
 const args = new WeakMap<HTMLElement, unknown>();
+/** A row's arg for its right-click action (SheetRow.context). */
+const contextArgs = new WeakMap<HTMLElement, unknown>();
 /** A dial's way to take a new length from the activity without being rebuilt. */
 const dialSetters = new WeakMap<Element, (seconds: number) => void>();
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -589,6 +595,14 @@ export class SheetRenderer {
     });
     // Grown out of the pill, the card covers it, so it takes the pill's right-click and scroll too.
     this.el.addEventListener('contextmenu', (e) => {
+      // A row with its own right-click (a Claude chat's: its reply box); anywhere else, the island's.
+      const row = (e.target as HTMLElement).closest<HTMLElement>('[data-context]');
+      if (row && this.el.contains(row)) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.onAction(row.dataset.context!, contextArgs.get(row), row);
+        return;
+      }
       if (!this.morph) return;
       e.preventDefault();
       this.onAction('island:menu', null, this.el);
@@ -1578,6 +1592,11 @@ export class SheetRenderer {
     // A row with its own button cannot itself be a <button>.
     const e = make(r.action && !r.button ? 'button' : 'div', `row${r.action ? ' act' : ''}`);
     if (e instanceof HTMLButtonElement) e.type = 'button';
+    if (r.context) {
+      e.dataset.context = r.context;
+      contextArgs.set(e, r.arg);
+    }
+
     if (r.dot) {
       const d = make('span', `rd tone-${r.dot}${r.pulse ? ' pulse' : ''}${r.unread ? ' unread' : ''}`);
       d.append(make('i', 'ring'), make('i', 'core'), make('i', 'badge'));
@@ -2979,7 +2998,7 @@ export class SheetRenderer {
     const b = t.body;
     const live = Boolean(t.action) && !editing && !t.hidden;
     // The size classes follow the cells it actually got, not the size it asked for.
-    const e = make(live ? 'button' : 'div', `tile k-${b.k} span-${t.w ?? t.span ?? 1} rows-${t.h ?? t.rows ?? 1}${live ? ' act' : ''}${t.hidden ? ' hidden-tile' : ''}`);
+    const e = make(live ? 'button' : 'div', `tile k-${b.k} span-${t.w ?? t.span ?? 1} rows-${t.h ?? t.rows ?? 1}${live ? ' act' : ''}${t.hidden ? ' hidden-tile' : ''}${t.resting ? ' resting' : ''}`);
     if (e instanceof HTMLButtonElement) e.type = 'button';
     e.dataset.mode = this.tileMode(t, editing);
     // Tone tints the tile's icon and accents only (a tone class would tint all its text).

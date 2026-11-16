@@ -14,6 +14,7 @@ import { ChatBar, type ChatAction, type ChatView } from './chat';
 import { lookFor } from './looks';
 import { PetBrain, type PetSignal } from './pet';
 import { beamSpec, BorderGlow, type GlowSpec } from './glow';
+import { loadShapes, restingTile, saveShapes, type TileShape } from './resting';
 import { cellsOf, CELLS, hiddenTest, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
 import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
 import { native, on, onFileDrop, onTermOpened, sendTo, type FileDrop, type MenuItem, type TermOpened } from './native';
@@ -44,6 +45,11 @@ type View = 'main' | 'overflow' | 'menu' | 'hide';
 const levelIdx = (l: Level) => LEVELS.indexOf(l);
 /** Tile kinds that read well in a single column. */
 const NARROW_OK = new Set(['stat', 'actions', 'dots']);
+/** A pop-up the pointer holds (SurfaceOptions.hoverHolds) goes this long after the pointer leaves the island. */
+const HOVER_HOLD_MS = 600;
+
+
+
 /** The sizes a list, card or player can take: two columns at least. */
 const WIDE_SIZES: TileSize[] = ['2x1', '2x2'];
 /** Row height per island size (the width comes from the pill). */
@@ -611,7 +617,7 @@ export class Island {
     const now = Date.now();
     const key = opts.key ?? 'event';
     this.surfaces = this.surfaces.filter((s) => !(s.id === id && s.key === key) && s.until > now);
-    this.surfaces.push({ id, key, until: now + (opts.ms ?? 3500), level: opts.level ?? 'expanded', at: now });
+    this.surfaces.push({ id, key, until: now + (opts.ms ?? 3500), level: opts.level ?? 'expanded', at: now, hoverHolds: opts.hoverHolds });
     // Picked just before its own event, so the event still shows as one (its card), then it stays.
     if (STAYS_IN_FRONT.has(id)) this.pick(id, now - 1);
     if (opts.bump !== false) this.pendingBump = true;
@@ -653,6 +659,17 @@ export class Island {
     const now = Date.now();
     const s = this.settings.island;
     const statuses = this.statuses();
+    // A pop-up that the pointer holds stays while the pointer is on the island (pill or card),
+    // and goes a moment after it leaves.
+    if (this.hover) {
+      let held = false;
+      for (const x of this.surfaces) {
+        if (!x.hoverHolds || x.until >= now + HOVER_HOLD_MS) continue;
+        x.until = now + HOVER_HOLD_MS;
+        held = true;
+      }
+      if (held) setTimeout(() => this.schedule(), HOVER_HOLD_MS + 20);
+    }
     this.surfaces = this.surfaces.filter((x) => x.until > now && this.running.has(x.id));
 
     const order = this.settings.activities.order;
@@ -1266,7 +1283,32 @@ export class Island {
         console.error(`tile ${id}`, err);
       }
     }
+    for (const t of tiles) this.rememberShape(t);
+    // A tile the user placed keeps its place: while its activity has nothing to show, it rests
+    // there (its name, dimmed) at its usual size instead of leaving a gap the others fill.
+    const present = new Set(tiles.map((t) => t.key));
+    const layout = this.settings.island.grid;
+    // The user's pages (the older single order list only before they ever arranged).
+    const placed = layout.pages.length ? layout.pages.flat() : layout.order;
+    for (const key of placed) {
+      if (!key || present.has(key)) continue;
+      const act = this.running.get(key.split('/')[0]);
+      if (!act || (!act.tile && !act.tiles)) continue;
+      present.add(key);
+      tiles.push(restingTile(key, act.meta.name, act.meta.icon, this.tileShapes[key], NARROW_OK));
+    }
     return tiles;
+  }
+
+  /** Each tile's own size and kind, kept (also across restarts) for its resting stand-in. */
+  private tileShapes: Record<string, TileShape> = loadShapes();
+
+  private rememberShape(t: Tile): void {
+    const shape: TileShape = { span: t.span ?? 1, rows: t.rows ?? 1, kind: t.body.k };
+    const was = this.tileShapes[t.key];
+    if (was && was.span === shape.span && was.rows === shape.rows && was.kind === shape.kind) return;
+    this.tileShapes[t.key] = shape;
+    saveShapes(this.tileShapes);
   }
 
   /**
@@ -1295,7 +1337,7 @@ export class Island {
     const dims = new Map(shown.map((t) => [t.key, { w: t.w, h: t.h }]));
     const dimsOf: GridDims = (k) => dims.get(k) ?? null;
     const saved = drag?.preview ?? (layout.pages.length ? layout.pages : layout.order.length ? [layout.order] : []);
-    const { pages, slots } = settle(withNew(saved, shown.map((t) => t.key), dimsOf), dimsOf, geo.cols, geo.rows);
+    const { pages, slots } = settle(withNew(saved, shown.map((t) => t.key), dimsOf, layout.pages.length > 0), dimsOf, geo.cols, geo.rows);
     if (live) {
       this.gridPages = pages;
       this.gridSlots = slots;

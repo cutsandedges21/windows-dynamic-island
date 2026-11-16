@@ -166,6 +166,8 @@ export class ClaudeActivity extends BaseActivity {
   private unfold = { on: false, asked: 0 };
   /** Finished chats whose reply box the user clicked into: pointing away from it no longer lets the pop-up go. */
   private readonly typing = new Set<string>();
+  /** A chat whose row was right-clicked: its reply box shows (under the pill, or as the open island's card). */
+  private replyTo: string | null = null;
 
   sessions: SessionView[] = [];
   closed: ClosedView[] = [];
@@ -258,6 +260,7 @@ export class ClaudeActivity extends BaseActivity {
       const hold = this.hooks.takeHold(request_id);
       this.picks.delete(request_id);
       if (card) this.answeredFor(card.sessionId);
+      if (hold) this.afterWindow(hold.sessionId);
       if (card || hold) this.ctx.update();
     });
     // Switching to a chat's own window means the user will answer it there: let it go at once.
@@ -415,6 +418,17 @@ export class ClaudeActivity extends BaseActivity {
   private isCode(id: string): boolean {
     return this.sessions.some((s) => s.id === id);
   }
+
+  /** Rows of Claude Code chats answer a right-click with their reply box (the Claude app's and Chrome's have none). */
+  private replyable(rows: SheetRow[]): SheetRow[] {
+    return this.opts().replyBox ? rows.map((r) => (this.isCode(r.key) ? { ...r, context: 'reply-to' } : r)) : rows;
+  }
+
+  /** The pop-up a chat's reply box is in: the right-clicked one, or its finish. */
+  private replyKey(sid: string): string {
+    return this.replyTo === sid ? `reply:${sid}` : `done:${sid}`;
+  }
+
 
   /** Whether Auto model is installed (Activities) and paused (the card's button). */
   private async pollAuto(): Promise<void> {
@@ -748,8 +762,20 @@ export class ClaudeActivity extends BaseActivity {
     const now = Date.now();
     const stale = this.hooks.holds.filter((h) => now > h.until + 2000);
     if (!stale.length) return;
-    for (const h of stale) this.hooks.takeHold(h.requestId);
+    for (const h of stale) {
+      this.hooks.takeHold(h.requestId);
+      this.afterWindow(h.sessionId);
+    }
     this.ctx.update();
+  }
+
+  /**
+   * A chat's reply window ran out unanswered. With the pointer on the island its card stays, now
+   * with the reply that goes through the chat's own window (finishedSheet), until the pointer leaves.
+   */
+  private afterWindow(sid: string): void {
+    if (!this.opts().replyBox || this.looking.has(sid)) return;
+    this.ctx.surface({ key: `done:${sid}`, ms: POINT_LEAVE_MS, level: 'expanded', bump: false, hoverHolds: true });
   }
 
   /** The user clicked into the reply box: the chat keeps waiting while they type. */
@@ -930,7 +956,8 @@ export class ClaudeActivity extends BaseActivity {
     }
     const o = this.opts();
     if (o.showDone && !this.hooks.holds.some((h) => h.sessionId === id)) {
-      this.ctx.surface({ key: `done:${id}`, ms: s || ev ? o.finishedSeconds * 1000 : SHOW_MS, level: 'expanded' });
+      // With the pointer on the island it stays until the pointer leaves: there may be a reply to write.
+      this.ctx.surface({ key: `done:${id}`, ms: s || ev ? o.finishedSeconds * 1000 : SHOW_MS, level: 'expanded', hoverHolds: true });
     }
     this.ctx.update();
   }
@@ -1435,9 +1462,16 @@ export class ClaudeActivity extends BaseActivity {
         return done ? this.withRows(done, env.now) : this.statusCard('status', env.now);
       }
       if (key.startsWith('slot:')) return this.statusCard('status', env.now);
+      // A row right-clicked: that chat's reply box, whatever the chat is doing.
+      if (key.startsWith('reply:')) return this.withRows(this.finishedSheet(key.slice(6), 'asked'), env.now);
       return null;
     }
     if (env.reason === 'hover') return this.hoverSheet(env);
+    // A row right-clicked in Control Center: the open island shows that chat's reply box.
+    if (this.replyTo && this.ctx.cardOpen?.()) {
+      const reply = this.finishedSheet(this.replyTo, 'card');
+      if (reply) return reply;
+    }
     // Only a phone opens Claude's own card (its Claude button): a chat with Claude.
     return this.phoneSheet(env.now);
   }
@@ -1463,7 +1497,7 @@ export class ClaudeActivity extends BaseActivity {
 
   /** Every session's row, each with its progress bar on its second line; Claude Code's carry their Alt+Shift number. */
   private rowsBlock(now: number): Block {
-    return { t: 'rows', key: 'rows', items: statusRows(this.rows, now, true, (id) => this.sessions.find((s) => s.id === id)?.slot ?? null) };
+    return { t: 'rows', key: 'rows', items: this.replyable(statusRows(this.rows, now, true, (id) => this.sessions.find((s) => s.id === id)?.slot ?? null)) };
   }
 
   /** Claude Status's own card: the header and the rows. */
@@ -1576,27 +1610,35 @@ export class ClaudeActivity extends BaseActivity {
     };
   }
 
-  /** A finished chat after its reply window: the reply goes through the editor, the terminal or a resume. */
-  private finishedSheet(sid: string): SheetView | null {
+  /**
+   * A finished chat after its reply window: the reply goes through the editor, the terminal or a
+   * resume. `asked`: its row was right-clicked, so it shows whatever the chat is doing ('card': as
+   * the open island's card, with a way back to Control Center).
+   */
+  private finishedSheet(sid: string, asked: 'asked' | 'card' | null = null): SheetView | null {
     const s = this.sessions.find((x) => x.id === sid) ?? null;
     const last = this.hooks.lastMessage.get(sid);
     const text = plainText(last?.text || s?.lastAssistantText || '');
-    if (!s || !text) return null;
+    if (!s || (!text && !asked)) return null;
     // Already going again (a reply from the island, or a prompt typed in the chat): nothing to answer.
-    if (s.status === 'working' || (this.hooks.turnStart.get(sid) ?? 0) > (last?.at ?? 0)) return null;
+    const going = s.status === 'working' || (this.hooks.turnStart.get(sid) ?? 0) > (last?.at ?? 0);
+    if (going && !asked) return null;
     const failed = s.status === 'errored';
     const blocks: Block[] = [
       {
         t: 'head',
         key: 'h',
-        icon: failed ? 'alert' : 'check',
-        tone: failed ? 'bad' : 'good',
+        icon: failed ? 'alert' : going ? 'claude' : 'check',
+        tone: failed ? 'bad' : going ? 'info' : 'good',
         title: s.displayTitle,
-        sub: this.where(s, failed ? 'Failed' : 'Finished'),
-        buttons: [{ key: 'open', icon: 'external', action: 'switch', arg: sid, style: 'ghost', tip: this.openText(s) }],
+        sub: this.where(s, failed ? 'Failed' : going ? 'Working' : 'Finished'),
+        buttons: [
+          ...(asked === 'card' ? [{ key: 'back', icon: 'chevron-left', action: 'reply-back', style: 'ghost', tip: 'Back' } as SheetButton] : []),
+          { key: 'open', icon: 'external', action: 'switch', arg: sid, style: 'ghost', tip: this.openText(s) },
+        ],
       },
-      { t: 'text', key: 'msg', text, bubble: true, lines: 7 },
     ];
+    if (text) blocks.push({ t: 'text', key: 'msg', text, bubble: true, lines: 7 });
     // Pointing at the box, or clicking into it, keeps the pop-up up while you write.
     if (this.opts().replyBox) {
       blocks.push({ t: 'input', key: 'reply', placeholder: 'Reply to this chat…', action: `continue:${sid}`, engage: `keep:${sid}`, point: `point:${sid}`, hint: this.lateHint(s) });
@@ -1737,7 +1779,7 @@ export class ClaudeActivity extends BaseActivity {
     // nothing on the pill, a missing tile left Claude out of reach). Hidden sessions get a row to bring them back.
     const d = this.opts().showLimits ? this.limitsNow(env.now) : null;
     const limits = [d?.fiveHour ? `S ${Math.round(d.fiveHour.pct)}%` : null, d?.sevenDay ? `W ${Math.round(d.sevenDay.pct)}%` : null].filter(Boolean).join(' · ');
-    const rows = statusRows(this.rows, env.now);
+    const rows = this.replyable(statusRows(this.rows, env.now));
     const hidden = this.opts().hiddenSessions.length;
     if (hidden) rows.push({ key: 'unhide', icon: 'eye', title: `Show hidden (${hidden})`, detail: hidden === 1 ? 'A session hidden from Claude Status' : `${hidden} sessions hidden from Claude Status`, action: 'unhide-all' });
     return {
@@ -2038,8 +2080,22 @@ export class ClaudeActivity extends BaseActivity {
         break;
       case 'point':
         // The pointer on a finished chat's reply box holds its pop-up; off it, untouched, the pop-up goes soon after.
-        if (arg === true) this.ctx.surface({ key: `done:${ref}`, ms: POINT_MS, level: 'expanded', bump: false });
-        else if (!this.typing.has(ref)) this.ctx.surface({ key: `done:${ref}`, ms: POINT_LEAVE_MS, level: 'expanded', bump: false });
+        if (this.ctx.cardOpen?.() && this.replyTo === ref) break;
+        if (arg === true) this.ctx.surface({ key: this.replyKey(ref), ms: POINT_MS, level: 'expanded', bump: false, hoverHolds: true });
+        else if (!this.typing.has(ref)) this.ctx.surface({ key: this.replyKey(ref), ms: POINT_LEAVE_MS, level: 'expanded', bump: false, hoverHolds: true });
+        break;
+      case 'reply-to':
+        // A chat's row right-clicked: its reply box. In Control Center it opens as the island's
+        // card; under the pill it stays while the pointer is on the island.
+        if (!this.isCode(id)) break;
+        this.replyTo = id;
+        this.looking.delete(id);
+        if (this.ctx.isOpen()) this.ctx.openCard?.();
+        else this.ctx.surface({ key: `reply:${id}`, ms: POINT_LEAVE_MS, level: 'expanded', bump: false, hoverHolds: true });
+        break;
+      case 'reply-back':
+        this.replyTo = null;
+        this.ctx.closeCard?.();
         break;
       case 'switch':
         await this.switchTo(id);
@@ -2047,7 +2103,12 @@ export class ClaudeActivity extends BaseActivity {
       case 'continue':
         if (ref) {
           // A reply typed on a finished chat's card, after its reply window.
-          if (id.trim()) await this.continueSession(ref, id.trim());
+          if (id.trim()) {
+            const inCard = this.replyTo === ref && this.ctx.cardOpen?.();
+            if (this.replyTo === ref) this.replyTo = null;
+            await this.continueSession(ref, id.trim());
+            if (inCard) this.ctx.closeCard?.();
+          }
           break;
         }
         this.inputFor = id;
@@ -2057,7 +2118,8 @@ export class ClaudeActivity extends BaseActivity {
       case 'keep':
         // The user is typing on a finished chat's card: keep it up.
         this.typing.add(ref);
-        this.ctx.surface({ key: `done:${ref}`, ms: 120_000, level: 'expanded', bump: false });
+        if (this.ctx.cardOpen?.() && this.replyTo === ref) break;
+        this.ctx.surface({ key: this.replyKey(ref), ms: 120_000, level: 'expanded', bump: false, hoverHolds: true });
         break;
       case 'reply':
         if (id.trim()) await this.sendReply(ref, id.trim());

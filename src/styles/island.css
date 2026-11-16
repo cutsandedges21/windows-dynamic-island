@@ -1832,3 +1832,6 @@ html[data-pill='glass'] .hub-menu .hm-lock { background: rgba(22, 24, 30, 0.8); 
   .sb-tiles.editing .tile { animation: none; }
   .tile.tile-float { transition: none; }
 }
+
+/* A placed Control Center tile whose activity has nothing to show: it keeps its spot, dimmed. */
+.tile.resting > * { opacity: 0.45; }

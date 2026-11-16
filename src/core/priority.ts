@@ -28,6 +28,8 @@ export interface Surface {
   until: number;
   level: Level;
   at: number;
+  /** Stays while the pointer is on the island (SurfaceOptions.hoverHolds). */
+  hoverHolds?: boolean;
 }
 
 export interface Choice {

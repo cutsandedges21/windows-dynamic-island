@@ -209,7 +209,7 @@ function dimsOf(d: GridDraft): { shown: string[]; dims: GridDims } {
 /** Where every tile sits now (with a drag's preview while one is under way). */
 export function draftLayoutNow(d: GridDraft): { pages: GridPages; slots: GridSlot[] } {
   const { shown, dims } = dimsOf(d);
-  return settle(withNew(d.drag?.preview ?? d.pages, shown, dims), dims, d.cols, PAGE_ROWS);
+  return settle(withNew(d.drag?.preview ?? d.pages, shown, dims, d.pages.length > 0), dims, d.cols, PAGE_ROWS);
 }
 
 /** The draft drawn as the island draws its grid: every row open, the tray and Reset layout / Done while editing. */

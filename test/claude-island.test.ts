@@ -58,7 +58,7 @@ const tick = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
 
 type Calls = { surface: Array<{ key?: string; ms?: number; level?: string }>; log: unknown[][]; push: unknown[][]; alerts: unknown[][] };
 
-async function boot(options: Record<string, unknown> = {}, tweak: (s: ReturnType<typeof defaultSettings>) => void = () => {}) {
+async function boot(options: Record<string, unknown> = {}, tweak: (s: ReturnType<typeof defaultSettings>) => void = () => {}, over: Partial<ActivityContext> = {}) {
   const act = new ClaudeActivity();
   const settings = defaultSettings();
   tweak(settings);
@@ -78,6 +78,7 @@ async function boot(options: Record<string, unknown> = {}, tweak: (s: ReturnType
     notify: () => {},
     push: (...a) => void calls.push.push(a),
     log: (...a) => void calls.log.push(a),
+    ...over,
   };
   await act.start(ctx);
   await tick(0);
@@ -137,6 +138,66 @@ afterEach(() => {
 
 // ---------------------------------------------------------------- reply window
 
+describe("a chat's row, right-clicked", () => {
+  it('gives Claude Code rows a right-click, not the Claude app\'s or Chrome\'s', async () => {
+    const { act } = await boot();
+    stubTracker(act, [session({})], { 100: [50] });
+    act.onRows([row({}), row({ id: 'ui-app1', label: 'Weekly plan', where: 'Claude app', tag: 'APP' })]);
+    const rows = block(act.sheet!(senv('surfaced', { surfaced: 'slot:1' })), 'rows')!.items;
+    expect(rows.find((r) => r.key === 'S1')).toMatchObject({ context: 'reply-to', arg: 'S1' });
+    expect(rows.find((r) => r.key === 'ui-app1')!.context).toBeUndefined();
+    const tile = act.tile!(senv('open'))!;
+    expect(tile.body.k === 'list' && tile.body.rows.find((r) => r.key === 'S1')?.context).toBe('reply-to');
+    // With the reply box off (Activities), no right-click either.
+    const off = await boot({ replyBox: false });
+    stubTracker(off.act, [session({})], { 100: [50] });
+    off.act.onRows([row({})]);
+    expect(block(off.act.sheet!(senv('surfaced', { surfaced: 'slot:1' })), 'rows')!.items[0].context).toBeUndefined();
+  });
+
+  it('under the pill: its reply box pops up, even while Claude works, and stays while the pointer is on the island', async () => {
+    const { act, calls } = await boot();
+    stubTracker(act, [session({ status: 'working', lastAssistantText: 'Reading the parser.' })], { 100: [50] });
+    await act.action!('reply-to', 'S1');
+    expect(calls.surface.at(-1)).toEqual({ key: 'reply:S1', ms: 1500, level: 'expanded', bump: false, hoverHolds: true });
+    const card = act.sheet!(senv('surfaced', { surfaced: 'reply:S1' }));
+    expect(block(card, 'head')).toMatchObject({ title: 'Fix the parser', sub: 'Working · app · Terminal' });
+    expect(block(card, 'text')?.text).toBe('Reading the parser.');
+    expect(block(card, 'input')).toMatchObject({ action: 'continue:S1', point: 'point:S1' });
+    // Pointing at its box and typing keep the same pop-up, not the finish's.
+    await act.action!('point:S1', true);
+    expect(calls.surface.at(-1)).toMatchObject({ key: 'reply:S1', hoverHolds: true });
+    await act.action!('keep:S1', null);
+    expect(calls.surface.at(-1)).toMatchObject({ key: 'reply:S1', ms: 120_000 });
+    // Not a Claude Code chat: nothing.
+    const n = calls.surface.length;
+    await act.action!('reply-to', 'ui-app1');
+    expect(calls.surface).toHaveLength(n);
+  });
+
+  it('in Control Center: the open island shows its reply box as the card, with Back', async () => {
+    let cardOpen = false;
+    const opened: string[] = [];
+    const { act } = await boot({}, () => {}, {
+      isOpen: () => true,
+      openCard: () => void ((cardOpen = true), opened.push('open')),
+      closeCard: () => void ((cardOpen = false), opened.push('close')),
+      cardOpen: () => cardOpen,
+    });
+    stubTracker(act, [session({ lastAssistantText: 'Parser fixed.' })], { 100: [50] });
+    await act.action!('reply-to', 'S1');
+    expect(opened).toEqual(['open']);
+    const card = act.sheet!(senv('open'));
+    expect(card?.key).toBe('done:S1');
+    expect(block(card, 'head')!.buttons!.map((b) => b.action)).toEqual(['reply-back', 'switch']);
+    expect(block(card, 'input')).toMatchObject({ action: 'continue:S1' });
+    await act.action!('reply-back', null);
+    expect(opened).toEqual(['open', 'close']);
+    // Back in Control Center, Claude's card is the phone's again.
+    expect(act.sheet!(senv('open'))?.key).not.toBe('done:S1');
+  });
+});
+
 describe('the reply window', () => {
   // Off unless set (Activities › Claude Status › Claude Code › Reply window): these set Moss's 45 s.
   const REPLY = { replyWindowSeconds: 45 };
@@ -149,7 +210,7 @@ describe('the reply window', () => {
     await tick(0);
     expect(lastReply()).toEqual(['r1', 'pass']);
     expect(act.status().urgent ?? null).toBeNull();
-    expect(calls.surface).toEqual([{ key: 'done:S1', ms: 8000, level: 'expanded' }]);
+    expect(calls.surface).toEqual([{ key: 'done:S1', ms: 8000, level: 'expanded', hoverHolds: true }]);
     const card = act.sheet!(senv('surfaced', { surfaced: 'done:S1' }));
     expect(block(card, 'text')?.text).toBe('Parser fixed.');
     expect(block(card, 'input')).toMatchObject({ action: 'continue:S1', engage: 'keep:S1', point: 'point:S1' });
@@ -308,7 +369,20 @@ describe('the reply window', () => {
     expect(act.status().urgent ?? null).toBeNull();
   });
 
+  it('a reply window that runs out with the pointer on the island leaves the reply box up until it leaves', async () => {
+    const { act, calls } = await boot({ replyWindowSeconds: 45 });
+    stubTracker(act, [session({})], { 100: [50, 10] });
+    h.native.foregroundPid.mockResolvedValue(999);
+    emit('hook', { hook_event_name: 'Stop', session_id: 'S1', request_id: 'r1', last_assistant_message: 'Parser fixed.' });
+    await tick(0);
+    expect(act.status().urgent?.key).toBe('reply:r1');
+    emit('hook-expired', { request_id: 'r1' });
+    expect(calls.surface.at(-1)).toEqual({ key: 'done:S1', ms: 1500, level: 'expanded', bump: false, hoverHolds: true });
+    expect(block(act.sheet!(senv('surfaced', { surfaced: 'done:S1' })), 'input')).toMatchObject({ action: 'continue:S1' });
+  });
+
   it('hook-expired takes the card down', async () => {
+
     const { act } = await boot(REPLY);
     stubTracker(act, [session({})], { 100: [50] });
     h.native.foregroundPid.mockResolvedValue(999);
@@ -951,7 +1025,7 @@ describe('one pop-up per moment', () => {
     (act as unknown as { onTrackerEvent(e: unknown): void }).onTrackerEvent({ type: 'finished', session: session({}) });
     act.onRows([row({ state: 'done', word: 'done' })]);
     await tick(0);
-    expect(told(calls).surfaces).toEqual([{ key: 'done:S1', ms: 8000, level: 'expanded' }]);
+    expect(told(calls).surfaces).toEqual([{ key: 'done:S1', ms: 8000, level: 'expanded', hoverHolds: true }]);
     expect(calls.push).toHaveLength(1);
     expect(act.status().beam).toEqual({ tone: 'good', motion: 'still' });
   });
@@ -1023,7 +1097,7 @@ describe('one pop-up per moment', () => {
     act.onRows([row({ id: 'app1', label: 'Trip', where: 'Claude app' })]);
     act.onRows([row({ id: 'app1', label: 'Trip', where: 'Claude app', state: 'done', word: 'done' })]);
     act.onRows([row({ id: 'app1', label: 'Trip', where: 'Claude app', state: 'done', word: 'done' })]);
-    expect(told(calls).surfaces).toEqual([{ key: 'done:app1', ms: 4000, level: 'expanded' }]);
+    expect(told(calls).surfaces).toEqual([{ key: 'done:app1', ms: 4000, level: 'expanded', hoverHolds: true }]);
     expect(act.sheet!(senv('surfaced', { surfaced: 'done:app1' }))).toMatchObject({ key: 'status' });
     act.onRows([row({ id: 'app1', label: 'Trip', where: 'Claude app', state: 'running', since: T0 / 1000 + 10 })]);
     await tick(20_000);
@@ -1069,9 +1143,9 @@ describe('one pop-up per moment', () => {
     const { act, calls } = await boot();
     stubTracker(act, [session({})], { 100: [50] });
     await act.action!('point:S1', true);
-    expect(calls.surface.at(-1)).toEqual({ key: 'done:S1', ms: 120_000, level: 'expanded', bump: false });
+    expect(calls.surface.at(-1)).toEqual({ key: 'done:S1', ms: 120_000, level: 'expanded', bump: false, hoverHolds: true });
     await act.action!('point:S1', false);
-    expect(calls.surface.at(-1)).toEqual({ key: 'done:S1', ms: 1500, level: 'expanded', bump: false });
+    expect(calls.surface.at(-1)).toEqual({ key: 'done:S1', ms: 1500, level: 'expanded', bump: false, hoverHolds: true });
     // Clicked into: it stays while you type, wherever the pointer goes.
     await act.action!('keep:S1', null);
     const n = calls.surface.length;

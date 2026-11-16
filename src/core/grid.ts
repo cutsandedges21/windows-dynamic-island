@@ -266,10 +266,22 @@ export function moveTile(
  * `pages` with each of `keys` that is not on them yet put in after the key before
  * it in `keys` (its neighbour in the activities' own order), taking up empty
  * cells right behind that neighbour, or at the very end. New and returning tiles
- * show up next to where they belong instead of at a random spot.
+ * show up next to where they belong instead of at a random spot. `atEnd`: the user
+ * arranged these pages, so a tile they have not placed yet goes after all of theirs
+ * and moves none of them.
  */
-export function withNew(pages: GridPages, keys: string[], dims: GridDims): GridPages {
+export function withNew(pages: GridPages, keys: string[], dims: GridDims, atEnd = false): GridPages {
   const out = pages.map((p) => [...p]);
+  if (atEnd) {
+    const on = new Set(out.flat());
+    for (const key of keys) {
+      if (on.has(key)) continue;
+      if (!out.length) out.push([]);
+      out[out.length - 1].push(key);
+    }
+    return out;
+  }
+
   const where = new Map<string, [number, number]>();
   const index = () => {
     where.clear();
