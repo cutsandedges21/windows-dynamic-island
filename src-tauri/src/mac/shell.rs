@@ -60,6 +60,18 @@ pub fn shell_edit_image(path: String) -> bool {
 #[tauri::command]
 pub fn shell_lock() {}
 
+/// Sleep, restart and shut down from a phone: Windows only for now (`hello.power` is false on a Mac).
+#[tauri::command]
+pub fn shell_power(_kind: String) -> Result<(), String> {
+    Err("not on Mac yet".into())
+}
+
+/// Xbox Game Bar's shortcuts: Windows only.
+#[tauri::command]
+pub fn game_bar(_action: String) -> bool {
+    false
+}
+
 #[tauri::command]
 pub fn shell_sleep() {
     let _ = Command::new("pmset").arg("sleepnow").status();

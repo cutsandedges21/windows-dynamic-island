@@ -6,6 +6,8 @@
 
 export interface HookEvent {
   hook_event_name: string;
+  /** Which AI sent it, added by island-hook: 'claude' (also when missing, from older installs) or 'codex'. */
+  agent?: string;
   session_id?: string;
   cwd?: string;
   tool_name?: string;
@@ -19,6 +21,14 @@ export interface HookEvent {
   stop_hook_active?: boolean;
   hook_pid?: number;
   hook_ppid?: number;
+  /** The hook's grandparent: the AI's own process when a shell runs the hook (Codex: island-hook ← powershell ← codex). */
+  hook_gppid?: number;
+  /** Codex: the session file (rollout .jsonl). */
+  transcript_path?: string | null;
+  model?: string;
+  permission_mode?: string;
+  /** Codex SessionStart: startup, resume, clear, compact, fork. */
+  source?: string;
 }
 
 /** A PermissionRequest waiting in the island. AskUserQuestion arrives this way too. */

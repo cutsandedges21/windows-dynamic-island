@@ -59,7 +59,7 @@ export const USES: Option<Use>[] = [
 const USE_EXTRAS: Record<Use, string[]> = {
   school: [],
   work: [],
-  coding: ['servers'],
+  coding: ['codex', 'cursor', 'antigravity', 'servers'],
   gaming: ['game'],
   media: [],
   calls: ['calls'],
@@ -107,6 +107,12 @@ export interface Facts {
   laptop: boolean;
   /** Claude Code is on this PC. */
   claudeCode: boolean;
+  /** Codex is on this PC (its ~/.codex folder is there). */
+  codex?: boolean;
+  /** Cursor is on this PC. */
+  cursor?: boolean;
+  /** Antigravity (app, IDE or CLI) is on this PC. */
+  antigravity?: boolean;
   /** The system Island runs on (Windows when not given). */
   platform?: Platform;
 }
@@ -168,7 +174,7 @@ export interface Answers {
 export const HELPERS = ['system-controls', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'phone', 'workspaces'];
 
 /** Grid order: what you act on first, then what you glance at, then occasional helpers. */
-const GRID_ORDER = ['claude', 'music', 'calendar', 'weather', 'timer', 'reminders', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'system-controls', 'downloads', 'land', 'screenshots', 'clipboard'];
+const GRID_ORDER = ['claude', 'codex', 'cursor', 'antigravity', 'music', 'calendar', 'weather', 'timer', 'reminders', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'system-controls', 'downloads', 'land', 'screenshots', 'clipboard'];
 
 /** The bot's brain: switched on by the AI step, never a tile (the bot is the way in). */
 const BRAIN = 'local';
@@ -190,6 +196,9 @@ export function planActivities(a: Answers, facts: Facts): Plan {
   const offered = new Set([...glanceChoices(facts).map((g) => g.id), ...shownClaude]);
   // Claude shows the Claude app's and Chrome's chats too, so it is no less wanted without Claude Code here.
   const wanted = new Set([...a.glance.filter((id) => offered.has(id)), ...a.uses.flatMap((u) => USE_EXTRAS[u])]);
+  if (!facts.codex) wanted.delete('codex');
+  if (!facts.cursor) wanted.delete('cursor');
+  if (!facts.antigravity) wanted.delete('antigravity');
   const picked = GRID_ORDER.filter((id) => wanted.has(id));
   const helpers = HELPERS.filter((id) => id !== 'battery' || facts.laptop);
   // A Mac switches on only what it can run yet.

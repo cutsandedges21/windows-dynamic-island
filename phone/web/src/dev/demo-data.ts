@@ -393,5 +393,5 @@ export const DEMO_FOLDERS = ['C:\\Users\\Moss\\Projects\\windows-dynamic-island'
 
 /** The demo's hello: terminals on and Chrome Remote Desktop ready, unless ?demo asks otherwise. */
 export function demoHello(name = DEMO_NAME, opts: { term?: boolean; screen?: ScreenState } = {}): Extract<IslandMsg, { t: 'hello' }> {
-  return { t: 'hello', v: 1, name, platform: 'windows', version: '0.3.1', allow: true, vapid: null, term: opts.term ?? true, screen: opts.screen === undefined ? 'ready' : opts.screen, folders: [...DEMO_FOLDERS] };
+  return { t: 'hello', v: 1, name, platform: 'windows', version: '0.3.1', allow: true, vapid: null, term: opts.term ?? true, screen: opts.screen === undefined ? 'ready' : opts.screen, folders: [...DEMO_FOLDERS], power: true };
 }

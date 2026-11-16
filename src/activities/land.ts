@@ -14,12 +14,17 @@ import type { PhoneDelivery } from '../remote/hub';
 import { holdForPhone, type HeldEnd } from '../remote/outbox';
 import type { PetSignal } from '../core/pet';
 import type { Seg } from '../core/segments';
-import type { Block, Person, SheetButton, SheetRow, SheetView, Tile } from '../core/sheet';
+import type { Block, FileTile, Person, SheetButton, SheetRow, SheetView, Tile } from '../core/sheet';
 import { platform } from '../core/platform';
 import { hiddenNow } from '../core/settings';
 import { BaseActivity } from './base';
 
 type Options = { visible: boolean; name: string; anywhere: boolean; tile: boolean };
+
+/** Files the shelf remembers across restarts, at most. */
+export const SHELF_MAX = 60;
+/** A shelf tile's picture, a side in pixels. */
+const THUMB_PX = 96;
 
 /** A transfer as the island keeps it: Rust's report, plus timing and a smoothed speed. */
 export interface Live extends LandTransfer {
@@ -101,7 +106,12 @@ export class LandActivity extends BaseActivity {
   private me: { id: string; name: string; visible: boolean } | null = null;
   private error: string | null = null;
   private peers: LandPeer[] = [];
+  /** The shelf: files dropped on the island wait here until they are taken off, sent or not. Kept across restarts (the `shelf` option holds their paths). */
   private staged: LandStaged[] = [];
+  /** Shelf files ticked: Send, Send to a phone, a drag out and the bin act on these, or on all when none is. */
+  private readonly ticked = new Set<string>();
+  /** Each shelf file's picture (null: Windows has none), asked once per path. */
+  private readonly thumbs = new Map<string, string | null>();
   /** Text to send instead of files (pasted or typed in the card). */
   private stagedText: string | null = null;
   /** What a phone can fetch right now: its QR code, and what it opened. */
@@ -163,6 +173,9 @@ export class LandActivity extends BaseActivity {
       return;
     }
     await this.connect();
+    // What was on the shelf when Island last closed; a file gone since shows as missing.
+    const saved = this.ctx.options<{ shelf?: unknown }>().shelf;
+    if (Array.isArray(saved)) await this.stage(saved.filter((x): x is string => typeof x === 'string').slice(0, SHELF_MAX));
   }
 
   override dispose(): void {
@@ -429,11 +442,40 @@ export class LandActivity extends BaseActivity {
   }
 
   private stagedFiles(): number {
-    return this.staged.reduce((n, s) => n + s.files, 0);
+    return this.chosen().reduce((n, s) => n + s.files, 0);
   }
 
   private stagedBytes(): number {
-    return this.staged.reduce((n, s) => n + s.size, 0);
+    return this.chosen().reduce((n, s) => n + s.size, 0);
+  }
+
+  /** What Send, Send to a phone and a drag out take: the ticked files, or every file when none is ticked. */
+  private chosen(): LandStaged[] {
+    const ok = this.staged.filter((s) => !s.error);
+    const ticked = ok.filter((s) => this.ticked.has(s.path));
+    return ticked.length ? ticked : ok;
+  }
+
+  /** The shelf changed: ticks of files no longer on it go, and its paths are saved for the next start. */
+  private shelfChanged(): void {
+    const paths = new Set(this.staged.map((s) => s.path));
+    for (const x of [...this.ticked]) if (!paths.has(x)) this.ticked.delete(x);
+    for (const x of [...this.thumbs.keys()]) if (!paths.has(x)) this.thumbs.delete(x);
+    this.ctx.setOptions?.({ shelf: [...paths].slice(0, SHELF_MAX) });
+  }
+
+  /** Asks Windows for each new shelf file's picture; the card shows its icon until it comes. */
+  private loadThumbs(): void {
+    if (native.demo) return;
+    for (const s of this.staged) {
+      if (s.error || this.thumbs.has(s.path)) continue;
+      this.thumbs.set(s.path, null);
+      void native.shelfThumb?.(s.path, THUMB_PX).then((src) => {
+        if (!this.alive || !src || !this.thumbs.has(s.path)) return;
+        this.thumbs.set(s.path, src);
+        this.ctx.update();
+      });
+    }
   }
 
   private frac(t: Live): number | null {
@@ -506,7 +548,7 @@ export class LandActivity extends BaseActivity {
     if (lead) return { icon: lead.dir === 'out' ? 'upload' : 'download', label: this.progressText(lead), tone: 'accent' };
     if (this.share) return { icon: 'phone', label: clock(Math.max(0, this.share.expires - Date.now())), tone: 'accent' };
     // At rest: the icon alone; a click opens Land's card.
-    if (this.me || native.demo) return { icon: 'land', label: '', tone: 'muted', action: 'card' };
+    if (this.me || native.demo) return { icon: 'land', label: this.staged.length ? String(this.staged.length) : '', tone: this.staged.length ? 'accent' : 'muted', action: 'card' };
     return null;
   }
 
@@ -782,7 +824,8 @@ export class LandActivity extends BaseActivity {
     const files = this.stagedFiles();
     const size = this.stagedBytes();
     const n = this.peers.length;
-    const sub = files ? `${plural(files, 'file')} · ${bytes(size)}` : this.stagedText ? `${cap(what({ items: [], count: 0, text: this.stagedText }))} to send` : n ? `${plural(n, 'computer')} nearby` : 'Send files to a computer nearby';
+    const picked = this.staged.filter((s) => this.ticked.has(s.path)).length;
+    const sub = this.stagedText ? `${cap(what({ items: [], count: 0, text: this.stagedText }))} to send` : picked ? `${picked} selected · ${bytes(size)}` : files ? `${plural(files, 'file')} · ${bytes(size)}` : this.stagedText ? `${cap(what({ items: [], count: 0, text: this.stagedText }))} to send` : n ? `${plural(n, 'computer')} nearby` : 'Send files to a computer nearby';
     const head: Block = {
       t: 'head',
       key: 'head',
@@ -791,27 +834,34 @@ export class LandActivity extends BaseActivity {
       title: 'Land',
       sub,
       buttons: [
-        ...(this.staged.length || this.stagedText ? [{ key: 'clear', icon: 'x', action: 'clear', style: 'ghost' as const, tip: this.stagedText ? 'Remove the text' : 'Remove the files' }] : []),
+        ...(this.staged.length > 1 && !this.stagedText ? [{ key: 'all', label: picked === this.staged.length ? 'None' : 'All', action: 'tick-all', style: 'ghost' as const, tip: picked === this.staged.length ? 'Untick them all' : 'Tick them all' }] : []),
+        ...(this.staged.length || this.stagedText ? [{ key: 'clear', icon: this.stagedText ? 'x' : 'trash', action: 'clear', style: 'ghost' as const, tip: this.stagedText ? 'Remove the text' : picked ? 'Take the ticked files off the shelf' : 'Take every file off the shelf' }] : []),
         { key: 'back', icon: 'grid', action: 'island:card-close', style: 'ghost' as const, tip: 'Control Center' },
       ],
     };
     const blocks: Block[] = [head];
 
-    if (this.staged.length) {
-      const rows: SheetRow[] = this.staged.slice(0, FILE_ROWS).map((s) => ({
-        key: s.path,
-        icon: s.dir ? 'folder' : 'file',
-        tone: s.error ? 'bad' : undefined,
-        title: s.name,
-        detail: s.error ?? (s.dir ? `${plural(s.files, 'file')} · ${bytes(s.size)}` : bytes(s.size)),
-        button: { key: 'rm', icon: 'x', action: 'unstage', arg: s.path, style: 'ghost', tip: 'Remove' },
-      }));
-      if (this.staged.length > FILE_ROWS) rows.push({ key: 'more', title: `and ${plural(this.staged.length - FILE_ROWS, 'more item')}`, tone: 'muted' });
-      blocks.push({ t: 'rows', key: 'files', items: rows });
-    } else if (this.stagedText) {
+    if (this.stagedText) {
       const link = isLink(this.stagedText);
-      blocks.push({ t: 'rows', key: 'files', items: [{ key: 'text', icon: link ? 'globe' : 'edit', title: clip(this.stagedText.replace(/\s+/g, ' '), 90), detail: link ? 'Link' : `Note · ${plural(this.stagedText.length, 'character')}`, button: { key: 'rm', icon: 'x', action: 'clear', style: 'ghost', tip: 'Remove' } }] });
-    } else {
+      blocks.push({ t: 'rows', key: 'text', items: [{ key: 'text', icon: link ? 'globe' : 'edit', title: clip(this.stagedText.replace(/\s+/g, ' '), 90), detail: link ? 'Link' : `Note · ${plural(this.stagedText.length, 'character')}`, button: { key: 'rm', icon: 'x', action: 'clear', style: 'ghost', tip: 'Remove' } }] });
+    }
+    if (this.staged.length) {
+      this.loadThumbs();
+      const items: FileTile[] = this.staged.map((s) => ({
+        key: s.path,
+        name: s.name,
+        sub: s.error ?? (s.dir ? plural(s.files, 'file') : bytes(s.size)),
+        thumb: this.thumbs.get(s.path) ?? null,
+        icon: s.dir ? 'folder' : 'file',
+        ticked: this.ticked.has(s.path),
+        tone: s.error ? 'bad' : undefined,
+        action: s.error || !env.interactive ? undefined : 'tick',
+        arg: s.path,
+        tip: s.error ? `${s.name}: ${s.error}` : `${s.name} · click to tick, drag it out into a folder or an app`,
+        remove: { key: 'rm', icon: 'x', action: 'unstage', arg: s.path, style: 'ghost', tip: 'Take it off the shelf' },
+      }));
+      blocks.push({ t: 'files', key: 'files', items, drag: env.interactive ? 'drag-out' : undefined });
+    } else if (!this.stagedText) {
       blocks.push({ t: 'text', key: 'hint', text: 'Drag files or folders onto the island, or paste a link or a note below, then pick who gets it.', tone: 'muted', size: 'sm' });
       blocks.push({ t: 'input', key: 'text', placeholder: 'Paste a link or type a note, then Enter', action: 'stage-text', pasteFiles: 'paste' });
     }
@@ -831,7 +881,7 @@ export class LandActivity extends BaseActivity {
     blocks.push(...this.firewallBlocks(env));
 
     if (this.staged.length || this.stagedText) {
-      const bad = this.staged.some((s) => s.error);
+      const bad = !this.stagedText && !this.chosen().length;
       const count = targets.size;
       const pick = this.friends.length || this.phones.length ? 'Pick who gets them' : 'Pick a computer';
       const label = count > 1 ? `Send to ${count} ${[...targets].some(isPhone) ? 'devices' : 'computers'}` : count === 1 ? `Send to ${clip(all.find((p) => targets.has(p.id))!.name, 22)}` : all.length ? pick : 'Send';
@@ -975,6 +1025,7 @@ export class LandActivity extends BaseActivity {
     const got = await native.landStage(fresh);
     if (!this.alive) return;
     for (const s of got) if (!this.staged.some((x) => x.path === s.path)) this.staged.push(s);
+    this.shelfChanged();
     this.note = null;
     this.ctx.update();
   }
@@ -1001,14 +1052,41 @@ export class LandActivity extends BaseActivity {
       }
       case 'unstage':
         this.staged = this.staged.filter((s) => s.path !== id);
+        this.shelfChanged();
         break;
+      case 'tick':
+        if (this.ticked.has(id)) this.ticked.delete(id);
+        else if (this.staged.some((s) => s.path === id && !s.error)) this.ticked.add(id);
+        break;
+      case 'tick-all': {
+        const ok = this.staged.filter((s) => !s.error);
+        const every = ok.length > 0 && ok.every((s) => this.ticked.has(s.path));
+        this.ticked.clear();
+        if (!every) for (const s of ok) this.ticked.add(s.path);
+        break;
+      }
+      case 'drag-out': {
+        // Dragging a ticked file takes every ticked one with it; an unticked one goes alone.
+        const paths = this.ticked.has(id) ? this.chosen().map((s) => s.path) : this.staged.filter((s) => s.path === id && !s.error).map((s) => s.path);
+        if (!paths.length || native.demo) break;
+        const r = await native.shelfDrag(paths);
+        if (!this.alive) return;
+        if (!r.ok) this.note = { text: r.error, at: Date.now() };
+        else if (r.value && this.ticked.has(id)) this.ticked.clear();
+        break;
+      }
       case 'clear':
-        this.staged = [];
-        this.stagedText = null;
+        // The text first; else the ticked files, or every file when none is ticked.
+        if (this.stagedText) this.stagedText = null;
+        else {
+          const gone = new Set((this.ticked.size ? this.staged.filter((s) => this.ticked.has(s.path)) : this.staged).map((s) => s.path));
+          this.staged = this.staged.filter((s) => !gone.has(s.path));
+          this.shelfChanged();
+        }
         this.note = null;
         break;
       case 'share-phone': {
-        const paths = this.staged.filter((s) => !s.error).map((s) => s.path);
+        const paths = this.stagedText ? [] : this.chosen().map((s) => s.path);
         if (!paths.length && !this.stagedText) break;
         const r = await native.landShareStart(paths, paths.length ? null : this.stagedText);
         if (!this.alive) return;
@@ -1033,7 +1111,6 @@ export class LandActivity extends BaseActivity {
         }
         if (pasted.files.length) {
           this.stagedText = null;
-          this.staged = [];
           await this.stage(pasted.files);
         } else if (pasted.text?.trim()) {
           await this.action('stage-text', pasted.text);
@@ -1052,8 +1129,7 @@ export class LandActivity extends BaseActivity {
           this.note = { text: `That is more than ${MAX_TEXT.toLocaleString('en-US')} characters. Send it as a file instead.`, at: Date.now() };
           break;
         }
-        // One thing at a time: text takes the place of files waiting to go.
-        this.staged = [];
+        // Text goes first; the shelf keeps its files for later.
         this.stagedText = text;
         this.note = null;
         void this.scan();
@@ -1136,15 +1212,15 @@ export class LandActivity extends BaseActivity {
     this.ctx.update();
   }
 
-  /** Every picked computer gets the files (or the text); the list empties once they are on their way. */
+  /** Every picked computer gets the ticked files (all of them when none is ticked), or the text. */
   private async send(): Promise<void> {
     const to = this.targets();
     if (this.stagedText) return this.sendText(to, this.stagedText);
-    const staged = this.staged.filter((s) => !s.error);
+    const staged = this.chosen();
     if (!to.length || !staged.length) return;
     if (native.demo) {
       for (const p of to) this.remember(this.demoSend(p, staged), { staged });
-      this.staged = [];
+      this.ticked.clear();
       return;
     }
     const failures: string[] = [];
@@ -1154,7 +1230,8 @@ export class LandActivity extends BaseActivity {
     }
     if (!this.alive) return;
     if (failures.length) this.note = { text: failures.join(' '), at: Date.now() };
-    if (failures.length < to.length) this.staged = [];
+    // Sent files stay on the shelf (they are only parked there); the ticks have done their job.
+    if (failures.length < to.length) this.ticked.clear();
   }
 
   /** Files to one computer or phone; each send it starts remembers them for Send again. */

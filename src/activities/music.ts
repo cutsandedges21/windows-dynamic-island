@@ -218,7 +218,22 @@ export class MusicActivity extends BaseActivity {
     }
     const showArt = this.ctx.options<{ showArt: boolean }>().showArt !== false;
     const open = env.interactive && this.canOpen() ? 'open' : undefined;
-    return { key: 'music', span: 2, rows: 2, body: { k: 'media', art: showArt ? m.thumbnail : null, title: m.title, artist: m.artist || m.app || '', playing, progress, buttons, open } };
+    // Lyrics on: the tile is the lyrics, every line in full (the pill's player shows one line, cut).
+    if (this.lyricsOn()) {
+      const lines = this.lyrics.lines(m, true);
+      const at = lines && pos != null ? lines.reduce((n, l, i) => (l.at <= pos ? i : n), -1) : -1;
+      // Keeps the line ticking while Control Center shows it.
+      if (lines?.length) this.lyric(pos, env.now);
+      return {
+        key: 'music',
+        span: 2,
+        rows: 4,
+        action: env.interactive ? 'card' : undefined,
+        tip: 'Now playing',
+        body: { k: 'lyrics', art: showArt ? m.thumbnail : null, title: m.title, artist: m.artist || m.app || '', playing, lines: (lines ?? []).map((l) => l.text), at, note: lines ? undefined : 'Looking for the lyrics…', open },
+      };
+    }
+    return { key: 'music', span: 2, rows: 2, action: env.interactive ? 'card' : undefined, tip: 'Now playing', body: { k: 'media', art: showArt ? m.thumbnail : null, title: m.title, artist: m.artist || m.app || '', playing, progress, buttons, open } };
   }
 
   /** Clicking the art brings the app playing forward: Windows finds its tab or window (media.rs `focus`). */
@@ -259,7 +274,10 @@ export class MusicActivity extends BaseActivity {
    */
   sheet(env: SheetEnv): SheetView | null {
     const m = this.m;
-    if (env.reason !== 'hover' || !this.hoverPlayer() || !m?.title) return null;
+    // Pointed at (when the player is the hover card), or opened from its tile: on a phone that is the
+    // whole now-playing screen.
+    const opened = env.reason === 'open';
+    if (!m?.title || !(opened || (env.reason === 'hover' && this.hoverPlayer()))) return null;
     const on = env.interactive;
     const pos = this.position(env.now);
     const showArt = this.ctx.options<{ showArt: boolean }>().showArt !== false;
@@ -280,10 +298,15 @@ export class MusicActivity extends BaseActivity {
         : { prev: '', toggle: '', next: '' },
       output: { icon: headphonesLike(this.device) ? 'headphones' : 'speaker', tip: this.device ? `Sound output: ${this.device}` : 'Sound output' },
     };
+    if (opened) return { key: 'player-open', blocks: [{ t: 'head', key: 'head', icon: this.meta.icon, tone: 'accent', title: 'Now playing', sub: m.app || undefined, buttons: [{ key: 'back', icon: 'grid', action: 'island:card-close', style: 'ghost', tip: 'Control Center' }] }, block] };
     return { key: 'player', morph: true, blocks: [block] };
   }
 
   async action(name: string, arg?: unknown): Promise<void> {
+    if (name === 'card') {
+      this.ctx.openCard?.();
+      return;
+    }
     if (name === 'output') {
       await native.soundOutput();
       return;

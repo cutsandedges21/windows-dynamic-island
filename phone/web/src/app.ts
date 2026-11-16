@@ -3,7 +3,7 @@
 // sends (hello, pill, view, toasts, clipboard, text, files, terminals), and where a tap goes
 // (routing.ts, nav.ts).
 
-import { INBOX_OPEN, type IslandMsg, type Nav, type PairPayload, type TermInfo } from '../../../src/remote/protocol';
+import { INBOX_OPEN, type IslandMsg, type Nav, type PairPayload, type PowerAction, type TermInfo } from '../../../src/remote/protocol';
 import { NavKeeper, navMsg, sameNav } from './nav';
 import { deniedText, pairErrorText, phoneName } from './pairing';
 import { pushFlag, pushOff, pushOn, pushResend, pushState } from './push';
@@ -464,6 +464,18 @@ export class App {
     if (yes && !this.link.send({ t: 'sleep' })) toast('Not connected', 'bad');
   }
 
+  /** Sleep, restart or shut down the PC, after asking: its programs get the chance to stop it, as from Start. */
+  private async power(what: PowerAction): Promise<void> {
+    const name = this.island?.name ?? 'your PC';
+    const ask = {
+      sleep: { title: `Put ${name} to sleep?`, text: 'This phone loses it until someone wakes it.', ok: 'Sleep', icon: 'moon' },
+      restart: { title: `Restart ${name}?`, text: 'Like Start › Restart: a program with unsaved work can stop it. Island comes back if it starts with Windows.', ok: 'Restart', icon: 'refresh' },
+      shutdown: { title: `Shut down ${name}?`, text: 'Like Start › Shut down: a program with unsaved work can stop it. It stays off until someone turns it on.', ok: 'Shut down', icon: 'power' },
+    }[what];
+    const yes = await confirmSheet(ask);
+    if (yes && !this.link.send({ t: 'power', what })) toast('Not connected', 'bad');
+  }
+
   private menu(): void {
     const island = this.island;
     if (!island) return;
@@ -481,6 +493,7 @@ export class App {
         if (this.island) this.prefs = new PrefsSheet(kind, this.island.name, (m) => this.link.send(m));
       },
       sleep: () => void this.sleep(),
+      power: this.hello?.power ? (what) => void this.power(what) : undefined,
       switchTo: (id) => {
         const it = this.store.get(id);
         if (!it) return;

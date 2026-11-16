@@ -1,6 +1,7 @@
-// More: the PC's clipboard and Lock PC, switch between paired PCs, pair another, notifications
+// More: the PC's clipboard, Lock PC and (where the PC offers it) Sleep, Restart and Shut down, switch between paired PCs, pair another, notifications
 // (phase 3), remove this PC.
 
+import type { PowerAction } from '../../../../src/remote/protocol';
 import { lastSeenText } from '../format';
 import type { LinkState, SavedIsland } from '../link/api';
 import type { PushState } from '../push';
@@ -20,6 +21,8 @@ export interface MenuHooks {
   prefs(kind: 'activities' | 'settings'): void;
   /** Puts the PC to sleep (asks first). */
   sleep(): void;
+  /** Sleep, restart or shut down the PC (each asks first); absent when this PC doesn't offer it. */
+  power?: (what: PowerAction) => void;
   switchTo(id: string): void;
   pairAnother(): void;
   remove(): void;
@@ -44,7 +47,13 @@ export function openMenu(m: MenuHooks): void {
     row(`Lock ${m.current.name}`, 'lock', () => m.lock()),
     row('Activities', 'grid', () => m.prefs('activities')),
     row('Settings', 'sliders', () => m.prefs('settings')),
-    row(`Sleep ${m.current.name}`, 'moon', () => m.sleep()),
+    ...(m.power
+      ? [
+          row(`Sleep ${m.current.name}`, 'moon', () => m.power?.('sleep')),
+          row(`Restart ${m.current.name}`, 'refresh', () => m.power?.('restart')),
+          row(`Shut down ${m.current.name}`, 'power', () => m.power?.('shutdown')),
+        ]
+      : [row(`Sleep ${m.current.name}`, 'moon', () => m.sleep())]),
   ]);
 
   const pcs =

@@ -14,6 +14,7 @@ export const phoneNative: PhoneNative = {
   clipboard: () => native.clipboardPaste(),
   lock: () => native.lock(),
   sleep: () => native.sleep(),
+  power: (kind) => native.power(kind),
   log: (text) => void native.log(text),
   on: (event, cb) => on(event, cb),
 };

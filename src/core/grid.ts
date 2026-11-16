@@ -52,6 +52,8 @@ export const CELLS: Record<TileSize, { w: number; h: number }> = {
   '2x1': { w: 2, h: 1 },
   '1x2': { w: 1, h: 2 },
   '2x2': { w: 2, h: 2 },
+  '1x4': { w: 1, h: 4 },
+  '2x4': { w: 2, h: 4 },
 };
 
 /**
@@ -63,7 +65,8 @@ export function cellsOf(tile: { span?: number; rows?: number }, saved: TileSize 
 }
 
 export function sizeOf(w: number, h: number): TileSize {
-  return `${Math.min(2, Math.max(1, w))}x${Math.min(2, Math.max(1, h))}` as TileSize;
+  const hh = h >= 3 ? 4 : Math.max(1, h);
+  return `${Math.min(2, Math.max(1, w))}x${hh}` as TileSize;
 }
 
 /** How many rows the packed tiles reach down to: the grid is no taller than that. */

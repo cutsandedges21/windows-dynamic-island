@@ -11,6 +11,7 @@ import type { MenuItem } from './native';
 import type { GlowMotion } from './glow';
 import type { Seg, Tone } from './segments';
 import type { SheetView, Tile } from './sheet';
+import type { StripView } from './strip';
 import type { ActivityConfig, Settings } from './settings';
 
 export interface ActivityStatus {
@@ -178,6 +179,8 @@ export interface Activity {
   hotkeys?(): Array<{ id: string; accel: string }>;
   /** Files were dropped on the island. True takes them; the island then opens this activity's card. */
   drop?(paths: string[]): boolean;
+  /** A slim row of numbers along the top while a full-screen app is in front (Games, when set to a strip); the pill hides then. */
+  strip?(now: number): StripView | null;
   /** Says whether a drop would be taken, while files are dragged over the island (the pill shows the hint). */
   accepts?(): string | null;
 }

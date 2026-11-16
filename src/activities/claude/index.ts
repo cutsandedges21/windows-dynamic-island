@@ -25,6 +25,7 @@ import { chatUrl, DesktopChats, type DesktopChat } from './desktop';
 import { afterModifiersReleased, deepLink, focusSession, selectWindow } from './focus';
 import { HookState, questionsOf, type HookEvent, type PermissionCard, type ReplyHold } from './hooks';
 import { MomentGate } from './moments';
+import { markSlept, sleepDue, sleptFor, SLEEP_COUNTDOWN_MS, type SleepDue } from './sleepguard';
 import { claudeArgs, oneLine, recentFolders, routeFor, routeHint, sameText, terminalFor, type ChatPane, type ChatRoute } from './phonechat';
 import { EDITOR_HOSTS } from './procinfo';
 import { askText, permissionText, PushGate, pushFor, type PushKind } from './pushes';
@@ -559,12 +560,64 @@ export class ClaudeActivity extends BaseActivity {
     if (u.error) this.ctx.log('limits', { result: u.error, session: u.data?.fiveHour?.pct ?? null, nextInS: Math.round((this.usage.nextAt - Date.now()) / 1000) });
     // The weekly window start comes from seven_day.resets_at, so refresh totals.
     if (this.weekly) this.tokenTotals = this.weekly.totals(weekWindowStart(u.data?.sevenDay?.resetsAt ?? null));
+    this.checkSleep();
     this.ctx.update();
+  }
+
+  // ---------------------------------------------------------------- Sleep this PC at 99% (sleepguard.ts)
+
+  /** The countdown before the PC sleeps, while one runs. */
+  private sleeping: (SleepDue & { until: number }) | null = null;
+
+  /** A limit window reached 99% and the option is on: count down, then sleep (Stay awake skips it). */
+  private checkSleep(): void {
+    if (this.sleeping || this.ctx.options<{ sleepAt99?: boolean }>().sleepAt99 !== true) return;
+    const due = sleepDue(this.limitsNow(), sleptFor());
+    if (!due) return;
+    this.sleeping = { ...due, until: Date.now() + SLEEP_COUNTDOWN_MS };
+    this.ctx.log('sleep countdown', { window: due.key, pct: due.pct });
+    this.ctx.surface({ key: `sleep:${due.key}`, ms: SLEEP_COUNTDOWN_MS, level: 'expanded' });
+    this.ctx.alert('glow', 'warn');
+    this.ctx.notify(`Claude's ${due.label} is at ${Math.floor(due.pct)}%`, 'This PC goes to sleep in a minute. Open the island to stay awake.', false);
+    this.later(SLEEP_COUNTDOWN_MS, () => void this.sleepNow(due.key));
+  }
+
+  private async sleepNow(key: string): Promise<void> {
+    if (this.sleeping?.key !== key) return;
+    this.sleeping = null;
+    markSlept(key);
+    this.ctx.update();
+    const ok = await native.powerSleep();
+    this.ctx.log('sleep', { window: key, ok });
+  }
+
+  private stayAwake(): void {
+    if (!this.sleeping) return;
+    markSlept(this.sleeping.key);
+    this.ctx.log('sleep skipped', { window: this.sleeping.key });
+    this.sleeping = null;
+    this.ctx.update();
+  }
+
+  private sleepSheet(): SheetView | null {
+    const z = this.sleeping;
+    if (!z) return null;
+    const blocks: Block[] = [
+      { t: 'head', key: 'h', icon: 'moon', tone: 'warn', title: `Claude's ${z.label} is at ${Math.floor(z.pct)}%`, sub: 'This PC goes to sleep in a minute' },
+      { t: 'buttons', key: 'b', items: [
+        { key: 'awake', label: 'Stay awake', icon: 'x', action: 'sleep-cancel', style: 'secondary' },
+        { key: 'now', label: 'Sleep now', icon: 'moon', action: 'sleep-now', style: 'primary' },
+      ] },
+      { t: 'countdown', key: 'left', until: z.until, total: SLEEP_COUNTDOWN_MS, tone: 'warn' },
+    ];
+    return { key: `sleep:${z.key}`, blocks };
   }
 
   // ---------------------------------------------------------------- hooks
 
   private onHook(ev: HookEvent): void {
+    // Every AI's hooks come through the same pipe (Codex, Cursor, Antigravity have their own activities).
+    if ((ev.agent ?? 'claude') !== 'claude') return;
     // Prompts this event takes away (answered in the chat, the turn ended): their moment is over.
     const waitingBefore = new Set(this.hooks.cards.map((c) => c.sessionId));
     const kind = this.hooks.apply(ev);
@@ -670,7 +723,7 @@ export class ClaudeActivity extends BaseActivity {
     } else {
       this.ctx.log('stop', { session: sid.slice(0, 8), held: true, seconds: o.replyWindowSeconds });
       this.ctx.alert('glow', 'good');
-      if (this.ctx.settings().general.sounds) chime('attention');
+      chime('attention', this.ctx.settings().general);
     }
     this.ctx.update();
   }
@@ -882,6 +935,8 @@ export class ClaudeActivity extends BaseActivity {
 
   /** The island dismissed an urgent moment (tap outside). */
   dismiss(key: string): void {
+    // Tapping the sleep countdown away is being there: the PC stays awake.
+    if (key.startsWith('sleep:')) return this.stayAwake();
     const [kind, ref] = splitOnce(key, ':');
     if (kind === 'perm') {
       // Hand the question back to the terminal instead of leaving Claude Code waiting.
@@ -950,7 +1005,7 @@ export class ClaudeActivity extends BaseActivity {
     this.glow(errored ? 'bad' : 'good');
     this.saw(errored ? 'claude-error' : 'claude-done', `claude:done:${id}`);
     if (s || ev) {
-      if (this.ctx.settings().general.sounds) chime('done');
+      chime('done', this.ctx.settings().general);
       const said = ev?.last_assistant_message?.trim() || s?.lastAssistantText || '';
       this.toPhone(id, errored ? 'error' : 'done', errored ? [s?.label, said].filter(Boolean).join('\n') : said, '', ev?.cwd);
     }
@@ -974,7 +1029,7 @@ export class ClaudeActivity extends BaseActivity {
     this.saw('claude-asks', `claude:needs:${id}`);
     const s = this.sessions.find((x) => x.id === id);
     if (!s && !ev) return;
-    if (this.ctx.settings().general.sounds) chime('attention');
+    chime('attention', this.ctx.settings().general);
     const title = s?.displayTitle || (ev?.cwd ? projectName(ev.cwd) : '') || 'Claude Code';
     // The phone gets this from toPhone, once, however many ways the moment is reported.
     if (this.opts().notifications) this.ctx.notify(title, `Needs you${s ? ` in ${s.project}` : ''}. Alt+Shift+0 to switch.`, false);
@@ -1439,6 +1494,7 @@ export class ClaudeActivity extends BaseActivity {
   // ---------------------------------------------------------------- the card under the pill
 
   sheet(env: SheetEnv): SheetView | null {
+    if (this.sleeping && (env.reason === 'urgent' || (env.reason === 'surfaced' && env.surfaced?.startsWith('sleep:')))) return this.sleepSheet();
     // Claude Code's prompt, question or reply window, with every session's row under it: Claude Status's pop-up with Claude Code's answers in it.
     if (env.reason === 'urgent') {
       const card = this.hooks.cards[0];
@@ -2063,6 +2119,12 @@ export class ClaudeActivity extends BaseActivity {
     // Card inputs name their target after a colon ("reply:<request id>"); the typed text is the arg.
     const [verb, ref] = splitOnce(name, ':');
     switch (verb) {
+      case 'sleep-cancel':
+        this.stayAwake();
+        break;
+      case 'sleep-now':
+        if (this.sleeping) await this.sleepNow(this.sleeping.key);
+        break;
       case 'jump':
         // A row of Claude Status's: Claude Code's go where Claude Code would (Open), the rest where the widget did.
         await this.jump(id);

@@ -20,6 +20,9 @@ import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationF
 import { native, on, onFileDrop, onTermOpened, sendTo, type FileDrop, type MenuItem, type TermOpened } from './native';
 import { cardChips, choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
 import type { MirrorFrame } from './mirror';
+import { Strip, type StripView } from './strip';
+import { lookOf, WidgetHost } from './widgets';
+import { DockHost } from './dock';
 import { PillRenderer } from './renderer';
 import { menuMain, menuSegments } from './menu';
 import { quietMoon } from './quiet';
@@ -52,6 +55,27 @@ const HOVER_HOLD_MS = 600;
 
 /** The sizes a list, card or player can take: two columns at least. */
 const WIDE_SIZES: TileSize[] = ['2x1', '2x2'];
+/** Music's lyrics: tall, so every line shows in full (Moss, 2026-11-13). */
+const LYRIC_SIZES: TileSize[] = ['1x2', '1x4', '2x4'];
+/** Island set Windows' taskbar to hide (kept across restarts and crashes, to put it back). */
+const HID_BAR_KEY = 'island.taskbar.hidWindows';
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+function writeFlag(key: string, on: boolean): void {
+  try {
+    if (on) localStorage.setItem(key, '1');
+    else localStorage.removeItem(key);
+  } catch {
+    /* the next start can't tell, and leaves the taskbar as it is */
+  }
+}
+
+const sizesOfKind = (k: string): TileSize[] => (k === 'lyrics' ? LYRIC_SIZES : NARROW_OK.has(k) ? TILE_SIZES : WIDE_SIZES);
 /** Row height per island size (the width comes from the pill). */
 const CELL_PX = { small: 80, medium: 92, large: 106 } as const;
 const SIZE_SCALE = { small: 0.88, medium: 1, large: 1.14 } as const;
@@ -64,6 +88,21 @@ const GRID_COLS = 4;
 const GRID_ROWS = 4;
 /** Narrowest grid that still gives each of the four columns 90 px. */
 const GRID_MIN_W = GRID_COLS * 90 + GRID_GAP * (GRID_COLS - 1) + GRID_PAD * 2;
+/** Every size inside a tile is drawn for this cell and scaled by --k = cell / this (sheet.ts). */
+export const TILE_DESIGN_CELL = 92;
+/** The width a one-cell tile's content is drawn for: narrower columns shrink the tiles to fit. */
+const TILE_DESIGN_W = 120;
+
+/**
+ * The grid's row height for a grid `width` px wide (padding included): the island size's own,
+ * unless the columns are too narrow for a tile's design; then smaller in proportion. A tile's
+ * content scales with it, so it fits its cell at any island width or size instead of being cut off.
+ */
+export function gridCell(width: number, sizeCell: number): number {
+  const col = (width - GRID_PAD * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
+  const k = Math.min(sizeCell / TILE_DESIGN_CELL, col / TILE_DESIGN_W);
+  return Math.max(48, Math.round(TILE_DESIGN_CELL * k));
+}
 const atLeast = (a: Level, b: Level): Level => (levelIdx(a) >= levelIdx(b) ? a : b);
 /** Activities that stay in front once they pop up (a chat finished, a song started), until the user picks another. */
 const STAYS_IN_FRONT = new Set(['claude', 'music']);
@@ -101,6 +140,11 @@ export class Island {
   private lastOrientation: Orientation | null = null;
   private scheduled = false;
   private fullscreenOn: string | null = null;
+  private readonly strip: Strip;
+  private widgets: WidgetHost | null = null;
+  private dock: DockHost | null = null;
+  /** Windows' taskbar was set to hide by Island (put back when the taskbar is turned off). */
+  private hidWindowsBar = false;
   private inputActive = false;
   /** The pill itself shows an input (Continue Session, Ask). */
   private pillInput = false;
@@ -208,6 +252,7 @@ export class Island {
     );
     // The light is drawn above the pill and the card, not inside them, so it can spill over their edges.
     this.pillGlow = new BorderGlow(stage, null, 'of-pill');
+    this.strip = new Strip(stage);
     this.bubble = new BubbleView(stage, { interactive: true, onClick: () => this.handleAction('island:bot', null, this.bubble.el) });
     this.chat = new ChatBar(stage, (action, arg) => this.chatAction(action, arg), () => this.publishHit(this.renderer.rect, true));
     this.cardGlow = new BorderGlow(stage, 24);
@@ -271,6 +316,56 @@ export class Island {
     });
 
     // Island on your phone: paired phones see this island live and tap it.
+    this.widgets = new WidgetHost(
+      {
+        tiles: (now) => this.gridTiles(now, 460, false),
+        act: (action, arg) => void this.runAct(action, arg),
+        save: () => this.saveSettings(),
+        look: () => ({ accent: this.settings.island.accent, color: this.settings.island.color, glass: this.settings.island.glass, reduce: document.documentElement.classList.contains('reduce') }),
+        enabled: (kind) => this.running.has(kind),
+      },
+      () => this.settings.island.widgets,
+    );
+    this.widgets.start().catch((err) => native.log(`widgets failed to start: ${String(err)}`));
+    setInterval(() => this.widgets?.tick(Date.now()), 1000);
+    this.dock = new DockHost(
+      {
+        pinned: () => {
+          const saved = this.settings.activities.config.apps?.options.apps;
+          return Array.isArray(saved) ? (saved as Array<{ name: string; target: string }>).filter((a) => a && typeof a.target === 'string') : [];
+        },
+        music: () => this.dockMusic(),
+        timer: () => this.dockTimer(),
+        muted: () => this.dockMuted,
+        wifi: () => null,
+        look: () => ({ accent: this.settings.island.accent, ...lookOf(this.settings.island.taskbar.look, this.settings.island) }),
+        act: (action) => void this.runAct(action, null),
+        locked: () => this.settings.island.taskbar.locked,
+        setLocked: (on) => {
+          this.settings.island.taskbar.locked = on;
+          this.saveSettings();
+        },
+        open: () => {
+          this.view = 'main';
+          this.open = true;
+          this.schedule();
+        },
+        centre: () => this.settings.island.taskbar.centre,
+        saveCentre: (c) => {
+          this.settings.island.taskbar.centre = c;
+          this.saveSettings();
+        },
+      },
+      () => this.settings.island.taskbar.on,
+    );
+    void on<{ muted: boolean }>('audio', (a) => {
+      if (typeof a?.muted === 'boolean') this.dockMuted = a.muted;
+    });
+    this.dock.start().catch((err) => native.log(`taskbar failed to start: ${String(err)}`));
+    setInterval(() => {
+      void this.dock?.tick();
+      this.syncWindowsBar();
+    }, 1000);
     this.hub = new PhoneHub(this.phoneHooks(), phoneNative);
     this.hub.start().catch((err) => native.log(`phones failed to start: ${String(err)}`));
     // A phone's terminals: Rust refuses them unless Settings › Your phone allows them.
@@ -726,7 +821,10 @@ export class Island {
     const hiddenEverywhere =
       this.moving ||
       (!primary && s.idle === 'hidden' && !this.open && !this.hover && this.view === 'main' && !this.previewLevel && !this.fileDrag && !note);
-    const hidden = hiddenEverywhere || (fsHide && this.fullscreenOn !== null);
+    // A strip in place of the pill over a full-screen app (Games set to a strip).
+    const strip = this.fullscreenOn !== null && !hiddenEverywhere && !urgentNow ? this.stripView(now) : null;
+    this.strip.show(strip);
+    const hidden = hiddenEverywhere || ((fsHide || strip !== null) && this.fullscreenOn !== null);
 
     const anchor = s.anchor;
     // Left/right pills stand vertical; an inline input needs a horizontal pill to type in.
@@ -1242,7 +1340,7 @@ export class Island {
     const scale = SIZE_SCALE[this.settings.island.size] ?? 1;
     const want = Math.max(460, Math.min(pillW, 760)) * scale;
     const width = Math.round(Math.min(this.area.width - 32, Math.max(GRID_MIN_W, want)));
-    return { cols: GRID_COLS, rows: GRID_ROWS, cell: Math.round(CELL_PX[this.settings.island.size] ?? CELL_PX.medium), width };
+    return { cols: GRID_COLS, rows: GRID_ROWS, cell: gridCell(width, CELL_PX[this.settings.island.size] ?? CELL_PX.medium), width };
   }
 
   /** Control Center: one tile per switched-on activity, in the user's order. */
@@ -1322,13 +1420,13 @@ export class Island {
     const drag = live ? this.gridDrag : null;
     const editing = live && this.gridEditing;
     const sized = natural.map((t) => {
-      const narrow = NARROW_OK.has(t.body.k);
+      const narrow = NARROW_OK.has(t.body.k) || t.body.k === 'lyrics';
       const [sw, sh] = cellsOf(t, layout.sizes[t.key]);
       // Lists, cards and players need two columns whatever was asked for.
       let w = Math.min(geo.cols, narrow ? sw : Math.max(2, sw));
       let h = Math.max(1, Math.min(geo.rows, sh));
       if (drag?.key === t.key) ({ w, h } = drag.size);
-      const sizes = (narrow ? TILE_SIZES : WIDE_SIZES).map((x): [number, number] => [CELLS[x].w, CELLS[x].h]);
+      const sizes = sizesOfKind(t.body.k).map((x): [number, number] => [CELLS[x].w, CELLS[x].h]);
       return { ...t, w, h, sizes };
     });
 
@@ -1371,7 +1469,7 @@ export class Island {
 
   /** Sizes a tile may take: lists, cards and players need the width of two cells. */
   private sizesFor(key: string): TileSize[] {
-    return NARROW_OK.has(this.lastTiles.get(key) ?? '') ? TILE_SIZES : WIDE_SIZES;
+    return sizesOfKind(this.lastTiles.get(key) ?? '');
   }
 
   private lastTiles = new Map<string, string>();
@@ -1424,7 +1522,7 @@ export class Island {
         const drag = this.gridDrag;
         const a = (arg ?? {}) as { key?: unknown; page?: unknown; col?: unknown; row?: unknown; w?: unknown; h?: unknown };
         if (!drag || a.key !== drag.key || typeof a.page !== 'number' || typeof a.col !== 'number' || typeof a.row !== 'number') return;
-        if (typeof a.w === 'number' && typeof a.h === 'number' && a.w <= 2 && a.h <= 2 && this.sizesFor(drag.key).includes(sizeOf(a.w, a.h))) {
+        if (typeof a.w === 'number' && typeof a.h === 'number' && a.w <= 2 && a.h <= 4 && this.sizesFor(drag.key).includes(sizeOf(a.w, a.h))) {
           drag.size = { w: a.w, h: a.h };
         }
         const at = { page: a.page, col: a.col, row: a.row };
@@ -1790,7 +1888,9 @@ export class Island {
         term: this.settings ? termAllowed(this.settings) : false,
         screen: this.screen,
         folders: this.recentFolders(),
+        power: platform === 'windows',
       }),
+      guarded: () => (['claude', 'codex', 'cursor', 'antigravity'] as const).filter((id) => this.settings?.activities.config[id]?.options.requireHello === true).map((id) => `act:${id}:allow`),
       fromPhone: (item) => this.fromPhone(item),
       prefs: () => (this.settings ? prefsOf(this.settings) : null),
       // The phone's Activities and Settings screens: only the allow-list in src/remote/prefs.ts.
@@ -1933,6 +2033,66 @@ export class Island {
       }
     }
     this.schedule();
+  }
+
+  /** Windows' own taskbar hides while Island's shows (Settings › Taskbar), and comes back after. */
+  /**
+   * Windows' own taskbar hides while Island's shows (Settings › Taskbar › Hide Windows' taskbar),
+   * and comes back when that is turned off. Island remembers that it hid it (also across a crash),
+   * so a taskbar the user set to hide themselves is never shown by Island.
+   */
+  private syncWindowsBar(): void {
+    const t = this.settings.island.taskbar;
+    const want = t.on && t.hideWindows;
+    if (!this.barSynced) {
+      this.barSynced = true;
+      this.hidWindowsBar = readFlag(HID_BAR_KEY);
+      if (want) {
+        this.hidWindowsBar = true;
+        writeFlag(HID_BAR_KEY, true);
+        void native.dockAutohide(true);
+        return;
+      }
+    }
+    if (want && !this.hidWindowsBar) {
+      this.hidWindowsBar = true;
+      writeFlag(HID_BAR_KEY, true);
+      void native.dockAutohide(true);
+    } else if (!want && this.hidWindowsBar) {
+      this.hidWindowsBar = false;
+      writeFlag(HID_BAR_KEY, false);
+      void native.dockAutohide(false);
+    }
+  }
+
+  private barSynced = false;
+
+  private dockMuted = false;
+
+  /** What is playing, for the taskbar: from Music's tile. */
+  private dockMusic(): { title: string; artist: string; playing: boolean; art: string | null } | null {
+    const env = { reason: 'open' as const, now: Date.now(), width: 400, vertical: false, interactive: true, surfaced: null };
+    const t = this.running.get('music')?.tile?.(env);
+    return t && t.body.k === 'media' ? { title: t.body.title, artist: t.body.artist, playing: t.body.playing, art: t.body.art ?? null } : null;
+  }
+
+  /** The timer running, for the taskbar: the first one's time left. */
+  private dockTimer(): string | null {
+    const st = this.running.get('timer')?.status();
+    return st?.active && st.summary ? (st.summary.match(/\d+:\d{2}(:\d{2})?/)?.[0] ?? null) : null;
+  }
+
+  /** The first running activity with a strip to show over a full-screen app. */
+  private stripView(now: number): StripView | null {
+    for (const [id, act] of this.running) {
+      try {
+        const v = act.strip?.(now) ?? null;
+        if (v) return v;
+      } catch (err) {
+        console.error(`strip ${id}`, err);
+      }
+    }
+    return null;
   }
 
   /** The first running activity that would take dropped files, and what it says about it. */

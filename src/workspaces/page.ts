@@ -14,6 +14,7 @@ import { detail, flushNotes } from './detail';
 import { cancelEdit, editor, loadDraft, saveEdit, startEdit } from './editor';
 import type { WsSort } from './model';
 import { sameIds, workspacesInUse } from './notice/detect';
+import { ProgramBook } from './notice/programs';
 import { readTrail } from './notice/model';
 import type { Answer, Job } from './restore';
 import { takeSeed } from './seed';
@@ -250,11 +251,14 @@ export function workspacesPage(accent: () => string, ask: Ask, noticing: Noticin
   // "In use" on the cards and a workspace's page: which ones have a window open, read again
   // every few seconds while they're on screen; a redraw only when that changes.
   const inUseShowing = () => el.isConnected && document.visibilityState === 'visible' && ctx.view.kind !== 'edit' && !timeShowing();
+  // Windows are told apart by title and by program: a workspace made of apps is in use too.
+  const book = new ProgramBook();
   const checkInUse = async () => {
     if (!store.ready) return;
+    const programs = await book.of(store.list);
     const r = await native.wsWindows();
     if (!r.ok) return;
-    const now = workspacesInUse(r.value, store.list);
+    const now = workspacesInUse(r.value, store.list, programs);
     if (sameIds(now, ui.inUse)) return;
     ui.inUse = now;
     paint();

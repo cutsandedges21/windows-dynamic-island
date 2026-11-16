@@ -46,9 +46,12 @@ mod win {
         unsafe { dialog.SetOptions(opts)? };
 
         // The filter strings must outlive SetFileTypes' use of them (until Show returns).
-        let names = [wide("Apps and shortcuts"), wide("All files")];
-        let specs = [wide("*.exe;*.lnk;*.bat;*.cmd;*.com;*.msc;*.appref-ms;*.url"), wide("*.*")];
-        if kind == "app" {
+        let names = [wide(if kind == "sound" { "Sounds" } else { "Apps and shortcuts" }), wide("All files")];
+        let specs = [
+            wide(if kind == "sound" { "*.mp3;*.wav;*.ogg;*.m4a;*.aac;*.flac;*.opus" } else { "*.exe;*.lnk;*.bat;*.cmd;*.com;*.msc;*.appref-ms;*.url" }),
+            wide("*.*"),
+        ];
+        if kind == "app" || kind == "sound" {
             let filters = [
                 COMDLG_FILTERSPEC { pszName: PCWSTR(names[0].as_ptr()), pszSpec: PCWSTR(specs[0].as_ptr()) },
                 COMDLG_FILTERSPEC { pszName: PCWSTR(names[1].as_ptr()), pszSpec: PCWSTR(specs[1].as_ptr()) },
@@ -59,6 +62,7 @@ mod win {
             "app" => "Choose an app",
             "folder" => "Choose a folder",
             "program" => "Choose the program to open it with",
+            "sound" => "Choose a sound",
             _ if multiple => "Choose files",
             _ => "Choose a file",
         });
@@ -99,12 +103,14 @@ mod mac {
         let what = match kind {
             "folder" => "choose folder",
             "app" => "choose file of type {\"com.apple.application-bundle\"}",
+            "sound" => "choose file of type {\"public.audio\"}",
             _ => "choose file",
         };
         let prompt = match kind {
             "app" => "Choose an app",
             "folder" => "Choose a folder",
             "program" => "Choose the program to open it with",
+            "sound" => "Choose a sound",
             _ => "Choose a file",
         };
         let mut call = format!("{what} with prompt {}", quote(prompt));
@@ -135,7 +141,7 @@ mod mac {
 }
 
 /// Opens the system's Open dialog over the window that asked. `kind`: "app", "file",
-/// "program" (an app to open a file with) or "folder". The chosen paths; empty when cancelled.
+/// "program" (an app to open a file with), "sound" (an audio file) or "folder". The chosen paths; empty when cancelled.
 #[tauri::command]
 pub async fn ws_pick(window: tauri::WebviewWindow, kind: String, multiple: bool, start: Option<String>) -> Vec<String> {
     let (tx, rx) = tokio::sync::oneshot::channel();

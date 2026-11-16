@@ -128,13 +128,90 @@ export function matchWorkspace(sig: Signal, title: string, list: Workspace[]): W
 }
 
 /**
- * The workspaces in use: those with a window open now, each window going to the workspace it
- * clearly belongs to (read the way the window in front is). Nothing is kept.
+ * How a workspace's windows are known besides their titles: by their program. A workspace made of
+ * apps (a browser, an IDE, a music app) has no folder its windows' titles would name.
  */
-export function workspacesInUse(windows: ReadonlyArray<{ exe: string; title: string; className?: string }>, list: Workspace[]): Set<string> {
+export interface WsPrograms {
+  /** Program file names, lower case ("idea64.exe"): what its app items start, and its saved layout's windows. */
+  exes: Set<string>;
+  /** Web apps a browser opens for it, lower case ("youtube music"): found in their windows' titles. */
+  webApps: string[];
+}
+
+/** Browsers, and the launchers their web-app shortcuts start ("chrome_proxy.exe --app-id=…"). */
+const BROWSER_EXE = /^(chrome|msedge|firefox|brave|opera|vivaldi|arc|zen|comet|chromium|iexplore)(_proxy)?\.exe$/;
+
+/** What an app item starts: its program, and the arguments its shortcut adds (null: unknown). */
+export type ItemProgram = { exe: string; args: string } | null;
+
+/**
+ * A workspace's programs, from what its app items start (`items`: item id → program, read by
+ * Rust) and its saved window layout. A browser started with arguments (a web app's shortcut, a
+ * site) stands for that web app, known by name in its windows' titles, not for every browser window.
+ */
+export function programsOf(ws: Workspace, items: ReadonlyMap<string, ItemProgram>): WsPrograms {
+  const exes = new Set<string>();
+  const webApps: string[] = [];
+  for (const r of ws.resources) {
+    if (r.kind !== 'app' || !r.enabled) continue;
+    const p = items.get(r.id) ?? null;
+    const exe = lower(baseName(p?.exe ?? r.path));
+    const args = `${p?.args ?? ''} ${r.args}`.trim();
+    if (BROWSER_EXE.test(exe) && args) {
+      const name = lower(r.label || appName(r.path));
+      if (name && !BROWSER_EXE.test(`${name}.exe`)) webApps.push(name);
+    } else if (exe.endsWith('.exe')) exes.add(exe.replace(/_proxy\.exe$/, '.exe'));
+  }
+  for (const spot of ws.layout?.windows ?? []) {
+    const exe = lower(baseName(spot.exe));
+    // A saved browser window says nothing about which of its tabs or web apps was the workspace's.
+    if (spot.enabled && exe.endsWith('.exe') && !BROWSER_EXE.test(exe)) exes.add(exe);
+  }
+  return { exes, webApps };
+}
+
+/**
+ * The workspace a window belongs to: by its title first (its project folder or files, as
+ * matchWorkspace reads it), else by its program: a web app named in its title, then a program
+ * the workspace starts. Several workspaces with the same program: the one whose name or folder
+ * the title mentions, then the one opened last.
+ */
+export function matchWindow(sig: Signal, title: string, list: Workspace[], programs: ReadonlyMap<string, WsPrograms>): Workspace | null {
+  const byTitle = matchWorkspace(sig, title, list);
+  if (byTitle) return byTitle;
+  const exe = lower(sig.app);
+  const t = lower(title);
+  const browser = BROWSER_EXE.test(exe);
+  let best: Workspace | null = null;
+  let bestRank = 0;
+  let bestHint = 0;
+  for (const ws of list) {
+    if (ws.archived) continue;
+    const p = programs.get(ws.id);
+    if (!p) continue;
+    // An editor showing some other project isn't this workspace's, when it has a project folder of its own.
+    if (sig.project && (ws.cwd || ws.resources.some((r) => r.kind === 'folder'))) continue;
+    const rank = browser && p.webApps.some((name) => t.includes(name)) ? 2 : p.exes.has(exe) ? 1 : 0;
+    if (!rank) continue;
+    const hint = workspaceScore(sig, title, ws) + (t.includes(lower(ws.name)) ? 1 : 0);
+    const better = rank > bestRank || (rank === bestRank && (hint > bestHint || (hint === bestHint && (ws.lastOpenedAt ?? 0) > (best?.lastOpenedAt ?? 0))));
+    if (better) {
+      best = ws;
+      bestRank = rank;
+      bestHint = hint;
+    }
+  }
+  return best;
+}
+
+/**
+ * The workspaces in use: those with a window open now, each window going to the workspace it
+ * belongs to (read the way the window in front is). Nothing is kept.
+ */
+export function workspacesInUse(windows: ReadonlyArray<{ exe: string; title: string; className?: string }>, list: Workspace[], programs: ReadonlyMap<string, WsPrograms> = new Map()): Set<string> {
   const ids = new Set<string>();
   for (const w of windows) {
-    const ws = matchWorkspace(detect(w.exe, w.title, w.className), w.title, list);
+    const ws = matchWindow(detect(w.exe, w.title, w.className), w.title, list, programs);
     if (ws) ids.add(ws.id);
   }
   return ids;

@@ -3,8 +3,15 @@
 
 const P: Record<string, string> = {
   claude: '<path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/>',
+  // Codex: a prompt in a rounded window, its command-line roots.
+  codex: '<rect x="3" y="4.5" width="18" height="15" rx="5"/><path d="M7.5 9.5l3 2.5-3 2.5M12.5 15h4"/>',
+  cursor: '<path d="M6.5 4.5l11 6.2-4.6 1.4-1.9 4.6z"/><path d="M12.9 12.1l4.1 4.1"/>',
+  antigravity: '<path d="M12 15V4.5M8 8.5l4-4 4 4"/><path d="M4.5 19.5c3-2.4 12-2.4 15 0"/>',
   spark: '<path d="M12 3.5l1.9 5.6 5.6 1.9-5.6 1.9L12 18.5l-1.9-5.6L4.5 11l5.6-1.9z"/>',
   music: '<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  // Widgets: tiles of two sizes, as on a desktop.
+  widgets: '<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="2"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="3.75"/><rect x="3.5" y="13" width="17" height="7.5" rx="2"/>',
   play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>',
   pause: '<path d="M8 5.5v13M16 5.5v13" stroke-width="3.2"/>',
   next: '<path d="M6 6l9 6-9 6z" fill="currentColor"/><path d="M18 6v12" stroke-width="2.4"/>',
@@ -20,6 +27,7 @@ const P: Record<string, string> = {
   download: '<path d="M12 3.5v12M7 10.5l5 5 5-5M4.5 20.5h15"/>',
   upload: '<path d="M12 15.5v-12M7 8.5l5-5 5 5M4.5 20.5h15"/>',
   check: '<path d="M4.5 12.5l5 5 10-11"/>',
+  trash: '<path d="M4.5 7h15M9.5 7V4.8h5V7M6.5 7l.9 12.2h9.2L17.5 7M10 10.5v5.5M14 10.5v5.5"/>',
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
   timer: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V9.5M9.5 2.5h5M18.5 6.5l1.5-1.5"/>',
   stopwatch: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5l3-3M10 2.5h4M12 2.5v3.5"/>',

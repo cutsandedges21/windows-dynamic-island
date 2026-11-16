@@ -152,12 +152,24 @@ fn usage_via_curl(token: &str, ua: &str) -> Option<UsageFetch> {
     Some(UsageFetch { status, retry_after: None, body: serde_json::from_str(body).ok(), no_token: false })
 }
 
+/// Until when (ms since 1970) the limits go straight through curl: on a network where the built-in
+/// client can't connect, trying it first every poll only adds a failed attempt (and a log line).
+static CURL_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const CURL_FOR_MS: u64 = 30 * 60_000;
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
 #[tauri::command]
 pub async fn claude_usage_fetch(version: Option<String>) -> UsageFetch {
     let Some(token) = read_token() else {
         return UsageFetch { status: 0, retry_after: None, body: None, no_token: true };
     };
     let ua = format!("claude-code/{}", version.filter(|v| !v.is_empty()).unwrap_or_else(|| FALLBACK_VERSION.into()));
+    if now_ms() < CURL_UNTIL.load(std::sync::atomic::Ordering::Relaxed) {
+        return fallback_fetch(&token, &ua).await;
+    }
     let client = match reqwest::Client::builder().timeout(Duration::from_secs(15)).build() {
         Ok(c) => c,
         Err(_) => return fallback_fetch(&token, &ua).await,
@@ -173,8 +185,15 @@ pub async fn claude_usage_fetch(version: Option<String>) -> UsageFetch {
     match resp {
         Err(e) => {
             let kind = if e.is_timeout() { "timeout" } else if e.is_connect() { "connect" } else { "request" };
-            crate::log::line(format!("usage: built-in client failed ({kind}), trying curl"));
-            fallback_fetch(&token, &ua).await
+            let res = fallback_fetch(&token, &ua).await;
+            // curl got through where the built-in client couldn't: use it for a while.
+            if res.status != 0 && (e.is_connect() || e.is_timeout()) {
+                CURL_UNTIL.store(now_ms() + CURL_FOR_MS, std::sync::atomic::Ordering::Relaxed);
+                crate::log::line(format!("usage: built-in client failed ({kind}); curl works, so curl for the next 30 min"));
+            } else {
+                crate::log::line(format!("usage: built-in client failed ({kind}), tried curl"));
+            }
+            res
         }
         Ok(r) => {
             let status = r.status().as_u16();
@@ -211,7 +230,7 @@ pub fn is_uuid(s: &str) -> bool {
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
-fn cwd_ok(cwd: &str) -> bool {
+pub(crate) fn cwd_ok(cwd: &str) -> bool {
     !cwd.is_empty() && !cwd.contains(['"', ';', '\r', '\n', '\0']) && Path::new(cwd).is_dir()
 }
 
@@ -250,7 +269,7 @@ fn wide(s: &str) -> Vec<u16> {
 
 /// Starts `exe args…` in its own console, optionally minimized without focus.
 #[cfg(windows)]
-fn spawn_console(exe: &Path, args: &[&str], cwd: &str, minimized: bool) -> bool {
+pub(crate) fn spawn_console(exe: &Path, args: &[&str], cwd: &str, minimized: bool) -> bool {
     let exe_s = exe.to_string_lossy().to_string();
     let mut line = quote_arg(&exe_s);
     for a in args {
@@ -292,7 +311,7 @@ fn spawn_console(exe: &Path, args: &[&str], cwd: &str, minimized: bool) -> bool 
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
-fn clean_prompt(text: &str) -> String {
+pub(crate) fn clean_prompt(text: &str) -> String {
     text.replace("\r\n", " ").replace(['\n', '\r', '\t'], " ").chars().filter(|c| !c.is_control()).collect::<String>().trim().to_string()
 }
 

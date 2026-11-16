@@ -405,6 +405,26 @@ pub async fn power_saver_set(on: bool) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || saver_set(on)).await.map_err(|e| e.to_string())?
 }
 
+/// Puts this PC to sleep. A PC with Modern Standby (no S3 sleep; most laptops now) has no call
+/// for that, and SetSuspendState hibernates it instead: there, turning the display off is what
+/// sends it into standby. Older PCs sleep through SetSuspendState (sleep, not hibernate).
+#[tauri::command]
+pub fn power_sleep() -> bool {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::System::Power::{GetPwrCapabilities, SetSuspendState, SYSTEM_POWER_CAPABILITIES};
+    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, HWND_BROADCAST, SC_MONITORPOWER, WM_SYSCOMMAND};
+    let mut caps = SYSTEM_POWER_CAPABILITIES::default();
+    let caps_ok = unsafe { GetPwrCapabilities(&mut caps) };
+    let modern = caps_ok && caps.AoAc;
+    let ok = if modern || (caps_ok && !caps.SystemS3) {
+        unsafe { PostMessageW(Some(HWND_BROADCAST), WM_SYSCOMMAND, WPARAM(SC_MONITORPOWER as usize), LPARAM(2)) }.is_ok()
+    } else {
+        unsafe { SetSuspendState(false, false, false) }
+    };
+    crate::log::line(format!("power: sleep requested (modern standby: {modern}) ok={ok}"));
+    ok
+}
+
 // ------------------------------------------------------------------ load
 
 fn ft(f: FILETIME) -> u64 {

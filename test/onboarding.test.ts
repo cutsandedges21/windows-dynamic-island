@@ -146,7 +146,7 @@ describe('applyPlan', () => {
     const plan = planActivities(answers({ uses: ['media'], glance: ['music', 'weather'] }), desktop);
     const s = applyPlan(base(), plan, ' Montreal ');
     const on = Object.entries(s.activities.config).filter(([, c]) => c.enabled).map(([id]) => id);
-    expect(on.sort()).toEqual([...plan.enabled, 'github'].sort());
+    expect(on.sort()).toEqual([...plan.enabled, 'github', 'apps'].sort());
     expect(s.activities.config.claude.enabled).toBe(false);
     expect(s.activities.config.weather.options.city).toBe('Montreal');
   });

@@ -67,6 +67,7 @@ function fakeIsland() {
     urgent: null as { id: string; view: SheetView } | null,
     allow: true,
     term: false,
+    power: false,
     screen: 'ready' as ScreenState,
     folders: ['C:\\code\\island'] as string[],
     /** What act() throws, once. */
@@ -92,7 +93,7 @@ function fakeIsland() {
       f.fail = null;
       if (err) throw err;
     },
-    facts: () => ({ name: 'MossLaptop', platform: 'windows', version: '0.3.1', allow: f.allow, term: f.term, screen: f.screen, folders: [...f.folders] }),
+    facts: () => ({ name: 'MossLaptop', platform: 'windows', version: '0.3.1', allow: f.allow, term: f.term, screen: f.screen, folders: [...f.folders], power: f.power }),
     fromPhone: (item) => void f.got.push(item),
     setGrid: (l) => void f.layouts.push(l),
   };
@@ -131,6 +132,7 @@ function fakeRust() {
     clipboard: vi.fn(async () => ({ files: [], text: r.clipText })),
     lock: vi.fn(async () => undefined),
     sleep: vi.fn(async () => undefined),
+    power: vi.fn(async () => ({ ok: true as const, value: null })),
     log: (t: string) => void r.logs.push(t),
     on: async <T>(event: string, cb: (p: T) => void) => {
       let set = bus.get(event);
@@ -151,7 +153,7 @@ async function setup(list: PhoneInfo[] = []) {
   const hub = new PhoneHub(hooks, native);
   await hub.start();
   await flush();
-  return { f, r, native, hub };
+  return { f, r, native, hub, hooks };
 }
 
 beforeEach(() => {
@@ -167,7 +169,7 @@ describe('a phone connecting', () => {
     r.phones([phone()]);
     await flush();
     expect(r.types()).toEqual(['hello', 'pill', 'view']);
-    expect(r.last('hello')).toEqual({ t: 'hello', v: 1, name: 'MossLaptop', platform: 'windows', version: '0.3.1', allow: true, vapid: null, term: false, screen: 'ready', folders: ['C:\\code\\island'] });
+    expect(r.last('hello')).toEqual({ t: 'hello', v: 1, name: 'MossLaptop', platform: 'windows', version: '0.3.1', allow: true, vapid: null, term: false, screen: 'ready', folders: ['C:\\code\\island'], power: false });
     expect(r.last('pill')?.bot?.play).toBe(1);
     expect(r.last('view')).toMatchObject({ nav: { open: 'grid' }, urgent: null, view: { key: 'island/grid' } });
   });
@@ -464,6 +466,26 @@ describe('what a phone may press', () => {
     expect(r.last('toast')).toEqual({ t: 'toast', text: 'Energy saver only turns on while unplugged', tone: 'bad' });
   });
 
+  it("each AI's Allow follows its own Windows Hello setting", async () => {
+    const { r, f, hooks, hub } = await setup();
+    const codexCard: SheetView = JSON.parse(JSON.stringify(permission).replaceAll('act:claude:', 'act:codex:'));
+    hooks.guarded = () => ['act:codex:allow'];
+    f.urgent = { id: 'codex', view: codexCard };
+    r.phones([phone()]);
+    await flush();
+    const sent = JSON.stringify(r.last('view'));
+    expect(sent).toContain('act:codex:deny');
+    expect(sent).not.toContain('act:codex:allow');
+    r.line({ t: 'act', action: 'act:codex:allow', arg: 'r1' });
+    await flush();
+    expect(f.acts).toEqual([]);
+    // Codex's setting holds back only Codex's Allow.
+    f.urgent = { id: 'claude', view: permission };
+    hub.tick();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(JSON.stringify(r.last('view'))).toContain('act:claude:allow');
+  });
+
   it('ignores lines it cannot read', async () => {
     await pressing();
     r.line({ t: 'act', action: '' });
@@ -534,6 +556,30 @@ describe('phone ↔ PC', () => {
     await flush();
     expect(r.last('clip')?.text).toHaveLength(CLIP_MAX);
     expect(r.last('toast')?.tone).toBe('info');
+  });
+
+  it('sleeps, restarts and shuts down the PC, only where hello offers it', async () => {
+    const { r, native, f } = await setup([phone()]);
+    r.line({ t: 'power', what: 'shutdown' });
+    await flush();
+    expect(native.power).not.toHaveBeenCalled();
+    expect(r.last('toast')?.tone).toBe('bad');
+
+    f.power = true;
+    r.line({ t: 'power', what: 'restart' });
+    await flush();
+    expect(native.power).toHaveBeenCalledWith('restart');
+    expect(r.last('toast')).toEqual({ t: 'toast', text: 'Restarting MossLaptop', tone: 'good' });
+
+    native.power.mockResolvedValueOnce({ ok: false, error: 'Windows said no' });
+    r.line({ t: 'power', what: 'sleep' });
+    await flush();
+    expect(r.last('toast')).toEqual({ t: 'toast', text: "Couldn't sleep: Windows said no", tone: 'bad' });
+
+    // Anything else is not a line the island reads.
+    r.line({ t: 'power', what: 'format' });
+    await flush();
+    expect(native.power).toHaveBeenCalledTimes(2);
   });
 
   it('locks the PC', async () => {

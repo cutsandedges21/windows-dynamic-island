@@ -4,6 +4,8 @@
 // On a Mac, a module that is almost all Windows API is swapped for its twin in
 // src/mac/ (same command names), so the Windows file never changes.
 mod app;
+#[cfg_attr(target_os = "macos", path = "mac/apps.rs")]
+mod apps;
 #[cfg_attr(target_os = "macos", path = "mac/agenda.rs")]
 mod agenda;
 #[cfg_attr(target_os = "macos", path = "mac/audio.rs")]
@@ -18,6 +20,9 @@ mod chat;
 mod claude;
 #[cfg_attr(target_os = "macos", path = "mac/claude_status.rs")]
 mod claude_status;
+mod antigravity;
+mod codex;
+mod cursor;
 mod crash;
 #[cfg_attr(target_os = "macos", path = "mac/dnd.rs")]
 mod dnd;
@@ -58,8 +63,11 @@ mod reminders;
 mod remote;
 mod screen;
 mod secrets;
+#[cfg_attr(target_os = "macos", path = "mac/shelf.rs")]
+mod shelf;
 #[cfg_attr(target_os = "macos", path = "mac/shell.rs")]
 mod shell;
+mod sounds;
 #[cfg_attr(target_os = "macos", path = "mac/spectrum.rs")]
 mod spectrum;
 mod store;
@@ -69,6 +77,9 @@ mod system;
 mod term;
 mod updater;
 mod web;
+mod dock;
+#[cfg_attr(target_os = "macos", path = "mac/widgets.rs")]
+mod widgets;
 mod workspaces;
 
 use std::sync::Arc;
@@ -118,6 +129,15 @@ pub fn run() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--install-hooks" || a == "--remove-hooks") {
         std::process::exit(hooks::cli(args.iter().any(|a| a == "--install-hooks")));
+    }
+    if args.iter().any(|a| a == "--install-codex-hooks" || a == "--remove-codex-hooks") {
+        std::process::exit(codex::cli(args.iter().any(|a| a == "--install-codex-hooks")));
+    }
+    if args.iter().any(|a| a == "--install-antigravity-hooks" || a == "--remove-antigravity-hooks") {
+        std::process::exit(antigravity::cli(args.iter().any(|a| a == "--install-antigravity-hooks"), args.iter().any(|a| a == "--antigravity-gate")));
+    }
+    if args.iter().any(|a| a == "--install-cursor-hooks" || a == "--remove-cursor-hooks") {
+        std::process::exit(cursor::cli(args.iter().any(|a| a == "--install-cursor-hooks"), args.iter().any(|a| a == "--cursor-gate")));
     }
     // Before the single-instance check: the exe that started this one must be gone first.
     let updated_from = updater::after_update(&args);
@@ -226,6 +246,7 @@ pub fn run() {
             fsx::claude_transcript_work,
             fsx::claude_workflows,
             fsx::claude_task_finished,
+            fsx::codex_rollout_scan,
             claude::claude_env,
             claude::claude_usage_fetch,
             claude::claude_resume,
@@ -240,6 +261,24 @@ pub fn run() {
             auto_model::claude_auto_model_get,
             auto_model::claude_auto_model_set,
             auto_model::claude_auto_model_node,
+            codex::codex_env,
+            codex::codex_resume,
+            codex::codex_hooks_status,
+            codex::codex_hooks_preview,
+            codex::codex_hooks_write,
+            codex::codex_hooks_trust,
+            antigravity::antigravity_env,
+            antigravity::antigravity_transcripts,
+            antigravity::antigravity_open,
+            antigravity::antigravity_hooks_status,
+            antigravity::antigravity_hooks_preview,
+            antigravity::antigravity_hooks_write,
+            cursor::cursor_env,
+            cursor::cursor_open,
+            cursor::cursor_transcripts,
+            cursor::cursor_hooks_status,
+            cursor::cursor_hooks_preview,
+            cursor::cursor_hooks_write,
             hooks::hooks_status,
             hooks::hooks_preview,
             hooks::hooks_write,
@@ -252,6 +291,7 @@ pub fn run() {
             spectrum::spectrum_watch,
             system::power_state,
             system::power_saver_set,
+            system::power_sleep,
             system::sys_sample,
             system::sys_top,
             net::net_sample,
@@ -262,6 +302,18 @@ pub fn run() {
             shell::shell_edit_image,
             shell::shell_lock,
             shell::shell_sleep,
+            shell::shell_power,
+            widgets::widgets_sync,
+            dock::dock_show,
+            dock::dock_fit,
+            dock::dock_at,
+            dock::dock_panel,
+            dock::dock_autohide,
+            widgets::widget_size,
+            widgets::widget_moved,
+            shell::game_bar,
+            shelf::shelf_thumb,
+            shelf::shelf_drag,
             shell::shell_snip,
             shell::screen_capture,
             shell::clipboard_set_text,
@@ -345,9 +397,15 @@ pub fn run() {
             workspaces::paths::ws_check,
             workspaces::paths::ws_show,
             workspaces::pick::ws_pick,
+            sounds::sound_pick,
+            sounds::sound_read,
+            sounds::sound_clear,
             workspaces::launch::ws_launch,
             workspaces::launch::ws_running,
+            workspaces::launch::ws_program,
             workspaces::launch::ws_apps,
+            apps::apps_pinned,
+            apps::apps_icons,
             workspaces::layout::ws_windows,
             workspaces::layout::ws_place,
             notice::notice_now,
@@ -372,6 +430,8 @@ pub fn run() {
             // Quitting (or updating) ends every terminal (a crash too, on Windows: term/spawn.rs).
             if let tauri::RunEvent::Exit = event {
                 term::quit(app);
+                // Windows' taskbar comes back if Island's taskbar had it hide.
+                dock::quit();
             }
         });
 }

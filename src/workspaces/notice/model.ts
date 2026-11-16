@@ -4,7 +4,8 @@
 // out is kept (the program, the project's name, the file's name, the workspace), never the
 // whole title. Pure: the activity (src/activities/notice.ts) samples, this decides what it means.
 
-import { appName } from '../model';
+import { appName, baseName, type Workspace } from '../model';
+import { matchWindow, type WsPrograms } from './detect';
 
 export const TRAIL_VERSION = 1;
 /** A gap longer than this between samples (asleep, away, Island closed) ends a span. */
@@ -76,6 +77,24 @@ export function addSample(doc: TrailDoc, x: Sample): TrailDoc {
   if (joined) spans[spans.length - 1] = { ...last, end: x.at };
   if (!(joined && sameSpan(last, x))) spans.push({ start: x.at, end: x.at, app: x.app, project: x.project, ws: x.ws, file: x.file, title: x.title });
   return { ...doc, spans: spans.length > MAX_SPANS ? spans.slice(-MAX_SPANS) : spans };
+}
+
+/**
+ * Credits time no workspace claimed when it was noticed to the workspace its program belongs to
+ * now (detect.ts matchWindow): a workspace made of apps used to get none, and one made later
+ * gets the time since it was made. Kept titles help (a web app is known by its title); without
+ * them the program and project do. The same doc back when nothing changed.
+ */
+export function reattribute(doc: TrailDoc, list: Workspace[], programs: ReadonlyMap<string, WsPrograms>): TrailDoc {
+  let changed = false;
+  const spans = doc.spans.map((s) => {
+    if (s.ws || !s.app) return s;
+    const ws = matchWindow({ app: baseName(s.app), project: s.project, file: s.file }, s.title || s.project || '', list, programs);
+    if (!ws || s.start < ws.createdAt) return s;
+    changed = true;
+    return { ...s, ws: ws.id };
+  });
+  return changed ? { ...doc, spans } : doc;
 }
 
 /** Drops spans older than `days`, and quiet suggestions that are over. */

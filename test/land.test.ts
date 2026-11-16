@@ -68,7 +68,7 @@ function resetNative() {
 
 type Calls = { surface: Array<{ key?: string; ms?: number; level?: string }>; alert: unknown[][]; notify: unknown[][]; openCard: number; cardOpen: boolean };
 
-async function boot(options: Record<string, unknown> = {}) {
+async function boot(options: Record<string, unknown> = {}, setOptions?: (patch: Record<string, unknown>) => void) {
   const settings = defaultSettings();
   const calls: Calls = { surface: [], alert: [], notify: [], openCard: 0, cardOpen: false };
   const act = new LandActivity();
@@ -92,6 +92,7 @@ async function boot(options: Record<string, unknown> = {}) {
     },
     closeCard: () => void (calls.cardOpen = false),
     cardOpen: () => calls.cardOpen,
+    setOptions,
   };
   await act.start(ctx);
   await tick(0);
@@ -370,7 +371,7 @@ describe('land', () => {
     expect(h.native.landStage).toHaveBeenCalledWith(['C:\\Users\\m\\Trip', 'C:\\Users\\m\\notes.txt']);
     const card = act.sheet(sheetEnv('open'))!;
     expect(block(card, 'head')).toMatchObject({ title: 'Land', sub: '13 files · 2.0 KB' });
-    expect(block(card, 'rows', 'files')!.items.map((r) => [r.icon, r.title])).toEqual([
+    expect(block(card, 'files', 'files')!.items.map((f) => [f.icon, f.name])).toEqual([
       ['folder', 'Trip'],
       ['file', 'notes.txt'],
     ]);
@@ -380,7 +381,7 @@ describe('land', () => {
     // The same path dropped again is not listed twice.
     act.drop(['C:\\Users\\m\\notes.txt']);
     await tick(0);
-    expect(block(act.sheet(sheetEnv('open')), 'rows', 'files')!.items).toHaveLength(2);
+    expect(block(act.sheet(sheetEnv('open')), 'files', 'files')!.items).toHaveLength(2);
     expect(act.tile(sheetEnv('open'))?.body).toMatchObject({ value: '13 files ready' });
   });
 
@@ -421,8 +422,8 @@ describe('land', () => {
       [MAC.id, ['C:\\a.txt']],
       [LAB.id, ['C:\\a.txt']],
     ]);
-    // On their way: the list empties.
-    expect(block(act.sheet(sheetEnv('open')), 'rows', 'files')).toBeUndefined();
+    // On their way: the file stays on the shelf.
+    expect(block(act.sheet(sheetEnv('open')), 'files', 'files')!.items.map((f) => f.name)).toEqual(['a.txt']);
     // A computer that leaves is no longer picked.
     emit('land-peers', [LAB]);
     act.drop(['C:\\b.txt']);
@@ -548,7 +549,7 @@ describe('land', () => {
     await act.action('send');
     const card = act.sheet(sheetEnv('open'))!;
     expect(block(card, 'text', 'note')!.text).toBe('That device is gone. Try again when it shows up.');
-    expect(block(card, 'rows', 'files')!.items).toHaveLength(1);
+    expect(block(card, 'files', 'files')!.items).toHaveLength(1);
     await tick(9000);
     expect(block(act.sheet(sheetEnv('open')), 'text', 'note')).toBeUndefined();
   });
@@ -773,7 +774,7 @@ describe('text and links', () => {
     await act.action('stage-text', '  https://example.com/recipe  ');
     card = act.sheet(sheetEnv('open'))!;
     expect(block(card, 'input', 'text')).toBeUndefined();
-    expect(block(card, 'rows', 'files')!.items[0]).toMatchObject({ title: 'https://example.com/recipe', detail: 'Link' });
+    expect(block(card, 'rows', 'text')!.items[0]).toMatchObject({ title: 'https://example.com/recipe', detail: 'Link' });
     await act.action('pick', LAB.id);
     await act.action('send');
     expect(h.native.landSendText).toHaveBeenCalledWith(LAB.id, 'https://example.com/recipe');
@@ -891,7 +892,7 @@ describe('the icon on the pill', () => {
     await act.action('paste');
     expect(calls.openCard).toBe(1);
     const card = act.sheet(sheetEnv('open'))!;
-    expect(block(card, 'rows', 'files')!.items[0]).toMatchObject({ title: 'https://example.com/a', detail: 'Link' });
+    expect(block(card, 'rows', 'text')!.items[0]).toMatchObject({ title: 'https://example.com/a', detail: 'Link' });
     await act.action('send');
     expect(h.native.landSendText).toHaveBeenCalledWith(MAC.id, 'https://example.com/a');
   });
@@ -901,12 +902,92 @@ describe('the icon on the pill', () => {
     const { act } = await boot();
     await act.action('paste');
     expect(h.native.landStage).toHaveBeenCalledWith(['C:\\x\\Trip']);
-    expect(block(act.sheet(sheetEnv('open'))!, 'rows', 'files')!.items[0].title).toBe('Trip');
+    expect(block(act.sheet(sheetEnv('open'))!, 'files', 'files')!.items[0].name).toBe('Trip');
 
     resetNative();
     h.native.clipboardPaste = vi.fn(async () => ({ files: [], text: null }));
     const empty = await boot();
     await empty.act.action('paste');
     expect(block(empty.act.sheet(sheetEnv('open'))!, 'text', 'note')!.text).toContain('Nothing to send yet');
+  });
+});
+
+// ---------------------------------------------------------------- the shelf (2026-11-12)
+
+describe('the shelf', () => {
+  it('keeps files after a send, and sends only the ticked ones', async () => {
+    const { act } = await boot();
+    emit('land-peers', [MAC]);
+    act.drop(['C:\\a.txt', 'C:\\b.txt', 'C:\\c.txt']);
+    await tick(0);
+    await act.action('tick', 'C:\\b.txt');
+    let card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'head')).toMatchObject({ sub: '1 selected · 1000 B' });
+    expect(block(card, 'files', 'files')!.items.map((f) => f.ticked)).toEqual([false, true, false]);
+    await act.action('send');
+    expect(h.native.landSend).toHaveBeenCalledWith(MAC.id, ['C:\\b.txt']);
+    // Still parked, the tick gone: the next Send takes them all.
+    card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'files', 'files')!.items.map((f) => [f.name, f.ticked])).toEqual([
+      ['a.txt', false],
+      ['b.txt', false],
+      ['c.txt', false],
+    ]);
+    await act.action('send');
+    expect(h.native.landSend).toHaveBeenLastCalledWith(MAC.id, ['C:\\a.txt', 'C:\\b.txt', 'C:\\c.txt']);
+  });
+
+  it('All ticks every file and again unticks them; the bin takes the ticked ones off, or all', async () => {
+    const { act } = await boot();
+    act.drop(['C:\\a.txt', 'C:\\b.txt', 'C:\\c.txt']);
+    await tick(0);
+    await act.action('tick-all');
+    expect(block(act.sheet(sheetEnv('open'))!, 'files', 'files')!.items.every((f) => f.ticked)).toBe(true);
+    await act.action('tick-all');
+    expect(block(act.sheet(sheetEnv('open'))!, 'files', 'files')!.items.some((f) => f.ticked)).toBe(false);
+    await act.action('tick', 'C:\\a.txt');
+    await act.action('clear');
+    expect(block(act.sheet(sheetEnv('open'))!, 'files', 'files')!.items.map((f) => f.name)).toEqual(['b.txt', 'c.txt']);
+    await act.action('clear');
+    expect(block(act.sheet(sheetEnv('open'))!, 'files', 'files')).toBeUndefined();
+  });
+
+  it('drags a ticked file out with the other ticked ones, an unticked one alone', async () => {
+    h.native.shelfDrag = vi.fn(async () => ({ ok: true, value: true }));
+    const { act } = await boot();
+    act.drop(['C:\\a.txt', 'C:\\b.txt', 'C:\\c.txt']);
+    await tick(0);
+    expect(block(act.sheet(sheetEnv('open'))!, 'files', 'files')!.drag).toBe('drag-out');
+    await act.action('tick', 'C:\\a.txt');
+    await act.action('tick', 'C:\\b.txt');
+    await act.action('drag-out', 'C:\\c.txt');
+    expect(h.native.shelfDrag).toHaveBeenLastCalledWith(['C:\\c.txt']);
+    await act.action('drag-out', 'C:\\a.txt');
+    expect(h.native.shelfDrag).toHaveBeenLastCalledWith(['C:\\a.txt', 'C:\\b.txt']);
+    // Dropped somewhere: the files stay on the shelf, unticked.
+    expect(block(act.sheet(sheetEnv('open'))!, 'files', 'files')!.items.map((f) => f.ticked)).toEqual([false, false, false]);
+  });
+
+  it('comes back after a restart, and shows a picture once Windows gives one', async () => {
+    h.native.shelfThumb = vi.fn(async (path: string) => (path.endsWith('.png') ? 'data:image/png;base64,AAAA' : null));
+    const { act } = await boot({ shelf: ['C:\\pic.png', 'C:\\notes.txt', 42] });
+    expect(h.native.landStage).toHaveBeenCalledWith(['C:\\pic.png', 'C:\\notes.txt']);
+    act.sheet(sheetEnv('open'));
+    await tick(0);
+    const items = block(act.sheet(sheetEnv('open'))!, 'files', 'files')!.items;
+    expect(items.map((f) => [f.name, f.thumb])).toEqual([
+      ['pic.png', 'data:image/png;base64,AAAA'],
+      ['notes.txt', null],
+    ]);
+    expect(act.chip()).toMatchObject({ icon: 'land', label: '2' });
+  });
+
+  it('saves its paths whenever it changes', async () => {
+    const saved: unknown[] = [];
+    const { act } = await boot({}, (patch) => void saved.push(patch));
+    act.drop(['C:\\a.txt', 'C:\\b.txt']);
+    await tick(0);
+    await act.action('unstage', 'C:\\a.txt');
+    expect(saved.at(-1)).toEqual({ shelf: ['C:\\b.txt'] });
   });
 });

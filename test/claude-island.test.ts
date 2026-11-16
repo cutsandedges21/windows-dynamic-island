@@ -418,6 +418,19 @@ describe('permission and question cards', () => {
     expect(lastReply()).toEqual(['p1', JSON.stringify({ kind: 'deny', message: 'keep the build folder' })]);
   });
 
+  it("another AI's hook events are not Claude's to answer", async () => {
+    const { act } = await boot();
+    stubTracker(act, [session({})], { 100: [50] });
+    emit('hook', { hook_event_name: 'PermissionRequest', agent: 'codex', session_id: 'S1', request_id: 'x1', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    emit('hook', { hook_event_name: 'Stop', agent: 'codex', session_id: 'S1', request_id: 'x2', last_assistant_message: 'Done' });
+    await tick(0);
+    expect(h.native.hookReply).not.toHaveBeenCalled();
+    expect(act.sheet!(senv('urgent'))).toBeNull();
+    // Tagged as Claude's (island-hook adds the tag), it is answered as before.
+    emit('hook', { hook_event_name: 'PermissionRequest', agent: 'claude', session_id: 'S1', request_id: 'p1', tool_name: 'Bash', tool_input: { command: 'ls' } });
+    expect(h.native.hookReply).toHaveBeenCalledWith('p1', 'ack');
+  });
+
   it('Allow and Deny send the plain words; tapping away hands the prompt back', async () => {
     const { act } = await boot();
     stubTracker(act, [session({})], { 100: [50] });

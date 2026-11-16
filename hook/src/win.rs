@@ -66,28 +66,29 @@ unsafe fn token_sid(process: HANDLE) -> Option<String> {
 }
 
 /// Parent of this relay: the shell Claude Code spawned it through.
-pub fn parent_pid() -> u32 {
+/// (parent, grandparent) of this process from one process snapshot; 0 when unknown. A hook's
+/// grandparent is the AI itself when a shell runs the hook (Codex: island-hook ← powershell ← codex).
+pub fn parents() -> (u32, u32) {
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
     };
     unsafe {
         let me = GetCurrentProcessId();
-        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return 0 };
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return (0, 0) };
         let mut e = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
-        let mut found = 0;
+        let mut parent_of = std::collections::HashMap::new();
         if Process32FirstW(snap, &mut e).is_ok() {
             loop {
-                if e.th32ProcessID == me {
-                    found = e.th32ParentProcessID;
-                    break;
-                }
+                parent_of.insert(e.th32ProcessID, e.th32ParentProcessID);
                 if Process32NextW(snap, &mut e).is_err() {
                     break;
                 }
             }
         }
         let _ = CloseHandle(snap);
-        found
+        let parent = parent_of.get(&me).copied().unwrap_or(0);
+        let grandparent = if parent == 0 { 0 } else { parent_of.get(&parent).copied().unwrap_or(0) };
+        (parent, grandparent)
     }
 }
 

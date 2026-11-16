@@ -55,6 +55,24 @@ export interface Person {
   tip?: string;
 }
 
+/** A file on a shelf (Land's): its picture or icon over its name, with a tick to pick it. */
+export interface FileTile {
+  key: string;
+  name: string;
+  sub?: string;
+  /** A picture (a data address); without one, `icon`. */
+  thumb?: string | null;
+  icon: string;
+  ticked?: boolean;
+  tone?: Tone;
+  /** Clicking the tile (ticks it). */
+  action?: string;
+  arg?: unknown;
+  tip?: string;
+  /** A small button at the tile's corner (shown on hover), to take it off. */
+  remove?: SheetButton;
+}
+
 export interface SheetRow {
   key: string;
   icon?: string;
@@ -131,6 +149,12 @@ export type Block =
   | { t: 'countdown'; key: string; until: number; total: number; tone?: Tone }
   /** A row of avatars to pick from; `empty` (with a searching pulse) when there are none. */
   | { t: 'people'; key: string; items: Person[]; empty?: string }
+  /**
+   * A shelf of files in one scrolling row. `drag`: pressing a tile and moving sends this action
+   * with the tile's key, once, for the activity to start a real drag out of the island (a pointer
+   * gesture, so never something a phone can press). `wrap`: a grid that wraps instead (Apps).
+   */
+  | { t: 'files'; key: string; items: FileTile[]; drag?: string; wrap?: boolean }
   /** A QR code: `size` modules a side, `cells` row by row with '1' for dark. */
   | { t: 'qr'; key: string; size: number; cells: string; caption?: string }
   /**
@@ -146,7 +170,7 @@ export interface Tile {
   key: string;
   /** Default size the activity asks for: columns (1 or 2) and rows (1 or 2). */
   span?: 1 | 2;
-  rows?: 1 | 2;
+  rows?: 1 | 2 | 4;
   /** Where the island packed it: page and 0-based cell, with its size in cells. */
   page?: number;
   col?: number;
@@ -173,6 +197,11 @@ export type TileBody =
   | { k: 'battery'; pct: number; charging: boolean; head: string; sub: string }
   /** `open`: clicking the art (Music: the app playing comes forward). */
   | { k: 'media'; art?: string | null; title: string; artist: string; playing: boolean; progress?: number | null; buttons: SheetButton[]; open?: string }
+  /**
+   * Music's lyrics: the cover, title and artist small at the top, the lines big under them, the
+   * one being sung lit (`at`, -1 before the first) and kept in view. `lines` empty: `note` instead.
+   */
+  | { k: 'lyrics'; art?: string | null; title: string; artist: string; playing: boolean; lines: string[]; at: number; note?: string; open?: string }
   | { k: 'week'; title: string; sub: string; days: Array<{ label: string; num: number; today: boolean; busy: number }> }
   | { k: 'dots'; label: string; pct: number; sub?: string }
   | { k: 'forecast'; icon: string; temp: string; label: string; hours: Array<{ t: string; icon: string; temp: string }> }
@@ -327,6 +356,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
   const body = (b: TileBody): TileBody => {
     if (b.k === 'actions' && b.dial) return { ...b, buttons: b.buttons.map(btn), dial: { ...b.dial, action: fn(b.dial.action), start: btn(b.dial.start) } };
     if (b.k === 'media') return { ...b, buttons: b.buttons.map(btn), open: b.open ? fn(b.open) : undefined };
+    if (b.k === 'lyrics') return { ...b, open: b.open ? fn(b.open) : undefined };
     if (b.k === 'actions') return { ...b, buttons: b.buttons.map(btn) };
     if (b.k === 'stat' && b.buttons) return { ...b, buttons: b.buttons.map(btn) };
     if (b.k === 'list') return { ...b, rows: b.rows.map(row) };
@@ -350,6 +380,8 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
         return { ...b, items: b.items.map((c) => ({ ...c, action: fn(c.action) })) };
       case 'people':
         return { ...b, items: b.items.map((p) => ({ ...p, action: p.action ? fn(p.action) : undefined })) };
+      case 'files':
+        return { ...b, drag: b.drag ? fn(b.drag) : undefined, items: b.items.map((f) => ({ ...f, action: f.action ? fn(f.action) : undefined, remove: f.remove ? btn(f.remove) : undefined })) };
       case 'tiles':
         return { ...b, items: b.items.map((t) => ({ ...t, action: t.action ? fn(t.action) : undefined, body: body(t.body) })) };
       case 'player': {
@@ -1540,6 +1572,9 @@ export class SheetRenderer {
       }
       case 'people':
         return this.fillPeople(e, b);
+      case 'files':
+        this.fillFiles(e, b);
+        return true;
       case 'player':
         // Every second while it plays: the bars and a drag on the scrubber must survive it.
         patchPlayer(e, b, this.bindPlayer);
@@ -1729,6 +1764,11 @@ export class SheetRenderer {
         this.fillPeople(e, b);
         return e;
       }
+      case 'files': {
+        const e = make('div', `sb sb-files${b.wrap ? ' wrap' : ''}`);
+        this.fillFiles(e, b);
+        return e;
+      }
       case 'qr': {
         const e = make('div', 'sb sb-qr');
         e.append(qrSvg(b.size, b.cells));
@@ -1845,6 +1885,67 @@ export class SheetRenderer {
       submit();
     });
     return e;
+  }
+
+  /**
+   * A shelf's tiles. Pressing one and moving 6 px starts a drag out of the island (`drag`), and
+   * the click that would follow is dropped, so dragging a file never also ticks it.
+   */
+  private fillFiles(e: HTMLElement, b: Extract<Block, { t: 'files' }>): void {
+    e.replaceChildren(
+      ...b.items.map((f) => {
+        const el = make('div', `ftile tone-${f.tone ?? 'default'}${f.ticked ? ' ticked' : ''}${f.action ? ' act' : ''}`);
+        const pic = make('span', 'fpic');
+        if (f.thumb) {
+          const img = document.createElement('img');
+          img.src = f.thumb;
+          img.alt = '';
+          img.draggable = false;
+          pic.append(img);
+        } else pic.append(iconEl(f.icon, 'fi'));
+        const tick = make('span', 'ftick');
+        tick.append(iconEl('check', 'fc'));
+        el.append(pic, tick, make('span', 'fname', f.name));
+        if (f.sub) el.append(make('span', 'fsub', f.sub));
+        if (f.tip) el.title = f.tip;
+        this.bind(el, f.action, f.arg);
+        if (f.remove) {
+          const x = this.button(f.remove, 'sm');
+          x.classList.add('frm');
+          el.append(x);
+        }
+        const drag = b.drag;
+        if (drag) {
+          let dragged = false;
+          el.addEventListener(
+            'click',
+            (c) => {
+              if (dragged) c.stopPropagation();
+              dragged = false;
+            },
+            { capture: true },
+          );
+          el.addEventListener('pointerdown', (down) => {
+            if (down.button !== 0 || (down.target as HTMLElement).closest('.frm')) return;
+            dragged = false;
+            const move = (ev: PointerEvent) => {
+              if (Math.hypot(ev.clientX - down.clientX, ev.clientY - down.clientY) < 6) return;
+              stop();
+              // The drop ends outside this window: no click may follow the press.
+              dragged = true;
+              this.onAction(drag, f.key, el);
+            };
+            const stop = () => {
+              window.removeEventListener('pointermove', move);
+              window.removeEventListener('pointerup', stop);
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', stop);
+          });
+        }
+        return el;
+      }),
+    );
   }
 
   /**
@@ -1977,6 +2078,8 @@ export class SheetRenderer {
     host.style.setProperty('--cols', String(b.cols));
     host.style.setProperty('--rows', String(b.rows));
     host.style.setProperty('--cell', `${b.cell}px`);
+    // Everything inside a tile is drawn for a 92 px cell (island.ts TILE_DESIGN_CELL) and scales with the real one.
+    host.style.setProperty('--k', b.cell > 0 ? (b.cell / 92).toFixed(4) : '1');
     const pagesEl = host.querySelector<HTMLElement>('.pages')!;
     const trayEl = host.querySelector<HTMLElement>('.tray')!;
     this.grid = { items: b.items, cols: b.cols, rows: b.rows };
@@ -3068,6 +3171,31 @@ export class SheetRenderer {
         const ctl = make('div', 'mc');
         for (const x of b.buttons) ctl.append(this.button(x));
         e.append(ctl);
+        break;
+      }
+      case 'lyrics': {
+        const top = make('div', 'ltop');
+        const art = make('div', 'la');
+        if (b.art) {
+          const img = make('img', '');
+          img.alt = '';
+          img.decoding = 'async';
+          img.src = b.art;
+          art.append(img);
+        } else art.innerHTML = icon('music');
+        this.bind(art, b.open, undefined);
+        const meta = make('div', 'lm');
+        meta.append(make('div', 'l1', b.title), make('div', 'l2', b.artist));
+        top.append(art, meta);
+        const body = make('div', 'lb');
+        if (!b.lines.length) body.append(make('div', 'ln note', b.note ?? 'No lyrics for this one'));
+        b.lines.forEach((line, i) => body.append(make('div', `ln${i === b.at ? ' now' : i < b.at ? ' past' : ''}`, line || '♪')));
+        e.append(top, body);
+        // The line being sung stays in view, a third of the way down.
+        requestAnimationFrame(() => {
+          const now = body.querySelector<HTMLElement>('.ln.now');
+          if (now) body.scrollTop = Math.max(0, now.offsetTop - body.clientHeight / 3);
+        });
         break;
       }
       case 'week': {

@@ -65,12 +65,12 @@ export function welcomePage(host: WelcomeHost): HTMLElement {
   return root;
 }
 
-/** A battery means a laptop; Claude Code counts when its program or its chats are on this PC. */
+/** A battery means a laptop; Claude Code counts when its program or its chats are on this PC, Codex when its folder is. */
 async function loadFacts(): Promise<void> {
-  const [power, env] = await Promise.all([native.powerState(), native.claudeEnv()]);
+  const [power, env, codex, cursor, antigravity] = await Promise.all([native.powerState(), native.claudeEnv(), native.codexEnv(), native.cursorEnv(), native.antigravityEnv()]);
   let claudeCode = Boolean(env?.claudeExe);
   if (env && !claudeCode) claudeCode = (await native.statMany([`${env.configDir}\\projects`]))[0] != null;
-  flow.facts = { laptop: Boolean(power?.hasBattery), claudeCode, platform };
+  flow.facts = { laptop: Boolean(power?.hasBattery), claudeCode, codex: codex !== null, cursor: cursor !== null, antigravity: antigravity !== null, platform };
   if (current?.root.isConnected && STEPS[flow.step] === 'glance') paint();
 }
 

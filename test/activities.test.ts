@@ -1717,7 +1717,7 @@ describe('music', () => {
   it('clicking the art, in the player or on the tile, brings the app playing forward and closes the island', async () => {
     const { act, calls } = await boot(new MusicActivity(), { hoverPlayer: true });
     expect(act.sheet(hover())!.blocks[0]).toMatchObject({ actions: { open: 'open' } });
-    expect(act.tile(hover())!.body).toMatchObject({ k: 'media', open: 'open' });
+    expect(act.tile(hover())!.body).toMatchObject({ open: 'open' });
     // Not interactive: the art is only a picture.
     expect((act.sheet(hover(false))!.blocks[0] as { actions: { open?: string } }).actions.open).toBeUndefined();
     expect((act.tile(hover(false))!.body as { open?: string }).open).toBeUndefined();

@@ -95,26 +95,5 @@ export abstract class BaseActivity implements Activity {
   }
 }
 
-/** Soft synthesized chime (no audio files), only when sounds are on. */
-export function chime(kind: 'done' | 'attention' = 'done'): void {
-  try {
-    const ac = new AudioContext();
-    const notes = kind === 'done' ? [880, 1174.7] : [659.3, 880];
-    notes.forEach((f, i) => {
-      const o = ac.createOscillator();
-      const g = ac.createGain();
-      o.type = 'sine';
-      o.frequency.value = f;
-      const t = ac.currentTime + i * 0.14;
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.12, t + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
-      o.connect(g).connect(ac.destination);
-      o.start(t);
-      o.stop(t + 0.55);
-    });
-    setTimeout(() => void ac.close(), 1200);
-  } catch {
-    /* no audio device */
-  }
-}
+/** The chime, in the style and volume picked in Settings (src/core/sounds.ts). */
+export { chime, playSound } from '../core/sounds';

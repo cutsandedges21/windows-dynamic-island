@@ -7,6 +7,8 @@ import { Island } from './core/island';
 import { runMirror } from './core/mirror';
 import { catchErrors } from './core/errors';
 import { emitLocal, native, windowLabel } from './core/native';
+import { runWidget } from './core/widgets';
+import { runDock } from './core/dock';
 import { workspaceEngine } from './workspaces/engine';
 
 catchErrors(windowLabel, (line) => void native.log(line));
@@ -16,7 +18,13 @@ if (native.demo) document.body.classList.add('demo');
 
 // Duplicate mode: this window is a copy of the pill on another screen.
 const mirror = windowLabel.startsWith('mirror-');
-const island = mirror ? null : new Island(stage, createRegistry());
+// A desktop widget: one tile on the desktop, drawn from what the island sends it.
+const widget = windowLabel.startsWith('widget-');
+// The taskbar: drawn from what the island sends it.
+const dock = windowLabel === 'dock';
+const island = mirror || widget || dock ? null : new Island(stage, createRegistry());
+if (dock) void runDock(stage).catch((err) => void native.log(`taskbar failed: ${String(err)}`));
+if (widget) void runWidget(stage).catch((err) => void native.log(`widget failed: ${String(err)}`));
 if (mirror) void runMirror(stage).catch((err) => void native.log(`mirror failed: ${String(err)}`));
 // Workspaces restore from here: the island lives as long as Island runs.
 if (island) workspaceEngine();
@@ -32,6 +40,7 @@ if (native.demo && island) {
   Object.assign(window, { native, emitLocal });
   if (new URLSearchParams(location.search).has('fill')) void import('./dev/fill').then((m) => m.fillPreview(island, native, emitLocal));
   if (new URLSearchParams(location.search).has('pet')) void import('./dev/pet').then((m) => m.petPreview());
+  if (new URLSearchParams(location.search).has('widget')) void import('./dev/widget').then((m) => m.widgetPreview(stage));
   const land = new URLSearchParams(location.search).get('land');
   if (land !== null) void import('./dev/land').then((m) => m.landPreview(island, native, land));
 }

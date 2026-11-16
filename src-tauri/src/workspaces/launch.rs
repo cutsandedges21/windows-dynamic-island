@@ -349,6 +349,41 @@ mod win {
         }
     }
 
+    /// What a shortcut passes its program ("--app-id=…" makes a browser open a web app).
+    pub fn shortcut_args(lnk: &Path) -> String {
+        let _com = Com::new();
+        unsafe {
+            let Ok(link) = CoCreateInstance::<_, IShellLinkW>(&ShellLink, None, CLSCTX_INPROC_SERVER) else { return String::new() };
+            let Ok(file) = windows::core::Interface::cast::<IPersistFile>(&link) else { return String::new() };
+            if file.Load(PCWSTR(wide(&lnk.display().to_string()).as_ptr()), STGM_READ).is_err() {
+                return String::new();
+            }
+            let mut buf = [0u16; 2048];
+            if link.GetArguments(&mut buf).is_err() {
+                return String::new();
+            }
+            let len = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
+            String::from_utf16_lossy(&buf[..len])
+        }
+    }
+
+    /// The .exe an app item starts and what its shortcut passes it, when that can be known (not Store apps).
+    pub fn program_info(path: &str, base: &str) -> Option<(PathBuf, String)> {
+        if is_shell_app(path) {
+            return None;
+        }
+        let p = super::paths::resolve(path, base)?;
+        let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        match ext.as_str() {
+            "exe" => Some((p, String::new())),
+            "lnk" => {
+                let target = shortcut_target(&p).filter(|t| t.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")))?;
+                Some((target, shortcut_args(&p)))
+            }
+            _ => None,
+        }
+    }
+
     /// The .exe an app item starts, when that can be known (not Store apps).
     pub fn program_of(path: &str, base: &str) -> Option<PathBuf> {
         if is_shell_app(path) {
@@ -591,6 +626,27 @@ pub async fn ws_launch(item: Launch, base: String) -> Result<Launched, String> {
 #[tauri::command]
 pub async fn ws_running(path: String, base: String) -> Option<Running> {
     tauri::async_runtime::spawn_blocking(move || native::running(&path, &base)).await.ok().flatten()
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct Program {
+    pub exe: String,
+    pub args: String,
+}
+
+/// The program an app item starts, and what its shortcut passes it: Workspaces' noticing tells a
+/// workspace's windows by their program (a browser's web app by its window title instead).
+#[tauri::command]
+pub async fn ws_program(path: String, base: String) -> Option<Program> {
+    #[cfg(windows)]
+    {
+        tauri::async_runtime::spawn_blocking(move || win::program_info(&path, &base).map(|(exe, args)| Program { exe: exe.display().to_string(), args })).await.ok().flatten()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (path, base);
+        None
+    }
 }
 
 /// The apps installed for this user, as Start lists them.

@@ -1,9 +1,11 @@
 // The settings schema. Rust stores the blob; this module owns its shape,
 // defaults and migration, and keeps both windows in sync.
 
+import { cleanWidgets } from './widgets';
 import { CATALOG, type Band, type Behavior } from '../activities/catalog';
 import { normalizeWidths, type Anchor, type IslandSize, type Widths } from './layout';
 import { GLASS_DEFAULT } from './glass';
+import { SOUND_PACKS } from './sound-packs';
 import { DEFAULT_ICON_ONLY, DEFAULT_MENU_ORDER, FULL_MENU, normalizeIconOnly, normalizeMenuOrder, type MenuIconOnly, type MenuItemId, type MenuShown } from './menu';
 
 export type DisplayMode = 'primary' | 'cursor' | 'active' | 'specific' | 'duplicate';
@@ -42,8 +44,42 @@ export function growsOf(c: Pick<ActivityConfig, 'grows'> | undefined, fallback: 
 }
 
 /** Cell sizes in the open island's grid: columns x rows. */
-export type TileSize = '1x1' | '2x1' | '1x2' | '2x2';
+export type TileSize = '1x1' | '2x1' | '1x2' | '2x2' | '1x4' | '2x4';
 export const TILE_SIZES: TileSize[] = ['1x1', '2x1', '1x2', '2x2'];
+/** Every size a tile can be saved at: the four, and the tall ones only the lyrics tile takes. */
+export const ALL_TILE_SIZES: TileSize[] = [...TILE_SIZES, '1x4', '2x4'];
+
+/** A widget on the desktop (src/core/widgets.ts): an activity's Control Center tile, or the day and time. */
+export interface DesktopWidget {
+  id: string;
+  /** An activity id, or 'clock'. */
+  kind: string;
+  /** Where its top-left corner is, in physical px on the desktop; -1: not placed yet (it starts down the right side). */
+  x: number;
+  y: number;
+  /** The size picked on its right-click menu ("2x4"), for tiles that show more when bigger. */
+  size?: string;
+  /** Dragging it is off (right-click, Lock in place). */
+  locked?: boolean;
+}
+
+/**
+ * How widgets or the taskbar look: like the island ('island'), or a colour of their own with
+ * the glass slider's value (Settings, Widgets).
+ */
+export interface ItemLook {
+  color: 'island' | PillColor;
+  glass: number;
+}
+
+export const ITEM_COLORS: ReadonlyArray<ItemLook['color']> = ['island', 'black', 'white', 'matte-black', 'matte-white', 'glass'];
+
+function cleanLook(v: unknown): ItemLook {
+  const o = isObj(v) ? v : {};
+  const color = ITEM_COLORS.includes(o.color as ItemLook['color']) ? (o.color as ItemLook['color']) : 'island';
+  const glass = typeof o.glass === 'number' && Number.isFinite(o.glass) ? Math.max(0, Math.min(100, Math.round(o.glass))) : GLASS_DEFAULT;
+  return { color, glass };
+}
 
 /** How the user arranged the open island's grid (long-press a tile to edit). */
 export interface GridLayout {
@@ -60,6 +96,18 @@ export interface GridLayout {
 }
 
 export type PillColor = 'black' | 'white' | 'matte-white' | 'matte-black' | 'glass';
+
+/** The chimes Island synthesizes (src/core/sounds.ts). */
+export type SynthStyle = 'soft' | 'glass' | 'pop' | 'bell' | 'retro';
+export const SYNTH_STYLES: SynthStyle[] = ['soft', 'glass', 'pop', 'bell', 'retro'];
+/** How the chime sounds: synthesized, a pack that ships with Island (src/core/sound-packs.ts) by
+ *  its id, or custom: your own files. */
+export type SoundStyle = SynthStyle | 'custom' | (string & {});
+
+export function soundStyleKnown(style: string): boolean {
+  return (SYNTH_STYLES as string[]).includes(style) || style === 'custom' || SOUND_PACKS.some((p) => p.id === style);
+}
+
 
 export const SETTINGS_VERSION = 6;
 
@@ -97,6 +145,13 @@ export interface Settings {
     /** The bot in its bubble beside the pill (src/core/bubble.ts). */
     bot: boolean;
     grid: GridLayout;
+    /** Widgets on the desktop, under your windows (Settings, Widgets). Off until turned on. */
+    widgets: { on: boolean; items: DesktopWidget[]; look: ItemLook };
+    /**
+     * The taskbar at the bottom (src/core/dock.ts); `hideWindows`: Windows' own taskbar hides itself
+     * meanwhile; `centre`: where it was dragged to, 0..1 across the screen (-1: the middle).
+     */
+    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; locked: boolean };
     /** The island is off the screen until this time (epoch ms); 0: shown. HIDE_UNTIL_SHOWN: until the user brings it back. */
     hiddenUntil: number;
     /** Faded from the right-click menu's Fade: see-through and click-through until Show (kept across restarts). */
@@ -118,6 +173,16 @@ export interface Settings {
     startWithWindows: boolean;
     notifications: boolean;
     sounds: boolean;
+    sound: {
+      style: SoundStyle;
+      /** 0 to 100; 50 is the chime's first loudness. */
+      volume: number;
+      /** The names of your own files (style custom); '' for none, and the Soft chime plays. */
+      done: string;
+      attention: string;
+      /** Goes up when a file is picked or removed, so the island loads it again. */
+      rev: number;
+    };
     /** Do not disturb: nothing auto-expands, only interrupts marked urgent. */
     dnd: boolean;
     toggleHotkey: string;
@@ -207,6 +272,8 @@ export function defaultSettings(): Settings {
       peekThrough: true,
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
+      widgets: { on: false, items: [], look: { color: 'island', glass: GLASS_DEFAULT } },
+      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, locked: false },
       hiddenUntil: 0,
       faded: false,
       menu: { ...FULL_MENU },
@@ -219,6 +286,7 @@ export function defaultSettings(): Settings {
       startWithWindows: false,
       notifications: true,
       sounds: false,
+      sound: { style: 'soft', volume: 50, done: '', attention: '', rev: 0 },
       dnd: false,
       toggleHotkey: 'Alt+Shift+Space',
       activitiesHotkey: 'Alt+Shift+A',
@@ -282,6 +350,9 @@ export function migrate(saved: unknown): Settings {
   if (!['black', 'white', 'matte-white', 'matte-black', 'glass'].includes(out.island.color)) out.island.color = 'black';
   // Justin's 0.2.11 saved the glass slider; Moss's 0.4.2 had none and gets the old look.
   out.island.glass = Number.isFinite(out.island.glass) ? Math.max(0, Math.min(100, out.island.glass)) : GLASS_DEFAULT;
+  const snd = out.general.sound;
+  if (!soundStyleKnown(snd.style)) snd.style = 'soft';
+  snd.volume = Math.round(Math.max(0, Math.min(100, Number.isFinite(snd.volume) ? snd.volume : 50)));
 
   // Activity configs: merge each known one; options keep any extra saved keys.
   const savedActs = isObj(saved.activities) ? saved.activities : {};
@@ -333,7 +404,7 @@ export function migrate(saved: unknown): Settings {
   const tileKey = (key: string) => claudeTile(controlsTile(key));
   const tiles = (v: unknown) => [...new Set(strings(v).map(tileKey).filter(Boolean))];
   const sizes: Record<string, TileSize> = {};
-  if (isObj(savedGrid.sizes)) for (const [k, v] of Object.entries(savedGrid.sizes)) if (TILE_SIZES.includes(v as TileSize) && tileKey(k)) sizes[tileKey(k)] = v as TileSize;
+  if (isObj(savedGrid.sizes)) for (const [k, v] of Object.entries(savedGrid.sizes)) if (ALL_TILE_SIZES.includes(v as TileSize) && tileKey(k)) sizes[tileKey(k)] = v as TileSize;
   // Pages: tile keys (each on one page at most) and nulls for the empty cells the user left.
   const seen = new Set<string>();
   const pages: Array<Array<string | null>> = [];
@@ -350,6 +421,11 @@ export function migrate(saved: unknown): Settings {
     pages.push(list);
   }
   out.island.grid = { order: tiles(savedGrid.order), sizes, hidden: tiles(savedGrid.hidden), pages };
+  const savedWidgets = isObj(saved.island) && isObj(saved.island.widgets) ? saved.island.widgets : {};
+  out.island.widgets = { on: savedWidgets.on === true, items: cleanWidgets(savedWidgets.items), look: cleanLook(savedWidgets.look) };
+  const savedBar = isObj(saved.island) && isObj(saved.island.taskbar) ? saved.island.taskbar : {};
+  const centre = typeof savedBar.centre === 'number' && savedBar.centre >= 0 && savedBar.centre <= 1 ? savedBar.centre : -1;
+  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), locked: savedBar.locked === true };
   out.island.displayIds = strings(isObj(saved.island) ? saved.island.displayIds : null);
   if (!Number.isFinite(out.island.hiddenUntil) || out.island.hiddenUntil < 0) out.island.hiddenUntil = 0;
   out.island.hiddenUntil = Math.min(out.island.hiddenUntil, HIDE_UNTIL_SHOWN);
