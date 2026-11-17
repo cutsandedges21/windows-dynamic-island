@@ -801,18 +801,38 @@ describe('text and links', () => {
     const card = act.sheet(sheetEnv('urgent'))!;
     expect(block(card, 'text', 'text')!.text).toBe('dinner at 7?');
     const buttons = block(card, 'buttons', 'answer')!.items.map((b) => b.action);
-    expect(buttons).toEqual(['decline', 'accept-copy']);
+    expect(buttons).toEqual(['decline', 'reply', 'accept-copy']);
     smoke(act, 'text offer');
     await act.action('accept-copy', 'in-t');
     expect(h.native.landAnswer).toHaveBeenCalledWith('in-t', true);
     expect(h.native.clipboardSetText).toHaveBeenCalledWith('dinner at 7?');
   });
 
+  it('a note can be answered: Reply opens a box, Enter sends it back, and their note stays to copy', async () => {
+    const { act } = await boot();
+    emit('land-transfer', transfer({ id: 'in-r', dir: 'in', state: 'asking', count: 0, total: 0, items: [], text: 'yo my stuff is done, try it out', expires: T0 + 120_000 }));
+    expect(act.render(env('expanded')).some((x) => x.key === 'reply')).toBe(true);
+    await act.action('reply', 'in-r');
+    let card = act.sheet(sheetEnv('urgent'))!;
+    expect(block(card, 'head', 'head')).toMatchObject({ title: "Reply to Moss's MacBook Air", back: { action: 'reply-cancel' } });
+    expect(block(card, 'input', 'reply')).toMatchObject({ action: 'reply-send' });
+    // Back: their note again, untouched.
+    await act.action('reply-cancel');
+    expect(block(act.sheet(sheetEnv('urgent'))!, 'buttons', 'answer')).toBeDefined();
+    await act.action('reply', 'in-r');
+    await act.action('reply-send', '  on it  ');
+    expect(h.native.landSendText).toHaveBeenCalledWith(MAC.id, 'on it');
+    expect(h.native.landAnswer).not.toHaveBeenCalled();
+    card = act.sheet(sheetEnv('urgent'))!;
+    expect(block(card, 'buttons', 'answer')).toBeDefined();
+    expect(block(card, 'text', 'note')).toMatchObject({ text: "Reply sent to Moss's MacBook Air", tone: 'good' });
+  });
+
   it('a link that arrives can be opened instead', async () => {
     const { act } = await boot();
     emit('land-transfer', transfer({ id: 'in-l', dir: 'in', state: 'asking', count: 0, total: 0, items: [], text: 'https://example.com/recipe', expires: T0 + 120_000 }));
     const buttons = block(act.sheet(sheetEnv('urgent'))!, 'buttons', 'answer')!.items.map((b) => b.action);
-    expect(buttons).toEqual(['decline', 'accept-open', 'accept-copy']);
+    expect(buttons).toEqual(['decline', 'accept-open', 'reply', 'accept-copy']);
     await act.action('accept-open', 'in-l');
     expect(h.native.landAnswer).toHaveBeenCalledWith('in-l', true);
     expect(h.native.openUrl).toHaveBeenCalledWith('https://example.com/recipe');

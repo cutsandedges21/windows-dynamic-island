@@ -52,6 +52,8 @@ const FIREWALL_MS = 30_000;
 const ONLINE_MS = 20000;
 /** How long the other side has to accept (land.rs ASK_FOR). */
 const ASK_MS = 120000;
+/** "Reply sent" stays on their note this long after the reply went. */
+const REPLY_NOTE_MS = 6000;
 /** How long a phone share works (land/share.rs SHARE_FOR). */
 const SHARE_MS = 15 * 60000;
 /** Land's first start says what it is this long. */
@@ -130,6 +132,8 @@ export class LandActivity extends BaseActivity {
   private readonly friendAsks = new Map<string, LandFriendAsk & { since: number }>();
   /** Something to say on the card for a moment (why a send did not start). */
   private note: { text: string; at: number; good?: boolean } | null = null;
+  /** The note being answered (its transfer id): its card holds a box to write the reply in. */
+  private replying: string | null = null;
   private lastScan = 0;
   /** Windows Firewall's word on this network, checked when the card opens (at most every 30 s). */
   private firewall: LandFirewall | null = null;
@@ -563,6 +567,7 @@ export class LandActivity extends BaseActivity {
       if (compact) return segs;
       if (!env.vertical) segs.push({ t: 'text', key: 'what', text: ask.text ? `sent you ${what(ask)}` : `wants to send ${what(ask)}`, tone: 'muted', prio: 4, min: 60 });
       segs.push({ t: 'button', key: 'no', icon: 'x', label: env.vertical ? undefined : 'Decline', action: 'decline', arg: ask.id, style: 'secondary', side: 'end', prio: 2, tip: 'Decline' });
+      if (ask.text) segs.push({ t: 'button', key: 'reply', icon: 'chat', action: 'reply', arg: ask.id, style: 'secondary', side: 'end', prio: 3, tip: 'Reply' });
       if (ask.text) segs.push({ t: 'button', key: 'yes', icon: 'copy', label: env.vertical ? undefined : 'Copy', action: 'accept-copy', arg: ask.id, style: 'primary', side: 'end', prio: 1, tip: 'Copy it' });
       else segs.push({ t: 'button', key: 'yes', icon: 'check', label: env.vertical ? undefined : 'Accept', action: 'accept', arg: ask.id, style: 'primary', side: 'end', prio: 1, tip: 'Accept: save to Downloads' });
       return segs;
@@ -684,8 +689,9 @@ export class LandActivity extends BaseActivity {
     return null;
   }
 
-  /** Someone sent text: what it says, and Copy, Open (a link) or Decline. */
+  /** Someone sent text: what it says, and Copy, Open (a link), Reply or Decline. */
   private textCard(t: Live, text: string, env: SheetEnv): SheetView {
+    if (env.interactive && this.replying === t.id) return this.replyCard(t, text);
     const link = isLink(text);
     const blocks: Block[] = [
       { t: 'head', key: 'head', icon: 'land', tone: 'accent', title: `${t.peer.name} sent you ${what(t)}`, sub: osLabel(t.peer.os) || undefined },
@@ -695,11 +701,28 @@ export class LandActivity extends BaseActivity {
     if (env.interactive) {
       const items: SheetButton[] = [{ key: 'no', label: 'Decline', icon: 'x', action: 'decline', arg: t.id, style: 'secondary' }];
       if (link) items.push({ key: 'open', label: 'Open', icon: 'external', action: 'accept-open', arg: t.id, style: 'secondary' });
+      // A note back, without taking this one (Justin).
+      items.push({ key: 'reply', label: 'Reply', icon: 'chat', action: 'reply', arg: t.id, style: 'secondary' });
       items.push({ key: 'yes', label: 'Copy', icon: 'copy', action: 'accept-copy', arg: t.id, style: 'primary' });
       blocks.push({ t: 'buttons', key: 'answer', align: 'fill', items });
     }
+    // Just answered: says the reply went (or why it didn't).
+    if (this.note && env.now - this.note.at < REPLY_NOTE_MS) blocks.push({ t: 'text', key: 'note', text: this.note.text, tone: this.note.good ? 'good' : 'bad', size: 'sm' });
     blocks.push({ t: 'text', key: 'where', text: 'Sent encrypted. Nothing is copied or opened until you choose.', tone: 'dim', size: 'sm' });
     return { key: `ask/${t.id}`, blocks };
+  }
+
+  /** Writing a note back: what they sent, a box (Enter sends it to them), and Back to their note. */
+  private replyCard(t: Live, text: string): SheetView {
+    return {
+      key: `reply/${t.id}`,
+      blocks: [
+        { t: 'head', key: 'head', icon: 'land', tone: 'accent', title: `Reply to ${t.peer.name}`, sub: osLabel(t.peer.os) || undefined, back: { key: 'back', icon: 'chevron-left', action: 'reply-cancel', arg: t.id, style: 'ghost', tip: 'Back to their note' } },
+        { t: 'text', key: 'text', text, bubble: true, lines: 3, tone: 'muted' },
+        { t: 'input', key: 'reply', placeholder: `A note to ${t.peer.name}, then Enter`, action: 'reply-send' },
+        { t: 'text', key: 'where', text: 'Sent encrypted, like theirs. Their note stays here to copy.', tone: 'dim', size: 'sm' },
+      ],
+    };
   }
 
   /** Someone wants to send files here: who, what, and Accept or Decline. */
@@ -1152,6 +1175,27 @@ export class LandActivity extends BaseActivity {
         if (!native.demo) await native.landAnswer(id, true);
         if (name === 'accept-open' && isLink(text)) void native.openUrl(text.trim());
         else void native.clipboardSetText(text);
+        break;
+      }
+      case 'reply':
+        if (!this.transfers.get(id)?.text) break;
+        this.replying = id;
+        break;
+      case 'reply-cancel':
+        this.replying = null;
+        break;
+      case 'reply-send': {
+        const text = typeof arg === 'string' ? arg.trim() : '';
+        const t = this.replying ? this.transfers.get(this.replying) : undefined;
+        if (!text || !t) break;
+        if (text.length > MAX_TEXT) {
+          this.note = { text: `That is more than ${MAX_TEXT.toLocaleString('en-US')} characters. Send it as a file instead.`, at: Date.now() };
+          break;
+        }
+        this.replying = null;
+        const r = native.demo ? ({ ok: true, value: null } as const) : await this.textTo(t.peer, text);
+        if (!this.alive) return;
+        this.note = r.ok ? { text: `Reply sent to ${t.peer.name}`, at: Date.now(), good: true } : { text: r.error, at: Date.now() };
         break;
       }
       case 'copy-text':
