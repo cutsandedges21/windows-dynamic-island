@@ -865,7 +865,9 @@ export class Island {
     // Under a hover card the pill stays as it is, so it is as it was when the card goes back.
     // Pointing at that chat's card changes nothing: the pill stays resting, so the card keeps its size.
     const underCard = this.sheet.grown && (!morphing || this.raisedCard);
-    if (surf && !underCard) level = atLeast(level, surf.level);
+    // Under a card grown out of the pill (the pointer on it) the pill stays too: pausing or skipping
+    // from Music's player surfaces the change, and a raised pill under it widened the card (Justin).
+    if (surf && !underCard && !morphing) level = atLeast(level, surf.level);
     if (this.hover && s.hoverExpand && primary && !this.open && !morphing) level = atLeast(level, 'expanded');
     if (this.open || this.view !== 'main') level = 'maximum';
     // An activity's own card belongs to the open island; closing the island goes back to Control Center.

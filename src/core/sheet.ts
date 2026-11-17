@@ -1477,7 +1477,12 @@ export class SheetRenderer {
     const vertical = this.anchor === 'left' || this.anchor === 'right';
     const k = clamp01(vertical ? vh / Math.max(1, fh) : vw / Math.max(1, fw));
     this.inner.style.transformOrigin = { top: '50% 0', bottom: '50% 100%', left: '0 50%', right: '100% 50%' }[this.anchor];
-    this.inner.style.transform = k < 0.999 && !this.opts.still ? `scale(${k.toFixed(4)})` : '';
+    // Already grown and only widening (Music's lyrics panel opening): the content keeps its size and
+    // rides the card's left edge, so the player glides aside as the panel is uncovered, instead of
+    // the whole card shrinking and zooming back in (Justin's recording).
+    const resizing = !this.opening && this.cover === 'grown' && !vertical;
+    if (resizing) this.inner.style.transform = k < 0.999 ? `translateX(${lx.toFixed(2)}px)` : '';
+    else this.inner.style.transform = k < 0.999 && !this.opts.still ? `scale(${k.toFixed(4)})` : '';
     if (this.cover === 'shrinking') {
       // The card's content fades over most of the way back and the pill's own content fades in
       // over the last part (island.css, --pill-in), both locked to the shape, not to a clock.
