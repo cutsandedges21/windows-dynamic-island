@@ -29,6 +29,9 @@ export const CARD_MARGIN = 6;
 
 /** How long a finger rests on the pill before it is held, not tapped (about an iPhone's long press). */
 export const HOLD_MS = 450;
+/** A swipe across the held card: this far sideways (CSS px), mostly sideways, within this long. */
+const SWIPE_PX = 40;
+const SWIPE_MS = 700;
 /** How long after a held finger lifts its click is still the hold's (not a tap). */
 const HOLD_CLICK_MS = 600;
 /**
@@ -73,6 +76,8 @@ export class IslandView {
   onAway: () => void = () => {};
   /** Whether the held card shows (or is asked for). */
   holding: () => boolean = () => false;
+  /** A swipe across the held card (1: to the left, the next activity; -1: back), as over the PC's card. */
+  onSwipe: (dir: 1 | -1) => void = () => {};
   private holdTimer: ReturnType<typeof setTimeout> | undefined;
   /** The finger on the pill that may become a hold. */
   private holdDown: (Point & { id: number }) | null = null;
@@ -115,6 +120,7 @@ export class IslandView {
     this.stage.addEventListener('pointerdown', (e) => this.lookAt(e), { passive: true });
     this.guardScroll();
     this.watchHold();
+    this.watchSwipe();
     this.measure();
   }
 
@@ -411,6 +417,43 @@ export class IslandView {
       },
       { capture: true, signal },
     );
+  }
+
+  /**
+   * A finger swiped sideways across the held card: the next activity's card (Justin), as a
+   * sideways swipe over the PC's card steps through them. Touch events, so the browser's own
+   * scrolling of the card never cancels it; not from the scrubber, a slider or the lyrics' line.
+   */
+  private watchSwipe(): void {
+    const el = this.sheet.el;
+    const signal = this.gone.signal;
+    let start: (Point & { at: number }) | null = null;
+    el.addEventListener(
+      'touchstart',
+      (e) => {
+        const t = e.touches[0];
+        const on = e.target as HTMLElement;
+        start = e.touches.length === 1 && this.holding() && !on.closest('.pl-scrub, .pl-ly-grip, .hs, input, textarea') ? { x: t.clientX, y: t.clientY, at: performance.now() } : null;
+      },
+      { passive: true, signal },
+    );
+    el.addEventListener(
+      'touchend',
+      (e) => {
+        const s = start;
+        start = null;
+        const t = e.changedTouches[0];
+        if (!s || !t || !this.holding()) return;
+        const dx = t.clientX - s.x;
+        const dy = t.clientY - s.y;
+        if (Math.abs(dx) < SWIPE_PX || Math.abs(dx) < Math.abs(dy) * 1.5 || performance.now() - s.at > SWIPE_MS) return;
+        // The click a swipe would end in is no tap.
+        this.swallowUntil = performance.now() + 400;
+        this.onSwipe(dx < 0 ? 1 : -1);
+      },
+      { passive: true, signal },
+    );
+    el.addEventListener('touchcancel', () => (start = null), { passive: true, signal });
   }
 
   /** The finger on the pill lifted or travelled: no hold now; a held one's click is still swallowed for a moment. */

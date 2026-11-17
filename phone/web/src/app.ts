@@ -3,7 +3,7 @@
 // sends (hello, pill, view, toasts, clipboard, text, files, terminals), and where a tap goes
 // (routing.ts, nav.ts).
 
-import { INBOX_OPEN, type IslandMsg, type Nav, type PairPayload, type PowerAction, type TermInfo } from '../../../src/remote/protocol';
+import { INBOX_OPEN, swipeKey, type IslandMsg, type Nav, type PairPayload, type PowerAction, type TermInfo } from '../../../src/remote/protocol';
 import { NavKeeper, navMsg, sameNav } from './nav';
 import { deniedText, pairErrorText, phoneName } from './pairing';
 import { pushFlag, pushOff, pushOn, pushResend, pushState } from './push';
@@ -201,6 +201,7 @@ export class App {
       hold: (key) => this.hold(key),
       unhold: () => this.unhold(),
       holding: () => this.nav.holding,
+      swipe: (dir) => this.swipe(dir),
     });
     s.setName(this.hello?.name || island.name);
     this.mount(s);
@@ -351,6 +352,13 @@ export class App {
     if (this.state.s !== 'online' || this.islandScreen?.arranging) return;
     if (!this.nav.holding) this.beforeHold = this.lastView;
     this.go(this.nav.hold(key, Date.now()));
+  }
+
+  /** A swipe across the held card: the activity before or after the one held, as the PC's swipe does. */
+  private swipe(dir: 1 | -1): void {
+    const now = this.nav.want;
+    if (this.state.s !== 'online' || now.open !== 'hover') return;
+    this.go(this.nav.hold(swipeKey(now.key, dir), Date.now()));
   }
 
   /** The held card closes: what showed before it comes back, at once (the island's fresh copy follows). */

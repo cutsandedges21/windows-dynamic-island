@@ -43,7 +43,7 @@ import { clip, timeOfDay } from './format';
 import { PhoneActs, PhoneError, PhoneHub, termAllowed, type PhoneDelivery, type PhoneIslandHooks } from '../remote/hub';
 import { applyPref, prefsOf } from '../remote/prefs';
 import { phoneNative } from '../remote/native';
-import { HELLO_FOLDERS, PHONE_ISLAND_ACTIONS, type BotState, type Nav, type ScreenState } from '../remote/protocol';
+import { HELLO_FOLDERS, PHONE_ISLAND_ACTIONS, readSwipe, type BotState, type Nav, type ScreenState } from '../remote/protocol';
 import { urgentIds } from '../remote/views';
 
 type View = 'main' | 'overflow' | 'menu' | 'hide' | 'fade';
@@ -2161,9 +2161,26 @@ export class Island {
    * activity has no card of either kind.
    */
   private phoneHover(key: string | null, now: number, width: number): SheetView | null {
-    const owner = this.hoverOwner(key);
-    if (!owner) return null;
-    return phoneHoverView(this.askSheet(owner, 'hover', now, width - 28, false, null)?.view ?? null, () => this.tileCardOf(owner, now, false));
+    const cardOf = (owner: string) => phoneHoverView(this.askSheet(owner, 'hover', now, width - 28, false, null)?.view ?? null, () => this.tileCardOf(owner, now, false));
+    const swipe = readSwipe(key);
+    if (!swipe) {
+      const owner = this.hoverOwner(key);
+      return owner ? cardOf(owner) : null;
+    }
+    // Swiped across the held card: the activity that many along, in the order scrolling the pill
+    // steps through, past any with no card to show.
+    const ids = this.visibleIds;
+    const start = this.hoverOwner(swipe.base);
+    const i = ids.indexOf(start ?? '');
+    if (i < 0 || !ids.length) return start ? cardOf(start) : null;
+    const dir = Math.sign(swipe.steps) || 1;
+    const n = ids.length;
+    for (let k = 0; k < n; k++) {
+      const owner = ids[(((i + swipe.steps + dir * k) % n) + n) % n];
+      const view = cardOf(owner);
+      if (view) return view;
+    }
+    return null;
   }
 
   /** Control Center on a phone: four columns across its card, the user's pages and sizes, never arranging. */

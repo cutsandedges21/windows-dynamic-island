@@ -36,6 +36,8 @@ export interface IslandHooks {
   unhold(): void;
   /** Whether the held card shows (or was asked for). */
   holding(): boolean;
+  /** A swipe across the held card: the next activity's card (1) or the one before (-1). */
+  swipe(dir: 1 | -1): void;
 }
 
 /** Room under a card for the Back button. */
@@ -85,6 +87,7 @@ export class IslandScreen {
     this.view.onHold = (key) => hooks.hold(key);
     this.view.onAway = () => hooks.unhold();
     this.view.holding = () => hooks.holding();
+    this.view.onSwipe = (dir) => hooks.swipe(dir);
     this.main.append(this.hint, this.backBtn, this.note, this.overlay);
 
     const item = (label: string, iconName: string, fn: () => void, needsLink: boolean) => {

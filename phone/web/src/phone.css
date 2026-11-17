@@ -849,14 +849,20 @@ body {
 .ph-stage .sb-player .pl-btn { transform: scale(1.35); }
 /* Music's lyrics card (the PC's Control Center one, .stage): on a phone the lyrics go under the player,
    full width, instead of a squeezed column beside it (Justin: one word a line, the art spilling out). */
-.ph-stage .sb-player.stage { flex-direction: column; align-items: stretch; }
-.ph-stage .sb-player.stage .pl-main { flex: none; width: 100%; }
+.ph-stage .sb-player:is(.stage, .lyrics-open) { flex-direction: column; align-items: stretch; }
+.ph-stage .sb-player:is(.stage, .lyrics-open) .pl-main { flex: none; width: 100%; }
 /* The art small beside the track, as on the PC's hover player, so the lyrics show without scrolling
    (Justin: on the phone they were under the fold). */
-.ph-stage .sb-player.stage { gap: 12px; }
-.ph-stage .sb-player.stage .pl-top { flex-direction: row; align-items: center; text-align: left; gap: 14px; }
-.ph-stage .sb-player.stage .pl-art { width: 72px; height: 72px; border-radius: 14px; }
-.ph-stage .sb-player.stage .pl-tx { flex: 1; width: auto; min-width: 0; align-items: flex-start; }
-.ph-stage .sb-player.stage .pl-ctl { gap: 18px; }
-.ph-stage .sb-player.stage .pl-ly { flex: none; margin: 2px 0 0; min-height: 180px; }
-.ph-stage .sb-player.stage .pl-ly-line { font-size: 22px; }
+.ph-stage .sb-player:is(.stage, .lyrics-open) { gap: 12px; }
+.ph-stage .sb-player:is(.stage, .lyrics-open) .pl-top { flex-direction: row; align-items: center; text-align: left; gap: 14px; }
+.ph-stage .sb-player:is(.stage, .lyrics-open) .pl-art { width: 72px; height: 72px; border-radius: 14px; }
+.ph-stage .sb-player:is(.stage, .lyrics-open) .pl-tx { flex: 1; width: auto; min-width: 0; align-items: flex-start; }
+.ph-stage .sb-player:is(.stage, .lyrics-open) .pl-ctl { gap: 18px; }
+.ph-stage .sb-player:is(.stage, .lyrics-open) .pl-ly { flex: none; margin: 2px 0 0; min-height: 180px; }
+.ph-stage .sb-player:is(.stage, .lyrics-open) .pl-ly-line { font-size: 22px; }
+/* The hover player with its lyrics open (the lyrics button, Justin: the art filled the card and the
+   lines ran over it): the same, the lyrics under it; no line to drag, they take the whole width. */
+.ph-stage .sb-player.lyrics-open .pl-ly { flex-basis: auto !important; border-left: 0; padding-left: 0; }
+.ph-stage .sb-player.lyrics-open .pl-ly-view { left: 0; }
+.ph-stage .sb-player.lyrics-open .pl-ly-note { left: 0; }
+.ph-stage .pl-ly-grip { display: none; }

@@ -519,3 +519,21 @@ export function actionsIn(value: unknown, out: Set<string> = new Set()): Set<str
   }
   return out;
 }
+
+/**
+ * A swipe across the held card on a phone (Justin): the hover key asks for the activity `steps`
+ * along from the one held (`swipe:<steps>:<key held>`), so the nav stays a plain string the PC
+ * answers like any other hold.
+ */
+export function swipeKey(key: string | null, dir: 1 | -1): string {
+  const was = readSwipe(key);
+  const steps = (was?.steps ?? 0) + dir;
+  const base = was ? was.base : key;
+  return `swipe:${steps}:${base ?? ''}`.slice(0, 128);
+}
+
+/** A swipe key's steps and the key first held (null: not a swipe key). */
+export function readSwipe(key: string | null): { steps: number; base: string | null } | null {
+  const m = key ? /^swipe:(-?\d{1,4}):(.*)$/s.exec(key) : null;
+  return m ? { steps: Number(m[1]), base: m[2] || null } : null;
+}
