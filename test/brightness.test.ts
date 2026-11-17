@@ -83,7 +83,8 @@ describe('brightness', () => {
     expect(surface).toEqual([]);
 
     emit('brightness', 70);
-    expect(surface.at(-1)).toEqual({ key: 'brightness', ms: FLASH_MS, level: 'expanded' });
+    // No nod: stepping the brightness made the island bounce every step (Justin).
+    expect(surface.at(-1)).toEqual({ key: 'brightness', ms: FLASH_MS, level: 'expanded', bump: false });
     expect(FLASH_MS).toBe(1600);
     expect(act.status()).toMatchObject({ active: true, summary: 'Brightness 70%' });
     expect(icon(act, env('compact'))).toMatchObject({ icon: 'sun' });

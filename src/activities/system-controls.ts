@@ -70,7 +70,8 @@ export class SystemControlsActivity extends BaseActivity {
     listen: <T>(event: string, cb: (payload: T) => void) => this.listen<T>(event, cb),
     on: (option) => this.ctx.options<Partial<Options>>()[option as keyof Options] !== false,
     show: (key, ms) => {
-      this.ctx.surface({ key, ms, level: 'expanded' });
+      // No nod: turning the sound or the brightness up and down made the island bounce every step (Justin).
+      this.ctx.surface({ key, ms, level: 'expanded', bump: false });
       this.ctx.update();
     },
     saw: (id, key, strength) => this.saw(id, key, strength),
