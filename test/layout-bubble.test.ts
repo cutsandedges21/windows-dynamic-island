@@ -22,13 +22,8 @@ describe('the bubble', () => {
     expect(bubbleSize('large')).toBe(heightFor('compact', 'large'));
   });
 
-  it('grows with the pill width setting, within limits', () => {
-    const at = (share: number) => bubbleSize('medium', share);
-    expect(at(0.08)).toBeLessThan(at(0.12));
-    expect(at(0.2)).toBeGreaterThan(at(0.12));
-    expect(at(0.06)).toBeGreaterThanOrEqual(Math.round(36 * 0.8));
-    expect(at(0.9)).toBeLessThanOrEqual(Math.round(36 * 1.45));
-    expect(at(Number.NaN)).toBe(at(0.12));
+  it('stays as tall as the compact pill however wide the pill is set', () => {
+    for (const share of [0.06, 0.12, 0.225, 0.9, Number.NaN]) expect((bubbleSize as (s: 'medium', w?: number) => number)('medium', share)).toBe(heightFor('compact', 'medium'));
   });
 
   it('is the same on every screen for the same settings, though the pill itself is not', () => {
@@ -38,11 +33,11 @@ describe('the bubble', () => {
     expect(big.w).not.toBe(small.w);
     // bubbleSize takes no screen at all: only the settings decide.
     expect(bubbleSize.length).toBe(1);
-    expect(bubbleSize('medium', share)).toBe(bubbleSize('medium', share));
+    expect(bubbleSize('medium')).toBe(bubbleSize('medium'));
   });
 
   it('keeps its size whatever the pill does (hover, expanded, open)', () => {
-    const d = bubbleSize('medium', 0.2);
+    const d = bubbleSize('medium');
     for (const level of ['idle', 'compact', 'expanded', 'maximum'] as const) {
       const b = bubbleRect(pillAt('top', level), 'top', d);
       expect([b.w, b.h]).toEqual([d, d]);

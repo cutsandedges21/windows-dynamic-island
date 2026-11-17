@@ -263,7 +263,9 @@ describe('tiles that are not placed yet', () => {
 describe('sizes', () => {
   it('reads back as the label the settings store', () => {
     expect([sizeOf(1, 1), sizeOf(2, 1), sizeOf(1, 2), sizeOf(2, 2)]).toEqual(['1x1', '2x1', '1x2', '2x2']);
-    expect(sizeOf(5, 0)).toBe('2x1');
+    expect(sizeOf(5, 0)).toBe('4x1');
+    // Music stretches across the whole grid: four columns.
+    expect([sizeOf(4, 1), sizeOf(4, 2), sizeOf(3, 4)]).toEqual(['4x1', '4x2', '4x4']);
   });
 });
 

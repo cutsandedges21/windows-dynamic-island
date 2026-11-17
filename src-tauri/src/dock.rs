@@ -172,7 +172,83 @@ fn fullscreen_in_front(own: isize) -> bool {
     }
     let (Some(r), Some(m)) = (crate::procs::window_rect(fg), monitors::of_window(HWND(fg as *mut _))) else { return false };
     let b = &m.bounds;
-    r.left <= b.x && r.top <= b.y && r.right >= b.x + b.width && r.bottom >= b.y + b.height
+    let covers = r.left <= b.x && r.top <= b.y && r.right >= b.x + b.width && r.bottom >= b.y + b.height;
+    covers && game_or_video(fg)
+}
+
+/// Video players: full screen, they're always a video.
+#[cfg(windows)]
+const VIDEO_PLAYERS: &[&str] = &[
+    "vlc.exe", "mpc-hc.exe", "mpc-hc64.exe", "mpc-be.exe", "mpc-be64.exe", "mpv.exe", "potplayer.exe", "potplayer64.exe",
+    "potplayermini.exe", "potplayermini64.exe", "wmplayer.exe", "microsoft.media.player.exe", "video.ui.exe", "kmplayer.exe",
+    "kmplayer64x.exe", "gom.exe", "smplayer.exe", "kodi.exe", "plex.exe", "plex htpc.exe", "stremio.exe", "mpvnet.exe",
+];
+
+/// Windows' list of games it has seen (Game Bar's), lower-cased exe paths, read once a minute.
+#[cfg(windows)]
+fn known_games() -> Vec<String> {
+    static CACHE: Mutex<Option<(std::time::Instant, Vec<String>)>> = Mutex::new(None);
+    let mut c = CACHE.lock().unwrap();
+    if let Some((at, list)) = c.as_ref() {
+        if at.elapsed().as_secs() < 60 {
+            return list.clone();
+        }
+    }
+    let mut list = Vec::new();
+    if let Ok(root) = windows_registry::CURRENT_USER.open(r"System\GameConfigStore\Children") {
+        if let Ok(names) = root.keys() {
+            for n in names {
+                if let Ok(path) = root.open(&n).and_then(|k| k.get_string("MatchedExeFullPath")) {
+                    if !path.is_empty() {
+                        list.push(path.to_lowercase());
+                    }
+                }
+            }
+        }
+    }
+    *c = Some((std::time::Instant::now(), list.clone()));
+    list
+}
+
+/// Only games and videos send the taskbar down: any other app full screen keeps it in sight.
+#[cfg(windows)]
+fn game_or_video(fg: isize) -> bool {
+    use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_RUNNING_D3D_FULL_SCREEN};
+    // A game in exclusive full screen.
+    if unsafe { SHQueryUserNotificationState() }.is_ok_and(|q| q == QUNS_RUNNING_D3D_FULL_SCREEN) {
+        return true;
+    }
+    let pid = crate::procs::window_pid(fg);
+    if pid == 0 {
+        return false;
+    }
+    if crate::game::game_state().game.is_some_and(|g| g.pid == pid) {
+        return true;
+    }
+    let Some(exe) = crate::game::exe_path(pid).map(|e| e.to_lowercase()) else { return false };
+    let game = known_games().contains(&exe);
+    let playing = crate::media::playing_app();
+    is_game_or_video(&exe, game, playing.as_deref())
+}
+
+/// `exe`: the full-screen window's program, lower case; `known_game`: Windows lists it as a game;
+/// `playing`: the app playing media now (media.rs's friendly name).
+#[cfg(windows)]
+fn is_game_or_video(exe: &str, known_game: bool, playing: Option<&str>) -> bool {
+    if known_game || crate::game::GAME_FOLDERS.iter().any(|f| exe.contains(f)) {
+        return true;
+    }
+    let name = exe.rsplit(['\\', '/']).next().unwrap_or(exe);
+    if VIDEO_PLAYERS.contains(&name) {
+        return true;
+    }
+    let Some(playing) = playing else { return false };
+    // A browser playing (a video full screen), not one in F11 with nothing playing.
+    if let Some((app, _)) = crate::media::BROWSERS.iter().find(|(_, e)| *e == name) {
+        return *app == playing;
+    }
+    // A Store app (Netflix, Disney+, Prime Video) full screen while something plays that isn't a browser or a music app.
+    name == "applicationframehost.exe" && !crate::media::BROWSERS.iter().any(|(a, _)| *a == playing) && !matches!(playing, "Spotify" | "Apple Music" | "Media Player")
 }
 
 /// The pointer is on the dock or anywhere on its way up: across the dock, from its usual top to the
@@ -406,6 +482,27 @@ pub fn quit(_app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn only_games_and_videos_count_as_full_screen() {
+        use super::is_game_or_video as gv;
+        // Games: from a store's folder, or one Windows lists.
+        assert!(gv(r"d:\steamlibrary\steamapps\common\hades\hades.exe", false, None));
+        assert!(gv(r"c:\games\minecraft\javaw.exe", true, None));
+        // Video players, playing or not.
+        assert!(gv(r"c:\program files\videolan\vlc\vlc.exe", false, None));
+        // A browser: a video only while it plays something.
+        assert!(gv(r"c:\program files\google\chrome\application\chrome.exe", false, Some("Chrome")));
+        assert!(!gv(r"c:\program files\google\chrome\application\chrome.exe", false, None));
+        assert!(!gv(r"c:\program files\google\chrome\application\chrome.exe", false, Some("Spotify")));
+        // Store video apps while something plays, not music.
+        assert!(gv(r"c:\windows\system32\applicationframehost.exe", false, Some("Netflix")));
+        assert!(!gv(r"c:\windows\system32\applicationframehost.exe", false, Some("Spotify")));
+        // Everything else Moss uses full screen keeps the taskbar.
+        assert!(!gv(r"c:\users\x\appdata\local\programs\microsoft vs code\code.exe", false, Some("Spotify")));
+        assert!(!gv(r"c:\program files\windowsapps\notion.exe", false, None));
+    }
+
     use super::{centre_of, place};
 
     #[test]

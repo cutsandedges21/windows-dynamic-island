@@ -24,14 +24,14 @@ import { cardChips, choosePrimary, type Candidate, type Choice as Picked, type S
 import type { MirrorFrame } from './mirror';
 import { Strip, type StripView } from './strip';
 import { lookOf, WidgetHost } from './widgets';
-import { DockHost } from './dock';
+import { DockHost, type DockFrame } from './dock';
 import { PillRenderer } from './renderer';
 import { menuMain, menuSegments } from './menu';
 import { fadeSegments, fadeSheet } from './fade-menu';
 import { quietMoon } from './quiet';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { applyGlass } from './glass';
-import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
+import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type Block, type DropZone, type SheetChip, type SheetView, type Tile } from './sheet';
 import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
@@ -60,7 +60,10 @@ const HOVER_HOLD_MS = 600;
 const WIDE_SIZES: TileSize[] = ['2x1', '2x2'];
 /** Music's lyrics: tall, so every line shows in full (Moss, 2026-11-13). */
 // Every size (Justin: 1x1, 1x2, 2x1, 2x2 and the tall ones); the line being sung stays in the middle of any of them.
-const LYRIC_SIZES: TileSize[] = ALL_TILE_SIZES;
+// Music stretches across 2 or 4 columns (Moss, 2026-11-17).
+const LYRIC_SIZES: TileSize[] = [...ALL_TILE_SIZES, ...FULL_WIDTH_SIZES];
+/** Music's player: two columns or the whole width, one row or two. */
+const MEDIA_SIZES: TileSize[] = [...WIDE_SIZES, '4x1', '4x2'];
 /** Island set Windows' taskbar to hide (kept across restarts and crashes, to put it back). */
 const HID_BAR_KEY = 'island.taskbar.hidWindows';
 function readFlag(key: string): boolean {
@@ -79,7 +82,7 @@ function writeFlag(key: string, on: boolean): void {
   }
 }
 
-const sizesOfKind = (k: string): TileSize[] => (k === 'lyrics' ? LYRIC_SIZES : NARROW_OK.has(k) ? TILE_SIZES : WIDE_SIZES);
+const sizesOfKind = (k: string): TileSize[] => (k === 'lyrics' ? LYRIC_SIZES : k === 'media' ? MEDIA_SIZES : NARROW_OK.has(k) ? TILE_SIZES : WIDE_SIZES);
 /** Row height per island size (the width comes from the pill). */
 const CELL_PX = { small: 80, medium: 92, large: 106 } as const;
 const SIZE_SCALE = { small: 0.88, medium: 1, large: 1.14 } as const;
@@ -382,6 +385,7 @@ export class Island {
         },
         music: () => this.dockMusic(),
         timer: () => this.dockTimer(),
+        claude: () => this.dockClaude,
         battery: () => this.dockBattery,
         muted: () => this.dockMuted,
         wifi: () => this.dockWifi,
@@ -397,8 +401,14 @@ export class Island {
           this.settings.island.taskbar.locked = on;
           this.saveSettings();
         },
-        open: () => {
+        size: () => this.settings.island.taskbar.size,
+        setSize: (size) => {
+          this.settings.island.taskbar.size = size;
+          this.saveSettings();
+        },
+        open: (id) => {
           this.view = 'main';
+          if (id && this.running.has(id)) this.pick(id, Date.now());
           this.open = true;
           this.schedule();
         },
@@ -426,6 +436,7 @@ export class Island {
     }, 15000);
     this.dock.start().catch((err) => native.log(`taskbar failed to start: ${String(err)}`));
     setInterval(() => {
+      if (this.settings.island.taskbar.on) void this.syncDockClaude();
       void this.dock?.tick();
       this.syncWindowsBar();
     }, 1000);
@@ -1020,7 +1031,7 @@ export class Island {
     // The bot stays beside where the pill rests, even while the idle pill is tucked away; it goes
     // only while the island moves screens or hides behind a full-screen app.
     const botShown = s.bot && !this.moving && !(fsHide && this.fullscreenOn !== null);
-    const botD = bubbleSize(s.size, s.widths.compact);
+    const botD = bubbleSize(s.size);
     const restPill = pillRect(this.area, anchor, w, h, s.edge);
     // The card is picked now so the bot can step aside when a card grows out of the pill.
     let picked = hidden ? null : this.pickSheet(choice, statuses, now, orient, w);
@@ -1652,7 +1663,7 @@ export class Island {
         const drag = this.gridDrag;
         const a = (arg ?? {}) as { key?: unknown; page?: unknown; col?: unknown; row?: unknown; w?: unknown; h?: unknown };
         if (!drag || a.key !== drag.key || typeof a.page !== 'number' || typeof a.col !== 'number' || typeof a.row !== 'number') return;
-        if (typeof a.w === 'number' && typeof a.h === 'number' && a.w <= 2 && a.h <= 4 && this.sizesFor(drag.key).includes(sizeOf(a.w, a.h))) {
+        if (typeof a.w === 'number' && typeof a.h === 'number' && a.w <= GRID_COLS && a.h <= 4 && this.sizesFor(drag.key).includes(sizeOf(a.w, a.h))) {
           drag.size = { w: a.w, h: a.h };
         }
         const at = { page: a.page, col: a.col, row: a.row };
@@ -2310,7 +2321,21 @@ export class Island {
   private dockMusic(): { title: string; artist: string; playing: boolean; art: string | null } | null {
     const env = { reason: 'open' as const, now: Date.now(), width: 400, vertical: false, interactive: true, surfaced: null };
     const t = this.running.get('music')?.tile?.(env);
-    return t && t.body.k === 'media' ? { title: t.body.title, artist: t.body.artist, playing: t.body.playing, art: t.body.art ?? null } : null;
+    // Its player, or its lyrics with Lyrics on: both carry the track.
+    return t && (t.body.k === 'media' || t.body.k === 'lyrics') ? { title: t.body.title, artist: t.body.artist, playing: t.body.playing, art: t.body.art ?? null } : null;
+  }
+
+  /** Claude's limits for the taskbar, asked of the Claude activity once a second. */
+  private dockClaude: DockFrame['claude'] = null;
+
+  private async syncDockClaude(): Promise<void> {
+    const act = this.running.get('claude');
+    try {
+      const l = act?.command ? ((await act.command('limits', null)) as { session: number | null; week: number | null } | null) : null;
+      this.dockClaude = l && (l.session != null || l.week != null) ? l : null;
+    } catch {
+      this.dockClaude = null;
+    }
   }
 
   /** The timer running, for the taskbar: the first one's time left. */

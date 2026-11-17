@@ -132,6 +132,15 @@ input[type='range'] { width: 220px; accent-color: var(--accent); }
 /* ------------------------------------------------------------------ activity list */
 
 .act-list { display: flex; flex-direction: column; gap: 6px; }
+.act-list [hidden] { display: none; }
+.act-search { display: flex; align-items: center; gap: 8px; height: 36px; margin: 0 0 12px; padding: 0 10px 0 12px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.05); cursor: text; }
+.act-search:focus-within { border-color: var(--accent); }
+.act-search .ico { display: flex; color: var(--dim); width: 15px; height: 15px; }
+.act-search .ico svg { width: 15px; height: 15px; }
+.act-search input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; color: inherit; font: inherit; outline: none; }
+.act-search input::placeholder { color: var(--dim); }
+.act-search input::-webkit-search-cancel-button { display: none; }
+.act-empty { margin: 4px 2px; }
 .band { display: flex; align-items: baseline; gap: 10px; padding: 14px 4px 4px; }
 .band:first-child { padding-top: 0; }
 .band-name { font-weight: 600; font-size: 13px; }

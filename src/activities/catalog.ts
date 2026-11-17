@@ -753,3 +753,11 @@ export const CATALOG: ActivityMeta[] = [
 ];
 
 export const CATALOG_BY_ID = new Map(CATALOG.map((m) => [m.id, m]));
+
+/** Whether an activity matches the search: its name, what it does, or one of its options. */
+export function activityMatches(meta: Pick<ActivityMeta, 'name' | 'description' | 'options'>, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const text = [meta.name, meta.description, ...meta.options.map((o) => ('label' in o ? o.label : ''))].join(' ').toLowerCase();
+  return words.every((w) => text.includes(w));
+}

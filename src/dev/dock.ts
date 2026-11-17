@@ -4,7 +4,7 @@
 
 import type { DockFrame } from '../core/dock';
 import type { emitLocal as EmitLocal } from '../core/native';
-import { DOCK_ITEMS, type DockItem, type PillColor } from '../core/settings';
+import { DOCK_ITEMS, type DockItem, type DockSize, type PillColor } from '../core/settings';
 
 export function dockPreview(emitLocal: typeof EmitLocal): void {
   const q = new URLSearchParams(location.search);
@@ -15,6 +15,7 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
     apps: [app('code', 'Visual Studio Code', true, true), app('chrome', 'Chrome', true), app('spotify', 'Spotify', true), app('explorer', 'File Explorer', false)],
     music: { title: 'Blinding Lights', artist: 'The Weeknd', playing: mode !== 'paused', art: null },
     timer: '4:32',
+    claude: { session: 42, week: 18 },
     battery: { percent: mode === 'low' ? 9 : 76, charging: mode === 'charging' },
     muted: false,
     wifi: true,
@@ -23,6 +24,7 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
     color: (q.get('look') as PillColor | null) ?? 'black',
     glass: 50,
     locked: false,
+    size: (q.get('size') as DockSize | null) ?? 'medium',
   };
   document.documentElement.classList.add('dock-preview');
   // The dock window asks for its frame once it is ready; send it then, and again in case it was early.

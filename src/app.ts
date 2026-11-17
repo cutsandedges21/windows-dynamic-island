@@ -5,7 +5,7 @@
 import './styles/app.css';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { widgetsPage } from './widgets-page';
-import { CATALOG_BY_ID, type ActivityMeta, type Band, type OptionSpec } from './activities/catalog';
+import { activityMatches, CATALOG_BY_ID, type ActivityMeta, type Band, type OptionSpec } from './activities/catalog';
 import { SpringSet } from './core/animator';
 import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from './core/format';
 import { icon, type IconName } from './core/icons';
@@ -126,11 +126,13 @@ function render(): void {
     return;
   }
   const scroll = root.querySelector('.content')?.scrollTop ?? 0;
+  const searching = (document.activeElement as HTMLElement | null)?.dataset?.focus === 'act-search';
   const body =
     page === 'activities' ? activitiesPage() : page === 'workspaces' ? workspacesView().el : page === 'widgets' ? widgetsPage({ settings: () => settings, save, render, mac: platform === 'macos' }) : page === 'controls' ? controlsPage() : settingsPage();
   root.replaceChildren(h('div', { class: 'body' }, [nav(), h('main', { class: 'content' }, [body])]));
   const content = root.querySelector('.content');
   if (content) content.scrollTop = scroll;
+  if (searching) root.querySelector<HTMLInputElement>('[data-focus="act-search"]')?.focus();
   if (page === 'workspaces') workspacesView().shown();
 }
 
@@ -180,6 +182,27 @@ function orderedIds(): Array<{ kind: 'band'; band: Band | 'available' } | { kind
   return out;
 }
 
+/** Activities' search: kept across re-renders so a toggle doesn't clear it. */
+let actQuery = '';
+
+/** Shows only the cards that match; the bands hide while searching, as they only make sense in the full list. */
+function filterActivities(list: HTMLElement, empty: HTMLElement): void {
+  const q = actQuery.trim();
+  let shown = 0;
+  for (const el of Array.from(list.children) as HTMLElement[]) {
+    if (el.classList.contains('band')) el.hidden = Boolean(q);
+    else {
+      const meta = CATALOG_BY_ID.get(el.dataset.id ?? '');
+      const ok = !meta || activityMatches(meta, q);
+      el.hidden = !ok;
+      if (ok) shown++;
+    }
+  }
+  list.classList.toggle('searching', Boolean(q));
+  empty.hidden = !q || shown > 0;
+  empty.textContent = `Nothing matches “${q}”.`;
+}
+
 function activitiesPage(): HTMLElement {
   const list = h('div', { class: 'act-list' });
   for (const item of orderedIds()) {
@@ -188,10 +211,27 @@ function activitiesPage(): HTMLElement {
       list.append(h('div', { class: 'band', 'data-band': b.id }, [h('span', { class: 'band-name', text: b.label }), h('span', { class: 'band-help', text: b.help })]));
     } else list.append(activityCard(CATALOG_BY_ID.get(item.id)!));
   }
+  const empty = h('p', { class: 'muted act-empty' });
+  const input = h('input', { type: 'search', placeholder: 'Search activities', value: actQuery, spellcheck: 'false', 'aria-label': 'Search activities', 'data-focus': 'act-search' }) as HTMLInputElement;
+  input.addEventListener('input', () => {
+    actQuery = input.value;
+    filterActivities(list, empty);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && input.value) {
+      e.stopPropagation();
+      input.value = actQuery = '';
+      filterActivities(list, empty);
+    }
+  });
+  const search = h('label', { class: 'act-search' }, [h('span', { class: 'ico', html: icon('search') }), input]);
+  filterActivities(list, empty);
   return h('div', { class: 'page' }, [
     h('div', { class: 'page-head' }, [h('h1', { text: 'Activities' }), h('p', { text: 'What the island shows, how much each thing matters, and how it behaves. Drag to reorder.' })]),
     sizeCard(),
+    search,
     list,
+    empty,
   ]);
 }
 

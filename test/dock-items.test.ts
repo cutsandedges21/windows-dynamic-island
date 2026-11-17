@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
-import { batteryTone, DOCK_LABELS, toggleDockItem } from '../src/core/dock';
+import { batteryTone, claudeUsageText, DOCK_LABELS, DOCK_ZOOM, toggleDockItem } from '../src/core/dock';
 import { DOCK_ITEMS, migrate } from '../src/core/settings';
 
 describe('taskbar items', () => {
@@ -29,5 +29,22 @@ describe('taskbar items', () => {
     expect(batteryTone({ percent: 10, charging: true })).toBe('charging');
     expect(batteryTone({ percent: 10, charging: false })).toBe('low');
     expect(batteryTone({ percent: 80, charging: false })).toBe('');
+  });
+});
+
+describe('taskbar Claude usage and sizes', () => {
+  it('reads S: xx% | W: xx%, leaving out what is not known', () => {
+    expect(claudeUsageText({ session: 42.4, week: 18 })).toBe('S: 42% | W: 18%');
+    expect(claudeUsageText({ session: null, week: 7 })).toBe('W: 7%');
+    expect(claudeUsageText({ session: 100, week: null })).toBe('S: 100%');
+  });
+
+  it('is Medium (the size it was built at) unless a size was saved', () => {
+    expect(migrate({}).island.taskbar.size).toBe('medium');
+    expect(migrate({ island: { taskbar: { size: 'large' } } }).island.taskbar.size).toBe('large');
+    expect(migrate({ island: { taskbar: { size: 'huge' } } }).island.taskbar.size).toBe('medium');
+    expect(DOCK_ZOOM.medium).toBe(1);
+    expect(DOCK_ZOOM.small).toBeLessThan(1);
+    expect(DOCK_ZOOM.large).toBeGreaterThan(1);
   });
 });

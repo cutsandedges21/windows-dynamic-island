@@ -56,7 +56,7 @@ const UDP4_SEND: u16 = 42;
 /// The internet stand-in when the game's server ignores ICMP.
 const INTERNET: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
 /// Program folders of the stores Island recognises for games not run by Steam.
-const GAME_FOLDERS: &[&str] = &[
+pub(crate) const GAME_FOLDERS: &[&str] = &[
     r"\steamapps\common\",
     r"\epic games\",
     r"\xboxgames\",

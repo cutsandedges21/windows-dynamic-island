@@ -2169,6 +2169,8 @@ html[data-pill='glass'] .dock { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45
 .dock .dk-batt[data-tone='low'] > span { color: #ff453a; }
 .dock .dk-wifi, .dock .dk-sound { width: 34px; padding: 0; }
 .dock .dk-timer span { font: 600 15px/1 var(--font); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+.dock .dk-claude { padding: 0 10px; }
+.dock .dk-claude span { font: 600 13px/1 var(--font); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dock .dk-clock { flex-direction: column; gap: 2px; padding: 0 10px; text-align: center; }
 .dock .dk-clock b { font: 650 14px/1 var(--font); }
 .dock .dk-clock span { font: 500 11px/1 var(--font); color: var(--muted); }

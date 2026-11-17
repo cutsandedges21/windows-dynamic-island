@@ -44,10 +44,12 @@ export function growsOf(c: Pick<ActivityConfig, 'grows'> | undefined, fallback: 
 }
 
 /** Cell sizes in the open island's grid: columns x rows. */
-export type TileSize = '1x1' | '2x1' | '1x2' | '2x2' | '1x4' | '2x4';
+export type TileSize = '1x1' | '2x1' | '1x2' | '2x2' | '1x4' | '2x4' | '4x1' | '4x2' | '4x4';
 export const TILE_SIZES: TileSize[] = ['1x1', '2x1', '1x2', '2x2'];
 /** Every size a tile can be saved at: the four, and the tall ones only the lyrics tile takes. */
 export const ALL_TILE_SIZES: TileSize[] = [...TILE_SIZES, '1x4', '2x4'];
+/** Across the whole grid, four columns: only Music (Now playing) stretches that far (Moss, 2026-11-17). */
+export const FULL_WIDTH_SIZES: TileSize[] = ['4x1', '4x2', '4x4'];
 
 /** A widget on the desktop (src/core/widgets.ts): an activity's Control Center tile, or the day and time. */
 export interface DesktopWidget {
@@ -73,8 +75,12 @@ export interface ItemLook {
 }
 
 /** What the taskbar can show, in its order (Settings › Widgets › Show on the taskbar, or its right-click menu). */
-export const DOCK_ITEMS = ['start', 'apps', 'music', 'timer', 'battery', 'wifi', 'sound', 'clock', 'notifications'] as const;
+export const DOCK_ITEMS = ['start', 'apps', 'music', 'timer', 'claude', 'battery', 'wifi', 'sound', 'clock', 'notifications'] as const;
 export type DockItem = (typeof DOCK_ITEMS)[number];
+
+/** The taskbar's size (right-click, or Settings › Widgets); Medium is the size it was first built at. */
+export const DOCK_SIZES = ['small', 'medium', 'large'] as const;
+export type DockSize = (typeof DOCK_SIZES)[number];
 
 export const ITEM_COLORS: ReadonlyArray<ItemLook['color']> = ['island', 'black', 'white', 'matte-black', 'matte-white', 'glass'];
 
@@ -157,7 +163,7 @@ export interface Settings {
      * The taskbar at the bottom (src/core/dock.ts); `hideWindows`: Windows' own taskbar hides itself
      * meanwhile; `centre`: where it was dragged to, 0..1 across the screen (-1: the middle).
      */
-    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; locked: boolean; hidden: DockItem[] };
+    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; locked: boolean; hidden: DockItem[]; size: DockSize };
     /** The island is off the screen until this time (epoch ms); 0: shown. HIDE_UNTIL_SHOWN: until the user brings it back. */
     hiddenUntil: number;
     /** Faded from the right-click menu's Fade: see-through and click-through until Show (kept across restarts). */
@@ -282,7 +288,7 @@ export function defaultSettings(): Settings {
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       widgets: { on: false, items: [], look: { color: 'island', glass: GLASS_DEFAULT } },
-      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, locked: false, hidden: [] },
+      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, locked: false, hidden: [], size: 'medium' },
       hiddenUntil: 0,
       faded: false,
       smartFade: false,
@@ -414,7 +420,7 @@ export function migrate(saved: unknown): Settings {
   const tileKey = (key: string) => claudeTile(controlsTile(key));
   const tiles = (v: unknown) => [...new Set(strings(v).map(tileKey).filter(Boolean))];
   const sizes: Record<string, TileSize> = {};
-  if (isObj(savedGrid.sizes)) for (const [k, v] of Object.entries(savedGrid.sizes)) if (ALL_TILE_SIZES.includes(v as TileSize) && tileKey(k)) sizes[tileKey(k)] = v as TileSize;
+  if (isObj(savedGrid.sizes)) for (const [k, v] of Object.entries(savedGrid.sizes)) if ((ALL_TILE_SIZES.includes(v as TileSize) || FULL_WIDTH_SIZES.includes(v as TileSize)) && tileKey(k)) sizes[tileKey(k)] = v as TileSize;
   // Pages: tile keys (each on one page at most) and nulls for the empty cells the user left.
   const seen = new Set<string>();
   const pages: Array<Array<string | null>> = [];
@@ -436,7 +442,7 @@ export function migrate(saved: unknown): Settings {
   const savedBar = isObj(saved.island) && isObj(saved.island.taskbar) ? saved.island.taskbar : {};
   const centre = typeof savedBar.centre === 'number' && savedBar.centre >= 0 && savedBar.centre <= 1 ? savedBar.centre : -1;
   const barHidden = Array.isArray(savedBar.hidden) ? DOCK_ITEMS.filter((k) => (savedBar.hidden as unknown[]).includes(k)) : [];
-  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), locked: savedBar.locked === true, hidden: barHidden };
+  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), locked: savedBar.locked === true, hidden: barHidden, size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium' };
   out.island.displayIds = strings(isObj(saved.island) ? saved.island.displayIds : null);
   if (!Number.isFinite(out.island.hiddenUntil) || out.island.hiddenUntil < 0) out.island.hiddenUntil = 0;
   out.island.hiddenUntil = Math.min(out.island.hiddenUntil, HIDE_UNTIL_SHOWN);

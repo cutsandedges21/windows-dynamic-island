@@ -2,11 +2,11 @@
 // how it looks, whether Windows' own taskbar hides, whether it can be dragged). Both are drawn by
 // the island (src/core/widgets.ts, src/core/dock.ts); this page only edits their settings.
 
-import { section, row, toggle } from './controls';
+import { section, row, segmented, toggle } from './controls';
 import { icon, type IconName } from './core/icons';
 import { sendTo } from './core/native';
-import { DOCK_LABELS, toggleDockItem } from './core/dock';
-import { DOCK_ITEMS, type ItemLook, type Settings } from './core/settings';
+import { DOCK_LABELS, DOCK_SIZE_LABELS, toggleDockItem } from './core/dock';
+import { DOCK_ITEMS, DOCK_SIZES, type DockSize, type ItemLook, type Settings } from './core/settings';
 import { MAX_WIDGETS, newWidgetId, WIDGET_KINDS } from './core/widgets';
 import { h } from './dom';
 
@@ -168,6 +168,15 @@ export function widgetsPage(host: WidgetsPageHost): HTMLElement {
     ...(t.on
       ? [
           dockPicker(host),
+          row(
+            'Size',
+            'Medium is the size it has always been.',
+            segmented(t.size, DOCK_SIZES.map((k) => [k, DOCK_SIZE_LABELS[k]] as [DockSize, string]), (v) => {
+              t.size = v;
+              host.save(true);
+              host.render();
+            }),
+          ),
           ...lookPicker(t.look, host),
           row(
             "Hide Windows' taskbar",

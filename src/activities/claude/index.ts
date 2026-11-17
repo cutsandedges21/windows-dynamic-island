@@ -2360,6 +2360,11 @@ export class ClaudeActivity extends BaseActivity {
 
   async command(cmd: string, arg: unknown): Promise<unknown> {
     switch (cmd) {
+      // The taskbar's S: xx% | W: xx%.
+      case 'limits': {
+        const d = this.limitsNow();
+        return d ? { session: d.fiveHour?.pct ?? null, week: d.sevenDay?.pct ?? null } : null;
+      }
       case 'snapshot':
         return {
           available: Boolean(this.env) || native.demo,

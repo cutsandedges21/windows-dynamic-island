@@ -25,6 +25,14 @@ use windows::Win32::UI::Shell::{ApplicationActivationManager, IApplicationActiva
 use crate::overlay::LABEL as ISLAND;
 use crate::procs::WindowRow;
 
+/// The app playing media now (its friendly name), for the taskbar: a full-screen browser counts as a
+/// video only while it plays something.
+static PLAYING: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn playing_app() -> Option<String> {
+    PLAYING.lock().unwrap().clone()
+}
+
 const FILETIME_UNIX_OFFSET_MS: i64 = 11_644_473_600_000;
 const MAX_THUMB: u32 = 1_500_000;
 
@@ -176,6 +184,7 @@ pub fn start(app: AppHandle) {
         let mut last = MediaState::default();
         loop {
             let state = read(&manager, &mut cache).unwrap_or_else(|_| MediaState { status: "none".into(), ..Default::default() });
+            *PLAYING.lock().unwrap() = if state.status == "playing" { state.app.clone() } else { None };
             if state != last {
                 let _ = app.emit_to(ISLAND, "media", state.clone());
                 last = state;
@@ -228,7 +237,7 @@ pub async fn media_control(action: String, value: Option<f64>) -> bool {
 }
 
 /// Browsers, whose media session is one of their tabs: (friendly_app name, process).
-const BROWSERS: [(&str, &str); 6] =
+pub(crate) const BROWSERS: [(&str, &str); 6] =
     [("Chrome", "chrome.exe"), ("Edge", "msedge.exe"), ("Brave", "brave.exe"), ("Opera", "opera.exe"), ("Arc", "arc.exe"), ("Firefox", "firefox.exe")];
 
 /// Brings forward whatever is playing: the browser tab it's in, else the app's window

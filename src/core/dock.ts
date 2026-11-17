@@ -11,7 +11,7 @@
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tauri-apps/api/menu';
 import { applyGlass } from './glass';
 import { isTauri, native, on, sendTo, type DockIconRect, type InstalledApp, type LiveWindow } from './native';
-import { DOCK_ITEMS, type DockItem, type PillColor } from './settings';
+import { DOCK_ITEMS, DOCK_SIZES, type DockItem, type DockSize, type PillColor } from './settings';
 
 /** One app on the dock. */
 export interface DockApp {
@@ -31,6 +31,8 @@ export interface DockFrame {
   apps: DockApp[];
   music: { title: string; artist: string; playing: boolean; art: string | null } | null;
   timer: string | null;
+  /** Claude's limits used, whole percents: the session (5 hours) and the week. */
+  claude: { session: number | null; week: number | null } | null;
   /** This PC's battery; null on a desktop. */
   battery: { percent: number; charging: boolean } | null;
   muted: boolean;
@@ -42,6 +44,7 @@ export interface DockFrame {
   glass?: number;
   /** Dragging it is off (right-click › Lock in place). */
   locked: boolean;
+  size: DockSize;
 }
 
 /** What the taskbar's right-click menu changes. */
@@ -51,6 +54,7 @@ export interface DockPref {
   centre?: boolean;
   /** Show or hide one of its items. */
   toggle?: DockItem;
+  size?: DockSize;
 }
 
 /** Each item's name, for the right-click menu and Settings. */
@@ -59,6 +63,7 @@ export const DOCK_LABELS: Record<DockItem, string> = {
   apps: 'Apps',
   music: 'Now playing',
   timer: 'Timer',
+  claude: 'Claude usage',
   battery: 'Battery',
   wifi: 'Wi-Fi',
   sound: 'Sound',
@@ -88,7 +93,7 @@ export type DockAct =
   | { kind: 'close'; key: string; rect?: DockIconRect }
   /** Dragged to place `to` in the row (its index once dropped). */
   | { kind: 'move'; key: string; to: number }
-  | { kind: 'start' | 'quick' | 'notifications' | 'music' | 'timer' };
+  | { kind: 'start' | 'quick' | 'notifications' | 'music' | 'timer' | 'claude' };
 
 /** Apps on the dock, at most. */
 export const DOCK_MAX = 14;
@@ -184,6 +189,7 @@ export interface DockHooks {
   setPinned(apps: InstalledApp[]): void;
   music(): DockFrame['music'];
   timer(): string | null;
+  claude(): DockFrame['claude'];
   battery(): DockFrame['battery'];
   muted(): boolean;
   wifi(): boolean | null;
@@ -192,13 +198,15 @@ export interface DockHooks {
   look(): { accent: string; color: PillColor; glass?: number };
   /** One of an activity's actions (`act:music:toggle`). */
   act(action: string): void;
-  /** Opens the island (the timer: its time is there). */
-  open(): void;
+  /** Opens the island, on activity `id` when given (the timer: its time is there). */
+  open(id?: string): void;
   /** Where the taskbar was dragged to, 0..1 across the screen (-1: the middle). */
   centre(): number;
   saveCentre(centre: number): void;
   locked(): boolean;
   setLocked(on: boolean): void;
+  size(): DockSize;
+  setSize(size: DockSize): void;
 }
 
 export class DockHost {
@@ -225,6 +233,7 @@ export class DockHost {
       }),
       await on<DockPref>('dock-pref', (p) => {
         if (typeof p?.locked === 'boolean') this.hooks.setLocked(p.locked);
+        if (typeof p?.size === 'string' && (DOCK_SIZES as readonly string[]).includes(p.size)) this.hooks.setSize(p.size);
         if (typeof p?.toggle === 'string' && (DOCK_ITEMS as readonly string[]).includes(p.toggle)) this.hooks.setHidden(toggleDockItem(this.hooks.hidden(), p.toggle));
         if (p?.centre === true) void native.dockAt(-1, true);
         void this.tick();
@@ -269,12 +278,14 @@ export class DockHost {
         apps: this.apps,
         music: this.hooks.music(),
         timer: this.hooks.timer(),
+        claude: this.hooks.claude(),
         battery: this.hooks.battery(),
         muted: this.hooks.muted(),
         wifi: this.hooks.wifi(),
         hidden: this.hooks.hidden(),
         ...this.hooks.look(),
         locked: this.hooks.locked(),
+        size: this.hooks.size(),
       };
       const json = JSON.stringify(frame);
       if (json !== this.sent) {
@@ -293,7 +304,8 @@ export class DockHost {
       return;
     }
     if (a.kind === 'music') return this.hooks.act('act:music:toggle');
-    if (a.kind === 'timer') return this.hooks.open();
+    if (a.kind === 'timer') return this.hooks.open('timer');
+    if (a.kind === 'claude') return this.hooks.open('claude');
     if (typeof (a as { key?: unknown }).key !== 'string') return;
     const app = this.apps.find((x) => x.key === (a as { key: string }).key);
     if (!app) return;
@@ -353,9 +365,14 @@ async function dockMenu(f: DockFrame, pref: (p: DockPref) => void): Promise<void
     text: 'Show on the taskbar',
     items: await Promise.all(DOCK_ITEMS.map((k) => CheckMenuItem.new({ text: DOCK_LABELS[k], checked: !(f.hidden ?? []).includes(k), action: () => pref({ toggle: k }) }))),
   });
+  const sizes = await Submenu.new({
+    text: 'Size',
+    items: await Promise.all(DOCK_SIZES.map((k) => CheckMenuItem.new({ text: DOCK_SIZE_LABELS[k], checked: f.size === k, action: () => pref({ size: k }) }))),
+  });
   const menu = await Menu.new({
     items: [
       show,
+      sizes,
       await PredefinedMenuItem.new({ item: 'Separator' }),
       await CheckMenuItem.new({ text: 'Lock in place', checked: f.locked, action: () => pref({ locked: !f.locked }) }),
       await MenuItem.new({ text: 'Back to the middle', action: () => pref({ centre: true }) }),
@@ -386,6 +403,19 @@ const RISE_GROW = 0.4;
 const RISE_LIFT = 8;
 /** Room above the bar for risen icons, CSS px. */
 const HEADROOM = 14;
+
+export const DOCK_SIZE_LABELS: Record<DockSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
+
+/** Each size's scale; Medium is the size the taskbar was first built at. */
+export const DOCK_ZOOM: Record<DockSize, number> = { small: 0.84, medium: 1, large: 1.18 };
+
+/** The Claude item's text: `S: 42% | W: 18%`, a part left out while it isn't known. */
+export function claudeUsageText(c: { session: number | null; week: number | null }): string {
+  const parts: string[] = [];
+  if (c.session != null) parts.push(`S: ${Math.round(c.session)}%`);
+  if (c.week != null) parts.push(`W: ${Math.round(c.week)}%`);
+  return parts.join(' | ');
+}
 
 /**
  * The hover rise, as on a Mac: how much an icon `d` CSS px from the pointer rises and grows (0..1),
@@ -440,6 +470,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   timer.append(timerText);
   timer.title = 'Timer';
   timer.addEventListener('click', () => send({ kind: 'timer' }));
+  const claude = el('button', 'dk-claude');
+  const claudeText = el('span', '');
+  claude.append(claudeText);
+  claude.title = 'Claude usage: session and week';
+  claude.addEventListener('click', () => send({ kind: 'claude' }));
   const sepB = el('i', 'dk-sep');
   const battery = el('button', 'dk-batt');
   const battBody = el('i', 'dk-bbody');
@@ -463,7 +498,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const bell = el('button', 'dk-btn dk-bell', SVG.bell);
   bell.title = 'Notifications';
   bell.addEventListener('click', () => send({ kind: 'notifications' }));
-  bar.append(start, appsBox, sepA, music, timer, sepB, battery, wifi, sound, clock, bell);
+  bar.append(start, appsBox, sepA, music, timer, claude, sepB, battery, wifi, sound, clock, bell);
   const appEls = new Map<string, HTMLElement>();
   const appOf = (key: string) => frame?.apps.find((x) => x.key === key) ?? null;
   /** Where an app's icon is in this window (CSS px), for its window to fly out of or into. */
@@ -605,6 +640,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (!f) return;
     const root = document.documentElement;
     root.style.setProperty('--accent', f.accent);
+    bar.style.zoom = String(DOCK_ZOOM[f.size] ?? 1);
     root.dataset.pill = f.color;
     applyGlass(root, f.glass);
     bar.classList.toggle('locked', f.locked);
@@ -667,7 +703,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const t = off.has('timer') ? null : f.timer;
     timer.hidden = !t;
     timerText.textContent = t ?? '';
-    sepA.hidden = !m && !t;
+    // Claude's limits: S: 42% | W: 18%.
+    const c = off.has('claude') ? null : f.claude;
+    claude.hidden = !c;
+    if (c) claudeText.textContent = claudeUsageText(c);
+    sepA.hidden = !m && !t && !c;
     // The battery: a small one filled to its charge, the percent beside it.
     const b = off.has('battery') ? null : f.battery;
     battery.hidden = !b;

@@ -112,15 +112,13 @@ export function tuckedRect(area: Area, anchor: Anchor, w: number, h: number): Re
 export const BUBBLE_GAP = 6;
 
 /**
- * The bot's diameter, CSS px. It grows with the pill's resting (compact) width setting and the Size
- * setting, and nothing else: not the screen it is on (CSS px already undo display scaling, and the
- * width is taken as the setting, not as pixels of this screen), and not the pill's level, so hovering
- * or opening the island never resizes it. At the default width it is as tall as the compact pill.
+ * The bot's diameter, CSS px (the Shelf's circle takes the same): as tall as the compact pill at the
+ * Size setting, whatever its width, so the circles line up with the pill. Not the screen it is on
+ * (CSS px already undo display scaling), and not the pill's level, so hovering or opening the island
+ * never resizes it.
  */
-export function bubbleSize(size: IslandSize, compactShare: number = DEFAULT_WIDTHS.compact): number {
-  const share = Number.isFinite(compactShare) && compactShare > 0 ? compactShare : DEFAULT_WIDTHS.compact;
-  const grow = Math.min(1.45, Math.max(0.8, (share / DEFAULT_WIDTHS.compact) ** 0.35));
-  return Math.round(heightFor('compact', size) * grow);
+export function bubbleSize(size: IslandSize): number {
+  return heightFor('compact', size);
 }
 
 /**
