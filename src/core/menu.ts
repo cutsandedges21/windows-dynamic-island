@@ -135,10 +135,11 @@ export function menuSegments(shown: MenuShown, st: MenuState, look: MenuLook = D
       case 'fade':
         // Like tapping Ctrl over the island (it fades, clicks go through), but it stays that way until Show:
         // right-click the faded island and the menu comes back with this button saying Show (Justin's old Hide).
+        // Fade opens its own card first (fade-menu.ts): fade now, then the Ctrl and Smart fade settings.
         segs.push(
           st.faded
             ? { t: 'button', key: 'menu/fade', icon: 'eye', ...named('Show', 'Bring the island back'), action: 'island:fade', style: 'primary', side, prio: 2 }
-            : { t: 'button', key: 'menu/fade', icon: 'fade', ...named('Fade', 'Fade the island and let clicks through, until you right-click it and press Show'), action: 'island:fade', style: 'ghost', side, prio: 2 },
+            : { t: 'button', key: 'menu/fade', icon: 'fade', ...named('Fade', 'Fade the island now, or choose how it fades on its own'), action: 'island:fade-menu', style: 'ghost', side, prio: 2 },
         );
         break;
       case 'reminders':

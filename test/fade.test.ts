@@ -2,6 +2,7 @@
 // stays that way until Show. Its own item, beside Moss's Hide, which is left as it is.
 
 import { describe, expect, it } from 'vitest';
+import { fadeSegments, fadeSheet } from '../src/core/fade-menu';
 import { DEFAULT_ICON_ONLY, FULL_MENU, MENU_ITEMS, menuSegments, normalizeMenuOrder, type MenuState } from '../src/core/menu';
 import type { Seg } from '../src/core/segments';
 import { defaultSettings, HIDE_CHOICES, migrate } from '../src/core/settings';
@@ -24,8 +25,9 @@ describe('the menu\'s Fade', () => {
     expect(off.label).toBe('Fade');
     expect(off.icon).toBe('fade');
     expect(off.style).toBe('ghost');
-    expect(off.tip).toBe('Fade the island and let clicks through, until you right-click it and press Show');
-    expect(off.action).toBe('island:fade');
+    expect(off.tip).toBe('Fade the island now, or choose how it fades on its own');
+    // Fade opens its card (fade now, Peek lasts, Smart fade); Show brings the island back at once.
+    expect(off.action).toBe('island:fade-menu');
     const on = fadeButton(true);
     expect(on.label).toBe('Show');
     expect(on.icon).toBe('eye');
@@ -33,6 +35,23 @@ describe('the menu\'s Fade', () => {
     expect(on.action).toBe('island:fade');
     // Unset (the Settings preview) reads as not faded.
     expect(menuSegments(FULL_MENU, st).find((x) => x.key === 'menu/fade')).toEqual(off);
+  });
+
+  it('opened: fade now first, then how long a Ctrl tap lasts and Smart fade, as they are set', () => {
+    const v = fadeSheet({ faded: false, peekUntilBack: true, smartFade: false });
+    const choices = (k: string) => (v.blocks.find((b) => b.key === k) as Extract<(typeof v.blocks)[number], { t: 'choices' }>).items;
+    expect(v.blocks.map((b) => b.key)).toEqual(['head', 'now', 'lasts-label', 'lasts', 'smart']);
+    expect(choices('now')).toMatchObject([{ label: 'Fade now', action: 'island:fade' }]);
+    expect(choices('lasts').map((c) => [c.label, c.selected, c.action, c.arg])).toEqual([
+      ['Until the pointer moves off', false, 'island:peek-lasts', 'off'],
+      ['Until it comes back', true, 'island:peek-lasts', 'back'],
+    ]);
+    expect(choices('smart')).toMatchObject([{ label: 'Smart fade: off', selected: false, action: 'island:smart-fade' }]);
+    // Faded already: the first choice brings it back.
+    expect((fadeSheet({ faded: true, peekUntilBack: false, smartFade: true }).blocks[1] as { items: Array<{ label: string }> }).items[0].label).toBe('Show the island');
+    // The pill: back to the menu, then its name.
+    expect(fadeSegments(false).map((x) => x.key)).toEqual(['fade/back', 'fade/icon', 'fade/text']);
+    expect(fadeSegments(true).map((x) => x.key)).toEqual(['fade/back', 'fade/icon']);
   });
 
   it('as a bare icon keeps its name in the tip', () => {

@@ -27,6 +27,7 @@ import { lookOf, WidgetHost } from './widgets';
 import { DockHost } from './dock';
 import { PillRenderer } from './renderer';
 import { menuMain, menuSegments } from './menu';
+import { fadeSegments, fadeSheet } from './fade-menu';
 import { quietMoon } from './quiet';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { applyGlass } from './glass';
@@ -45,7 +46,7 @@ import { phoneNative } from '../remote/native';
 import { HELLO_FOLDERS, PHONE_ISLAND_ACTIONS, type BotState, type Nav, type ScreenState } from '../remote/protocol';
 import { urgentIds } from '../remote/views';
 
-type View = 'main' | 'overflow' | 'menu' | 'hide';
+type View = 'main' | 'overflow' | 'menu' | 'hide' | 'fade';
 
 const levelIdx = (l: Level) => LEVELS.indexOf(l);
 /** Tile kinds that read well in a single column. */
@@ -920,6 +921,9 @@ export class Island {
       } else if (this.view === 'hide') {
         segs = this.hideSegments(vertical);
         viewKey = 'hide';
+      } else if (this.view === 'fade') {
+        segs = fadeSegments(vertical);
+        viewKey = 'fade';
       } else if (this.view === 'menu') {
         const state = { anchor, dnd: this.settings.general.dnd, mac: platform === 'macos', reminders: this.running.has('reminders'), faded: s.faded };
         const look = { order: s.menuOrder, iconOnly: s.menuIconOnly, settingsIconOnly: s.menuSettingsIconOnly };
@@ -1293,6 +1297,10 @@ export class Island {
   private pickSheet(choice: Picked, statuses: Map<string, ActivityStatus>, now: number, orient: Orientation, pillW: number): { owner: string; view: SheetView } | null {
     this.raisedCard = false;
     if (this.view === 'hide' && !this.previewLevel) return this.hideSheet(now);
+    if (this.view === 'fade' && !this.previewLevel) {
+      const s = this.settings.island;
+      return { owner: 'island', view: fadeSheet({ faded: s.faded, peekUntilBack: s.peekUntilBack, smartFade: s.smartFade }) };
+    }
     if (this.view !== 'main' || this.previewLevel) return null;
     if (this.open && this.fileDrag?.where === 'island') return this.dropSheet(pillW);
     const vertical = orient === 'vertical';
@@ -1863,6 +1871,24 @@ export class Island {
       case 'island:fade':
         // Fade and Show are the same button.
         this.setFaded(!this.settings.island.faded);
+        break;
+      case 'island:fade-menu':
+        // The menu's Fade, opened: fade now, and the two ways it fades on its own (fade-menu.ts).
+        this.view = 'fade';
+        this.open = false;
+        break;
+      case 'island:peek-lasts': {
+        const back = arg === 'back';
+        if (this.settings.island.peekUntilBack !== back) {
+          this.settings.island.peekUntilBack = back;
+          this.saveSettings();
+          void native.setPeek(this.settings.island.peekThrough, back);
+        }
+        break;
+      }
+      case 'island:smart-fade':
+        this.settings.island.smartFade = !this.settings.island.smartFade;
+        this.saveSettings();
         break;
       case 'island:menu':
         this.view = this.view === 'menu' ? 'main' : 'menu';

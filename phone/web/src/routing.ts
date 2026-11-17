@@ -21,7 +21,7 @@ export type Route =
   | { to: 'none' };
 
 /** Island actions that do something on the PC only. */
-const PC_ONLY = new Set(['island:app', 'island:anchor', 'island:hide', 'island:hide-menu']);
+const PC_ONLY = new Set(['island:app', 'island:anchor', 'island:hide', 'island:hide-menu', 'island:fade-menu', 'island:peek-lasts', 'island:smart-fade']);
 
 export function routeAction(action: string, arg: unknown): Route {
   if (action.startsWith('act:')) return { to: 'island' };
