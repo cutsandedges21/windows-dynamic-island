@@ -900,7 +900,11 @@ export class Island {
     const underCard = this.sheet.grown && (!morphing || this.raisedCard);
     // Under a card grown out of the pill (the pointer on it) the pill stays too: pausing or skipping
     // from Music's player surfaces the change, and a raised pill under it widened the card (Justin).
-    if (surf && !underCard && !morphing) level = atLeast(level, surf.level);
+    // But a pop-up hanging below the pill (Land's "file arrived": a card that did not grow out of it,
+    // while its event is up) keeps the raised pill when pointed at: dropping it narrowed and widened
+    // that card as the pointer moved over it (Justin).
+    const hangingPopUp = choice.surfaced !== null && this.sheet.visible && !this.sheet.grown;
+    if (surf && !underCard && (!morphing || hangingPopUp)) level = atLeast(level, surf.level);
     if (this.hover && s.hoverExpand && primary && !this.open && !morphing) level = atLeast(level, 'expanded');
     if (this.open || this.view !== 'main') level = 'maximum';
     // An activity's own card belongs to the open island; closing the island goes back to Control Center.
