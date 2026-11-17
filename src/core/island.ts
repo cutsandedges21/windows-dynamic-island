@@ -30,7 +30,7 @@ import { menuMain, menuSegments } from './menu';
 import { quietMoon } from './quiet';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { applyGlass } from './glass';
-import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
+import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type Block, type DropZone, type SheetChip, type SheetView, type Tile } from './sheet';
 import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
@@ -58,7 +58,8 @@ const HOVER_HOLD_MS = 600;
 /** The sizes a list, card or player can take: two columns at least. */
 const WIDE_SIZES: TileSize[] = ['2x1', '2x2'];
 /** Music's lyrics: tall, so every line shows in full (Moss, 2026-11-13). */
-const LYRIC_SIZES: TileSize[] = ['1x2', '1x4', '2x4'];
+// Every size (Justin: 1x1, 1x2, 2x1, 2x2 and the tall ones); the line being sung stays in the middle of any of them.
+const LYRIC_SIZES: TileSize[] = ALL_TILE_SIZES;
 /** Island set Windows' taskbar to hide (kept across restarts and crashes, to put it back). */
 const HID_BAR_KEY = 'island.taskbar.hidWindows';
 function readFlag(key: string): boolean {

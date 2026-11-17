@@ -2179,7 +2179,8 @@ html[data-pill='glass'] .dock { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45
 .tile.k-lyrics .lm { min-width: 0; }
 .tile.k-lyrics .l1 { font: 650 calc(12.5px * var(--k, 1)) / 1.2 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile.k-lyrics .l2 { font: 500 calc(11px * var(--k, 1)) / 1.2 var(--font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tile.k-lyrics .lb { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; scroll-behavior: smooth; display: flex; flex-direction: column; gap: calc(6px * var(--k, 1)); mask-image: linear-gradient(transparent, #000 12%, #000 85%, transparent); padding: calc(6px * var(--k, 1)) 0; }
+/* positioned, so a line's offsetTop is measured from the lyrics box (sheet.ts centres the sung line) */
+.tile.k-lyrics .lb { position: relative; flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; scroll-behavior: smooth; display: flex; flex-direction: column; gap: calc(6px * var(--k, 1)); mask-image: linear-gradient(transparent, #000 22%, #000 78%, transparent); padding: calc(6px * var(--k, 1)) 0; }
 .tile.k-lyrics .lb::-webkit-scrollbar { display: none; }
 .tile.k-lyrics .ln { font: 700 calc(15px * var(--k, 1)) / 1.25 var(--font); color: rgba(var(--ink), 0.32); overflow-wrap: anywhere; transition: color 0.3s ease; }
 .tile.k-lyrics .ln.past { color: rgba(var(--ink), 0.22); }
@@ -2187,6 +2188,11 @@ html[data-pill='glass'] .dock { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45
 .tile.k-lyrics .ln.note { color: var(--muted); font-weight: 550; }
 .tile.k-lyrics.span-1 .ln { font-size: calc(12.5px * var(--k, 1)); }
 .tile.k-lyrics.span-1 .lm { display: none; }
+/* one row: the art and title stay small, so the line being sung has the room */
+.tile.k-lyrics.rows-1 { gap: calc(4px * var(--k, 1)); }
+.tile.k-lyrics.rows-1 .la { width: calc(24px * var(--k, 1)); height: calc(24px * var(--k, 1)); border-radius: calc(6px * var(--k, 1)); }
+.tile.k-lyrics.rows-1 .ln { font-size: calc(13px * var(--k, 1)); }
+.tile.k-lyrics.rows-1 .lb { mask-image: linear-gradient(transparent, #000 30%, #000 70%, transparent); }
 
 /* A widget's window is only PAD (12px) bigger than its card, so any shadow was cut off at the window's
    edge and showed as a faint hard box on the wallpaper: a widget has none. */

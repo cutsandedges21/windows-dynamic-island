@@ -33,6 +33,7 @@ export function saveShapes(shapes: Record<string, TileShape>): void {
  */
 export function restingTile(key: string, name: string, icon: string, shape: TileShape | undefined, narrow: ReadonlySet<string>): Tile {
   const span = shape?.span === 2 || (shape && !narrow.has(shape.kind)) ? 2 : 1;
-  const rows = shape?.rows === 2 ? 2 : 1;
+  // Tall ones too (Music's lyrics, 4 rows): the stand-in keeps the spot at the same size.
+  const rows = shape?.rows === 4 ? 4 : shape?.rows === 2 ? 2 : 1;
   return { key, span, rows, tone: 'dim', resting: true, body: { k: 'actions', icon, label: name, sub: 'Nothing right now', buttons: [] } };
 }

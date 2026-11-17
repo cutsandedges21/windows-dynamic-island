@@ -3380,14 +3380,18 @@ export class SheetRenderer {
         if (!b.lines.length) body.append(make('div', 'ln note', b.note ?? 'No lyrics for this one'));
         b.lines.forEach((line, i) => body.append(make('div', `ln${i === b.at ? ' now' : i < b.at ? ' past' : ''}`, line || '♪')));
         e.append(top, body);
-        // The line being sung stays in view, a third of the way down. Each update builds a new list, so
-        // it starts where the last one was and glides to the new line (a new song starts in place).
+        // The line being sung sits in the middle of the lyrics, at every tile size (Justin). Each update
+        // builds a new list, so it starts where the last one was and glides to the new line (a new song
+        // starts in place). Half the box of room above the first line and below the last lets any line
+        // reach the middle; before the first line is sung, the first one waits there.
         const sig = `${b.title}|${b.artist}|${b.lines.length}`;
         body.addEventListener('scroll', () => (this.lyricScroll = { sig, top: body.scrollTop }), { passive: true });
         requestAnimationFrame(() => {
-          const now = body.querySelector<HTMLElement>('.ln.now');
+          const half = Math.round(body.clientHeight / 2);
+          body.style.paddingBlock = `${half}px`;
+          const now = body.querySelector<HTMLElement>('.ln.now') ?? body.querySelector<HTMLElement>('.ln');
           if (!now) return;
-          const to = Math.max(0, now.offsetTop - body.clientHeight / 3);
+          const to = Math.max(0, now.offsetTop + now.offsetHeight / 2 - half);
           const was = this.lyricScroll;
           if (was.sig === sig && !reducedMotion() && Math.abs(was.top - to) > 1) {
             body.scrollTo({ top: was.top, behavior: 'instant' });
