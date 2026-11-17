@@ -1886,10 +1886,15 @@ export class Island {
         }
         break;
       }
-      case 'island:smart-fade':
-        this.settings.island.smartFade = !this.settings.island.smartFade;
-        this.saveSettings();
+      case 'island:smart-fade': {
+        // On or Off from the Fade card (a bare press switches it).
+        const on = typeof arg === 'boolean' ? arg : !this.settings.island.smartFade;
+        if (this.settings.island.smartFade !== on) {
+          this.settings.island.smartFade = on;
+          this.saveSettings();
+        }
         break;
+      }
       case 'island:menu':
         this.view = this.view === 'menu' ? 'main' : 'menu';
         break;

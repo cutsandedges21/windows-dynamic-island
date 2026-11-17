@@ -37,17 +37,18 @@ describe('the menu\'s Fade', () => {
     expect(menuSegments(FULL_MENU, st).find((x) => x.key === 'menu/fade')).toEqual(off);
   });
 
-  it('opened: fade now first, then how long a Ctrl tap lasts and Smart fade, as they are set', () => {
+  it('opened, laid out like Hide: fade now, then Peek lasts and Smart fade, each one row with its two choices', () => {
     const v = fadeSheet({ faded: false, peekUntilBack: true, smartFade: false });
-    const choices = (k: string) => (v.blocks.find((b) => b.key === k) as Extract<(typeof v.blocks)[number], { t: 'choices' }>).items;
-    expect(v.blocks.map((b) => b.key)).toEqual(['head', 'now', 'lasts-label', 'lasts', 'smart']);
-    expect(choices('now')).toMatchObject([{ label: 'Fade now', action: 'island:fade' }]);
-    expect(choices('lasts').map((c) => [c.label, c.selected, c.action, c.arg])).toEqual([
+    expect(v.blocks.map((b) => b.key)).toEqual(['head', 'for']);
+    const rows = (v.blocks[1] as Extract<(typeof v.blocks)[number], { t: 'choices' }>).items;
+    expect(rows.map((r) => r.label)).toEqual(['Fade now', 'Peek lasts', 'Smart fade']);
+    expect(rows[0]).toMatchObject({ action: 'island:fade' });
+    expect(rows[1].options!.map((o) => [o.label, o.selected, o.action, o.arg])).toEqual([
       ['Until the pointer moves off', false, 'island:peek-lasts', 'off'],
       ['Until it comes back', true, 'island:peek-lasts', 'back'],
     ]);
-    expect(choices('smart')).toMatchObject([{ label: 'Smart fade: off', selected: false, action: 'island:smart-fade' }]);
-    // Faded already: the first choice brings it back.
+    expect(rows[2].options!.map((o) => [o.label, o.selected, o.arg])).toEqual([['Off', true, false], ['On', false, true]]);
+    // Faded already: the first row brings it back.
     expect((fadeSheet({ faded: true, peekUntilBack: false, smartFade: true }).blocks[1] as { items: Array<{ label: string }> }).items[0].label).toBe('Show the island');
     // The pill: back to the menu, then its name.
     expect(fadeSegments(false).map((x) => x.key)).toEqual(['fade/back', 'fade/icon', 'fade/text']);

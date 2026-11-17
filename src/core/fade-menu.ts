@@ -23,7 +23,10 @@ export function fadeSegments(vertical: boolean): Seg[] {
   return segs;
 }
 
-/** The card: fade now (or show), then the two ways the island fades on its own. */
+/**
+ * The card, laid out like Hide's: one list, a row each. Fade now (or Show), then the two ways the
+ * island fades on its own, each one row with its choices side by side (Justin: not two rows).
+ */
 export function fadeSheet(s: FadeMenuState): SheetView {
   return {
     key: 'island/fade',
@@ -31,32 +34,30 @@ export function fadeSheet(s: FadeMenuState): SheetView {
       { t: 'head', key: 'head', icon: 'fade', title: 'Fade the island', sub: 'It goes faint and clicks go through it to what is behind.' },
       {
         t: 'choices',
-        key: 'now',
+        key: 'for',
         items: [
           s.faded
             ? { key: 'show', label: 'Show the island', detail: 'Bring it back now', action: 'island:fade' }
             : { key: 'fade', label: 'Fade now', detail: 'Until you right-click it and press Show', action: 'island:fade' },
-        ],
-      },
-      { t: 'text', key: 'lasts-label', text: 'A tap of Ctrl keeps it faded', tone: 'muted', size: 'sm' },
-      {
-        t: 'choices',
-        key: 'lasts',
-        items: [
-          { key: 'off', label: 'Until the pointer moves off', selected: !s.peekUntilBack, action: 'island:peek-lasts', arg: 'off' },
-          { key: 'back', label: 'Until it comes back', detail: 'Moved away, then back onto the island', selected: s.peekUntilBack, action: 'island:peek-lasts', arg: 'back' },
-        ],
-      },
-      {
-        t: 'choices',
-        key: 'smart',
-        items: [
+          {
+            key: 'lasts',
+            label: 'Peek lasts',
+            detail: 'How long a Ctrl tap fades it',
+            action: '',
+            options: [
+              { key: 'off', label: 'Until the pointer moves off', selected: !s.peekUntilBack, action: 'island:peek-lasts', arg: 'off' },
+              { key: 'back', label: 'Until it comes back', selected: s.peekUntilBack, action: 'island:peek-lasts', arg: 'back' },
+            ],
+          },
           {
             key: 'smart',
-            label: s.smartFade ? 'Smart fade: on' : 'Smart fade: off',
-            detail: 'Faded until you point at it. Pop-ups, like a finished chat, still show in full.',
-            selected: s.smartFade,
-            action: 'island:smart-fade',
+            label: 'Smart fade',
+            detail: 'Faded until you point at it; pop-ups still show',
+            action: '',
+            options: [
+              { key: 'off', label: 'Off', selected: !s.smartFade, action: 'island:smart-fade', arg: false },
+              { key: 'on', label: 'On', selected: s.smartFade, action: 'island:smart-fade', arg: true },
+            ],
           },
         ],
       },

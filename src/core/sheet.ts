@@ -122,8 +122,14 @@ export interface Choice {
   label: string;
   detail?: string;
   selected?: boolean;
+  /** What pressing the row does; a row with `options` does nothing itself. */
   action: string;
   arg?: unknown;
+  /**
+   * A setting in one row (the menu's Fade card): its name on the left and these side by side on the
+   * right, the one in use lit, like Settings' segmented choices. The row itself is not a button.
+   */
+  options?: Array<{ key: string; label: string; selected?: boolean; action: string; arg?: unknown }>;
 }
 
 export type Block =
@@ -430,7 +436,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
       case 'rows':
         return { ...b, items: b.items.map(row) };
       case 'choices':
-        return { ...b, items: b.items.map((c) => ({ ...c, action: fn(c.action) })) };
+        return { ...b, items: b.items.map((c) => ({ ...c, action: fn(c.action), options: c.options?.map((o) => ({ ...o, action: fn(o.action) })) })) };
       case 'people':
         return { ...b, items: b.items.map((p) => ({ ...p, action: p.action ? fn(p.action) : undefined })) };
       case 'files':
@@ -1821,6 +1827,23 @@ export class SheetRenderer {
       case 'choices': {
         const e = make('div', 'sb sb-choices');
         for (const c of b.items) {
+          if (c.options?.length) {
+            // A setting in one row: its name, then its choices side by side.
+            const row = make('div', 'choice opts');
+            const text = make('span', 'ct');
+            text.append(make('span', 'c1', c.label));
+            if (c.detail) text.append(make('span', 'c2', c.detail));
+            const seg = make('span', 'cseg');
+            for (const o of c.options) {
+              const ob = make('button', `co${o.selected ? ' on' : ''}`, o.label);
+              ob.type = 'button';
+              this.bind(ob, o.action, o.arg);
+              seg.append(ob);
+            }
+            row.append(text, seg);
+            e.append(row);
+            continue;
+          }
           const btn = make('button', `choice${c.selected ? ' selected' : ''}`);
           btn.type = 'button';
           btn.append(make('span', 'c1', c.label));
