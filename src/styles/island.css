@@ -2082,4 +2082,4 @@ html[data-pill='glass'] .dock { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45
 /* A widget's window is only PAD (12px) bigger than its card, so any shadow was cut off at the window's
    edge and showed as a faint hard box on the wallpaper: a widget has none. */
 html.widget-window .sheet, html.widget-window .sheet-shadow { box-shadow: none !important; }
-.tile.k-list .lsub { margin: calc(-2px * var(--k, 1)) 0 calc(4px * var(--k, 1)) calc(26px * var(--k, 1)); }
+.tile.k-list .lsub { flex: none; line-height: 1.35; margin: calc(-2px * var(--k, 1)) 0 calc(4px * var(--k, 1)) calc(26px * var(--k, 1)); }

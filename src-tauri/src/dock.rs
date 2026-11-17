@@ -73,6 +73,8 @@ fn put(win: &WebviewWindow, w: f64, h: f64) {
 
 /// The dock's window registered as an app bar (once).
 static APPBAR: AtomicBool = AtomicBool::new(false);
+/// The strip last reserved (left, top, right, bottom), physical px.
+static STRIP: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
 
 /// Reserves a strip `height` px tall along the bottom of the screen `(x, y, w, h)` for the dock;
 /// answers the strip's bottom edge (above Windows' taskbar when that one shows).
@@ -91,7 +93,13 @@ fn reserve(win: &WebviewWindow, screen: (i32, i32, i32, i32), height: i32) -> Op
         SHAppBarMessage(ABM_QUERYPOS, &mut d);
         // Windows may have moved the strip up (its own taskbar is there): keep our height.
         d.rc.top = d.rc.bottom - height;
-        SHAppBarMessage(ABM_SETPOS, &mut d);
+        // Only when the strip changed: each SETPOS makes Windows lay out every maximized window.
+        let strip = (d.rc.left, d.rc.top, d.rc.right, d.rc.bottom);
+        let mut last = STRIP.lock().unwrap();
+        if *last != Some(strip) {
+            SHAppBarMessage(ABM_SETPOS, &mut d);
+            *last = Some(strip);
+        }
         Some(d.rc.bottom)
     }
 }
@@ -109,6 +117,7 @@ fn release(win: &WebviewWindow) {
     if !APPBAR.swap(false, Ordering::SeqCst) {
         return;
     }
+    *STRIP.lock().unwrap() = None;
     let Ok(h) = win.hwnd() else { return };
     let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: HWND(h.0), ..Default::default() };
     unsafe {
