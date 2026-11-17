@@ -88,6 +88,8 @@ html.reduce .pl-lyric > span { animation-duration: 0.01s; }
 .pl-ly-grip::after { content: ''; position: absolute; left: 9px; top: 18%; bottom: 18%; width: 3px; border-radius: 2px; background: transparent; transition: background-color 0.15s ease; }
 .pl-ly-grip:hover::after,
 .sb-player.splitting .pl-ly-grip::after { background: rgba(var(--ink), 0.4); }
+/* snapped onto the card's middle: the line lights up in the accent */
+.sb-player.split-middle .pl-ly-grip::after { background: var(--accent); }
 .sb-player.splitting,
 .sb-player.splitting * { cursor: col-resize !important; -webkit-user-select: none; user-select: none; }
 .stage .pl-ly-grip { display: none; }

@@ -273,6 +273,8 @@ function showTime(e: HTMLElement, pos: number, dur: number, playing: boolean): v
 /** The narrowest the lyrics and the player get when the line between them is dragged. */
 const LYRICS_MIN = 200;
 const PLAYER_MIN = 260;
+/** How close to the card's middle the line has to come to snap onto it, px. */
+const SPLIT_SNAP = 22;
 
 /**
  * Dragging the line between the player and the lyrics: the lyrics get wider or narrower and the
@@ -287,7 +289,12 @@ function wireGrip(e: HTMLElement, panel: HTMLElement, grip: HTMLElement, act: Ac
   const widthAt = (x: number) => {
     const gap = parseFloat(getComputedStyle(panel).marginLeft) || 0;
     const most = e.clientWidth - gap - PLAYER_MIN;
-    return Math.round(Math.max(LYRICS_MIN, Math.min(most, w0 - (x - x0))));
+    const want = Math.max(LYRICS_MIN, Math.min(most, w0 - (x - x0)));
+    // Near the middle the line snaps onto it, like a magnet (Justin), and lets go once pulled past.
+    const middle = e.clientWidth / 2;
+    const snapped = Math.abs(want - middle) <= SPLIT_SNAP && middle >= LYRICS_MIN && middle <= most;
+    e.classList.toggle('split-middle', snapped);
+    return Math.round(snapped ? middle : want);
   };
   grip.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0 || !panel.dataset.split) return;
@@ -309,7 +316,7 @@ function wireGrip(e: HTMLElement, panel: HTMLElement, grip: HTMLElement, act: Ac
     if (ev.pointerId !== id) return;
     id = null;
     delete panel.dataset.dragging;
-    e.classList.remove('splitting');
+    e.classList.remove('splitting', 'split-middle');
     const split = panel.dataset.split;
     if (!commit) panel.style.flexBasis = `${w0}px`;
     else if (split) act(split, w, grip);

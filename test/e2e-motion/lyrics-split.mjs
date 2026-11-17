@@ -70,5 +70,13 @@ await page.click('.sheet-inner:not(.leaving) .pl-lyr');
 await sleep(1400);
 const again = await look();
 check('closed and reopened: the usual split', JSON.stringify(again) === JSON.stringify(start), again);
+// Near the middle the line snaps onto it (a magnet), and further off it goes where it is put.
+const middle = await page.evaluate(() => Math.round(document.querySelector('.sheet-inner:not(.leaving) .sb-player').clientWidth / 2));
+await drag(5);
+const snapped = await look();
+check(`dragged 5 right near the middle: snapped to it (${middle})`, Math.abs(snapped.lyrics - middle) <= 1, snapped);
+await drag(-40);
+const off = await look();
+check('dragged 40 left: let go of the middle', Math.abs(off.lyrics - middle - 40) <= 2, off);
 await browser.close();
 process.exit(failed ? 1 : 0);
