@@ -8,7 +8,7 @@
 //   node scripts/tauri.mjs <args>    anything else goes straight to the CLI
 
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -64,7 +64,16 @@ if (cmd === 'hook') {
   for (const f of readdirSync(out)) {
     if (f === 'island-hook.exe' || f.endsWith('-setup.exe')) rmSync(join(out, f), { force: true });
   }
-  copyFileSync(join(targetDir, 'release', 'island.exe'), join(out, 'Island.exe'));
+  // A running Island locks its exe, but Windows lets it be renamed: move it aside, then copy.
+  try {
+    copyFileSync(join(targetDir, 'release', 'island.exe'), join(out, 'Island.exe'));
+  } catch (err) {
+    if (err.code !== 'EBUSY' && err.code !== 'EPERM') throw err;
+    rmSync(join(out, 'Island.old.exe'), { force: true });
+    renameSync(join(out, 'Island.exe'), join(out, 'Island.old.exe'));
+    copyFileSync(join(targetDir, 'release', 'island.exe'), join(out, 'Island.exe'));
+    console.log('\nIsland was running: its exe is now release/Island.old.exe. Restart Island to run the new one.');
+  }
   console.log(`\nrelease/Island.exe is the whole app. Cargo output: ${targetDir}`);
 } else {
   run(tauriCli, [cmd, ...rest].filter(Boolean));
