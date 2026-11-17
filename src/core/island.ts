@@ -33,7 +33,7 @@ import { fitSegments, fitVertical, signature, type Placed, type Seg } from './se
 import { applyGlass } from './glass';
 import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
-import { mapActions, SheetRenderer, type Block, type DropZone, type SheetChip, type SheetView, type Tile } from './sheet';
+import { mapActions, SheetRenderer, type Block, type DropZone, type SheetButton, type SheetChip, type SheetView, type Tile } from './sheet';
 import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
 import { tileCard } from './tilecard';
 import { pillMotion } from './spring';
@@ -121,6 +121,21 @@ const CALM_MS = 1200;
 const SCREEN_POLL_MS = 3 * 60_000;
 /** The island's own note on the pill (a phone opened a terminal) shows this long. */
 const NOTE_MS = 5000;
+
+/**
+ * A card opened from Control Center always has a way back to it (Justin: Phone's card had none): its head
+ * gets a Back before the title unless the activity gave it one.
+ */
+export function withBack(c: { owner: string; view: SheetView }): { owner: string; view: SheetView } {
+  const i = c.view.blocks.findIndex((b) => b.t === 'head');
+  const back: SheetButton = { key: 'cc-back', icon: 'chevron-left', action: 'island:card-close', style: 'ghost', tip: 'Back to Control Center' };
+  if (i < 0) return { ...c, view: { ...c.view, blocks: [{ t: 'buttons', key: 'cc-back', align: 'start', items: [{ ...back, label: 'Control Center' }] }, ...c.view.blocks] } };
+  const head = c.view.blocks[i] as Extract<SheetView['blocks'][number], { t: 'head' }>;
+  if (head.back) return c;
+  const blocks = [...c.view.blocks];
+  blocks[i] = { ...head, back };
+  return { ...c, view: { ...c.view, blocks } };
+}
 
 export class Island {
   settings!: Settings;
@@ -1330,7 +1345,7 @@ export class Island {
     if (this.open) {
       // An activity asked for its own card (Land after a drop); its card, or the grid when it has none.
       const own = this.cardFor && this.running.has(this.cardFor) ? ask(this.cardFor, 'open') : null;
-      if (own) return own;
+      if (own) return this.cardFor === 'shelf' ? own : withBack(own);
       return this.gridSheet(now, orient, pillW);
     }
     if (primary && choice.surfaced) {
