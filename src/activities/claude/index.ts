@@ -1632,10 +1632,9 @@ export class ClaudeActivity extends BaseActivity {
         tone: failed ? 'bad' : going ? 'info' : 'good',
         title: s.displayTitle,
         sub: this.where(s, failed ? 'Failed' : going ? 'Working' : 'Finished'),
-        buttons: [
-          ...(asked === 'card' ? [{ key: 'back', icon: 'chevron-left', action: 'reply-back', style: 'ghost', tip: 'Back' } as SheetButton] : []),
-          { key: 'open', icon: 'external', action: 'switch', arg: sid, style: 'ghost', tip: this.openText(s) },
-        ],
+        // In Control Center: Back sits before the title, as on every card opened from a tile.
+        back: asked === 'card' ? { key: 'back', icon: 'chevron-left', action: 'reply-back', style: 'ghost', tip: 'Back to Control Center' } : undefined,
+        buttons: [{ key: 'open', icon: 'external', action: 'switch', arg: sid, style: 'ghost', tip: this.openText(s) }],
       },
     ];
     if (text) blocks.push({ t: 'text', key: 'msg', text, bubble: true, lines: 7 });

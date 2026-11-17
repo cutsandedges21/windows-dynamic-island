@@ -189,7 +189,8 @@ describe("a chat's row, right-clicked", () => {
     expect(opened).toEqual(['open']);
     const card = act.sheet!(senv('open'));
     expect(card?.key).toBe('done:S1');
-    expect(block(card, 'head')!.buttons!.map((b) => b.action)).toEqual(['reply-back', 'switch']);
+    expect(block(card, 'head')!.back).toMatchObject({ action: 'reply-back' });
+    expect(block(card, 'head')!.buttons!.map((b) => b.action)).toEqual(['switch']);
     expect(block(card, 'input')).toMatchObject({ action: 'continue:S1' });
     await act.action!('reply-back', null);
     expect(opened).toEqual(['open', 'close']);
