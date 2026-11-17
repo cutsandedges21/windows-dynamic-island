@@ -254,10 +254,23 @@ mod imp {
         }
     }
 
+    /// Island may move this window. An app running as administrator (Task Manager) refuses Island's
+    /// SetWindowPos, ShowWindow and WM_CLOSE (Windows' UIPI): its window can't fly, minimize or close
+    /// from here, only come forward (procs::activate restores it with SwitchToThisWindow).
+    fn controllable(w: HWND) -> bool {
+        use windows::Win32::Foundation::E_ACCESSDENIED;
+        use windows::Win32::UI::WindowsAndMessaging::{SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSENDCHANGING};
+        let still = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING;
+        match unsafe { SetWindowPos(w, None, 0, 0, 0, 0, still) } {
+            Err(e) => e.code() != E_ACCESSDENIED,
+            Ok(()) => true,
+        }
+    }
+
     pub fn raise(icon: Option<Rect>, raw: isize) -> bool {
         let w = h(raw);
         let minimized = unsafe { IsIconic(w).as_bool() };
-        let Some(icon) = icon.filter(|_| minimized) else { return crate::procs::activate(raw) };
+        let Some(icon) = icon.filter(|_| minimized && controllable(w)) else { return crate::procs::activate(raw) };
         flight(move || restore_from(h(raw), raw, icon), move || {
             crate::procs::activate(raw);
         });
@@ -357,6 +370,9 @@ mod imp {
 
     pub fn minimize(icon: Option<Rect>, raw: isize) {
         let w = h(raw);
+        if !controllable(w) {
+            return;
+        }
         let Some(icon) = icon else {
             unsafe {
                 let _ = ShowWindow(w, SW_MINIMIZE);
@@ -408,7 +424,7 @@ mod imp {
                 }
             }
         };
-        let (Some(icon), Some(first)) = (icon, first) else {
+        let (Some(icon), Some(first)) = (icon.filter(|_| first.is_some_and(|f| controllable(h(f)))), first) else {
             ask(&hwnds);
             return;
         };

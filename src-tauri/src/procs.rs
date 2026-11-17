@@ -17,7 +17,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, BringWindowToTop, EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowRect,
     GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow,
-    ShowWindow, ASFW_ANY, SW_RESTORE,
+    ShowWindow, SwitchToThisWindow, ASFW_ANY, SW_RESTORE,
 };
 
 const FILETIME_UNIX_OFFSET_MS: i64 = 11_644_473_600_000;
@@ -138,6 +138,11 @@ pub fn activate(raw: isize) -> bool {
     unsafe {
         if IsIconic(target).as_bool() {
             let _ = ShowWindow(target, SW_RESTORE);
+            // An app running as administrator (Task Manager) refuses ShowWindow from Island
+            // (access denied); this one still restores it, as Alt+Tab does.
+            if IsIconic(target).as_bool() {
+                SwitchToThisWindow(target, true);
+            }
         }
         let _ = SetForegroundWindow(target);
         if is_foreground(target) {
