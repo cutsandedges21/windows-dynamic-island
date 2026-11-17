@@ -837,3 +837,13 @@ body {
 .ph-stage .sb-tiles.editing .tile .tile-x { width: 24px; height: 24px; border-radius: 12px; }
 .ph-stage .sb-tiles.editing .tile .tile-x::after { content: ''; position: absolute; inset: -10px; }
 .ph-stage .sb-tiles.editing .tile .tile-resize { width: 30px; height: 30px; }
+/* ------------------------------------------------------------------ now playing
+   Music's card opened on the phone: the art large over the title, the scrubber and big buttons. */
+.ph-stage .sb-player { gap: 18px; padding: 6px 4px 10px; }
+.ph-stage .sb-player .pl-top { flex-direction: column; align-items: center; gap: 16px; text-align: center; }
+.ph-stage .sb-player .pl-art { width: min(72vw, 300px); height: min(72vw, 300px); border-radius: 22px; }
+.ph-stage .sb-player .pl-tx { flex: none; width: 100%; align-items: center; gap: 5px; }
+.ph-stage .sb-player .pl-bars { align-self: center; }
+.ph-stage .sb-player .pl-track { height: 8px; border-radius: 4px; }
+.ph-stage .sb-player .pl-ctl { gap: 26px; }
+.ph-stage .sb-player .pl-btn { transform: scale(1.35); }

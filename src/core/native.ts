@@ -142,6 +142,104 @@ export interface ClaudeEnv {
   hookReady: boolean;
   claudeExe: string | null;
 }
+/** Where Codex keeps its files (codex.rs); null when Codex never ran on this PC. */
+export interface CodexEnv {
+  home: string;
+  sessionsDir: string;
+  archivedDir: string;
+  indexPath: string;
+  codexExe: string | null;
+  hookExe: string;
+  hookReady: boolean;
+}
+/** One line of a Codex session file, as codex_rollout_scan keeps it. */
+export interface RolloutLine {
+  timestamp?: string;
+  type: string;
+  payload?: Record<string, unknown>;
+}
+export interface RolloutScan {
+  /** Where the next scan starts. */
+  offset: number;
+  /** The file's size; under the last offset means it was rewritten and this scan started over. */
+  size: number;
+  lines: RolloutLine[];
+}
+export interface CodexHookStatus {
+  installed: boolean;
+  upToDate: boolean;
+  codexFound: boolean;
+  hooksPath: string;
+  hookPath: string;
+  hookReady: boolean;
+  error: string | null;
+}
+export interface CodexHookPreview {
+  diff: string;
+  backup: string;
+  hooksPath: string;
+  fingerprint: string;
+  /** The trust entries Codex writes to its config.toml when installing. */
+  trust: string[];
+}
+export interface CursorEnv {
+  home: string;
+  projectsDir: string;
+  cursorExe: string | null;
+  hookExe: string;
+  hookReady: boolean;
+}
+/** One of Cursor's agent transcripts (cursor_transcripts). */
+export interface CursorTranscript {
+  path: string;
+  id: string;
+  size: number;
+  mtimeMs: number;
+  /** The folder the chat ran in, when Island could work it out. */
+  folder: string | null;
+}
+export interface CursorHookStatus {
+  installed: boolean;
+  upToDate: boolean;
+  /** Island's command hooks are in (Ask me here before Cursor runs a command). */
+  gate: boolean;
+  cursorFound: boolean;
+  hooksPath: string;
+  hookPath: string;
+  hookReady: boolean;
+  error: string | null;
+}
+export interface CursorHookPreview {
+  diff: string;
+  backup: string;
+  hooksPath: string;
+  fingerprint: string;
+}
+export interface AntigravityEnv {
+  home: string;
+  appExe: string | null;
+  ideExe: string | null;
+  cliExe: string | null;
+  hookExe: string;
+  hookReady: boolean;
+}
+/** One of Antigravity's transcripts (antigravity_transcripts). */
+export interface AgTranscript {
+  path: string;
+  id: string;
+  size: number;
+  mtimeMs: number;
+}
+export interface AgHookStatus {
+  installed: boolean;
+  upToDate: boolean;
+  /** Island's command hook is in (Ask me here before Antigravity runs a command). */
+  gate: boolean;
+  hooksPath: string;
+  hookPath: string;
+  hookReady: boolean;
+  error: string | null;
+}
 export interface UsageFetch {
   status: number;
   retryAfter: number | null;
@@ -519,6 +617,9 @@ export interface Launched {
   note: string | null;
 }
 /** An app in Start's list: `target` is its program, or shell:AppsFolder\<id> for a Store app. */
+/** A taskbar icon's place in the taskbar window: x, y, w, h in CSS px. */
+export type DockIconRect = [number, number, number, number];
+
 export interface InstalledApp {
   name: string;
   target: string;
@@ -649,7 +750,7 @@ export function emitLocal<T>(event: string, payload: T): void {
 }
 
 /** Send an event to the other window (island ⇄ app). */
-export async function sendTo(window: 'island' | 'app', event: string, payload: unknown): Promise<void> {
+export async function sendTo(window: string, event: string, payload: unknown): Promise<void> {
   if (isTauri) {
     try {
       await emitTo(window, event, payload);
@@ -719,6 +820,32 @@ export const native = {
   /** Install newer releases from GitHub on their own (release builds only). */
   setAutoUpdate: (enabled: boolean) => call('update_set', { enabled }, undefined),
   /** Duplicate mode: one click-through copy of the pill on each of these monitors. */
+  /** The taskbar (src-tauri/src/dock.rs): shown at w x h logical px, or closed. */
+  dockShow: (on: boolean, w: number, h: number, centre = -1) => call('dock_show', { on, w, h, centre }, undefined),
+  /** The taskbar page measured its content (logical px): its window takes that size, in its place. */
+  dockFit: (w: number, h: number) => call('dock_fit', { w, h }, undefined),
+  /** Dragging the taskbar: its left edge to `x` physical px; `done` keeps the place (x negative with done: back to the middle). */
+  dockAt: (x: number, done: boolean) => call('dock_at', { x, done }, undefined),
+  /** Windows' own panels: Start, Quick Settings (Wi-Fi, sound), notifications. */
+  dockPanel: (which: 'start' | 'quick' | 'notifications') => call<boolean>('dock_panel', { which }, false),
+  /** Windows' taskbar hides itself (Automatically hide the taskbar); answers whether it does now. */
+  dockAutohide: (on: boolean) => call<boolean>('dock_autohide', { on }, false),
+  /** A taskbar icon's window comes back out of the icon (`icon`: x, y, w, h CSS px in the taskbar), or just forward if it isn't minimized (src-tauri/src/dockfx.rs). */
+  dockRaise: (hwnd: number, icon: DockIconRect) => call<boolean>('dock_raise', { hwnd, icon }, false),
+  /** The window goes into its taskbar icon. */
+  dockMinimize: (hwnd: number, icon: DockIconRect) => call('dock_minimize', { hwnd, icon }, undefined),
+  /** The app's windows close, the first one into its taskbar icon. */
+  dockClose: (hwnds: number[], icon: DockIconRect) => call('dock_close', { hwnds, icon }, undefined),
+  /** Desktop widgets (src-tauri/src/widgets.rs): the windows that should exist; x, y negative: not placed yet. */
+  widgetsSync: (specs: Array<{ id: string; x: number; y: number; w: number; h: number }>) => call('widgets_sync', { specs }, undefined),
+  /** This widget window fits its content (logical px). */
+  widgetSize: (w: number, h: number) => call('widget_size', { w, h }, undefined),
+  /** Starts dragging this widget window from the pointer pressing now. */
+  widgetDrag: () => (isTauri ? getCurrentWindow().startDragging().catch(() => {}) : Promise.resolve()),
+  /** This widget was dragged: Rust tells the island where it is now, to be saved. */
+  widgetMoved: () => call('widget_moved', {}, undefined),
+  /** This window moved (a drag): `cb` after each move. */
+  onMoved: (cb: () => void): Promise<() => void> => (isTauri ? getCurrentWindow().onMoved(() => cb()) : Promise.resolve(() => {})),
   mirrors: (monitors: string[]) => call('island_mirrors', { monitors }, undefined),
   mirrorHello: () => call<Placement | null>('mirror_hello', {}, null),
   /** An event to every window (the island's copies listen for its frames). */
@@ -735,6 +862,8 @@ export const native = {
   dndSet: (on: boolean) => call<{ ok: boolean; active: boolean | null; reason: string | null }>('dnd_set', { on }, { ok: false, active: null, reason: null }),
   /** Every calendar Windows syncs, read-only: `back` days behind and `ahead` days in front. */
   agendaRead: (back: number, ahead: number) => call<Agenda | null>('agenda_read', { back, ahead }, null),
+  /** Presses one of Xbox Game Bar's shortcuts: its overlay, a screenshot, the last 30 s as a clip, or record. Windows only. */
+  gameBar: (action: 'bar' | 'screenshot' | 'clip' | 'record') => call<boolean>('game_bar', { action }, false),
   gameState: () => call<GameState | null>('game_state', {}, null),
   gameFpsSetup: () => call<{ ok: boolean; message: string }>('game_fps_setup', {}, { ok: false, message: 'This needs the Island app.' }),
   modifiersDown: () => call<boolean>('input_modifiers_down', {}, false),
@@ -794,12 +923,41 @@ export const native = {
   hooksStatus: () => call<HookStatus | null>('hooks_status', {}, null),
   hooksPreview: (install: boolean) => call<HookPreview | { error: string }>('hooks_preview', { install }, { error: 'not available' }),
   hooksWrite: (install: boolean, fingerprint: string) => call<{ ok: boolean; backup?: string; error?: string }>('hooks_write', { install, fingerprint }, { ok: false, error: 'not available' }),
+  codexEnv: () => call<CodexEnv | null>('codex_env', {}, null),
+  codexRolloutScan: (path: string, offset: number) => call<RolloutScan | null>('codex_rollout_scan', { path, offset }, null),
+  codexResume: (sessionId: string, cwd: string, prompt: string | null, minimized: boolean) =>
+    call<boolean>('codex_resume', { sessionId, cwd, prompt, minimized }, false),
+  codexHooksStatus: () => call<CodexHookStatus | null>('codex_hooks_status', {}, null),
+  codexHooksPreview: (install: boolean) => call<CodexHookPreview | { error: string }>('codex_hooks_preview', { install }, { error: 'not available' }),
+  /** Installs (and has Codex trust) or removes Island's Codex hooks. */
+  codexHooksWrite: (install: boolean, fingerprint: string) =>
+    call<{ ok: boolean; backup?: string; error?: string; trusted?: boolean; trustError?: string | null }>('codex_hooks_write', { install, fingerprint }, { ok: false, error: 'not available' }),
+  /** Does Codex run Island's hooks? `trust`: ask it to trust them first. Starts codex.exe for a moment. */
+  codexHooksTrust: (trust: boolean) => call<{ trusted: boolean; error: string | null }>('codex_hooks_trust', { trust }, { trusted: false, error: 'not available' }),
+  cursorEnv: () => call<CursorEnv | null>('cursor_env', {}, null),
+  cursorTranscripts: (maxAgeMs: number) => call<CursorTranscript[]>('cursor_transcripts', { maxAgeMs }, []),
+  /** Brings up Cursor's window for a folder (opens the folder when no window has it). */
+  cursorOpen: (folder: string) => call<boolean>('cursor_open', { folder }, false),
+  antigravityEnv: () => call<AntigravityEnv | null>('antigravity_env', {}, null),
+  antigravityTranscripts: (maxAgeMs: number) => call<AgTranscript[]>('antigravity_transcripts', { maxAgeMs }, []),
+  /** Starts or brings up the Antigravity app, or the IDE on a folder. */
+  antigravityOpen: (product: string, folder: string) => call<boolean>('antigravity_open', { product, folder }, false),
+  antigravityHooksStatus: () => call<AgHookStatus | null>('antigravity_hooks_status', {}, null),
+  antigravityHooksPreview: (install: boolean, gate: boolean) => call<CursorHookPreview | { error: string }>('antigravity_hooks_preview', { install, gate }, { error: 'not available' }),
+  antigravityHooksWrite: (install: boolean, gate: boolean, fingerprint: string) =>
+    call<{ ok: boolean; backup?: string; error?: string }>('antigravity_hooks_write', { install, gate, fingerprint }, { ok: false, error: 'not available' }),
+  cursorHooksStatus: () => call<CursorHookStatus | null>('cursor_hooks_status', {}, null),
+  cursorHooksPreview: (install: boolean, gate: boolean) => call<CursorHookPreview | { error: string }>('cursor_hooks_preview', { install, gate }, { error: 'not available' }),
+  cursorHooksWrite: (install: boolean, gate: boolean, fingerprint: string) =>
+    call<{ ok: boolean; backup?: string; error?: string }>('cursor_hooks_write', { install, gate, fingerprint }, { ok: false, error: 'not available' }),
   /**
    * The island's word on a waiting hook: 'ack' | `ack:${ms}` | `hold:${ms}` | 'allow' | 'deny' | 'pass',
    * or a JSON line island-hook understands ({kind:'reply'|'answer'|'deny', ...}).
    */
   hookReply: (requestId: string, reply: string) => call<boolean>('hook_reply', { requestId, reply }, false),
 
+  /** Puts this PC to sleep (Modern Standby PCs: by turning the display off). */
+  powerSleep: () => call<boolean>('power_sleep', {}, false),
   mediaState: () => call<MediaState | null>('media_state', {}, null),
   /** `focus`: brings forward the browser tab or app window that is playing (Windows). */
   mediaControl: (action: 'toggle' | 'play' | 'pause' | 'next' | 'prev' | 'seek' | 'focus', value?: number) => call<boolean>('media_control', { action, value: value ?? null }, false),
@@ -859,6 +1017,8 @@ export const native = {
   lock: () => call('shell_lock', {}, undefined),
   /** Puts the PC to sleep (a phone's Sleep). */
   sleep: () => call('shell_sleep', {}, undefined),
+  /** Sleep, restart or shut down this PC, as Start › Power does (nothing is forced closed). Windows only. */
+  power: (kind: 'sleep' | 'restart' | 'shutdown') => tryCall<null>('shell_power', { kind }),
   snip: () => call('shell_snip', {}, undefined),
   /** Snipping Tool's overlay to drag an area: a screenshot (Win+Shift+S) or a screen recording (Win+Shift+R). Windows only. */
   screenCapture: (what: 'image' | 'video') => call<boolean>('screen_capture', { video: what === 'video' }, false),
@@ -916,6 +1076,10 @@ export const native = {
   landShareStop: () => call<undefined>('land_share_stop', {}, undefined),
   landAnswer: (id: string, accept: boolean) => call<boolean>('land_answer', { id, accept }, false),
   landCancel: (id: string) => call<boolean>('land_cancel', { id }, false),
+  /** What Windows shows for a shelved file (a thumbnail, else its icon) as a PNG data address; null where there is none. */
+  shelfThumb: (path: string, px = 96) => call<string | null>('shelf_thumb', { path, px }, null),
+  /** Drags files out of the island from the pointer pressing now; settles at the drop (true: something took them). */
+  shelfDrag: (paths: string[]) => tryCall<boolean>('shelf_drag', { paths }),
   landStage: (paths: string[]) =>
     call<LandStaged[]>('land_stage', { paths }, paths.map((p) => ({ path: p, name: p.split(/[\\/]/).pop() || p, size: 0, dir: false, files: 1, error: null }))),
 
@@ -972,8 +1136,14 @@ export const native = {
   /** Opens one workspace item; `base` is its project folder. */
   wsLaunch: (item: LaunchItem, base: string) => tryCall<Launched>('ws_launch', { item, base }),
   /** The app an item starts, if it's running now (with its main window). */
+  /** The program an app item starts and its shortcut's arguments (null for Store apps and what can't be resolved). */
+  wsProgram: (path: string, base: string) => call<{ exe: string; args: string } | null>('ws_program', { path, base }, null),
   wsRunning: (path: string, base: string) => call<{ pid: number; hwnd: number | null } | null>('ws_running', { path, base }, null),
   /** Start's list of apps. */
+  /** The taskbar's pinned apps (the Apps tile's first list). */
+  appsPinned: () => call<InstalledApp[]>('apps_pinned', {}, []),
+  /** Each app's icon as a PNG data address, in the order asked; null where Windows has none. */
+  appsIcons: (targets: string[], px = 48) => call<Array<string | null>>('apps_icons', { targets, px }, []),
   wsApps: () => call<InstalledApp[]>('ws_apps', {}, []),
   /** App windows on screen now, front first. */
   wsWindows: () => tryCall<LiveWindow[]>('ws_windows', {}),
@@ -988,6 +1158,27 @@ export const native = {
   /** The system's Open dialog over this window; the chosen paths, empty when cancelled. */
   wsPick: (kind: 'app' | 'file' | 'folder' | 'program', multiple: boolean, start: string | null) =>
     call<string[]>('ws_pick', { kind, multiple, start }, []),
+
+  /** Your own chime (src-tauri/src/sounds.rs): the Open dialog, then a copy kept as `kind`'s sound.
+   *  The picked file's name; null when cancelled; `error` when the file can't be used. */
+  soundPick: async (kind: 'done' | 'attention'): Promise<{ name: string | null; error?: string }> => {
+    if (!isTauri) return { name: null, error: 'This needs the Island app.' };
+    try {
+      return { name: await invoke<string | null>('sound_pick', { kind }) };
+    } catch (err) {
+      return { name: null, error: String(err) };
+    }
+  },
+  /** `kind`'s own sound as bytes; null when there is none. */
+  soundRead: async (kind: 'done' | 'attention'): Promise<ArrayBuffer | null> => {
+    if (!isTauri) return null;
+    try {
+      return await invoke<ArrayBuffer>('sound_read', { kind });
+    } catch {
+      return null;
+    }
+  },
+  soundClear: (kind: 'done' | 'attention') => call('sound_clear', { kind }, undefined),
 };
 
 export type Native = typeof native;

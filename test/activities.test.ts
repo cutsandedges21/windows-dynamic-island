@@ -1717,7 +1717,7 @@ describe('music', () => {
   it('clicking the art, in the player or on the tile, brings the app playing forward and closes the island', async () => {
     const { act, calls } = await boot(new MusicActivity(), { hoverPlayer: true });
     expect(act.sheet(hover())!.blocks[0]).toMatchObject({ actions: { open: 'open' } });
-    expect(act.tile(hover())!.body).toMatchObject({ k: 'media', open: 'open' });
+    expect(act.tile(hover())!.body).toMatchObject({ open: 'open' });
     // Not interactive: the art is only a picture.
     expect((act.sheet(hover(false))!.blocks[0] as { actions: { open?: string } }).actions.open).toBeUndefined();
     expect((act.tile(hover(false))!.body as { open?: string }).open).toBeUndefined();
@@ -1854,10 +1854,13 @@ describe('music lyrics', () => {
 
   it('the Music tile in Control Center opens the lyrics card, with a way back', async () => {
     const { act, calls } = await boot(new MusicActivity(), { hoverPlayer: true, lyrics: true });
+    // With lyrics on, the tile is the lyrics (Moss's tile); a click on it opens the lyrics card.
     const tile = act.tile(hover())!;
-    expect((tile.body as { buttons: Array<{ key: string; action: string }> }).buttons[0]).toMatchObject({ key: 'lyrics', action: 'lyrics-card' });
-    await act.action('lyrics-card');
+    expect(tile).toMatchObject({ action: 'card', body: { k: 'lyrics' } });
+    await act.action('card');
     expect(calls.openCard).toBe(1);
+    await act.action('lyrics-card');
+    expect(calls.openCard).toBe(2);
     act.sheet(open());
     await tick(0);
     const v = act.sheet(open())!;

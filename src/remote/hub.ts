@@ -8,7 +8,7 @@ import type { MirrorFrame } from '../core/mirror';
 import type { RemoteFile, RemotePhone } from '../core/native';
 import type { Settings } from '../core/settings';
 import type { SheetView } from '../core/sheet';
-import { MAX_VIEWS_PER_S, PHONE_ISLAND_ACTIONS, PROTOCOL_V, readPhoneMsg, type BotState, type HelloFacts, type IslandMsg, type Nav, type PrefActivity, type PrefRow, type PrefValue } from './protocol';
+import { MAX_VIEWS_PER_S, PHONE_ISLAND_ACTIONS, PROTOCOL_V, readPhoneMsg, type BotState, type HelloFacts, type IslandMsg, type Nav, type PowerAction, type PrefActivity, type PrefRow, type PrefValue } from './protocol';
 import { gridSetAllowed, shownGridKeys, shownGridSizes, withoutTray, type PhoneLayout } from './grid-edit';
 import { heldPush, PhoneOutbox, setPhoneHolder, type HeldItem } from './outbox';
 import { HELLO_GUARDED, mayPress, PC_ONLY, pressables, stripActions, stripPill, type Pressables } from './views';
@@ -24,7 +24,7 @@ export class PhoneError extends Error {}
  * isn't asked before Claude's Allow (a phone can't pass Hello, so it gets no terminals either).
  */
 export function termAllowed(s: Pick<Settings, 'general' | 'activities'>): boolean {
-  return s.general.phoneTerminal === true && s.activities.config.claude?.options.requireHello !== true;
+  return s.general.phoneTerminal === true && s.activities.config.claude?.options.requireHello !== true && s.activities.config.codex?.options.requireHello !== true && s.activities.config.cursor?.options.requireHello !== true && s.activities.config.antigravity?.options.requireHello !== true;
 }
 
 /** Something a phone sent the PC, for the island to show the way Land shows what another computer sent. */
@@ -46,6 +46,11 @@ export interface PhoneIslandHooks {
    * `folders`: recent project folders. Asked after every compose: a change sends a fresh hello.
    */
   facts(): HelloFacts;
+  /**
+   * The Allow buttons phones may not see or press: each AI's whose Windows Hello is asked before
+   * Allow (`act:<id>:allow`). Without it, Claude's goes by `facts().allow`.
+   */
+  guarded?(): readonly string[];
   /** Text or a file from a phone arrived (already copied, or saved to Downloads; a picture copied too). */
   fromPhone(item: PhoneDelivery): void;
   /** The settings and activities a phone may change, with their values now (src/remote/prefs.ts `prefsOf`); null before settings load. */
@@ -70,6 +75,8 @@ export interface PhoneNative {
   clipboard(): Promise<{ files: string[]; text: string | null }>;
   lock(): Promise<unknown>;
   sleep(): Promise<unknown>;
+  /** Sleep, restart or shut down the PC; `ok: false` with why when Windows refused. */
+  power(kind: PowerAction): Promise<{ ok: true; value: unknown } | { ok: false; error: string }>;
   log(text: string): void;
   on<T>(event: string, cb: (payload: T) => void): Promise<() => void>;
 }
@@ -400,8 +407,10 @@ export class PhoneHub {
     this.send(s, { t: 'toast', text, tone });
   }
 
-  /** Claude's Allow is held back while Windows Hello is asked before it; the PC's own buttons always are. */
+  /** An AI's Allow is held back while Windows Hello is asked before it; the PC's own buttons always are. */
   private blocked(): ReadonlySet<string> {
+    const guarded = this.hooks.guarded?.();
+    if (guarded) return guarded.length ? new Set([...PC_ONLY, ...guarded]) : AT_THE_PC;
     return this.hooks.facts().allow ? AT_THE_PC : new Set([...PC_ONLY, ...HELLO_GUARDED]);
   }
 
@@ -469,6 +478,8 @@ export class PhoneHub {
         return this.sleep(s);
       case 'grid-set':
         return this.gridSet(s, { order: m.order, hidden: m.hidden, ...(m.pages ? { pages: m.pages } : {}), ...(m.sizes ? { sizes: m.sizes } : {}), ...(m.reset ? { reset: true } : {}) });
+      case 'power':
+        return this.power(s, m.what);
     }
   }
 
@@ -548,6 +559,22 @@ export class PhoneHub {
   private async sleep(s: Session): Promise<void> {
     this.toast(s, 'Going to sleep', 'good');
     await this.native.sleep();
+  }
+
+  /**
+   * Sleep, restart or shut down, asked from a phone's More menu (it confirmed there). Only where
+   * hello offered it.
+   */
+  private async power(s: Session, what: PowerAction): Promise<void> {
+    const name = this.hooks.facts().name;
+    if (!this.hooks.facts().power) {
+      this.toast(s, `${name} can't do that from a phone`, 'bad');
+      return;
+    }
+    this.native.log(`phone: ${s.name} asked to ${what}`);
+    const r = await this.native.power(what);
+    if (r.ok) this.toast(s, what === 'sleep' ? `${name} is going to sleep` : what === 'restart' ? `Restarting ${name}` : `Shutting down ${name}`, 'good');
+    else this.toast(s, `Couldn't ${what === 'shutdown' ? 'shut down' : what}: ${r.error}`, 'bad');
   }
 
   /** A file from a phone, saved to Downloads by Rust (which told the phone): the island shows it. */

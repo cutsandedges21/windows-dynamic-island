@@ -9,7 +9,7 @@ vi.mock('../src/core/native', () => ({ native: h.native, on: async () => () => {
 import type { ActivityContext, RenderEnv } from '../src/core/activity';
 import { choosePrimary, type Candidate } from '../src/core/priority';
 import { defaultSettings, migrate, SETTINGS_VERSION } from '../src/core/settings';
-import { fpsText, GameActivity, pingTone } from '../src/activities/game';
+import { fpsText, GameActivity, pingTone, stripItems } from '../src/activities/game';
 
 describe('settings v2', () => {
   it('frees orange for Claude and takes Claude off the main screen, once', () => {
@@ -84,13 +84,22 @@ describe('priority', () => {
 describe('games', () => {
   const env = (level: RenderEnv['level'], vertical = false): RenderEnv => ({ level, width: 400, height: 40, now: 0, open: false, hover: false, surfaced: null, interactive: true, vertical });
 
-  async function boot(state: unknown) {
+  async function boot(state: unknown, options: Record<string, unknown> = {}) {
     for (const k of Object.keys(h.native)) delete h.native[k];
-    Object.assign(h.native, { demo: false, gameState: vi.fn(async () => state), gameFpsSetup: vi.fn(async () => ({ ok: true, message: 'ok' })) });
+    Object.assign(h.native, {
+      demo: false,
+      gameState: vi.fn(async () => state),
+      gameFpsSetup: vi.fn(async () => ({ ok: true, message: 'ok' })),
+      sysSample: vi.fn(async () => ({ cpu: 31.2, memUsed: 8, memTotal: 16, gpu: 58, top: null })),
+      netSample: vi.fn(async () => ({ rxBps: 2.3 * 1024 * 1024, txBps: 1.1 * 1024 * 1024, connected: true, internet: true, name: 'Wi-Fi', wifi: true, vpn: false })),
+      audioState: vi.fn(async () => ({ micMuted: false })),
+      gameBar: vi.fn(async () => true),
+      micSetMute: vi.fn(async () => true),
+    });
     const act = new GameActivity();
     const settings = defaultSettings();
     const ctx = {
-      id: 'game', config: () => settings.activities.config.game, options: () => ({}), settings: () => settings, update: () => {}, surface: () => {},
+      id: 'game', config: () => settings.activities.config.game, options: () => options, settings: () => settings, update: () => {}, surface: () => {},
       alert: () => {}, open: () => {}, close: () => {}, isOpen: () => false, isPrimary: () => true, notify: () => {}, log: () => {},
     } as unknown as ActivityContext;
     vi.useFakeTimers();
@@ -111,6 +120,46 @@ describe('games', () => {
     expect(texts).toEqual(['144', 'FPS', '24 ms']);
     expect(act.render(env('expanded')).some((s) => s.t === 'text' && s.text === 'Hades II')).toBe(true);
     expect(act.render(env('compact', true)).map((s) => (s.t === 'text' ? s.text : ''))).toEqual(['144', 'FPS', '24', 'ms']);
+  });
+
+  it('game mode: the open card has CPU, GPU and RAM, and Game Bar buttons that press its shortcuts', async () => {
+    const act = await boot(playing, {});
+    const open = { reason: 'open' as const, now: Date.now(), width: 400, vertical: false, interactive: true, surfaced: null };
+    expect(act.tile!(open)).toMatchObject({ action: 'card' });
+    const card = act.sheet!(open)!;
+    const stats = card.blocks.find((b) => b.t === 'stats');
+    expect(stats && stats.t === 'stats' ? stats.items.map((i) => [i.label, i.value]) : []).toEqual([
+      ['FPS', '144'],
+      ['Ping', '24 ms'],
+      ['CPU', '31%'],
+      ['GPU', '58%'],
+      ['RAM', '50%'],
+    ]);
+    const bar = card.blocks.find((b) => b.t === 'buttons' && b.key === 'bar');
+    expect(bar && bar.t === 'buttons' ? bar.items.map((b) => [b.action, b.arg ?? null]) : []).toEqual([
+      ['bar', 'screenshot'],
+      ['bar', 'clip'],
+      ['bar', 'record'],
+      ['mic', null],
+    ]);
+    await act.action!('bar', 'clip');
+    expect(h.native.gameBar).toHaveBeenCalledWith('clip');
+    // Nothing else is pressed for it.
+    await act.action!('bar', 'format');
+    expect(h.native.gameBar).toHaveBeenCalledTimes(1);
+    await act.action!('mic');
+    expect(h.native.micSetMute).toHaveBeenCalledWith(true);
+  });
+
+  it('set to a strip, a full-screen game gets the numbers along the top and the pill leaves', async () => {
+    const island = await boot(playing, {});
+    expect(island.strip(0)).toBeNull();
+    const act = await boot(playing, { display: 'strip', stripStyle: 'glass' });
+    expect(act.status().overFullscreen).toBe(false);
+    const view = act.strip(new Date(2026, 10, 12, 10, 30).getTime())!;
+    expect(view.style).toBe('glass');
+    expect(view.items.map((i) => `${i.label ?? ''} ${i.value}`.trim())).toEqual(['FPS 144', 'CPU 31%', 'GPU 58%', 'RAM 50%', 'Ping 24 ms', '↓ 2.3 MB/s', '↑ 1.1 MB/s', '10:30 AM']);
+    expect(stripItems({ ...playing, fps: null } as never, null, null, null, 0).map((i) => i.key)).toEqual(['fps', 'time']);
   });
 
   it('offers the one-time setup when Windows refuses frame timing', async () => {

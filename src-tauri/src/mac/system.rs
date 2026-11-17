@@ -9,6 +9,12 @@ pub fn power_state() -> Result<(), String> {
     Err(crate::mac::NOT_YET.into())
 }
 
+/// Puts this Mac to sleep.
+#[tauri::command]
+pub fn power_sleep() -> bool {
+    std::process::Command::new("pmset").arg("sleepnow").status().map(|s| s.success()).unwrap_or(false)
+}
+
 #[tauri::command]
 pub async fn power_saver_set(on: bool) -> Result<bool, String> {
     let _ = on;

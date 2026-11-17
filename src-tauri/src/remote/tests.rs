@@ -451,7 +451,7 @@ impl TermStream {
     }
 
     /// Frames until the stream ends: the exit's payload, if one came.
-    async fn to_the_end(&mut self) -> Option<Value> {
+    async fn until_end(&mut self) -> Option<Value> {
         let mut exit = None;
         while let Some((kind, payload)) = self.frame().await {
             if kind == terms::TERM_EXIT {
@@ -504,7 +504,7 @@ async fn a_phone_opens_a_terminal_types_and_reads_it_back() {
 
     // Letting go leaves it running; attaching again replays what it printed.
     t.send.finish().unwrap();
-    assert!(t.to_the_end().await.is_none(), "no exit: it still runs");
+    assert!(t.until_end().await.is_none(), "no exit: it still runs");
     c.terms_until(|v| v["items"][0]["attached"] == 0).await;
     let mut again = TermStream::open(&conn, json!({ "t": "term", "id": id, "cols": 80, "rows": 24, "cwd": null, "shell": null })).await;
     assert_eq!((again.answer["t"].as_str(), again.answer["id"].as_str()), (Some("term-ok"), Some(id.as_str())));
@@ -515,7 +515,7 @@ async fn a_phone_opens_a_terminal_types_and_reads_it_back() {
 
     // Turned off on the PC: the stream is let go, new ones are refused, and none can be ended.
     rig.island.term_allow(false);
-    assert!(again.to_the_end().await.is_none());
+    assert!(again.until_end().await.is_none());
     c.terms_until(|v| v["allowed"] == false && v["items"] == json!([])).await;
     let refused = TermStream::open(&conn, json!({ "t": "term", "id": id, "cols": 80, "rows": 24 })).await;
     assert_eq!(refused.answer["error"], terms::NOT_ALLOWED);
@@ -529,7 +529,7 @@ async fn a_phone_opens_a_terminal_types_and_reads_it_back() {
     assert_eq!(last.answer["t"], "term-ok");
     c.say(json!({ "t": "term-kill", "id": id })).await;
     c.terms_until(|v| v["allowed"] == true && v["items"] == json!([])).await;
-    let exit = last.to_the_end().await.expect("an exit frame before the end");
+    let exit = last.until_end().await.expect("an exit frame before the end");
     assert!(exit["code"].is_i64(), "{exit}");
     assert!(rig.island.terms.list().is_empty());
     assert_eq!(rig.count("remote-msg"), 0, "terminal lines stay in Rust");

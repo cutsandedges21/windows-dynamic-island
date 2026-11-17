@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { detect, matchWorkspace, sameIds, workspacesInUse } from '../src/workspaces/notice/detect';
-import { addSample, contexts, duration, emptyTrail, GAP_MS, prune, readTrail, settled, type Sample, type TrailDoc } from '../src/workspaces/notice/model';
+import { detect, matchWindow, matchWorkspace, programsOf, sameIds, workspacesInUse, type ItemProgram } from '../src/workspaces/notice/detect';
+import { addSample, contexts, duration, emptyTrail, GAP_MS, prune, readTrail, reattribute, settled, type Sample, type TrailDoc } from '../src/workspaces/notice/model';
 import { inUseText, newResource, newWorkspace, type Workspace } from '../src/workspaces/model';
 
 const CODE = 'C:\\Users\\m\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe';
@@ -63,6 +63,72 @@ describe('reading the window in front', () => {
     expect(inUseText({ notes: { ...island.notes, next: '  finish the lab ' } })).toBe('In use · Next: finish the lab');
     expect(sameIds(new Set(['a', 'b']), new Set(['b', 'a']))).toBe(true);
     expect(sameIds(new Set(['a']), new Set(['a', 'b']))).toBe(false);
+  });
+});
+
+describe('workspaces made of apps', () => {
+  // Shaped like real ones: a browser and a web app for school; two IDEs for a course; an editor on a folder.
+  const school: Workspace = { ...newWorkspace({ name: 'School/Class' }), lastOpenedAt: 1, resources: [newResource('app', { path: 'C:\\Users\\m\\AppData\\Local\\Perplexity\\Comet\\Application\\comet.exe' }), newResource('app', { path: 'C:\\Users\\m\\Desktop\\YouTube Music.lnk' })] };
+  const prog: Workspace = { ...newWorkspace({ name: 'Prog' }), lastOpenedAt: 2, resources: [newResource('app', { path: 'C:\\Users\\m\\Desktop\\Apache NetBeans.lnk' }), newResource('app', { path: 'C:\\JetBrains\\IntelliJ IDEA 2026.2\\bin\\idea64.exe' })] };
+  const dev: Workspace = { ...newWorkspace({ name: 'Development' }), lastOpenedAt: 3, cwd: 'C:\\Users\\m\\OneDrive\\Documents\\CodingPersonal', resources: [newResource('app', { path: 'C:\\Users\\m\\Desktop\\Cursor.lnk' })] };
+  const list = [school, prog, dev];
+  // What Rust reads from each app item: shortcuts resolved to their program, a web app's --app-id.
+  const items = new Map<string, ItemProgram>([
+    [school.resources[1].id, { exe: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome_proxy.exe', args: '--profile-directory=Default --app-id=cinhimbnkkaeohfgghhklpknlkffjgod' }],
+    [prog.resources[0].id, { exe: 'C:\\Program Files\\NetBeans-25\\netbeans\\bin\\netbeans64.exe', args: '' }],
+    [dev.resources[0].id, { exe: 'C:\\Users\\m\\AppData\\Local\\Programs\\cursor\\Cursor.exe', args: '' }],
+  ]);
+  const programs = new Map(list.map((ws) => [ws.id, programsOf(ws, items)]));
+  const m = (exe: string, title: string) => matchWindow(detect(exe, title), title, list, programs)?.name ?? null;
+
+  it('knows each workspace by its programs, and a web app by its name', () => {
+    expect([...programs.get(school.id)!.exes]).toEqual(['comet.exe']);
+    expect(programs.get(school.id)!.webApps).toEqual(['youtube music']);
+    expect([...programs.get(prog.id)!.exes].sort()).toEqual(['idea64.exe', 'netbeans64.exe']);
+    expect([...programs.get(dev.id)!.exes]).toEqual(['cursor.exe']);
+  });
+
+  it('gives each window to its workspace', () => {
+    expect(m('C:\\x\\comet.exe', 'Assignment 3 - Omnivox - Comet')).toBe('School/Class');
+    expect(m('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'Lofi Beats - YouTube Music')).toBe('School/Class');
+    expect(m('C:\\JetBrains\\IntelliJ IDEA 2026.2\\bin\\idea64.exe', 'JavaFXApp – Main.java')).toBe('Prog');
+    expect(m('C:\\Program Files\\NetBeans-25\\netbeans\\bin\\netbeans64.exe', 'Lab4 - Apache NetBeans IDE 25')).toBe('Prog');
+    expect(m('C:\\x\\Cursor.exe', 'app.ts - CodingPersonal - Cursor')).toBe('Development');
+    // A plain Chrome window is nobody's: no workspace lists Chrome itself.
+    expect(m('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'Inbox - Gmail - Google Chrome')).toBeNull();
+    expect(m('C:\\Windows\\explorer.exe', 'Downloads')).toBeNull();
+    // An editor on some other project isn't Development's, which has a folder of its own.
+    expect(m('C:\\x\\Cursor.exe', 'main.rs - other-thing - Cursor')).toBeNull();
+    // Cursor on a loose file is.
+    expect(m('C:\\x\\Cursor.exe', 'notes.md - Cursor')).toBe('Development');
+  });
+
+  it('settles a program two workspaces share by the title, then by the one opened last', () => {
+    const a: Workspace = { ...newWorkspace({ name: 'Essays' }), lastOpenedAt: 5, resources: [newResource('app', { path: 'C:\\Office\\WINWORD.EXE' })] };
+    const b: Workspace = { ...newWorkspace({ name: 'Lab' }), lastOpenedAt: 9, resources: [newResource('app', { path: 'C:\\Office\\WINWORD.EXE' })] };
+    const both = new Map([a, b].map((ws) => [ws.id, programsOf(ws, new Map())]));
+    const pick = (title: string) => matchWindow(detect('C:\\Office\\WINWORD.EXE', title), title, [a, b], both)?.name;
+    expect(pick('Document1 - Word')).toBe('Lab');
+    expect(pick('Essays draft - Word')).toBe('Essays');
+  });
+
+  it('calls app workspaces in use while their programs have a window open', () => {
+    const win = (exe: string, title: string) => ({ exe, title, className: '' });
+    const open = [win('C:\\x\\comet.exe', 'Omnivox - Comet'), win('C:\\x\\Cursor.exe', 'a.ts - CodingPersonal - Cursor')];
+    expect([...workspacesInUse(open, list, programs)].sort()).toEqual([school.id, dev.id].sort());
+  });
+
+  it('credits time noticed before its programs were known to the workspace, from when it was made', () => {
+    const made = { ...prog, createdAt: 1_000 };
+    const progs = new Map([[made.id, programsOf(made, items)]]);
+    const doc: TrailDoc = { ...emptyTrail(), spans: [
+      { start: 500, end: 900, app: 'C:\\JetBrains\\bin\\idea64.exe', project: 'Lab4', ws: null, file: null, title: '' },
+      { start: 2_000, end: 9_000, app: 'C:\\JetBrains\\bin\\idea64.exe', project: 'Lab4', ws: null, file: null, title: '' },
+      { start: 9_000, end: 9_500, app: 'C:\\Windows\\explorer.exe', project: null, ws: null, file: null, title: '' },
+    ] };
+    const after = reattribute(doc, [made], progs);
+    expect(after.spans.map((x) => x.ws)).toEqual([null, made.id, null]);
+    expect(reattribute(after, [made], progs)).toBe(after);
   });
 });
 

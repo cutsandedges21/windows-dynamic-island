@@ -95,6 +95,10 @@ export interface PushSub {
   keys: { p256dh: string; auth: string };
 }
 
+/** What a phone may ask of the PC's power, beside Lock. */
+export type PowerAction = 'sleep' | 'restart' | 'shutdown';
+export const POWER_ACTIONS: readonly PowerAction[] = ['sleep', 'restart', 'shutdown'];
+
 /** Phone → island lines the island's TypeScript handles (Rust passes them on as `remote-msg`). */
 export type PhoneMsg =
   | { t: 'nav'; open: 'grid' | 'none'; width?: number }
@@ -109,6 +113,8 @@ export type PhoneMsg =
   /** Change one of them; the PC checks `key` against its own allow-list (src/remote/prefs.ts). */
   | { t: 'pref'; key: string; value: PrefValue }
   | { t: 'sleep' }
+  /** Sleep, restart or shut down the PC (only offered when `hello.power`). */
+  | { t: 'power'; what: PowerAction }
   /**
    * Control Center arranged on the phone: tiles on the grid in order, and the ones taken off; with
    * the pages they sit on and the sizes changed, or `reset` for Reset layout (src/remote/grid-edit.ts).
@@ -215,6 +221,8 @@ export type IslandMsg =
       screen: ScreenState;
       /** Recent project folders, newest first (at most HELLO_FOLDERS). An older island: none. */
       folders: string[];
+      /** This PC takes Sleep, Restart and Shut down from a phone (Windows). An older island: false. */
+      power: boolean;
     }
   | { t: 'pill'; frame: MirrorFrame; bot: BotState | null }
   | { t: 'view'; nav: Nav; view: SheetView | null; urgent: string | null }
@@ -368,6 +376,8 @@ export function readPhoneMsg(v: unknown): PhoneMsg | null {
       }
       return out;
     }
+    case 'power':
+      return POWER_ACTIONS.includes(v.what as PowerAction) ? { t: 'power', what: v.what as PowerAction } : null;
     default:
       return null;
   }
@@ -407,7 +417,7 @@ export function readIslandMsg(v: unknown): IslandMsg | null {
       // An older island says nothing of terminals, the screen or folders: none of them, then.
       const screen = v.screen === 'ready' || v.screen === 'off' || v.screen === 'missing' ? v.screen : null;
       const folders = Array.isArray(v.folders) ? v.folders.filter((f): f is string => short(f, 1000) && f.trim() !== '').slice(0, HELLO_FOLDERS) : [];
-      return { t: 'hello', v: v.v, name: v.name, platform: v.platform, version: v.version, allow: v.allow, vapid: v.vapid, term: v.term === true, screen, folders };
+      return { t: 'hello', v: v.v, name: v.name, platform: v.platform, version: v.version, allow: v.allow, vapid: v.vapid, term: v.term === true, screen, folders, power: v.power === true };
     }
     case 'terms':
       return Array.isArray(v.items) && typeof v.allowed === 'boolean'

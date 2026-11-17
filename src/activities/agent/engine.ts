@@ -1,0 +1,1774 @@
+// The engine every AI coding agent's activity runs on (Claude Code, Codex): hooks for
+// answering from the island (permission prompts, Claude's questions, the reply window:
+// a finished chat waits briefly for a reply typed here, which then lands in that same
+// chat), the moments it announces (pill, card, phone, bot), the pill and its cards, and
+// a chat with the agent on a phone (phonechat.ts). Moved here from the Claude activity
+// on 2026-10-30; what differs per agent (sessions, limits, opening and continuing a
+// chat) is the subclass's: src/activities/claude/index.ts, src/activities/codex/index.ts.
+
+import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../../core/activity';
+import { agoText, baseName, clip, elapsed, pace, plainText, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from '../../core/format';
+import { requireHello } from '../../core/hello';
+import { native } from '../../core/native';
+import type { PetSignal } from '../../core/pet';
+import type { Seg, Tone } from '../../core/segments';
+import { hiddenNow } from '../../core/settings';
+import type { Block, SheetButton, SheetRow, SheetView, Tile } from '../../core/sheet';
+import { PhoneError } from '../../remote/hub';
+import type { TermInfo } from '../../remote/protocol';
+import { BaseActivity, chime } from '../base';
+import { about, turnLeft } from '../claude/estimate';
+import { HookState, questionsOf, type HookEvent, type PermissionCard, type ReplyHold } from '../claude/hooks';
+import { oneLine, recentFolders, routeFor, routeHint, sameText, terminalFor, type ChatPane, type ChatRoute } from '../claude/phonechat';
+import { askText, permissionText, PushGate, pushFor, type PushKind } from '../claude/pushes';
+import { describeTool, projectName } from '../claude/status';
+import type { ClosedView, SessionView, TrackerEvent } from '../claude/tracker';
+import type { ChatMessage } from '../claude/transcript';
+import type { UsageData, UsageState } from '../claude/usage';
+import type { AgentBrand } from './brand';
+
+/**
+ * Where an agent's sessions come from. The engine needs the process chains (is the user
+ * looking at a chat?), lookups by id, and a poll; each agent's tracker does the rest.
+ */
+export interface AgentTracker {
+  readonly probe: {
+    table: Map<number, unknown>;
+    ancestors(pid: number): Array<{ pid: number; name: string }>;
+    load(rows: unknown): void;
+  };
+  get(id: string): SessionView | null;
+  getClosed(id: string): ClosedView | null;
+  poll(): Promise<{ sessions: SessionView[]; closed: ClosedView[]; events: TrackerEvent[] }>;
+}
+
+interface Options {
+  sessionHotkeys: boolean;
+  notifications: boolean;
+  /** Its moments also go to the phone (Settings › Notifications › Send to my phone). */
+  phone: boolean;
+  showLimits: boolean;
+  showDesktop: boolean;
+  finishedSeconds: number;
+  /** A chat that finishes while the user is looking at it does not pop the island open. */
+  onlyOtherChats: boolean;
+  replyWindowSeconds: number;
+  requireHello: boolean;
+  resetAlerts: boolean;
+  /** Session ids the user hid from Island. */
+  hiddenSessions: string[];
+  /** Closed chats up to this time are cleared from "Closed recently". */
+  closedClearedAt: number;
+}
+
+/** A reset older than this when first noticed is old news: recorded, not announced. */
+const RESET_NEWS_MS = 12 * 3600_000;
+
+/** island-hook waits 110 s for a permission answer; the pipe answers at 108 s. */
+const PERMISSION_MS = 108_000;
+/** Clicking the reply box keeps the chat waiting this long… */
+const HOLD_MS = 240_000;
+/** …but never past this, measured from the Stop (the pipe's own ceiling is 280 s). */
+const HOLD_CEILING_MS = 270_000;
+
+/**
+ * A chat's status in the island's tones, the colours of Justin's Claude Status: blue while
+ * the agent works, green when it's your turn, amber when it needs you, red for an error or a
+ * turn stopped with Esc, dim when idle. The agent's mark and its limits keep its own colour.
+ */
+const TONE: Record<string, Tone> = { needs: 'warn', working: 'info', turn: 'good', error: 'bad', stopped: 'bad', muted: 'dim' };
+
+/** A chat's dot: its status colour (statusTone's name, or desktop.ts's for the Claude app). */
+export function chatTone(tone: string): Tone {
+  return TONE[tone] ?? 'dim';
+}
+
+/** The agent's card on a phone: chats in its list (live and closed together), folders to start a new one in, messages of one chat. */
+const PHONE_CHATS = 8;
+const PHONE_FOLDERS = 4;
+const CHAT_MESSAGES = 12;
+/** Enter goes into an Island terminal this long after the text: in the same write it would read as part of a paste. */
+const ENTER_GAP_MS = 150;
+/** An agent started in an Island terminal is followed this long at most (it may wait in its terminal for an answer)… */
+const FOLLOW_MS = 10 * 60_000;
+/** …and after this long the phone is told it is taking a while. */
+const SLOW_START_MS = 45_000;
+/** A message from the phone shows under its chat until the transcript has it, at most this long (a working agent queues it). */
+const PENDING_MS = 10 * 60_000;
+/** The size an Island terminal for a chat starts at; a phone that attaches resizes it. */
+const TERM_COLS = 120;
+const TERM_ROWS = 36;
+/** Back to the list of chats, from one chat or a new one. */
+const CHATS_BACK: SheetButton = { key: 'back', icon: 'chevron-left', action: 'chat-back', style: 'ghost', tip: 'All chats' };
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** "a:b:c" → ["a", "b:c"]: action names carry their target after the first colon. */
+function splitOnce(text: string, sep: string): [string, string] {
+  const i = text.indexOf(sep);
+  return i < 0 ? [text, ''] : [text.slice(0, i), text.slice(i + sep.length)];
+}
+
+export abstract class AgentActivity extends BaseActivity {
+  /** Who this agent is: its name in sentences, its mark, its colour, the bot's moments. */
+  abstract readonly brand: AgentBrand;
+
+  // ---------------------------------------------------------------- what each agent supplies
+
+  /** Starts the agent's own sources (sessions, limits, watchers), after the shared listeners. */
+  protected abstract startAgent(): Promise<void>;
+  /** The agent is installed on this PC; without it there is no tile. */
+  protected abstract available(): boolean;
+  /** Brings a chat up where it lives (its window, its app), or reopens it when closed. */
+  abstract switchTo(id: string, source?: string): Promise<boolean>;
+  /** Reopens a closed chat where it lived. */
+  abstract reopen(id: string): Promise<boolean>;
+  /** Continue Session: the prompt goes to the same chat, wherever it lives. */
+  protected abstract continueSession(id: string, text: string): Promise<void>;
+  /** What Open does for a chat, as a tip or a button label. */
+  protected abstract openText(s: SessionView | null | undefined): string;
+  /** Where a reply typed on a finished chat's card goes, after its reply window. */
+  protected abstract lateHint(s: SessionView): string;
+  /** The transcript a phone reads one chat from, and that chat's last messages. */
+  protected abstract chatFile(chat: SessionView | ClosedView): Promise<string | null>;
+  protected abstract readChatMessages(file: string, max: number): Promise<ChatMessage[]>;
+  /** What an Island terminal runs for a phone's message that starts the agent (fork, resume, new). */
+  protected abstract chatProgram(route: ChatRoute, words: string): { program: string; args: string[]; claude: boolean };
+
+  /** The agent's mark that leads the pill. */
+  protected mark(): Seg {
+    return { t: 'icon', key: 'mark', icon: this.brand.icon, tone: this.brand.tone, prio: 0 };
+  }
+
+  /** A session's dot: its status colour. */
+  protected toneOf(tone: string): Tone {
+    return chatTone(tone);
+  }
+
+  /** Which limit resets the user was already told about (survives restarts). */
+  protected resetSeenKey(): string {
+    return `island.${this.brand.id}.resetSeen`;
+  }
+
+  /** The Windows notification's line when a chat needs you. */
+  protected needsYouText(s: SessionView): string {
+    return `Needs you in ${s.project}.`;
+  }
+
+  /** The tip on a closed chat in the hover card. */
+  protected reopenTip(c: ClosedView): string {
+    void c;
+    return 'Reopens the chat';
+  }
+
+  /** The line under a phone's chat box: where a message goes. */
+  protected routeHint(route: ChatRoute): string {
+    return routeHint(route);
+  }
+
+  /** More rows for the hover card, after the closed chats (Claude: its app's chats). */
+  protected hoverExtras(now: number): Block[] {
+    void now;
+    return [];
+  }
+
+  /** Actions only this agent has (Claude: open a Claude app chat). */
+  protected async agentAction(verb: string, ref: string, id: string, arg: unknown): Promise<void> {
+    void verb;
+    void ref;
+    void id;
+    void arg;
+  }
+
+  protected tracker: AgentTracker | null = null;
+  protected readonly hooks = new HookState();
+
+  sessions: SessionView[] = [];
+  closed: ClosedView[] = [];
+  usageState: UsageState | null = null;
+  tokenTotals: { fresh: number; cached: number; output: number } | null = null;
+
+  protected selected: string | null = null;
+  protected inputFor: string | null = null;
+  protected readonly finished = new Map<string, number>();
+  /** Each moment goes to the phone once. */
+  protected readonly pushes = new PushGate();
+  /** One-time codes on the phone's Allow and Deny buttons, and the request each answers. */
+  protected readonly phoneCodes = new Map<string, string>();
+  protected notice: { text: string; tone: Tone; icon: string; until: number } | null = null;
+  protected pollTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Chats that finished while the user was looking at them: no card, they saw it. */
+  protected readonly looking = new Set<string>();
+  /** Answers picked so far on a question card: request id → question index → labels. */
+  protected readonly picks = new Map<string, Map<number, string[]>>();
+
+  // The agent's card on a phone (phonechat.ts).
+  /** Island's terminals (src-tauri/src/term), as Rust last listed them: chats from the phone run in them. */
+  protected terms: TermInfo[] = [];
+  /** Chats Island started in its terminals: session id → terminal id. */
+  protected readonly started = new Map<string, string>();
+  /** A chat the phone continued in a copy (a VS Code chat): original → the copy, which the phone's card follows. */
+  readonly forks = new Map<string, string>();
+  /** The agent just started in an Island terminal, until the tracker sees its chat there. `from`: the chat it continues; null for a new one. */
+  protected follows: Array<{ term: string; pid: number; from: string | null; cwd: string; at: number }> = [];
+  /** What the card shows on the phone: every chat, one chat, or a new one. One for every phone. */
+  protected pane: ChatPane = { kind: 'list' };
+  /** The open chat's last messages, as last read from its transcript. */
+  protected chatLog: { id: string; file: string | null; size: number; messages: ChatMessage[] } | null = null;
+  protected chatReading = false;
+  protected chatAgain = false;
+  /** The phone's last message, under its chat until the transcript has it. */
+  protected pending: { pane: string; text: string; at: number } | null = null;
+  /** Something a chat's card says for a while (the agent stopped before the chat began). */
+  protected chatNote: { pane: string; text: string; until: number } | null = null;
+
+  constructor(id: string) {
+    super(id);
+  }
+
+  protected opts(): Options {
+    const o = this.ctx.options<Partial<Options>>();
+    return {
+      sessionHotkeys: o.sessionHotkeys !== false,
+      notifications: o.notifications !== false,
+      phone: o.phone !== false,
+      showLimits: o.showLimits !== false,
+      showDesktop: o.showDesktop !== false,
+      finishedSeconds: Number(o.finishedSeconds) || 8,
+      onlyOtherChats: o.onlyOtherChats === true,
+      replyWindowSeconds: Math.max(0, Math.min(240, Number(o.replyWindowSeconds ?? 45) || 0)),
+      requireHello: o.requireHello === true,
+      resetAlerts: o.resetAlerts !== false,
+      hiddenSessions: Array.isArray(o.hiddenSessions) ? o.hiddenSessions.filter((x): x is string => typeof x === 'string') : [],
+      closedClearedAt: Number(o.closedClearedAt) || 0,
+    };
+  }
+
+  // ---------------------------------------------------------------- lifecycle (main.js start())
+
+  protected async init(): Promise<void> {
+    this.listen<HookEvent>('hook', (ev) => this.onHook(ev));
+    // Allow or Deny tapped on the phone (Settings › Notifications › Answer Claude from my phone).
+    this.listen<{ message: string }>('phone-reply', (r) => this.fromPhone(String(r?.message ?? '')));
+    // Unanswered in time: the terminal asks now (or the chat ends its turn), so the card goes.
+    this.listen<{ request_id: string }>('hook-expired', ({ request_id }) => {
+      const card = this.hooks.take(request_id);
+      const hold = this.hooks.takeHold(request_id);
+      this.picks.delete(request_id);
+      if (card || hold) this.ctx.update();
+    });
+    // Switching to a chat's own window means the user will answer it there: let it go at once.
+    this.listen<{ pid: number }>('foreground', ({ pid }) => this.onForeground(pid));
+    // Chats from the phone run in Island's terminals: their list says which chat runs where.
+    this.listen<TermInfo[]>('term-changed', (list) => this.onTerms(list));
+    this.every(1000, () => this.expireHolds());
+    await this.startAgent();
+  }
+
+  // ---------------------------------------------------------------- polling (main.js)
+
+  protected pollSoon(ms: number): void {
+    clearTimeout(this.pollTimer);
+    this.pollTimer = setTimeout(() => void this.pollSessions(), ms);
+  }
+
+  protected async pollSessions(): Promise<void> {
+    if (!this.tracker || !this.alive) return;
+    let result;
+    try {
+      result = await this.tracker.poll();
+    } catch (err) {
+      this.ctx.log('session poll failed', String(err));
+      return;
+    }
+    // A chat in an Island terminal has no window of its own: it says Island where others say their terminal.
+    this.sessions = this.visibleSessions(result.sessions).map((s) => (this.islandTerm(s) ? { ...s, host: 'Island' } : s));
+    this.closed = this.visibleClosed(result.closed);
+    for (const ev of result.events) this.onTrackerEvent(ev);
+    const keepMs = this.opts().finishedSeconds * 1000 + 2000;
+    for (const [id, at] of this.finished) if (Date.now() - at > keepMs) this.finished.delete(id);
+    if (this.selected && !this.sessions.some((s) => s.id === this.selected)) this.selected = null;
+    this.followChats();
+    // A phone showing a chat sees it move: its transcript is read again once it grew.
+    if (this.pane.kind === 'chat' && this.ctx.cardOpen?.()) void this.loadChat();
+    this.ctx.update();
+  }
+
+  protected onTrackerEvent(ev: TrackerEvent): void {
+    if (ev.type === 'needs-you') this.announceNeedsYou(ev.session);
+    else if (ev.type === 'finished') this.markFinished(ev.session.id);
+    else if (ev.type === 'closed') this.ctx.log('closed', { session: ev.session.id, title: ev.session.displayTitle });
+  }
+
+  /** Chats the user hid stay out of every list. */
+  protected visibleSessions(list: SessionView[]): SessionView[] {
+    const hidden = new Set(this.opts().hiddenSessions);
+    return hidden.size ? list.filter((s) => !hidden.has(s.sessionId)) : list;
+  }
+
+  /** "Closed recently", without what the user cleared or hid. */
+  protected visibleClosed(list: ClosedView[]): ClosedView[] {
+    const o = this.opts();
+    const hidden = new Set(o.hiddenSessions);
+    return list.filter((c) => c.closedAt > o.closedClearedAt && !hidden.has(c.sessionId));
+  }
+
+  /**
+   * The limits as they stand now. A window whose reset time has passed is back at
+   * 0%: the API only reports the new window once a message starts it, and the
+   * island must not keep showing the old 100% until then.
+   */
+  protected limitsNow(now = Date.now()): UsageData | null {
+    const d = this.usageState?.data;
+    if (!d) return null;
+    const fresh = <W extends { pct: number; resetsAt: number | null } | null | undefined>(w: W): W =>
+      w && w.resetsAt != null && w.resetsAt <= now ? ({ ...w, pct: 0, resetsAt: null } as W) : w;
+    return { ...d, fiveHour: fresh(d.fiveHour), sevenDay: fresh(d.sevenDay) };
+  }
+
+  /** Says so once when the session or weekly limit resets, also if that happened while Island was closed. */
+  protected checkResets(now = Date.now()): void {
+    const d = this.usageState?.data;
+    if (!d) return;
+    let seen: Record<string, number> = {};
+    try {
+      seen = JSON.parse(localStorage.getItem(this.resetSeenKey()) ?? '{}') as Record<string, number>;
+    } catch {
+      seen = {};
+    }
+    let changed = false;
+    const windows = [
+      ['session', d.fiveHour, 'Session limit'],
+      ['week', d.sevenDay, 'Weekly limit'],
+    ] as const;
+    for (const [key, w, label] of windows) {
+      if (!w?.resetsAt || w.resetsAt > now || seen[key] === w.resetsAt) continue;
+      seen[key] = w.resetsAt;
+      changed = true;
+      if (!this.opts().resetAlerts || now - w.resetsAt > RESET_NEWS_MS) continue;
+      const was = Math.round(w.pct);
+      this.ctx.log('limit reset', { window: key, was });
+      this.flash(`${label} reset. Back to 0%`, 'good', 'refresh', 8000);
+      this.saw('limits-reset', `${this.brand.id}:reset:${key}`);
+      this.ctx.notify(`${label} reset`, was ? `It was at ${was}%. A fresh window starts with your next message.` : 'A fresh window starts with your next message.');
+    }
+    if (!changed) return;
+    try {
+      localStorage.setItem(this.resetSeenKey(), JSON.stringify(seen));
+    } catch {
+      /* no storage: at worst the alert repeats after a restart */
+    }
+    this.ctx.update();
+  }
+
+  // ---------------------------------------------------------------- hooks
+
+  protected onHook(ev: HookEvent): void {
+    // Every AI's hooks come through the same pipe; each activity answers only its own.
+    if ((ev.agent ?? 'claude') !== this.brand.id) return;
+    const kind = this.hooks.apply(ev);
+    const sid = ev.session_id ?? '';
+    if (kind === 'permission' && ev.request_id) {
+      const question = ev.tool_name === 'AskUserQuestion';
+      const early = ev.hook_event_name === 'PreToolUse';
+      if (question && !early && this.hooks.askedEarly(sid)) {
+        // The island held this question before Claude Code asked it and let it go to the chat: it is asked there now.
+        this.hooks.take(ev.request_id);
+        void native.hookReply(ev.request_id, 'decline');
+      } else {
+        const cfg = this.ctx.config();
+        const canShow = cfg.enabled && cfg.interactive && cfg.interrupt && !this.ctx.settings().general.dnd && !hiddenNow(this.ctx.settings().island, Date.now());
+        if (question) this.askToPhone(sid, ev);
+        // Only a request that waits for an answer gets buttons on the phone.
+        else this.toPhone(sid, 'permission', permissionText(ev.tool_name, ev.tool_input), `${ev.tool_name}:${JSON.stringify(ev.tool_input ?? null).slice(0, 300)}`, ev.cwd, canShow ? ev.request_id : undefined);
+        if (!canShow) {
+          // Nobody will see the card: let the terminal ask right away.
+          this.hooks.take(ev.request_id);
+          void native.hookReply(ev.request_id, 'decline');
+        } else if (early) {
+          void this.holdQuestion(ev.request_id, sid, ev);
+        } else {
+          void native.hookReply(ev.request_id, 'ack');
+          this.ctx.alert('glow', 'warn');
+          this.saw(this.brand.moments.asks, `${this.brand.id}:ask:${ev.request_id}`);
+          chime('attention', this.ctx.settings().general);
+        }
+      }
+    }
+    if (kind === 'stop' && sid) {
+      // With a request id the hook waits on us: decide first, so a watched chat never flashes a card.
+      if (ev.request_id) void this.onStop(ev.request_id, sid, ev).finally(() => this.markFinished(sid, ev));
+      else this.markFinished(sid, ev);
+    }
+    if (kind === 'prompt' && sid) {
+      this.finished.delete(sid);
+      this.looking.delete(sid);
+    }
+    // A question or a notification is the chat asking for the user: say so, with what it asks.
+    if (sid && ((kind === 'tool' && ev.tool_name === 'AskUserQuestion' && ev.hook_event_name === 'PreToolUse') || kind === 'note')) {
+      if (kind === 'note' && ev.notification_type === 'idle_prompt') {
+        this.ctx.surface({ key: `note:${sid}`, ms: 6000, level: 'expanded', bump: false });
+        this.toPhone(sid, 'waiting', ev.message ?? '', '', ev.cwd);
+      } else {
+        this.ctx.surface({ key: `note:${sid}`, ms: 15000, level: 'expanded' });
+        this.ctx.alert('glow', 'warn');
+        this.saw(this.brand.moments.asks, `${this.brand.id}:note:${sid}`);
+        if (kind === 'note') this.toPhone(sid, 'needs', ev.message ?? '', '', ev.cwd);
+        else this.askToPhone(sid, ev);
+      }
+    }
+    this.pollSoon(150);
+    this.ctx.update();
+  }
+
+  // ---------------------------------------------------------------- the reply window
+
+  /**
+   * A chat finished and its Stop hook asks whether to wait. Wait only when the
+   * user is not looking at that chat: then the card shows its last message and
+   * a reply box, and a reply typed there continues the same chat. The answer
+   * must come within the pipe's 900 ms, so this decides from what is known now.
+   */
+  protected async onStop(requestId: string, sid: string, ev: HookEvent): Promise<void> {
+    const o = this.opts();
+    const cfg = this.ctx.config();
+    const pass = (why: string) => {
+      this.hooks.takeHold(requestId);
+      void native.hookReply(requestId, 'pass');
+      this.ctx.log('stop', { session: sid.slice(0, 8), held: false, why });
+    };
+    if (o.replyWindowSeconds <= 0 || !cfg.enabled || !cfg.interactive || this.ctx.settings().general.dnd) return pass('off');
+    if (hiddenNow(this.ctx.settings().island, Date.now())) return pass('hidden');
+    let looking = false;
+    try {
+      looking = await this.isLookingAt(sid, ev);
+    } catch (err) {
+      this.ctx.log('stop: foreground check failed', String(err));
+    }
+    if (looking) {
+      this.looking.add(sid);
+      this.ctx.update();
+      return pass('looking');
+    }
+    this.looking.delete(sid);
+    const total = o.replyWindowSeconds * 1000;
+    const now = Date.now();
+    const message = ev.last_assistant_message?.trim() || this.sessions.find((s) => s.id === sid)?.lastAssistantText || '';
+    this.hooks.holds = this.hooks.holds.filter((h) => h.sessionId !== sid);
+    this.hooks.holds.push({ requestId, sessionId: sid, message, at: now, until: now + total, total, held: false });
+    const waiting = await native.hookReply(requestId, `ack:${total}`);
+    if (!waiting && !native.demo) {
+      this.hooks.takeHold(requestId);
+      this.ctx.log('stop: window already closed', { session: sid.slice(0, 8) });
+    } else {
+      this.ctx.log('stop', { session: sid.slice(0, 8), held: true, seconds: o.replyWindowSeconds });
+      this.ctx.alert('glow', 'good');
+      chime('attention', this.ctx.settings().general);
+    }
+    this.ctx.update();
+  }
+
+  /**
+   * A question before Claude Code asks it. A user looking at its chat answers it there, as
+   * always: it goes at once. Anyone else gets the card, and the chat waits for the answer.
+   * The answer must come within the pipe's 900 ms, like a Stop's.
+   */
+  protected async holdQuestion(requestId: string, sid: string, ev: HookEvent): Promise<void> {
+    let looking = false;
+    try {
+      looking = await this.isLookingAt(sid, ev);
+    } catch (err) {
+      this.ctx.log('question: foreground check failed', String(err));
+    }
+    if (looking) {
+      this.hooks.take(requestId);
+      void native.hookReply(requestId, 'decline');
+      this.ctx.log('question', { session: sid.slice(0, 8), held: false, why: 'looking' });
+      this.ctx.update();
+      return;
+    }
+    void native.hookReply(requestId, 'ack');
+    this.ctx.log('question', { session: sid.slice(0, 8), held: true });
+    this.ctx.alert('glow', 'warn');
+    this.saw(this.brand.moments.asks, `${this.brand.id}:ask:${requestId}`);
+    chime('attention', this.ctx.settings().general);
+    this.ctx.update();
+  }
+
+  /** The process chain of a chat's agent process, itself first. */
+  protected chainOf(pid: number): number[] {
+    const probe = this.tracker?.probe;
+    if (!probe || !pid) return pid ? [pid] : [];
+    return [pid, ...probe.ancestors(pid).map((a) => a.pid)];
+  }
+
+  /**
+   * Is the user looking at this chat? Its window must be in front. Several
+   * chats can share one window (editor tabs, terminal tabs): then the one the
+   * user last sent a prompt to is the one they are in.
+   */
+  protected async isLookingAt(sid: string, ev?: HookEvent): Promise<boolean> {
+    const fg = await native.foregroundPid();
+    if (!fg || !this.tracker) return false;
+    const probe = this.tracker.probe;
+    const pidOf = (id: string) => this.sessions.find((s) => s.id === id)?.pid ?? 0;
+    const pid = pidOf(sid) || Number(ev?.hook_ppid) || 0;
+    if (!pid) return false;
+    if (!probe.table.has(pid)) probe.load(await native.procSnapshot());
+    if (!this.chainOf(pid).includes(fg)) return false;
+    const sharing = this.sessions.filter((s) => s.alive && s.pid && this.chainOf(s.pid).includes(fg));
+    if (sharing.length <= 1) return true;
+    const lastPrompt = (s: SessionView) => this.hooks.turnStart.get(s.id) ?? s.turnStartMs ?? 0;
+    const current = sharing.reduce((a, b) => (lastPrompt(b) > lastPrompt(a) ? b : a));
+    return current.id === sid;
+  }
+
+  protected onForeground(pid: number): void {
+    if (!pid) return;
+    for (const h of [...this.hooks.holds]) {
+      if (h.held) continue;
+      const s = this.sessions.find((x) => x.id === h.sessionId);
+      if (s && this.chainOf(s.pid).includes(pid)) this.release(h, 'switched to the chat');
+    }
+    // A held question goes to its chat once the user is there: Claude Code asks it as usual.
+    for (const c of this.hooks.cards.filter((x) => x.early)) {
+      const s = this.sessions.find((x) => x.id === c.sessionId);
+      if (!s || !this.chainOf(s.pid).includes(pid)) continue;
+      this.hooks.take(c.requestId);
+      this.picks.delete(c.requestId);
+      void native.hookReply(c.requestId, 'decline');
+      this.ctx.log('question released', { session: c.sessionId.slice(0, 8), why: 'switched to the chat' });
+      this.ctx.update();
+    }
+  }
+
+  /** Lets the chat end its turn now (the user will answer it some other way, or not at all). */
+  protected release(h: ReplyHold, why: string): void {
+    if (!this.hooks.takeHold(h.requestId)) return;
+    void native.hookReply(h.requestId, 'pass');
+    if (why === 'switched to the chat') this.looking.add(h.sessionId);
+    this.ctx.log('stop released', { session: h.sessionId.slice(0, 8), why });
+    this.ctx.update();
+  }
+
+  /** Windows the pipe has already closed (a missed hook-expired) must not linger. */
+  protected expireHolds(): void {
+    const now = Date.now();
+    const stale = this.hooks.holds.filter((h) => now > h.until + 2000);
+    if (!stale.length) return;
+    for (const h of stale) this.hooks.takeHold(h.requestId);
+    this.ctx.update();
+  }
+
+  /** The user clicked into the reply box: the chat keeps waiting while they type. */
+  protected holdLonger(requestId: string): void {
+    const h = this.hooks.hold(requestId);
+    if (!h || h.held) return;
+    const now = Date.now();
+    const until = Math.min(now + HOLD_MS, h.at + HOLD_CEILING_MS);
+    if (until <= now + 1000) return;
+    h.held = true;
+    h.until = until;
+    h.total = until - now;
+    void native.hookReply(requestId, `hold:${until - now}`);
+    this.ctx.update();
+  }
+
+  /** A reply typed in the island: through the waiting hook if it still waits, else the next best way. */
+  protected async sendReply(requestId: string, text: string): Promise<void> {
+    const h = this.hooks.takeHold(requestId);
+    if (!h) return;
+    const delivered = Date.now() < h.until - 300 && (await native.hookReply(requestId, JSON.stringify({ kind: 'reply', text })));
+    this.ctx.log('reply', { session: h.sessionId.slice(0, 8), via: delivered ? 'hook' : 'fallback' });
+    if (delivered) {
+      this.finished.delete(h.sessionId);
+      this.hooks.turnStart.set(h.sessionId, Date.now());
+      this.flash(`Sent. ${this.brand.name} is on it`, 'good', 'check');
+      this.pollSoon(400);
+      return;
+    }
+    await this.continueSession(h.sessionId, text);
+  }
+
+  // ---------------------------------------------------------------- permission answers
+
+  protected answer(requestId: string, decision: 'allow' | 'deny', message?: string): void {
+    const card = this.hooks.take(requestId);
+    if (!card) return;
+    this.picks.delete(requestId);
+    const reply = decision === 'deny' && message ? JSON.stringify({ kind: 'deny', message }) : decision;
+    void native.hookReply(requestId, reply);
+    if (decision === 'allow') this.hooks.current.set(card.sessionId, { tool: card.tool, input: card.input, at: Date.now() });
+    this.ctx.log('permission', { tool: card.tool, decision, withMessage: Boolean(message) });
+    this.ctx.update();
+  }
+
+  /** Taps an option. A lone single-choice question is answered at once; otherwise options toggle. */
+  protected pick(requestId: string, q: number, label: string): void {
+    const card = this.hooks.cards.find((c) => c.requestId === requestId);
+    if (!card) return;
+    const qs = questionsOf(card.input);
+    const question = qs[q];
+    if (!question) return;
+    const chosen = this.picks.get(requestId) ?? new Map<number, string[]>();
+    const now = chosen.get(q) ?? [];
+    if (question.multiSelect) chosen.set(q, now.includes(label) ? now.filter((x) => x !== label) : [...now, label]);
+    else chosen.set(q, [label]);
+    this.picks.set(requestId, chosen);
+    if (qs.length === 1 && !question.multiSelect) this.sendAnswers(requestId);
+    this.ctx.update();
+  }
+
+  /** Free text: answers the first question still without an answer. */
+  protected answerText(requestId: string, text: string): void {
+    const card = this.hooks.cards.find((c) => c.requestId === requestId);
+    if (!card) return;
+    const qs = questionsOf(card.input);
+    const chosen = this.picks.get(requestId) ?? new Map<number, string[]>();
+    const open = qs.findIndex((_, i) => !(chosen.get(i)?.length));
+    chosen.set(open < 0 ? 0 : open, [text]);
+    this.picks.set(requestId, chosen);
+    if (qs.every((_, i) => chosen.get(i)?.length)) this.sendAnswers(requestId);
+    this.ctx.update();
+  }
+
+  /** AskUserQuestion answered in the island: the tool runs with these answers filled in. */
+  protected sendAnswers(requestId: string): void {
+    const card = this.hooks.cards.find((c) => c.requestId === requestId);
+    if (!card) return;
+    const qs = questionsOf(card.input);
+    const chosen = this.picks.get(requestId) ?? new Map<number, string[]>();
+    if (!qs.length || !qs.every((_, i) => chosen.get(i)?.length)) return;
+    const answers: Record<string, string> = {};
+    qs.forEach((q, i) => (answers[q.question] = chosen.get(i)!.join(', ')));
+    const input = card.input && typeof card.input === 'object' ? (card.input as Record<string, unknown>) : {};
+    this.hooks.take(requestId);
+    this.picks.delete(requestId);
+    void native.hookReply(requestId, JSON.stringify({ kind: 'answer', updatedInput: { ...input, answers } }));
+    this.hooks.asks.delete(card.sessionId);
+    this.ctx.log('question answered', { session: card.sessionId.slice(0, 8), questions: qs.length });
+    this.flash(`Answered. ${this.brand.name} is on it`, 'good', 'check');
+  }
+
+  /** Hands a prompt back to the chat itself and brings that chat up. */
+  protected async answerInChat(requestId: string): Promise<void> {
+    const card = this.hooks.take(requestId);
+    this.picks.delete(requestId);
+    if (!card) return;
+    void native.hookReply(requestId, 'decline');
+    await this.switchTo(card.sessionId, 'answer-in-chat');
+  }
+
+  /** The island dismissed an urgent moment (tap outside). */
+  dismiss(key: string): void {
+    const [kind, ref] = splitOnce(key, ':');
+    if (kind === 'perm') {
+      // Hand the question back to the terminal instead of leaving Claude Code waiting.
+      if (this.hooks.take(ref)) void native.hookReply(ref, 'decline');
+      this.picks.delete(ref);
+    } else if (kind === 'reply') {
+      const h = this.hooks.hold(ref);
+      if (h) this.release(h, 'dismissed');
+    } else if (kind === 'note') {
+      this.hooks.notes.delete(ref);
+      this.hooks.asks.delete(ref);
+    } else if (kind === 'input') {
+      this.inputFor = null;
+    }
+    this.selected = null;
+    this.ctx.update();
+  }
+
+  // ---------------------------------------------------------------- moments
+
+  protected markFinished(id: string, ev?: HookEvent): void {
+    const prev = this.finished.get(id);
+    if (prev && Date.now() - prev < 5000) return;
+    this.finished.set(id, Date.now());
+    if (this.opts().onlyOtherChats) void this.announceUnlessLooking(id, ev);
+    else this.announceFinished(id, ev);
+  }
+
+  /** "Only pop up for other chats": a chat the user is looking at finishes quietly. */
+  protected async announceUnlessLooking(id: string, ev?: HookEvent): Promise<void> {
+    let looking = this.looking.has(id);
+    if (!looking) {
+      try {
+        looking = await this.isLookingAt(id, ev);
+      } catch (err) {
+        this.ctx.log('finish: foreground check failed', String(err));
+      }
+    }
+    if (!looking) return this.announceFinished(id, ev);
+    this.looking.add(id);
+    this.ctx.log('finished quietly', { session: id.slice(0, 8) });
+    this.ctx.update();
+  }
+
+  protected announceFinished(id: string, ev?: HookEvent): void {
+    this.ctx.surface({ key: `done:${id}`, ms: this.opts().finishedSeconds * 1000, level: 'expanded' });
+    const s = this.sessions.find((x) => x.id === id);
+    const errored = s?.status === 'errored';
+    this.saw(errored ? this.brand.moments.error : this.brand.moments.done, `${this.brand.id}:done:${id}`);
+    chime('done', this.ctx.settings().general);
+    const said = ev?.last_assistant_message?.trim() || s?.lastAssistantText || '';
+    this.toPhone(id, errored ? 'error' : 'done', errored ? [s?.label, said].filter(Boolean).join('\n') : said, '', ev?.cwd);
+    this.ctx.update();
+  }
+
+  protected announceNeedsYou(session: SessionView): void {
+    this.ctx.surface({ key: `needs:${session.id}`, ms: 7000, level: 'expanded' });
+    this.ctx.alert('shake');
+    this.saw(this.brand.moments.asks, `${this.brand.id}:needs:${session.id}`);
+    this.ctx.alert('glow', 'warn');
+    // The phone gets this from toPhone, once, however many ways the moment is reported.
+    if (this.opts().notifications) this.ctx.notify(session.displayTitle, this.needsYouText(session), false);
+    this.toPhone(session.id, 'needs', `${session.label} · ${session.project}`, '', session.cwd);
+  }
+
+  /**
+   * A moment of this chat on the phone, once: hooks and polling report the same one twice.
+   * `requestId`: a permission request waiting here, which the phone can answer.
+   */
+  protected toPhone(sid: string, kind: PushKind, detail: string, key = '', cwd?: string, requestId?: string): void {
+    const o = this.opts();
+    if (!sid || !o.phone || !this.ctx.push || o.hiddenSessions.includes(sid)) return;
+    if (!this.pushes.allow(sid, kind, Date.now(), key)) return;
+    const s = this.sessions.find((x) => x.id === sid);
+    const p = pushFor(kind, s?.displayTitle || (cwd ? projectName(cwd) : '') || this.brand.product, detail);
+    this.ctx.push(p.title, p.body, { tag: p.tag, priority: p.priority, buttons: requestId ? this.phoneButtons(requestId) : undefined });
+  }
+
+  /**
+   * Allow and Deny for the phone, each posting its word and a one-time code. With Windows
+   * Hello asked before Allow, the phone can't skip it: Deny only.
+   */
+  protected phoneButtons(requestId: string): Array<{ label: string; reply: string }> | undefined {
+    if (!this.ctx.settings().general.phoneApprove) return undefined;
+    const code = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+    this.phoneCodes.set(code, requestId);
+    // Only the requests that can still be waiting are kept.
+    if (this.phoneCodes.size > 40) this.phoneCodes.delete(this.phoneCodes.keys().next().value!);
+    const deny = { label: 'Deny', reply: `deny ${code}` };
+    return this.opts().requireHello ? [deny] : [{ label: 'Allow', reply: `allow ${code}` }, deny];
+  }
+
+  /** A button tapped on the phone: answers the request it was for, if that still waits. */
+  protected fromPhone(message: string): void {
+    const m = /^(allow|deny) ([0-9a-f]{32})$/.exec(message.trim());
+    if (!m) return;
+    const requestId = this.phoneCodes.get(m[2]);
+    if (!requestId) return;
+    this.phoneCodes.delete(m[2]);
+    if (!this.hooks.cards.some((c) => c.requestId === requestId)) return;
+    // The phone never answers Allow past Windows Hello (it was only given Deny then).
+    if (m[1] === 'allow' && this.opts().requireHello) return;
+    this.ctx.log('permission answered from the phone', { decision: m[1] });
+    this.answer(requestId, m[1] === 'allow' ? 'allow' : 'deny');
+    this.flash(m[1] === 'allow' ? 'Allowed from your phone' : 'Denied from your phone', m[1] === 'allow' ? 'good' : 'warn', m[1] === 'allow' ? 'check' : 'x');
+  }
+
+  protected askToPhone(sid: string, ev: HookEvent): void {
+    const text = askText(ev.tool_input);
+    this.toPhone(sid, 'asks', text, text.slice(0, 160), ev.cwd);
+  }
+
+  protected flash(text: string, tone: Tone, icon = 'info', ms = 3000): void {
+    this.notice = { text, tone, icon, until: Date.now() + ms };
+    this.ctx.surface({ key: 'notice', ms, level: 'expanded', bump: false });
+    this.ctx.update();
+  }
+
+  // ---------------------------------------------------------------- what the island asks
+
+  protected featured(): SessionView | null {
+    if (this.selected) return this.sessions.find((s) => s.id === this.selected) ?? null;
+    const card = this.hooks.cards[0];
+    if (card) {
+      const s = this.sessions.find((x) => x.id === card.sessionId);
+      if (s) return s;
+    }
+    const byRecent = [...this.sessions].sort((a, b) => b.lastActivityMs - a.lastActivityMs);
+    return this.sessions.find((s) => s.needsYou) ?? byRecent.find((s) => s.status === 'working') ?? byRecent[0] ?? null;
+  }
+
+  /** A question or a notification that still waits on the user, newest first. */
+  protected waitingNote(): { sessionId: string; at: number } | null {
+    const now = Date.now();
+    let best: { sessionId: string; at: number } | null = null;
+    const consider = (sessionId: string, at: number) => {
+      if (now - at > 10 * 60_000) return;
+      if (this.hooks.cards.some((c) => c.sessionId === sessionId) || this.hooks.holds.some((h) => h.sessionId === sessionId)) return;
+      if (!best || at > best.at) best = { sessionId, at };
+    };
+    for (const [sid, a] of this.hooks.asks) consider(sid, a.at);
+    for (const [sid, n] of this.hooks.notes) if (n.kind !== 'idle_prompt' && n.kind !== 'auth_success') consider(sid, n.at);
+    return best;
+  }
+
+  status(): ActivityStatus {
+    const card = this.hooks.cards[0];
+    const hold = this.hooks.holds[0];
+    const note = this.waitingNote();
+    const needs = this.sessions.filter((s) => s.needsYou);
+    const working = this.sessions.filter((s) => s.status === 'working');
+    const active =
+      this.sessions.length > 0 || !!card || !!hold || !!note || this.inputFor !== null || this.finished.size > 0 || (this.notice !== null && this.notice.until > Date.now());
+    if (!active) return { active: false };
+    let urgent: ActivityStatus['urgent'] = null;
+    if (this.inputFor) urgent = { key: `input:${this.inputFor}`, level: 'maximum' };
+    else if (card) urgent = { key: `perm:${card.requestId}`, level: 'expanded' };
+    else if (hold) urgent = { key: `reply:${hold.requestId}`, level: 'expanded' };
+    else if (note) urgent = { key: `note:${note.sessionId}`, level: 'expanded' };
+    else if (needs.length) urgent = { key: `needs:${needs[0].id}`, level: 'expanded' };
+    const weight = card || hold || note || needs.length || working.length || this.inputFor ? 'foreground' : 'background';
+    // Border light: brisk when a chat waits on the user, slow while the agent works.
+    // Border light: an amber pulse when a chat needs you, a still green glow while a finished
+    // chat holds for your reply (Justin's Claude Status "done"), a slow blue comet while it works.
+    const beam: ActivityStatus['beam'] =
+      card || note || needs.length
+        ? { tone: 'warn', urgent: true }
+        : hold
+          ? { tone: 'good', motion: 'still', urgent: true }
+          : working.length
+            ? { tone: 'info' }
+            : null;
+    const n = this.sessions.length;
+    const summary =
+      n > 1
+        ? `${this.brand.name} ×${n}${needs.length ? `, ${needs.length} need${needs.length > 1 ? '' : 's'} you` : working.length ? `, ${working.length} working` : ''}`
+        : n === 1
+          ? `${this.brand.name} · ${this.sessions[0].label}`
+          : this.brand.name;
+    return { active: true, weight, urgent, summary, beam };
+  }
+
+  /** The agent working: the bot thinks along; a chat waiting on the user needs you. */
+  override pet(): PetSignal {
+    const needs = this.hooks.cards.length > 0 || this.waitingNote() !== null || this.sessions.some((s) => s.needsYou);
+    const working = this.sessions.some((s) => s.status === 'working');
+    return { mood: needs ? 'needs-you' : working ? 'thinking' : null, moment: this.petMoment };
+  }
+
+  chip(): ChipView | null {
+    const n = this.sessions.length;
+    if (!n) return null;
+    const needs = this.sessions.some((s) => s.needsYou) || this.hooks.cards.length > 0 || this.hooks.holds.length > 0 || this.waitingNote() !== null;
+    const working = this.sessions.some((s) => s.status === 'working');
+    return {
+      icon: this.brand.icon,
+      label: needs ? 'Needs you' : n > 1 ? `×${n}` : this.sessions[0].label,
+      dot: needs ? 'warn' : working ? 'info' : 'good',
+      pulse: needs,
+      tone: this.brand.tone,
+    };
+  }
+
+  // ---------------------------------------------------------------- views
+
+  render(env: RenderEnv): Seg[] {
+    const now = env.now;
+    if (this.inputFor) return this.inputView(env);
+    const card = this.hooks.cards[0];
+    if (card && (env.level === 'maximum' || env.level === 'expanded')) return this.permissionView(card, env);
+    const hold = this.hooks.holds[0];
+    if (hold && (env.level === 'maximum' || env.level === 'expanded')) return this.replyView(hold, env);
+    if (env.surfaced === 'notice' && this.notice && this.notice.until > now) {
+      return [
+        { t: 'icon', key: 'notice-icon', icon: this.notice.icon, tone: this.notice.tone, prio: 0 },
+        { t: 'text', key: 'notice', text: this.notice.text, weight: 'semibold', prio: 0 },
+      ];
+    }
+    if (env.surfaced?.startsWith('done:')) {
+      const s = this.sessions.find((x) => x.id === env.surfaced!.slice(5));
+      if (s) return this.finishedView(s, env);
+    }
+    const note = this.waitingNote();
+    if (note && (env.level === 'maximum' || env.level === 'expanded')) return this.noteView(note.sessionId, env);
+    if (this.sessions.length > 1 && !this.selected) return this.multiView(env);
+    const s = this.featured();
+    if (!s) return [this.mark(), { t: 'text', key: 'none', text: this.brand.name, weight: 'semibold', prio: 0 }];
+    return this.sessionView(s, env);
+  }
+
+  protected dot(s: SessionView): Seg {
+    return { t: 'dot', key: `dot`, tone: this.toneOf(s.tone), pulse: s.needsYou, prio: 0 };
+  }
+
+
+  protected timing(s: SessionView, now: number): string {
+    if (s.status === 'working') {
+      const start = this.hooks.turnStart.get(s.id) ?? s.turnStartMs ?? s.lastActivityMs;
+      return elapsed(now - start);
+    }
+    return agoText(now - s.lastActivityMs);
+  }
+
+  protected operation(s: SessionView): string | null {
+    const live = this.hooks.current.get(s.id);
+    if (live) {
+      const d = describeTool(live.tool, live.input);
+      return d.detail ? `${d.verb} · ${d.detail}` : d.verb;
+    }
+    if (s.operation) return s.operation;
+    return s.status === 'working' ? 'Thinking' : null;
+  }
+
+  protected meters(now: number, prioBase: number): Seg[] {
+    const d = this.limitsNow(now);
+    if (!d || !this.opts().showLimits) return [];
+    const out: Seg[] = [];
+    if (d.fiveHour) {
+      out.push({
+        t: 'meter', key: 'limit-s', label: 'S', value: d.fiveHour.pct / 100, pace: pace(d.fiveHour.resetsAt, SESSION_WINDOW_MS, now),
+        text: `${Math.round(d.fiveHour.pct)}%`, tone: d.fiveHour.pct >= 90 ? 'bad' : this.brand.tone, w: 96, side: 'end', prio: prioBase,
+        tip: `Session limit ${Math.round(d.fiveHour.pct)}%, ${resetsIn(d.fiveHour.resetsAt, now)}`,
+      });
+    }
+    if (d.sevenDay) {
+      out.push({
+        t: 'meter', key: 'limit-w', label: 'W', value: d.sevenDay.pct / 100, pace: pace(d.sevenDay.resetsAt, WEEK_WINDOW_MS, now),
+        text: `${Math.round(d.sevenDay.pct)}%`, tone: d.sevenDay.pct >= 90 ? 'bad' : this.brand.tone, w: 96, side: 'end', prio: prioBase + 1,
+        tip: `Weekly limit ${Math.round(d.sevenDay.pct)}%, ${resetsOn(d.sevenDay.resetsAt, now)}`,
+      });
+    }
+    return out;
+  }
+
+  protected sessionView(s: SessionView, env: RenderEnv): Seg[] {
+    const now = env.now;
+    const dot = this.dot(s);
+    const label: Seg = { t: 'text', key: 'label', text: s.status === 'working' ? 'Working…' : s.label, tone: s.needsYou ? 'warn' : 'muted', prio: 1 };
+    if (env.level === 'compact' || env.level === 'idle') {
+      if (env.vertical) return [this.mark(), dot];
+      return [dot, { t: 'text', key: 'name', text: this.brand.name, weight: 'semibold', prio: 0 }, { ...label, side: 'end' }];
+    }
+    const segs: Seg[] = [
+      dot,
+      { t: 'text', key: 'title', text: s.displayTitle, weight: 'semibold', prio: 3, max: env.level === 'expanded' ? 170 : 240 },
+      { t: 'sep', key: 'sep1', prio: 6 },
+      label,
+    ];
+    const op = this.operation(s);
+    if (env.level === 'maximum' && op) segs.push({ t: 'text', key: 'op', text: op, tone: 'muted', prio: 5, max: 220 });
+    segs.push({ t: 'sep', key: 'sep2', prio: 6 }, { t: 'text', key: 'time', text: this.timing(s, now), tone: 'muted', prio: 4 });
+    if (env.level !== 'maximum') return segs;
+
+    if (this.selected || this.sessions.length > 1) segs.unshift({ t: 'button', key: 'back', icon: 'chevron-left', action: 'back', style: 'ghost', prio: 2, tip: 'All sessions' });
+    segs.push(...this.meters(now, 7));
+    if (s.status === 'awaiting_input' || s.status === 'interrupted' || s.status === 'errored') {
+      segs.push({ t: 'button', key: 'continue', icon: 'enter', label: 'Continue', action: 'continue', arg: s.id, style: 'primary', side: 'end', prio: 1 });
+    }
+    segs.push({ t: 'button', key: 'open', icon: 'external', action: 'switch', arg: s.id, style: s.needsYou ? 'primary' : 'ghost', side: 'end', prio: 2, tip: `${this.openText(s)}${s.slot ? ` (Alt+Shift+${s.slot})` : ''}` });
+    return segs;
+  }
+
+  protected multiView(env: RenderEnv): Seg[] {
+    const n = this.sessions.length;
+    const needs = this.sessions.filter((s) => s.needsYou).length;
+    const working = this.sessions.filter((s) => s.status === 'working').length;
+    const tone: Tone = needs ? 'warn' : working ? 'info' : 'good';
+    if (env.level === 'compact' || env.level === 'idle') {
+      if (env.vertical) return [this.mark(), { t: 'text', key: 'count', text: `×${n}`, weight: 'semibold', prio: 0 }];
+      return [
+        { t: 'dot', key: 'dot', tone, pulse: needs > 0, prio: 0 },
+        { t: 'text', key: 'name', text: `${this.brand.name} ×${n}`, weight: 'semibold', prio: 0 },
+        { t: 'text', key: 'label', text: needs ? `${needs} need${needs > 1 ? '' : 's'} you` : working ? `${working} working` : 'Your turn', tone: needs ? 'warn' : 'muted', side: 'end', prio: 3 },
+      ];
+    }
+    const segs: Seg[] = [this.mark()];
+    this.sessions.forEach((s, i) => {
+      segs.push({
+        t: 'chip',
+        key: `s-${s.id}`,
+        label: env.level === 'maximum' ? `${clip(s.displayTitle, 26)} · ${s.status === 'working' ? 'Working' : s.label}` : clip(s.displayTitle, 18),
+        dot: this.toneOf(s.tone),
+        pulse: s.needsYou,
+        badge: s.slot ? String(s.slot) : undefined,
+        action: 'select',
+        arg: s.id,
+        prio: 2 + i,
+        max: env.level === 'maximum' ? 230 : 150,
+        tip: `${s.displayTitle}\n${s.label} · ${s.project}${s.slot ? `\nAlt+Shift+${s.slot}` : ''}`,
+      });
+    });
+    if (env.level === 'maximum') {
+      segs.push(...this.meters(env.now, 12));
+    }
+    return segs;
+  }
+
+  /** What a permission card asks, in a few words. */
+  protected askOf(card: PermissionCard): string {
+    if (card.tool === 'AskUserQuestion') {
+      const n = questionsOf(card.input).length;
+      return n > 1 ? `${this.brand.name} has ${n} questions` : `${this.brand.name} is asking`;
+    }
+    if (card.tool === 'Bash' || card.tool === 'PowerShell') return 'Run this command?';
+    return `Allow ${describeTool(card.tool, card.input).verb.toLowerCase()}?`;
+  }
+
+  /** The pill row says what is asked; the card under it carries the detail and the answers. */
+  protected permissionView(card: PermissionCard, env: RenderEnv): Seg[] {
+    const s = this.sessions.find((x) => x.id === card.sessionId);
+    const more = this.hooks.cards.length - 1;
+    const segs: Seg[] = [
+      { t: 'icon', key: 'perm-icon', icon: card.tool === 'AskUserQuestion' ? 'chat' : this.brand.icon, tone: card.tool === 'AskUserQuestion' ? 'warn' : this.brand.tone, anim: 'pulse', prio: 0 },
+      { t: 'text', key: 'perm-ask', text: this.askOf(card), weight: 'semibold', prio: 0 },
+      { t: 'text', key: 'perm-title', text: s?.displayTitle || baseName(card.cwd) || this.brand.product, tone: 'muted', prio: 4, max: env.vertical ? 60 : 200 },
+    ];
+    if (more > 0) segs.push({ t: 'chip', key: 'perm-more', label: `+${more}`, side: 'end', prio: 7, tip: `${more} more waiting` });
+    return segs;
+  }
+
+  protected replyView(h: ReplyHold, env: RenderEnv): Seg[] {
+    const s = this.sessions.find((x) => x.id === h.sessionId);
+    return [
+      { t: 'icon', key: 'reply-icon', icon: 'check', tone: 'good', prio: 0 },
+      { t: 'text', key: 'reply-done', text: `${this.brand.name} finished`, weight: 'semibold', prio: 0 },
+      { t: 'text', key: 'reply-title', text: s?.displayTitle ?? 'your chat', tone: 'muted', prio: 4, max: env.vertical ? 60 : 220 },
+    ];
+  }
+
+  protected finishedView(s: SessionView, env: RenderEnv): Seg[] {
+    const segs: Seg[] = [
+      { t: 'icon', key: 'done-icon', icon: 'check', tone: 'good', prio: 0 },
+      { t: 'text', key: 'done', text: `${this.brand.name} finished`, weight: 'semibold', prio: 0 },
+      { t: 'text', key: 'done-title', text: s.displayTitle, tone: 'muted', prio: 4, max: 200 },
+    ];
+    if (env.level === 'maximum' && s.lastAssistantText) segs.push({ t: 'text', key: 'done-text', text: s.lastAssistantText, tone: 'dim', size: 'sm', prio: 7, max: 320, tip: s.lastAssistantText });
+    if (env.level !== 'compact') {
+      segs.push(
+        { t: 'button', key: 'continue', icon: 'enter', label: 'Continue', action: 'continue', arg: s.id, style: 'primary', side: 'end', prio: 1 },
+        { t: 'button', key: 'open', icon: 'external', action: 'switch', arg: s.id, style: 'ghost', side: 'end', prio: 3, tip: this.openText(s) },
+      );
+    }
+    return segs;
+  }
+
+  protected inputView(env: RenderEnv): Seg[] {
+    const id = this.inputFor!;
+    const s = this.tracker?.get(id) ?? this.tracker?.getClosed(id) ?? this.sessions.find((x) => x.id === id) ?? null;
+    void env;
+    return [
+      { t: 'icon', key: 'in-icon', icon: this.brand.icon, tone: this.brand.tone, prio: 0 },
+      { t: 'input', key: 'prompt', placeholder: `Continue ${clip(s?.displayTitle ?? 'this session', 40)}…`, action: 'send', cancel: 'cancel-input', prio: 0, min: 220 },
+      { t: 'button', key: 'in-cancel', icon: 'x', action: 'cancel-input', style: 'ghost', side: 'end', prio: 1, tip: 'Cancel (Esc)' },
+    ];
+  }
+
+  protected noteView(sid: string, env: RenderEnv): Seg[] {
+    const s = this.sessions.find((x) => x.id === sid);
+    const ask = this.hooks.asks.get(sid);
+    return [
+      { t: 'icon', key: 'note-icon', icon: ask ? 'chat' : 'bell', tone: 'warn', anim: 'pulse', prio: 0 },
+      { t: 'text', key: 'note-what', text: ask ? `${this.brand.name} is asking` : `${this.brand.name} needs you`, weight: 'semibold', prio: 0 },
+      { t: 'text', key: 'note-title', text: s?.displayTitle ?? 'a chat', tone: 'muted', prio: 4, max: env.vertical ? 60 : 220 },
+    ];
+  }
+
+  // ---------------------------------------------------------------- the card under the pill
+
+  sheet(env: SheetEnv): SheetView | null {
+    if (env.reason === 'urgent') {
+      const card = this.hooks.cards[0];
+      if (card) return card.tool === 'AskUserQuestion' ? this.questionSheet(card) : this.permissionSheet(card);
+      const hold = this.hooks.holds[0];
+      if (hold) return this.replySheet(hold);
+      const note = this.waitingNote();
+      if (note) return this.noteSheet(note.sessionId);
+      const needs = this.sessions.find((s) => s.needsYou);
+      return needs ? this.noteSheet(needs.id) : null;
+    }
+    if (env.reason === 'surfaced') {
+      const key = env.surfaced ?? '';
+      if (key.startsWith('done:')) return this.looking.has(key.slice(5)) ? null : this.finishedSheet(key.slice(5));
+      if (key.startsWith('note:')) return this.noteSheet(key.slice(5));
+      return null;
+    }
+    if (env.reason === 'hover') return this.hoverSheet(env);
+    // Only a phone opens the agent's own card (its button on the phone): a chat with the agent.
+    return this.phoneSheet(env.now);
+  }
+
+  protected where(s: SessionView | null | undefined, ...extra: Array<string | null | undefined>): string {
+    return [...extra, s?.project, s?.host].filter(Boolean).join(' · ');
+  }
+
+  protected permissionSheet(card: PermissionCard): SheetView {
+    const s = this.sessions.find((x) => x.id === card.sessionId);
+    const i = (card.input && typeof card.input === 'object' ? card.input : {}) as Record<string, unknown>;
+    const str = (k: string) => (typeof i[k] === 'string' ? (i[k] as string) : '');
+    const shell = card.tool === 'Bash' || card.tool === 'PowerShell';
+    const detail = shell
+      ? str('command')
+      : str('file_path') || str('notebook_path') || str('url') || str('pattern') || str('query') || describeTool(card.tool, card.input).detail || '';
+    const more = this.hooks.cards.length - 1;
+    const title = s?.displayTitle || baseName(card.cwd) || this.brand.product;
+    const blocks: Block[] = [{ t: 'head', key: 'h', icon: this.brand.icon, tone: this.brand.tone, title: this.askOf(card), sub: [title, s?.host, more > 0 ? `${more} more waiting` : null].filter(Boolean).join(' · ') }];
+    if (detail) blocks.push({ t: 'code', key: 'detail', text: detail });
+    if (shell && str('description')) blocks.push({ t: 'text', key: 'why', text: str('description'), tone: 'muted', size: 'sm' });
+    blocks.push(
+      { t: 'input', key: 'deny-why', placeholder: `Or tell ${this.brand.name} what to do instead…`, action: `deny-with:${card.requestId}` },
+      {
+        t: 'buttons',
+        key: 'answer',
+        items: [
+          { key: 'deny', label: 'Deny', icon: 'x', action: 'deny', arg: card.requestId, style: 'danger' },
+          { key: 'allow', label: this.opts().requireHello ? 'Allow with Hello' : 'Allow', icon: 'check', action: 'allow', arg: card.requestId, style: 'primary' },
+        ],
+      },
+      { t: 'countdown', key: 'left', until: card.at + PERMISSION_MS, total: PERMISSION_MS, tone: 'warn' },
+    );
+    return { key: `perm:${card.requestId}`, blocks };
+  }
+
+  protected questionSheet(card: PermissionCard): SheetView {
+    const s = this.sessions.find((x) => x.id === card.sessionId);
+    const qs = questionsOf(card.input);
+    const chosen = this.picks.get(card.requestId);
+    const blocks: Block[] = [{ t: 'head', key: 'h', icon: 'chat', tone: 'warn', title: this.askOf(card), sub: [s?.displayTitle || baseName(card.cwd), s?.host].filter(Boolean).join(' · ') }];
+    qs.forEach((q, n) => {
+      blocks.push({ t: 'text', key: `q${n}`, text: q.header ? `${q.header} · ${q.question}` : q.question });
+      blocks.push({
+        t: 'choices',
+        key: `o${n}`,
+        items: (q.options ?? []).map((o, j) => ({
+          key: `o${n}-${j}`,
+          label: o.label,
+          detail: o.description,
+          selected: chosen?.get(n)?.includes(o.label) ?? false,
+          action: 'pick',
+          arg: { requestId: card.requestId, q: n, label: o.label },
+        })),
+      });
+    });
+    const open = qs.findIndex((_, n) => !chosen?.get(n)?.length);
+    const target = open < 0 ? null : qs[open];
+    blocks.push({
+      t: 'input',
+      key: 'own',
+      placeholder: qs.length > 1 && target ? `Your own answer to "${clip(target.header || target.question, 28)}"…` : 'Or type your own answer…',
+      action: `answer-text:${card.requestId}`,
+    });
+    const buttons: SheetButton[] = [{ key: 'chat', label: 'Answer in the chat', icon: 'external', action: 'answer-in-chat', arg: card.requestId, style: 'ghost' }];
+    if (qs.length > 1 || qs.some((q) => q.multiSelect)) {
+      buttons.push({ key: 'send', label: 'Send answers', icon: 'send', action: 'answer', arg: card.requestId, style: qs.length > 0 && open < 0 ? 'primary' : 'secondary' });
+    }
+    blocks.push({ t: 'buttons', key: 'b', items: buttons }, { t: 'countdown', key: 'left', until: card.at + PERMISSION_MS, total: PERMISSION_MS, tone: 'warn' });
+    return { key: `ask:${card.requestId}`, blocks };
+  }
+
+  protected replySheet(h: ReplyHold): SheetView {
+    const s = this.sessions.find((x) => x.id === h.sessionId);
+    const text = plainText(h.message || this.hooks.lastMessage.get(h.sessionId)?.text || s?.lastAssistantText || '') || `${this.brand.name} finished its turn.`;
+    return {
+      key: `reply:${h.requestId}`,
+      blocks: [
+        {
+          t: 'head',
+          key: 'h',
+          icon: 'check',
+          tone: 'good',
+          title: s?.displayTitle || `${this.brand.name} finished`,
+          sub: this.where(s, 'Finished'),
+          buttons: [{ key: 'open', icon: 'external', action: 'open-chat', arg: h.requestId, style: 'ghost', tip: this.openText(s) }],
+        },
+        { t: 'text', key: 'msg', text, bubble: true, lines: 9 },
+        {
+          t: 'input',
+          key: 'reply',
+          placeholder: 'Reply to this chat…',
+          action: `reply:${h.requestId}`,
+          engage: `hold:${h.requestId}`,
+          hint: h.held ? 'The chat waits while you type. Enter sends it there.' : 'Enter sends it straight into this chat.',
+        },
+        { t: 'countdown', key: 'left', until: h.until, total: h.total, tone: h.held ? 'good' : this.brand.tone },
+      ],
+    };
+  }
+
+  /** A finished chat after its reply window: the reply goes through the editor, the terminal or a resume. */
+  protected finishedSheet(sid: string): SheetView | null {
+    const s = this.sessions.find((x) => x.id === sid) ?? null;
+    const last = this.hooks.lastMessage.get(sid);
+    const text = plainText(last?.text || s?.lastAssistantText || '');
+    if (!s || !text) return null;
+    // Already going again (a reply from the island, or a prompt typed in the chat): nothing to answer.
+    if (s.status === 'working' || (this.hooks.turnStart.get(sid) ?? 0) > (last?.at ?? 0)) return null;
+    return {
+      key: `done:${sid}`,
+      blocks: [
+        {
+          t: 'head',
+          key: 'h',
+          icon: 'check',
+          tone: 'good',
+          title: s.displayTitle,
+          sub: this.where(s, 'Finished'),
+          buttons: [{ key: 'open', icon: 'external', action: 'switch', arg: sid, style: 'ghost', tip: this.openText(s) }],
+        },
+        { t: 'text', key: 'msg', text, bubble: true, lines: 7 },
+        { t: 'input', key: 'reply', placeholder: 'Reply to this chat…', action: `continue:${sid}`, engage: `keep:${sid}`, hint: this.lateHint(s) },
+      ],
+    };
+  }
+
+  /** A chat waiting on the user without a prompt the island can answer: show what it asks. */
+  protected noteSheet(sid: string): SheetView | null {
+    const s = this.sessions.find((x) => x.id === sid) ?? null;
+    const ask = this.hooks.asks.get(sid);
+    const note = this.hooks.notes.get(sid);
+    const blocks: Block[] = [
+      { t: 'head', key: 'h', icon: ask ? 'chat' : 'bell', tone: 'warn', title: ask ? `${this.brand.name} is asking` : note?.title || `${this.brand.name} needs you`, sub: [s?.displayTitle, s?.host].filter(Boolean).join(' · ') },
+    ];
+    if (ask) {
+      ask.questions.forEach((q, n) => {
+        blocks.push({ t: 'text', key: `q${n}`, text: q.header ? `${q.header} · ${q.question}` : q.question });
+        if (q.options?.length) blocks.push({ t: 'rows', key: `o${n}`, items: q.options.map((o, j) => ({ key: `o${n}-${j}`, icon: 'chevron-right', title: o.label, detail: o.description })) });
+      });
+    } else if (note) {
+      blocks.push({ t: 'text', key: 'msg', text: note.message });
+    } else if (s) {
+      const op = this.operation(s);
+      blocks.push({ t: 'text', key: 'msg', text: op ? `Waiting on you: ${op}` : 'Waiting on you in the chat.', tone: 'muted' });
+    } else return null;
+    blocks.push({ t: 'buttons', key: 'b', items: [{ key: 'open', label: this.openText(s), icon: 'external', action: 'switch', arg: sid, style: 'primary' }] });
+    return { key: `note:${sid}:${ask?.at ?? note?.at ?? 0}`, blocks };
+  }
+
+  /** The limits with their pace (session, week, per model), as the hover card and a phone's list of chats show them. */
+  protected limitBlocks(now: number): Block[] {
+    const blocks: Block[] = [];
+    const d = this.limitsNow(now);
+    const tone = (pct: number): Tone => (pct >= 90 ? 'bad' : pct >= 75 ? 'warn' : this.brand.tone);
+    if (d?.fiveHour) {
+      blocks.push({
+        t: 'meter', key: 'limit-s', label: 'Session (5 h)', value: d.fiveHour.pct / 100, pace: pace(d.fiveHour.resetsAt, SESSION_WINDOW_MS, now),
+        text: `${Math.round(d.fiveHour.pct)}%`, sub: d.fiveHour.resetsAt == null ? 'Reset. A new window starts with your next message' : resetsIn(d.fiveHour.resetsAt, now), tone: tone(d.fiveHour.pct), tip: 'The white tick shows how far into the 5-hour window you are.',
+      });
+    }
+    if (d?.sevenDay) {
+      blocks.push({
+        t: 'meter', key: 'limit-w', label: 'Week', value: d.sevenDay.pct / 100, pace: pace(d.sevenDay.resetsAt, WEEK_WINDOW_MS, now),
+        text: `${Math.round(d.sevenDay.pct)}%`, sub: d.sevenDay.resetsAt == null ? 'Reset. A new week starts with your next message' : resetsOn(d.sevenDay.resetsAt, now), tone: tone(d.sevenDay.pct), tip: 'The white tick shows how far into the week you are.',
+      });
+    }
+    for (const m of d?.models ?? []) {
+      blocks.push({ t: 'meter', key: `limit-${m.name}`, label: `${m.name} (week)`, value: m.pct / 100, text: `${Math.round(m.pct)}%`, tone: tone(m.pct) });
+    }
+    if (!d) blocks.push({ t: 'text', key: 'limits-none', text: this.usageState?.message ?? 'Limits not loaded yet', tone: 'muted', size: 'sm' });
+    return blocks;
+  }
+
+  /** Hovering the agent: limits with pace, this week's tokens, every chat, recent closed ones. */
+  protected hoverSheet(env: SheetEnv): SheetView {
+    const now = env.now;
+    const blocks: Block[] = this.limitBlocks(now);
+    const t = this.tokenTotals;
+    if (t) {
+      blocks.push({
+        t: 'stats',
+        key: 'tokens',
+        items: [
+          { key: 'fresh', label: 'Tokens this week', value: fmtTokens(t.fresh), tip: 'Input, output and cache writes since the weekly window began' },
+          { key: 'out', label: 'Output', value: fmtTokens(t.output) },
+          { key: 'cache', label: 'Cache reads', value: fmtTokens(t.cached) },
+        ],
+      });
+    }
+    if (this.sessions.length) {
+      blocks.push({
+        t: 'rows',
+        key: 'sessions',
+        items: this.sessions.map((s): SheetRow => ({
+          key: s.id,
+          dot: this.toneOf(s.tone),
+          pulse: s.needsYou,
+          title: s.displayTitle,
+          detail: this.rowDetail(s, now),
+          meter: this.contextMeter(s),
+          badge: s.slot ? String(s.slot) : undefined,
+          action: 'switch',
+          arg: s.id,
+          tip: `${this.openText(s)}${s.slot ? ` (Alt+Shift+${s.slot})` : ''}`,
+          button: { key: 'hide', icon: 'x', action: 'hide-session', arg: s.sessionId, style: 'ghost', tip: 'Hide this chat from Island' },
+        })),
+      });
+    } else blocks.push({ t: 'text', key: 'sessions-none', text: `No ${this.brand.product} chats open`, tone: 'muted', size: 'sm' });
+    const closed = this.closed.slice(0, 3);
+    if (closed.length) {
+      blocks.push(
+        { t: 'head', key: 'closed-h', title: 'Closed recently', buttons: [{ key: 'clear', label: 'Clear', action: 'clear-closed', style: 'ghost', tip: 'Start this list fresh' }] },
+        {
+          t: 'rows',
+          key: 'closed',
+          items: closed.map((c) => ({
+            key: c.id, icon: 'history', title: c.displayTitle, detail: `Closed ${agoText(now - c.closedAt)} · ${c.project}`, action: 'reopen', arg: c.id,
+            tip: this.reopenTip(c),
+          })),
+        },
+      );
+    }
+    blocks.push(...this.hoverExtras(now));
+    const hiddenCount = this.opts().hiddenSessions.length;
+    if (hiddenCount) {
+      blocks.push({ t: 'buttons', key: 'hidden', align: 'start', items: [{ key: 'unhide', label: `Show hidden (${hiddenCount})`, icon: 'eye', action: 'unhide-all', style: 'ghost' }] });
+    }
+    return { key: 'hover', blocks };
+  }
+
+  /**
+   * A chat's line under its title in the hover card: "Working · 2m 10s · done in ~3 min · project"
+   * (a guess from its recent turns, estimate.ts), or "Your turn · project · 4m ago".
+   */
+  protected rowDetail(s: SessionView, now: number): string {
+    if (s.status !== 'working') return [s.label, s.project, this.timing(s, now)].filter(Boolean).join(' · ');
+    const start = this.hooks.turnStart.get(s.id) ?? s.turnStartMs ?? s.lastActivityMs;
+    const left = turnLeft(s.turns ?? [], now - start);
+    const guess = left === null ? null : left === Infinity ? 'longer than usual' : about(left);
+    return ['Working', this.timing(s, now), guess && guess !== 'longer than usual' ? `done in ${guess}` : guess, s.project].filter(Boolean).join(' · ');
+  }
+
+  /** How full the chat's context is: the thin bar under its title, with about when it fills up. */
+  protected contextMeter(s: SessionView): SheetRow['meter'] {
+    const c = s.context;
+    if (!c) return undefined;
+    const pct = Math.round(c.share * 100);
+    const full = c.fullIn != null ? about(c.fullIn) : null;
+    return {
+      value: c.share,
+      text: full ? `${pct}% · full in ${full}` : `${pct}%`,
+      tone: c.share >= 0.9 ? 'bad' : c.share >= 0.75 ? 'warn' : this.brand.tone,
+      tip: `Context: ${fmtTokens(c.used)} of ${fmtTokens(c.window)} tokens${full ? `. Full in ${full} at the pace this chat fills while ${this.brand.name} works.` : ''}`,
+    };
+  }
+
+  /** The agent's cell in the open island: limits in the label, the chats as rows. */
+  tile(env: SheetEnv): Tile | null {
+    // Without the agent on this PC there is nothing to show: no empty cell for people who don't use it.
+    if (!this.available() && !native.demo) return null;
+    const now = env.now;
+    const d = this.limitsNow(now);
+    const limits = [d?.fiveHour ? `S ${Math.round(d.fiveHour.pct)}%` : null, d?.sevenDay ? `W ${Math.round(d.sevenDay.pct)}%` : null].filter(Boolean).join(' · ');
+    const rows: SheetRow[] = this.sessions.slice(0, 3).map((s) => ({
+      key: s.id,
+      dot: this.toneOf(s.tone),
+      pulse: s.needsYou,
+      title: s.displayTitle,
+      detail: `${s.status === 'working' ? 'Working' : s.label} · ${this.timing(s, now)}`,
+      action: 'switch',
+      arg: s.id,
+    }));
+    return {
+      key: this.brand.id,
+      span: 2,
+      rows: this.sessions.length > 1 ? 2 : 1,
+      tone: this.brand.tone,
+      body: {
+        k: 'list',
+        icon: this.brand.icon,
+        label: limits ? `${this.brand.product} · ${limits}` : this.brand.product,
+        rows,
+        empty: this.tokenTotals ? `No chats open · ${fmtTokens(this.tokenTotals.fresh)} tokens this week` : 'No chats open',
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------- the agent's card on a phone (phonechat.ts)
+
+  /** The folders its chats ran in, newest first: a phone's New chat, and its terminal's folder picker (hello). */
+  recentFolders(max: number): string[] {
+    return recentFolders([...this.sessions.map((s) => ({ cwd: s.cwd, at: s.lastActivityMs })), ...this.closed.map((c) => ({ cwd: c.cwd, at: c.closedAt }))], max);
+  }
+
+  /** The card a phone shows for the agent: the chats, one chat, or a new chat in a folder. */
+  protected phoneSheet(now: number): SheetView {
+    const pane = this.pane;
+    if (pane.kind === 'chat') {
+      const view = this.chatSheet(pane.id, now);
+      if (view) return view;
+    }
+    if (pane.kind === 'new') return this.newChatSheet(pane.folder, now);
+    return this.chatsSheet(now);
+  }
+
+  /** "Working…", "Your turn", "Needs you": a chat's state in a word or two. */
+  protected statusWord(s: SessionView): string {
+    return s.status === 'working' ? 'Working…' : s.label;
+  }
+
+  /** The limits, then every chat (live ones, then the closed recently: 8 at most), then a new chat in a recent folder. */
+  protected chatsSheet(now: number): SheetView {
+    const blocks = this.limitBlocks(now);
+    const live = this.sessions.slice(0, PHONE_CHATS);
+    const closed = this.closed.slice(0, PHONE_CHATS - live.length);
+    blocks.push({ t: 'text', key: 'chats-h', text: 'Chats', tone: 'muted', size: 'sm' });
+    if (live.length || closed.length) {
+      blocks.push({
+        t: 'rows',
+        key: 'chats',
+        items: [
+          ...live.map((s): SheetRow => ({ key: s.id, dot: this.toneOf(s.tone), pulse: s.needsYou, title: s.displayTitle, detail: [this.statusWord(s), s.project].filter(Boolean).join(' · '), action: 'chat', arg: s.id })),
+          ...closed.map((c): SheetRow => ({ key: c.id, icon: 'history', title: c.displayTitle, detail: [`Closed ${agoText(now - c.closedAt)}`, c.project].filter(Boolean).join(' · '), action: 'chat', arg: c.id })),
+        ],
+      });
+    } else blocks.push({ t: 'text', key: 'chats-none', text: `No ${this.brand.product} chats yet`, tone: 'muted', size: 'sm' });
+    const folders = this.recentFolders(PHONE_FOLDERS);
+    if (folders.length) {
+      blocks.push(
+        { t: 'text', key: 'new-h', text: 'New chat', tone: 'muted', size: 'sm' },
+        { t: 'buttons', key: 'new', align: 'start', items: folders.map((f): SheetButton => ({ key: f, label: clip(projectName(f), 24), icon: 'plus', action: 'chat-new', arg: f, style: 'ghost', tip: f })) },
+      );
+    }
+    return { key: 'chats', blocks };
+  }
+
+  /** One chat: its last messages, what it is doing, and the box to message it, with where a message goes. */
+  protected chatSheet(id: string, now: number): SheetView | null {
+    const live = this.sessions.find((s) => s.id === id) ?? null;
+    const chat = live ?? this.closed.find((c) => c.id === id) ?? null;
+    if (!chat) return null;
+    const pane = `chat:${id}`;
+    const log = this.chatLog?.id === id ? this.chatLog : null;
+    if (!log) void this.loadChat();
+    const blocks: Block[] = [
+      { t: 'head', key: 'h', icon: this.brand.icon, tone: this.brand.tone, title: chat.displayTitle, sub: [chat.project, live ? this.statusWord(live) : 'Closed'].filter(Boolean).join(' · '), buttons: [CHATS_BACK] },
+      ...this.messageBlocks(log?.messages ?? [], pane, now, log ? 'No messages yet' : 'Reading the chat…'),
+    ];
+    if (live?.status === 'working') blocks.push({ t: 'text', key: 'working', text: `${this.brand.name} is working…`, tone: 'muted', size: 'sm' });
+    const card = this.hooks.cards.find((c) => c.sessionId === id);
+    if (card) blocks.push({ t: 'text', key: 'waiting', text: card.tool === 'AskUserQuestion' ? `${this.brand.name} asked you something: its card has the question.` : `${this.brand.name} waits for your OK: its card has Allow and Deny.`, tone: 'warn', size: 'sm' });
+    blocks.push(...this.startBlocks(pane, now, { t: 'input', key: 'say', placeholder: `Message ${this.brand.name}…`, action: `say:${id}`, hint: this.routeHint(this.routeOf(chat)) }));
+    return { key: pane, blocks };
+  }
+
+  /** A new chat in a folder: what the agent should do. */
+  protected newChatSheet(folder: string, now: number): SheetView {
+    const pane = `new:${folder}`;
+    const blocks: Block[] = [
+      { t: 'head', key: 'h', icon: this.brand.icon, tone: this.brand.tone, title: `New chat in ${projectName(folder)}`, sub: folder, buttons: [CHATS_BACK] },
+      ...this.messageBlocks([], pane, now, ''),
+      ...this.startBlocks(pane, now, { t: 'input', key: 'say', placeholder: `What should ${this.brand.name} do?`, action: `say:new:${folder}`, hint: this.routeHint({ how: 'new', cwd: folder }) }),
+    ];
+    return { key: pane, blocks };
+  }
+
+  /** A chat's messages, oldest first, and the phone's own message after them until the chat has it. */
+  protected messageBlocks(messages: ChatMessage[], pane: string, now: number, empty: string): Block[] {
+    const out = messages.map((m): Block => {
+      const key = `m:${m.key}`;
+      if (m.kind === 'claude') return { t: 'text', key, text: plainText(m.text), bubble: true, lines: 9 };
+      if (m.kind === 'you') return { t: 'text', key, text: `You: ${m.text}` };
+      return { t: 'text', key, text: m.text, tone: m.kind === 'note' ? 'bad' : 'muted', size: 'sm' };
+    });
+    const p = this.pending;
+    if (p?.pane === pane && now - p.at < PENDING_MS) out.push({ t: 'text', key: 'pending', text: `You: ${p.text}` });
+    else if (!out.length && empty) out.push({ t: 'text', key: 'none', text: empty, tone: 'muted', size: 'sm' });
+    return out;
+  }
+
+  /** The box to message the chat, or, while the agent starts for it in an Island terminal, a line saying so; and a note when that failed. */
+  protected startBlocks(pane: string, now: number, input: Block): Block[] {
+    const out: Block[] = [];
+    const note = this.chatNote?.pane === pane && this.chatNote.until > now ? this.chatNote : null;
+    if (note) out.push({ t: 'text', key: 'note', text: note.text, tone: 'warn', size: 'sm' });
+    const start = this.follows.find((f) => (f.from ? `chat:${f.from}` : `new:${f.cwd}`) === pane);
+    // Until the chat shows up, a second message would start the agent a second time.
+    if (start) out.push({ t: 'text', key: 'starting', text: now - start.at > SLOW_START_MS ? 'Still starting on your PC. Its terminal (Terminal) shows if it waits for something.' : `Starting ${this.brand.name} on your PC…`, tone: 'muted', size: 'sm' });
+    else out.push(input);
+    return out;
+  }
+
+  /** A chat on the list by its id: live, else closed recently. */
+  protected findChat(id: string): SessionView | ClosedView | null {
+    return this.sessions.find((s) => s.id === id) ?? this.tracker?.get(id) ?? this.closed.find((c) => c.id === id) ?? this.tracker?.getClosed(id) ?? null;
+  }
+
+  /** The running Island terminal a live chat is in: Island started it there, or its process is the terminal's child. */
+  protected islandTerm(s: Pick<SessionView, 'sessionId' | 'pid'>): TermInfo | null {
+    if (!this.terms.length) return null;
+    const mine = this.started.get(s.sessionId);
+    const t = mine ? this.terms.find((x) => x.id === mine && x.exit === null) : undefined;
+    return t ?? terminalFor(s.pid, this.terms, (pid) => this.chainOf(pid));
+  }
+
+  /** Where a message to this chat goes now (phonechat.ts routeFor). */
+  protected routeOf(chat: SessionView | ClosedView): ChatRoute {
+    const live = 'pid' in chat && chat.alive ? chat : null;
+    return routeFor({ sessionId: chat.sessionId, cwd: chat.cwd, entrypoint: chat.entrypoint, pid: live?.pid ?? 0, alive: live !== null }, live ? this.islandTerm(live) : null);
+  }
+
+  /** Types a message into an Island terminal and presses Enter; why it couldn't, or null. */
+  protected async typeInto(term: string, text: string): Promise<string | null> {
+    const typed = await native.termWrite(term, oneLine(text));
+    if (!typed.ok) return typed.error;
+    // Enter on its own, a moment later: in the same write it would read as part of a paste.
+    await sleep(ENTER_GAP_MS);
+    const entered = await native.termWrite(term, '\r');
+    return entered.ok ? null : entered.error;
+  }
+
+  /**
+   * A message from the phone's chat box, sent where its chat lives (phonechat.ts routeFor): typed
+   * into the Island terminal it runs in, or into its own terminal; a VS Code chat or a closed one
+   * continues in an Island terminal running `claude --resume` (a copy, with --fork-session, while
+   * the VS Code panel still holds it); `id` null starts a new chat in `folder`. The phone's card
+   * follows a chat started this way once the tracker sees it. A failure throws a PhoneError,
+   * which the phone shows.
+   */
+  async messageChat(id: string | null, text: string, folder = ''): Promise<ChatRoute> {
+    const words = text.trim();
+    if (!words) throw new PhoneError('Type a message first');
+    const chat = id === null ? null : this.findChat(id);
+    if (id !== null && !chat) throw new PhoneError('That chat is gone');
+    if (id === null && !folder) throw new PhoneError('Pick a folder first');
+    const route: ChatRoute = chat ? this.routeOf(chat) : { how: 'new', cwd: folder };
+    const pane = id === null ? `new:${folder}` : `chat:${id}`;
+    this.ctx.log('phone message', { session: id?.slice(0, 8) ?? 'new', how: route.how });
+    if (route.how === 'term') {
+      const why = await this.typeInto(route.term, words);
+      if (why !== null) throw new PhoneError(`Couldn't send it: ${why}`);
+    } else if (route.how === 'inject') {
+      const r = await native.claudeInject(route.pid, words);
+      if (!r.ok) throw new PhoneError(`Couldn't type it into its terminal: ${r.error ?? 'no answer'}`);
+    } else {
+      if (!route.cwd) throw new PhoneError(`Couldn't start ${this.brand.name}: that chat's folder isn't known`);
+      const title = chat ? clip(chat.displayTitle, 60) : clip(oneLine(words), 60);
+      const start = this.chatProgram(route, words);
+      const r = await native.termOpen({ cwd: route.cwd, shell: null, program: start.program, args: start.args, cols: TERM_COLS, rows: TERM_ROWS, title, claude: start.claude });
+      if (!r.ok) throw new PhoneError(`Couldn't start ${this.brand.name}: ${r.error}`);
+      this.follows.push({ term: r.value.id, pid: r.value.pid, from: route.how === 'new' ? null : route.sessionId, cwd: route.cwd, at: Date.now() });
+      void this.refreshTerms();
+    }
+    if (id !== null && (route.how === 'term' || route.how === 'inject')) {
+      this.finished.delete(id);
+      this.hooks.turnStart.set(id, Date.now());
+    }
+    this.pending = { pane, text: words, at: Date.now() };
+    if (this.chatNote?.pane === pane) this.chatNote = null;
+    this.pollSoon(400);
+    return route;
+  }
+
+  /**
+   * The agent started in an Island terminal: once the tracker sees its chat there (its process is the
+   * terminal's child), Island remembers it, and the phone's card moves to it from the chat it
+   * continues (or the new chat). A terminal that ended first says so on that card.
+   */
+  protected followChats(now = Date.now()): void {
+    if (!this.follows.length) return;
+    // Their terminals' list moves meanwhile (started, ended): asked again with every poll.
+    void this.refreshTerms();
+    for (const f of [...this.follows]) {
+      const pane = f.from ? `chat:${f.from}` : `new:${f.cwd}`;
+      const s = f.pid > 0 ? this.sessions.find((x) => x.alive && x.pid > 0 && this.chainOf(x.pid).includes(f.pid)) : undefined;
+      if (s) {
+        this.follows = this.follows.filter((x) => x !== f);
+        this.started.set(s.sessionId, f.term);
+        if (f.from && f.from !== s.id) this.forks.set(f.from, s.id);
+        const next = `chat:${s.id}`;
+        if (this.paneKey() === pane) this.pane = { kind: 'chat', id: s.id };
+        if (this.pending?.pane === pane) this.pending.pane = next;
+        if (this.chatNote?.pane === pane) this.chatNote = null;
+        this.ctx.log('phone chat started', { session: s.id.slice(0, 8), from: f.from?.slice(0, 8) ?? 'new' });
+        if (this.pane.kind === 'chat' && this.pane.id === s.id) void this.loadChat();
+        continue;
+      }
+      const term = this.terms.find((t) => t.id === f.term);
+      // Ended, or not listed a while after it started: it is gone.
+      const ended = term ? term.exit !== null : now - f.at > 15_000;
+      if (!ended && now - f.at < FOLLOW_MS) continue;
+      this.follows = this.follows.filter((x) => x !== f);
+      if (this.pending?.pane === pane) this.pending = null;
+      const code = term?.exit != null ? ` (exit code ${term.exit})` : '';
+      this.chatNote = { pane, text: ended ? `${this.brand.name} stopped on your PC before the chat began${code}. Its terminal shows why.` : `${this.brand.name} didn't start on your PC. Its terminal shows why.`, until: now + 5 * 60_000 };
+      this.ctx.log('phone chat did not start', { term: f.term, ended, exit: term?.exit ?? null });
+    }
+  }
+
+  protected paneKey(): string {
+    const p = this.pane;
+    return p.kind === 'chat' ? `chat:${p.id}` : p.kind === 'new' ? `new:${p.folder}` : 'list';
+  }
+
+  /** Island's terminals, asked again (after starting one, while following one). */
+  protected async refreshTerms(): Promise<void> {
+    this.onTerms(await native.termList());
+  }
+
+  protected onTerms(list: unknown): void {
+    this.terms = Array.isArray(list) ? list.filter((t): t is TermInfo => typeof t === 'object' && t !== null && typeof (t as TermInfo).id === 'string' && typeof (t as TermInfo).pid === 'number') : [];
+    // A terminal that went: whatever Island started in it is no longer there.
+    for (const [sid, term] of this.started) if (!this.terms.some((t) => t.id === term && t.exit === null)) this.started.delete(sid);
+    this.ctx.update();
+  }
+
+  /** Reads the phone's open chat from its transcript again (only once it grew); one read at a time, the last asked always done. */
+  protected async loadChat(): Promise<void> {
+    if (this.chatReading) {
+      this.chatAgain = true;
+      return;
+    }
+    this.chatReading = true;
+    try {
+      do {
+        this.chatAgain = false;
+        await this.readOpenChat();
+      } while (this.chatAgain);
+    } catch (err) {
+      this.ctx.log('chat read failed', String(err));
+    } finally {
+      this.chatReading = false;
+    }
+  }
+
+  protected async readOpenChat(): Promise<void> {
+    if (this.pane.kind !== 'chat') return;
+    const id = this.pane.id;
+    const chat = this.findChat(id);
+    if (!chat) return;
+    const file = await this.chatFile(chat);
+    const [st] = file ? await native.statMany([file]) : [null];
+    const size = st?.size ?? 0;
+    const log = this.chatLog;
+    if (log && log.id === id && log.file === file && log.size === size) return;
+    const messages = file && st ? await this.readChatMessages(file, CHAT_MESSAGES) : [];
+    this.chatLog = { id, file, size, messages };
+    // The phone's message is in the chat now: it shows as the chat's own line.
+    const p = this.pending;
+    if (p?.pane === `chat:${id}` && messages.some((m) => m.kind === 'you' && m.at >= p.at - 60_000 && sameText(m.text, p.text))) this.pending = null;
+    this.ctx.update();
+  }
+
+  // ---------------------------------------------------------------- actions
+
+  async action(name: string, arg: unknown): Promise<void> {
+    const id = typeof arg === 'string' ? arg : '';
+    // Card inputs name their target after a colon ("reply:<request id>"); the typed text is the arg.
+    const [verb, ref] = splitOnce(name, ':');
+    switch (verb) {
+      case 'select':
+        this.selected = id;
+        this.ctx.open();
+        break;
+      case 'back':
+        this.selected = null;
+        break;
+      case 'switch':
+        await this.switchTo(id);
+        break;
+      case 'continue':
+        if (ref) {
+          // A reply typed on a finished chat's card, after its reply window.
+          if (id.trim()) await this.continueSession(ref, id.trim());
+          break;
+        }
+        this.inputFor = id;
+        this.finished.delete(id);
+        this.ctx.open();
+        break;
+      case 'keep':
+        // The user is typing on a finished chat's card: keep it up.
+        this.ctx.surface({ key: `done:${ref}`, ms: 120_000, level: 'expanded', bump: false });
+        break;
+      case 'reply':
+        if (id.trim()) await this.sendReply(ref, id.trim());
+        break;
+      case 'hold':
+        this.holdLonger(ref);
+        break;
+      case 'open-chat': {
+        const h = this.hooks.hold(id);
+        if (h) {
+          this.release(h, 'switched to the chat');
+          await this.switchTo(h.sessionId, 'reply-card');
+        }
+        break;
+      }
+      case 'deny-with':
+        if (id.trim()) this.answer(ref, 'deny', id.trim());
+        break;
+      case 'pick': {
+        const p = (arg ?? {}) as { requestId?: unknown; q?: unknown; label?: unknown };
+        if (typeof p.requestId === 'string' && typeof p.q === 'number' && typeof p.label === 'string') this.pick(p.requestId, p.q, p.label);
+        break;
+      }
+      case 'answer':
+        this.sendAnswers(id);
+        break;
+      case 'hide-session': {
+        const hidden = this.opts().hiddenSessions;
+        if (id && !hidden.includes(id)) this.ctx.setOptions?.({ hiddenSessions: [...hidden, id] });
+        this.sessions = this.sessions.filter((s) => s.sessionId !== id);
+        this.closed = this.closed.filter((c) => c.sessionId !== id);
+        break;
+      }
+      case 'unhide-all':
+        this.ctx.setOptions?.({ hiddenSessions: [] });
+        this.pollSoon(50);
+        break;
+      case 'clear-closed':
+        this.ctx.setOptions?.({ closedClearedAt: Date.now() });
+        this.closed = [];
+        break;
+      case 'answer-text':
+        if (id.trim()) this.answerText(ref, id.trim());
+        break;
+      case 'answer-in-chat':
+        await this.answerInChat(id);
+        break;
+      case 'send':
+        if (this.inputFor && id.trim()) await this.continueSession(this.inputFor, id.trim());
+        break;
+      case 'cancel-input':
+        this.inputFor = null;
+        break;
+      case 'allow': {
+        const card = this.hooks.cards.find((c) => c.requestId === id);
+        if (!card) break;
+        // The user asked for Windows Hello before any Allow: no confirmation, no Allow.
+        if (this.opts().requireHello && !(await requireHello(`Allow ${this.brand.product}: ${this.askOf(card)}`))) {
+          this.flash('Not allowed: Windows Hello did not confirm it', 'warn', 'lock', 4000);
+          break;
+        }
+        this.answer(id, 'allow');
+        break;
+      }
+      case 'deny':
+        this.answer(id, 'deny');
+        break;
+      case 'reopen':
+        await this.reopen(id);
+        break;
+      // The agent's card on a phone. Its card opens on the phone that tapped (a phone-started action).
+      case 'chat':
+        if (!id) break;
+        this.pane = { kind: 'chat', id };
+        await this.loadChat();
+        this.ctx.openCard?.();
+        break;
+      case 'chat-new':
+        if (!id) break;
+        this.pane = { kind: 'new', folder: id };
+        this.ctx.openCard?.();
+        break;
+      case 'chat-back':
+        this.pane = { kind: 'list' };
+        break;
+      case 'say':
+        // The chat box: "say:<session id>", or "say:new:<folder>" for a new chat; the typed text is the arg.
+        if (!id.trim()) break;
+        try {
+          await (ref.startsWith('new:') ? this.messageChat(null, id, ref.slice(4)) : this.messageChat(ref, id));
+        } finally {
+          this.ctx.update();
+        }
+        break;
+      default:
+        await this.agentAction(verb, ref, id, arg);
+    }
+    this.ctx.update();
+  }
+
+}

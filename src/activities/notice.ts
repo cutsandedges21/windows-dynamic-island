@@ -13,8 +13,9 @@ import type { Seg } from '../core/segments';
 import type { Block, SheetRow, SheetView, Tile } from '../core/sheet';
 import { workspaceEngine } from '../workspaces/engine';
 import { appName, baseName, displayName, inUseText, type Workspace } from '../workspaces/model';
-import { detect, matchWorkspace, sameIds, workspacesInUse } from '../workspaces/notice/detect';
-import { addSample, contextName, contexts, dayStart, duration, emptyTrail, prune, readTrail, settled, type Context, type TrailDoc } from '../workspaces/notice/model';
+import { detect, matchWindow, sameIds, workspacesInUse } from '../workspaces/notice/detect';
+import { ProgramBook } from '../workspaces/notice/programs';
+import { addSample, contextName, contexts, dayStart, duration, emptyTrail, prune, readTrail, reattribute, settled, type Context, type TrailDoc } from '../workspaces/notice/model';
 import { leaveSeed } from '../workspaces/seed';
 import { workspaceSpans } from '../workspaces/time';
 import { BaseActivity } from './base';
@@ -34,6 +35,10 @@ const SUGGEST_MS = 20 * 60_000;
 const SHOW_MS = 7000;
 /** How often Control Center's "In use" rows look at the open windows. */
 const IN_USE_MS = 4000;
+/** How often the open windows are read while noticing is on, to tell when a workspace is closed. */
+const WATCH_MS = 10_000;
+/** A workspace counts as closed once none of its windows has been open for this long. */
+const CLOSED_AFTER_MS = 20_000;
 
 interface NoticeOptions {
   notice: boolean;
@@ -47,9 +52,8 @@ export abstract class NoticeActivity extends BaseActivity {
   private doc: TrailDoc = emptyTrail();
   private loaded = false;
   private dirty = false;
-  /** Where the user has settled (a context key), and since when. */
+  /** Where the user has settled (a context key). */
   private current: string | null = null;
-  private since = 0;
   private readonly lastSeen = new Map<string, number>();
   private arrived: { key: string; at: number } | null = null;
   private leaving: { ws: string; ms: number; at: number } | null = null;
@@ -58,6 +62,11 @@ export abstract class NoticeActivity extends BaseActivity {
   /** Workspaces with a window open (workspacesInUse), read again while the island is open. */
   private inUse = new Set<string>();
   private inUseAt = 0;
+  /** When each workspace in use came into use, and since when one has had no window open. */
+  private readonly openedAt = new Map<string, number>();
+  private readonly missingSince = new Map<string, number>();
+  /** Each workspace's programs (detect.ts programsOf), read again when the workspaces change. */
+  private readonly book = new ProgramBook();
 
   protected noticeOptions(): NoticeOptions {
     const o = this.ctx.options<Partial<NoticeOptions>>();
@@ -75,19 +84,72 @@ export abstract class NoticeActivity extends BaseActivity {
     this.every(SAMPLE_MS, () => void this.sample());
     this.every(SAVE_MS, () => this.save());
     this.onDispose(() => this.save());
-    // Control Center's "In use" rows keep up while it's open (and cost nothing while it's closed).
+    // Control Center's "In use" rows keep up while it's open; with noticing on, the open windows
+    // are read every 10 s anyway, to tell when a workspace's windows are all closed.
     this.every(IN_USE_MS, () => {
       if (this.ctx.isOpen()) void this.checkInUse();
     });
+    this.every(WATCH_MS, () => {
+      if (!this.ctx.isOpen() && this.noticeOptions().notice) void this.checkInUse();
+    });
+  }
+
+  /**
+   * Each workspace's programs, read again when the workspaces change: what its app items start
+   * (a shortcut's target, read by Rust once per item) and its saved layout's windows. Time spent
+   * before this knew them is credited to them too (model.ts reattribute).
+   */
+  private async refreshPrograms(): Promise<void> {
+    const list = workspaceEngine().store.list;
+    const was = this.book.current;
+    const programs = await this.book.of(list);
+    if (programs === was) return;
+    const before = this.doc;
+    this.doc = reattribute(this.doc, list, programs);
+    if (this.doc !== before) this.dirty = true;
   }
 
   private async checkInUse(): Promise<void> {
-    this.inUseAt = Date.now();
+    const t = Date.now();
+    this.inUseAt = t;
+    await this.refreshPrograms();
     const r = await native.wsWindows();
     if (!r.ok) return;
-    const now = workspacesInUse(r.value, workspaceEngine().store.list);
+    const now = workspacesInUse(r.value, workspaceEngine().store.list, this.book.current);
+    this.watchClosing(now, t);
     if (sameIds(now, this.inUse)) return;
     this.inUse = now;
+    this.ctx.update();
+  }
+
+  /**
+   * A workspace whose windows are all closed (for 20 s: a window being reopened isn't a close)
+   * after real work on it asks where you stopped. Another window in front is not leaving it.
+   */
+  private watchClosing(open: ReadonlySet<string>, now: number): void {
+    for (const id of open) {
+      if (!this.openedAt.has(id)) this.openedAt.set(id, now);
+      this.missingSince.delete(id);
+    }
+    for (const [id, since] of [...this.openedAt]) {
+      if (open.has(id)) continue;
+      const gone = this.missingSince.get(id) ?? now;
+      this.missingSince.set(id, gone);
+      if (now - gone < CLOSED_AFTER_MS) continue;
+      this.openedAt.delete(id);
+      this.missingSince.delete(id);
+      this.closedWs(id, since, now);
+    }
+  }
+
+  private closedWs(id: string, since: number, now: number): void {
+    const o = this.noticeOptions();
+    if (!o.notice || !o.leaveNote) return;
+    const ws = workspaceEngine().store.get(id);
+    const worked = contexts(this.doc.spans, since).find((c) => c.key === `ws:${id}`)?.ms ?? 0;
+    if (!ws || worked < LEAVE_MIN_MS) return;
+    this.leaving = { ws: id, ms: worked, at: now };
+    this.ctx.surface({ key: `notice-leave:${id}:${now}`, ms: 12000, level: 'expanded' });
     this.ctx.update();
   }
 
@@ -116,18 +178,34 @@ export abstract class NoticeActivity extends BaseActivity {
   private async sample(): Promise<void> {
     if (!this.loaded || !this.noticeOptions().notice) return;
     const now = Date.now();
+    await this.refreshPrograms();
     const n = await native.noticeNow();
-    if (n.window && n.idleMs < IDLE_MS) {
+    if (n.window && (n.idleMs < IDLE_MS || (await this.watching(n.window.exe)))) {
       const w = n.window;
       const sig = detect(w.exe, w.title, w.className);
-      const ws = matchWorkspace(sig, w.title, workspaceEngine().store.list);
+      const ws = matchWindow(sig, w.title, workspaceEngine().store.list, this.book.current);
       this.doc = addSample(this.doc, { at: now, app: w.exe, project: sig.project, ws: ws?.id ?? null, file: sig.file, title: this.noticeOptions().titles ? w.title.slice(0, 300) : '' });
       this.dirty = true;
     }
     this.settle(now);
   }
 
-  /** Reacts to settling somewhere new: welcome to a workspace, ask about the one left, offer one. */
+  /**
+   * No input for a while, but the app in front is playing something (a lecture, a video, music
+   * you're listening to in it): still there.
+   */
+  private async watching(exe: string): Promise<boolean> {
+    const m = await native.mediaState().catch(() => null);
+    if (!m || m.status !== 'playing') return false;
+    const app = appName(exe).toLowerCase();
+    const src = `${m.appId ?? ''} ${m.app ?? ''}`.toLowerCase();
+    return app.length >= 3 && src.includes(app);
+  }
+
+  /**
+   * Reacts to settling somewhere new: welcome to a workspace, offer one. Switching windows never
+   * asks where you stopped: only closing a workspace's windows does (watchClosing).
+   */
   private settle(now: number): void {
     const key = settled(this.doc.spans, now, HOLD_MS);
     if (!key || key === this.current) {
@@ -135,15 +213,9 @@ export abstract class NoticeActivity extends BaseActivity {
       return;
     }
     const prev = this.current;
-    const stayed = now - this.since;
     if (prev) this.lastSeen.set(prev, now);
     this.current = key;
-    this.since = now;
-    const left = this.wsOf(prev);
-    if (left && stayed >= LEAVE_MIN_MS && this.noticeOptions().leaveNote) {
-      this.leaving = { ws: left.id, ms: stayed, at: now };
-      this.ctx.surface({ key: `notice-leave:${left.id}:${now}`, ms: 12000, level: 'expanded' });
-    } else if (this.wsOf(key) && now - (this.lastSeen.get(key) ?? 0) > RETURN_QUIET_MS) {
+    if (this.wsOf(key) && now - (this.lastSeen.get(key) ?? 0) > RETURN_QUIET_MS) {
       this.arrived = { key, at: now };
       this.ctx.surface({ key: `notice-arrive:${key}:${now}`, ms: SHOW_MS, level: 'expanded' });
       this.saw('info', `notice:${key}`);

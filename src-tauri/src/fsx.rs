@@ -19,9 +19,9 @@ const MAX_USER_TEXTS: usize = 24;
 fn roots() -> Vec<PathBuf> {
     let mut out = Vec::new();
     #[cfg(windows)]
-    const VARS: &[&str] = &["USERPROFILE", "APPDATA", "LOCALAPPDATA", "CLAUDE_CONFIG_DIR", "OneDrive"];
+    const VARS: &[&str] = &["USERPROFILE", "APPDATA", "LOCALAPPDATA", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "OneDrive"];
     #[cfg(not(windows))]
-    const VARS: &[&str] = &["HOME", "CLAUDE_CONFIG_DIR"];
+    const VARS: &[&str] = &["HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME"];
     for var in VARS {
         if let Some(v) = std::env::var_os(var) {
             out.push(PathBuf::from(v));
@@ -711,6 +711,123 @@ pub async fn claude_transcript_work(path: String, offset: f64, open: Vec<String>
     .flatten()
 }
 
+// ------------------------------------------------------------------ Codex session files
+
+/// Long strings in a Codex session line are cut to this many characters.
+const ROLLOUT_TEXT_MAX: usize = 4000;
+/// At most this much of a session file per scan: a long one is read over several polls.
+const ROLLOUT_SCAN_MAX: u64 = 8 * 1024 * 1024;
+/// A line is parsed only when it holds one of these (Codex writes compact JSON).
+const ROLLOUT_MARKS: &[&[u8]] = &[
+    b"\"session_meta\"",
+    b"\"task_started\"",
+    b"\"task_complete\"",
+    b"\"turn_aborted\"",
+    b"\"token_count\"",
+    b"\"user_message\"",
+    b"\"agent_message\"",
+    b"\"type\":\"message\"",
+    b"\"type\":\"function_call\"",
+    b"\"type\":\"error\"",
+];
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RolloutScan {
+    /// Where the next scan starts: just past the last complete line read.
+    offset: f64,
+    /// The file's size when read. Smaller than the last offset: the file was rewritten, and
+    /// this scan started again from the top.
+    size: f64,
+    lines: Vec<Value>,
+}
+
+/// The lines of a Codex session file Island reads (src/activities/codex/rollout.ts), from
+/// `offset`: the session's meta, turns starting and ending, token counts (with the plan's
+/// limits), the user's and Codex's messages, and the commands it ran. Instructions, tool
+/// output and Codex's own bookkeeping stay out, and long text is cut.
+fn rollout_scan(path: &Path, offset: u64) -> std::io::Result<RolloutScan> {
+    let size = std::fs::metadata(path)?.len();
+    let start = if offset > size { 0 } else { offset };
+    let end = size.min(start + ROLLOUT_SCAN_MAX);
+    let mut lines = Vec::new();
+    let next = scan_lines(path, start, end, |raw| {
+        if let Some(v) = rollout_line(raw) {
+            lines.push(v);
+        }
+    })?;
+    Ok(RolloutScan { offset: next as f64, size: size as f64, lines })
+}
+
+fn rollout_line(raw: &[u8]) -> Option<Value> {
+    if !ROLLOUT_MARKS.iter().any(|m| contains(raw, m)) {
+        return None;
+    }
+    let mut v: Value = serde_json::from_slice(raw).ok()?;
+    let kind = v.get("type")?.as_str()?.to_string();
+    let payload = v.get_mut("payload")?.as_object_mut()?;
+    let ptype = payload.get("type").and_then(Value::as_str).unwrap_or("").to_string();
+    let keep = match kind.as_str() {
+        "session_meta" => {
+            for k in ["base_instructions", "instructions", "dynamic_tools"] {
+                payload.remove(k);
+            }
+            true
+        }
+        "event_msg" => matches!(ptype.as_str(), "task_started" | "task_complete" | "turn_aborted" | "token_count" | "user_message" | "agent_message" | "error"),
+        "response_item" => match ptype.as_str() {
+            "message" => {
+                let role = payload.get("role").and_then(Value::as_str).unwrap_or("");
+                if role != "user" && role != "assistant" {
+                    return None;
+                }
+                if let Some(Value::Array(parts)) = payload.get_mut("content") {
+                    parts.retain(|p| p.get("text").is_some_and(Value::is_string));
+                }
+                true
+            }
+            "function_call" => {
+                payload.remove("internal_chat_message_metadata_passthrough");
+                true
+            }
+            _ => false,
+        },
+        _ => false,
+    };
+    if !keep {
+        return None;
+    }
+    cut_strings(&mut v, ROLLOUT_TEXT_MAX);
+    Some(v)
+}
+
+fn cut_strings(v: &mut Value, max: usize) {
+    match v {
+        Value::String(s) if s.chars().count() > max => {
+            let mut cut: String = s.chars().take(max).collect();
+            cut.push('…');
+            *s = cut;
+        }
+        Value::Array(items) => items.iter_mut().for_each(|x| cut_strings(x, max)),
+        Value::Object(map) => map.values_mut().for_each(|x| cut_strings(x, max)),
+        _ => {}
+    }
+}
+
+#[tauri::command]
+pub async fn codex_rollout_scan(path: String, offset: f64) -> Option<RolloutScan> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = PathBuf::from(&path);
+        if !allowed(&p) {
+            return None;
+        }
+        rollout_scan(&p, offset.max(0.0) as u64).ok()
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 #[tauri::command]
 pub async fn claude_workflows(projects_dir: String, sessions: Vec<String>, stale_ms: f64) -> Vec<WorkflowRun> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -964,6 +1081,62 @@ mod tests {
         let later = transcript_work(&file, scan.consumed as u64, &["t9".to_string()]).unwrap();
         assert_eq!(later.events.len(), 1);
         assert_eq!(later.events[0]["k"], "result");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A Codex session file written by Codex 0.158 (the Island probe, 2026-10-30), trimmed.
+    const CODEX_ROLLOUT: &str = include_str!("testdata/codex-rollout.jsonl");
+
+    fn kinds(scan: &RolloutScan) -> Vec<String> {
+        scan.lines
+            .iter()
+            .map(|l| {
+                let p = &l["payload"];
+                let sub = p.get("type").and_then(Value::as_str).or_else(|| p.get("role").and_then(Value::as_str)).unwrap_or("");
+                format!("{}/{}", l["type"].as_str().unwrap_or(""), sub)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn codex_rollout_scans_keep_only_what_island_reads() {
+        let dir = std::env::temp_dir().join(format!("island-fsx-codex-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("rollout.jsonl");
+        std::fs::write(&file, CODEX_ROLLOUT).unwrap();
+        let scan = rollout_scan(&file, 0).unwrap();
+        let k = kinds(&scan);
+        assert_eq!(k[0], "session_meta/");
+        assert!(scan.lines[0]["payload"].get("base_instructions").is_none(), "instructions are dropped");
+        assert_eq!(scan.lines[0]["payload"]["id"], "01a18eb4-0570-7f92-b87d-4917403176d2");
+        assert_eq!(k.iter().filter(|x| *x == "event_msg/token_count").count(), 3);
+        assert_eq!(k.iter().filter(|x| *x == "event_msg/task_complete").count(), 2);
+        assert!(k.contains(&"response_item/message".to_string()));
+        assert!(k.contains(&"response_item/function_call".to_string()));
+        // The developer's instructions, tool output, and Codex's own bookkeeping stay out.
+        let roles: Vec<&str> = scan.lines.iter().filter_map(|l| l["payload"].get("role").and_then(Value::as_str)).collect();
+        assert!(!roles.contains(&"developer"));
+        assert!(!k.iter().any(|x| x.contains("function_call_output") || x.starts_with("world_state") || x.starts_with("turn_context")));
+        assert_eq!(scan.offset, CODEX_ROLLOUT.len() as f64);
+        // From where it stopped: nothing new.
+        assert!(rollout_scan(&file, scan.offset as u64).unwrap().lines.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn codex_rollout_scans_wait_for_a_whole_line_and_cut_long_text() {
+        let dir = std::env::temp_dir().join(format!("island-fsx-codex2-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("rollout.jsonl");
+        let long = "x".repeat(ROLLOUT_TEXT_MAX * 2);
+        let done = format!(r#"{{"timestamp":"2026-10-30T21:25:28.000Z","type":"event_msg","payload":{{"type":"task_complete","turn_id":"t1","last_agent_message":"{long}"}}}}"#);
+        let half = r#"{"timestamp":"2026-10-30T21:25:29.000Z","type":"event_msg","payload":{"type":"task_star"#;
+        std::fs::write(&file, format!("{done}\n{half}")).unwrap();
+        let scan = rollout_scan(&file, 0).unwrap();
+        assert_eq!(scan.lines.len(), 1, "the half-written line waits");
+        assert_eq!(scan.offset, (done.len() + 1) as f64);
+        let text = scan.lines[0]["payload"]["last_agent_message"].as_str().unwrap();
+        assert!(text.chars().count() <= ROLLOUT_TEXT_MAX + 1 && text.ends_with('…'));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

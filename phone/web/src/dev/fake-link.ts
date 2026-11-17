@@ -265,6 +265,9 @@ export class FakeLink implements Link {
       case 'lock':
         this.toast(`Locked ${DEMO_NAME}`, 'good');
         return;
+      case 'power':
+        this.toast(m.what === 'sleep' ? `${DEMO_NAME} is going to sleep` : m.what === 'restart' ? `Restarting ${DEMO_NAME}` : `Shutting down ${DEMO_NAME}`, 'good');
+        return;
       case 'push-sub':
         return;
     }

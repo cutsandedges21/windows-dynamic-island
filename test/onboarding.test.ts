@@ -31,7 +31,7 @@ describe('planActivities', () => {
     const plan = planActivities(answers({ uses: ['gaming'], glance: ['system', 'network', 'system-controls'], ai: true }), desktop);
     expect(plan.picked).toEqual(['game', 'system', 'network', 'system-controls']);
     // The bot's brain is on with the AI step, but has no tile: the bot is the way in.
-    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'phone', 'workspaces', 'local']);
+    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'shelf', 'phone', 'workspaces', 'local']);
     expect(plan.enabled).toEqual([...plan.picked, ...plan.hidden]);
   });
 
@@ -146,7 +146,7 @@ describe('applyPlan', () => {
     const plan = planActivities(answers({ uses: ['media'], glance: ['music', 'weather'] }), desktop);
     const s = applyPlan(base(), plan, ' Montreal ');
     const on = Object.entries(s.activities.config).filter(([, c]) => c.enabled).map(([id]) => id);
-    expect(on.sort()).toEqual([...plan.enabled, 'github'].sort());
+    expect(on.sort()).toEqual([...plan.enabled, 'github', 'apps'].sort());
     expect(s.activities.config.claude.enabled).toBe(false);
     expect(s.activities.config.weather.options.city).toBe('Montreal');
   });

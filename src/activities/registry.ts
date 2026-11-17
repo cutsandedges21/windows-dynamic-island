@@ -5,9 +5,13 @@ import type { Activity } from '../core/activity';
 import { BatteryActivity } from './battery';
 import { SportsActivity } from './sports';
 import { LandActivity } from './land';
+import { ShelfActivity } from './shelf';
 import { CalendarActivity } from './calendar';
 import { CallsActivity } from './calls';
 import { ClaudeActivity } from './claude';
+import { CodexActivity } from './codex';
+import { CursorActivity } from './cursor';
+import { AntigravityActivity } from './antigravity';
 import { ClipboardActivity } from './clipboard';
 import { DevicesActivity } from './devices';
 import { DownloadsActivity } from './downloads';
@@ -20,6 +24,7 @@ import { LocalActivity } from './local';
 import { MusicActivity } from './music';
 import { NetworkActivity } from './network';
 import { PhoneActivity } from './phone';
+import { AppsActivity } from './apps';
 import { QuickActivity } from './quick';
 import { RemindersActivity } from './reminders';
 import { ScreenshotsActivity } from './screenshots';
@@ -33,12 +38,16 @@ import { WorkspacesActivity } from './workspaces';
 export function createRegistry(): Map<string, () => Activity> {
   return new Map<string, () => Activity>([
     ['claude', () => new ClaudeActivity()],
+    ['codex', () => new CodexActivity()],
+    ['cursor', () => new CursorActivity()],
+    ['antigravity', () => new AntigravityActivity()],
     ['music', () => new MusicActivity()],
     ['game', () => new GameActivity()],
     ['timer', () => new TimerActivity()],
     ['reminders', () => new RemindersActivity()],
     ['downloads', () => new DownloadsActivity()],
     ['land', () => new LandActivity()],
+    ['shelf', () => new ShelfActivity()],
     ['battery', () => new BatteryActivity()],
     ['system-controls', () => new SystemControlsActivity()],
     ['screenshots', () => new ScreenshotsActivity()],
@@ -54,6 +63,7 @@ export function createRegistry(): Map<string, () => Activity> {
     ['network', () => new NetworkActivity()],
     ['workspaces', () => new WorkspacesActivity()],
     ['servers', () => new ServersActivity()],
+    ['apps', () => new AppsActivity()],
     ['quick', () => new QuickActivity()],
     ['local', () => new LocalActivity()],
     ['github', () => new GithubActivity()],

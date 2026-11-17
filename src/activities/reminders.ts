@@ -11,7 +11,7 @@ import { agoText, clip, timeOfDay } from '../core/format';
 import { native } from '../core/native';
 import type { Seg } from '../core/segments';
 import type { Block, SheetButton, SheetRow, SheetView, Tile } from '../core/sheet';
-import { BaseActivity, chime } from './base';
+import { BaseActivity, playSound } from './base';
 
 export interface Reminder {
   id: string;
@@ -325,7 +325,8 @@ export class RemindersActivity extends BaseActivity {
       r.due = true;
       r.seen = false;
       changed = true;
-      chime('attention');
+      // A reminder always sounds, in the style picked in Settings.
+      void playSound('attention', this.ctx.settings().general.sound);
       const late = now - r.at > LATE_MS;
       const title = titleOf(r.text) || 'Reminder';
       const body = late ? `Was due ${whenText(r.at, now)}` : 'Reminder';

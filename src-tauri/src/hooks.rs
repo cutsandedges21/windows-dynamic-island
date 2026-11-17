@@ -177,18 +177,18 @@ fn without_ours(existing: &Value) -> Value {
     Value::Object(root)
 }
 
-fn pretty(v: &Value) -> String {
+pub(crate) fn pretty(v: &Value) -> String {
     serde_json::to_string_pretty(v).unwrap_or_default()
 }
 
 #[cfg(windows)]
-fn stamp() -> String {
+pub(crate) fn stamp() -> String {
     let t = unsafe { GetLocalTime() };
     format!("{:04}{:02}{:02}-{:02}{:02}{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
 }
 
 #[cfg(target_os = "macos")]
-fn stamp() -> String {
+pub(crate) fn stamp() -> String {
     crate::mac::sys::local_stamp()
 }
 
@@ -201,7 +201,7 @@ fn backup_path_of(path: &Path) -> PathBuf {
 }
 
 /// FNV-1a: "is this still the file I showed the user?"
-fn fingerprint(bytes: &[u8]) -> String {
+pub(crate) fn fingerprint(bytes: &[u8]) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in bytes {
         hash ^= *b as u64;
@@ -302,7 +302,7 @@ const EMBEDDED_HOOK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/island-ho
 
 /// Writes the embedded relay to `dest` unless it is already there. False when
 /// this build carries none or the write failed.
-fn write_embedded_hook(dest: &Path) -> bool {
+pub(crate) fn write_embedded_hook(dest: &Path) -> bool {
     if EMBEDDED_HOOK.is_empty() {
         return false;
     }
@@ -363,7 +363,7 @@ pub fn ensure_hook_exe(app: &AppHandle) {
 }
 
 /// settings.json is short, so a plain O(n·m) LCS diff is enough.
-fn unified_diff(before: &str, after: &str) -> String {
+pub(crate) fn unified_diff(before: &str, after: &str) -> String {
     let a: Vec<&str> = before.lines().collect();
     let b: Vec<&str> = after.lines().collect();
     let (n, m) = (a.len(), b.len());

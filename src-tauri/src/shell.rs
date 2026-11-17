@@ -111,6 +111,41 @@ pub fn shell_sleep() {
     }
 }
 
+/// What a power action runs: `shutdown.exe` with these arguments, or nothing for sleep (an API
+/// call). No `/f`: like Start › Power, a program with unsaved work can stop it.
+pub fn power_command(kind: &str) -> Option<Option<&'static [&'static str]>> {
+    match kind {
+        "shutdown" => Some(Some(&["/s", "/t", "0"])),
+        "restart" => Some(Some(&["/r", "/t", "0"])),
+        "sleep" => Some(None),
+        _ => None,
+    }
+}
+
+/// Sleep, restart or shut down this PC (a paired phone's More menu asks for it, after a confirm
+/// there). Sleep is asked for off this thread, since the call only comes back on waking; a PC
+/// that refuses it (some Modern Standby laptops) gets its screen turned off instead.
+#[tauri::command]
+pub fn shell_power(kind: String) -> Result<(), String> {
+    use crate::nowindow::NoWindow;
+    let Some(args) = power_command(&kind) else { return Err(format!("Unknown power action: {kind}")) };
+    crate::log::line(format!("power: {kind}"));
+    match args {
+        Some(args) => std::process::Command::new("shutdown.exe").args(args).no_window().spawn().map(|_| ()).map_err(|e| format!("Windows wouldn't start it: {e}")),
+        None => {
+            std::thread::spawn(|| unsafe {
+                if !windows::Win32::System::Power::SetSuspendState(false, false, false) {
+                    crate::log::line("power: sleep refused, turning the screen off".to_string());
+                    use windows::Win32::Foundation::{LPARAM, WPARAM};
+                    use windows::Win32::UI::WindowsAndMessaging::{SendNotifyMessageW, HWND_BROADCAST, SC_MONITORPOWER, WM_SYSCOMMAND};
+                    let _ = SendNotifyMessageW(HWND_BROADCAST, WM_SYSCOMMAND, WPARAM(SC_MONITORPOWER as usize), LPARAM(2));
+                }
+            });
+            Ok(())
+        }
+    }
+}
+
 #[tauri::command]
 pub fn shell_snip() {
     let _ = shell_execute("open", "ms-screenclip:", None);
@@ -346,6 +381,35 @@ pub fn screen_capture(video: bool) -> bool {
     sent as usize == inputs.len()
 }
 
+/// Xbox Game Bar's own shortcuts, as the keys to hold and the one to press: its overlay
+/// (Win+G), a screenshot of the game (Win+Alt+PrtScn), the last 30 seconds as a clip
+/// (Win+Alt+G), and starting or stopping a recording (Win+Alt+R).
+pub fn game_bar_keys(action: &str) -> Option<(&'static [VIRTUAL_KEY], VIRTUAL_KEY)> {
+    const WIN: &[VIRTUAL_KEY] = &[VK_LWIN];
+    const WIN_ALT: &[VIRTUAL_KEY] = &[VK_LWIN, VIRTUAL_KEY(18)];
+    match action {
+        "bar" => Some((WIN, VIRTUAL_KEY(0x47))),
+        "screenshot" => Some((WIN_ALT, VIRTUAL_KEY(44))),
+        "clip" => Some((WIN_ALT, VIRTUAL_KEY(0x47))),
+        "record" => Some((WIN_ALT, VIRTUAL_KEY(0x52))),
+        _ => None,
+    }
+}
+
+/// Presses one of Game Bar's shortcuts (the Games card's buttons, from the PC or a phone). True
+/// when Windows took every key press; whether Game Bar is on is Windows' own setting.
+#[tauri::command]
+pub fn game_bar(action: String) -> bool {
+    let Some((held, k)) = game_bar_keys(&action) else { return false };
+    let mut inputs: Vec<INPUT> = held.iter().map(|v| key(*v, false)).collect();
+    inputs.push(key(k, false));
+    inputs.push(key(k, true));
+    inputs.extend(held.iter().rev().map(|v| key(*v, true)));
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    crate::log::line(format!("game bar {action} sent={sent}"));
+    sent as usize == inputs.len()
+}
+
 // ------------------------------------------------------------------ http
 
 #[derive(Serialize)]
@@ -364,7 +428,7 @@ pub async fn http_get(url: String, max_bytes: Option<usize>) -> Option<HttpRespo
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_key, rgba_to_dib, scheme_ok};
+    use super::{capture_key, game_bar_keys, power_command, rgba_to_dib, scheme_ok};
 
     #[test]
     fn a_dib_is_bgra_and_bottom_up() {
@@ -379,6 +443,27 @@ mod tests {
         assert_eq!(&dib[20..24], &8u32.to_le_bytes());
         assert_eq!(&dib[40..44], &[255, 0, 0, 128], "the bottom row comes first, as BGRA");
         assert_eq!(&dib[44..48], &[0, 0, 255, 255]);
+    }
+
+
+    #[test]
+    fn game_bar_shortcuts_are_microsofts() {
+        assert_eq!(game_bar_keys("bar").map(|(h, k)| (h.len(), k.0)), Some((1, 0x47)));
+        assert_eq!(game_bar_keys("screenshot").map(|(h, k)| (h.len(), k.0)), Some((2, 44)));
+        assert_eq!(game_bar_keys("clip").map(|(h, k)| (h.len(), k.0)), Some((2, 0x47)));
+        assert_eq!(game_bar_keys("record").map(|(h, k)| (h.len(), k.0)), Some((2, 0x52)));
+        assert!(game_bar_keys("format").is_none());
+    }
+
+    #[test]
+    fn power_actions_never_force_programs_closed() {
+        assert_eq!(power_command("shutdown"), Some(Some(&["/s", "/t", "0"][..])));
+        assert_eq!(power_command("restart"), Some(Some(&["/r", "/t", "0"][..])));
+        assert_eq!(power_command("sleep"), Some(None));
+        assert_eq!(power_command("format"), None);
+        for kind in ["shutdown", "restart"] {
+            assert!(!power_command(kind).unwrap().unwrap().contains(&"/f"));
+        }
     }
 
     #[test]

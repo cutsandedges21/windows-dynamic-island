@@ -144,7 +144,7 @@ export class TimerActivity extends BaseActivity {
       this.ctx.alert('shake');
       this.saw('timer-done', 'timer:done');
       this.ctx.alert('glow', t.mode === 'focus' ? 'bad' : 'warn');
-      if (this.ctx.settings().general.sounds) chime('done');
+      chime('done', this.ctx.settings().general);
       this.ctx.notify(t.mode === 'focus' ? (t.phase === 'focus' ? 'Focus session done' : 'Break over') : 'Timer done', t.label);
       this.ctx.update();
     }

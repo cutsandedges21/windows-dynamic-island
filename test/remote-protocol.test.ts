@@ -61,6 +61,9 @@ describe("a phone's lines", () => {
     expect(readPhoneMsg({ t: 'text', text: '  ' })).toBeNull();
     expect(readPhoneMsg({ t: 'text', text: 'https://omnivox.ca' })).toEqual({ t: 'text', text: 'https://omnivox.ca' });
     expect(readPhoneMsg({ t: 'lock', extra: 1 })).toEqual({ t: 'lock' });
+    expect(readPhoneMsg({ t: 'power', what: 'sleep', extra: 1 })).toEqual({ t: 'power', what: 'sleep' });
+    expect(readPhoneMsg({ t: 'power', what: 'format' })).toBeNull();
+    expect(readPhoneMsg({ t: 'power' })).toBeNull();
     // Rust's own lines never reach the island's TypeScript as these.
     expect(readPhoneMsg({ t: 'pair', code: PAIR.code })).toBeNull();
     expect(readPhoneMsg('nav')).toBeNull();
@@ -111,13 +114,13 @@ const TERM: TermInfo = { id: 'a1b2c3d4', title: 'PowerShell', cwd: 'C:\\Users\\m
 
 describe('hello', () => {
   it("from an older island (no terminals, screen or folders): none of them", () => {
-    expect(readIslandMsg(HELLO)).toEqual({ ...HELLO, term: false, screen: null, folders: [] });
+    expect(readIslandMsg(HELLO)).toEqual({ ...HELLO, term: false, screen: null, folders: [], power: false });
   });
 
   it('carries whether terminals are allowed, the screen, and recent folders (six at most)', () => {
     const folders = ['C:\\code\\island', 'C:\\code\\app', '', '   ', 42, 'C:\\a', 'C:\\b', 'C:\\c', 'C:\\d', 'C:\\e'];
     const got = readIslandMsg({ ...HELLO, term: true, screen: 'ready', folders });
-    expect(got).toEqual({ ...HELLO, term: true, screen: 'ready', folders: ['C:\\code\\island', 'C:\\code\\app', 'C:\\a', 'C:\\b', 'C:\\c', 'C:\\d'] });
+    expect(got).toEqual({ ...HELLO, term: true, screen: 'ready', folders: ['C:\\code\\island', 'C:\\code\\app', 'C:\\a', 'C:\\b', 'C:\\c', 'C:\\d'], power: false });
     expect(HELLO_FOLDERS).toBe(6);
     for (const screen of ['ready', 'off', 'missing', null] as const) expect(readIslandMsg({ ...HELLO, screen })).toMatchObject({ screen });
     // Anything else is read as an older island would say it.

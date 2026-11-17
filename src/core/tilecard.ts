@@ -25,6 +25,11 @@ export function tileCard(tile: Tile, name: string, icon: string): Block[] {
         { t: 'head', key: 'head', icon: 'battery', tone: tile.tone, title: pct(b.pct), sub: b.head },
         { t: 'meter', key: 'bar', label: b.head, value: b.pct / 100, text: pct(b.pct), sub: b.sub, tone: tile.tone },
       ];
+    case 'lyrics':
+      return [
+        { t: 'head', key: 'head', icon: 'music', tone: tile.tone, title: b.title, sub: b.artist },
+        ...(b.lines.length ? [{ t: 'text', key: 'lines', text: b.lines.slice(Math.max(0, b.at), Math.max(0, b.at) + 6).join('\n'), bubble: true, lines: 6 } as Block] : []),
+      ];
     case 'media': {
       // Island's player (player.ts) takes its buttons' actions by name; none (not interactive): no buttons.
       const act = (key: string) => b.buttons.find((x) => x.key === key)?.action ?? '';

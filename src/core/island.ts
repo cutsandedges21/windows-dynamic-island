@@ -6,6 +6,8 @@
 //                                   └─► sheet (the card under the pill)
 
 import { CATALOG_BY_ID } from '../activities/catalog';
+import { ShelfActivity } from '../activities/shelf';
+import { ShelfBubble } from './shelf-bubble';
 import type { Activity, ActivityContext, ActivityStatus, RenderEnv, SheetEnv, SurfaceOptions } from './activity';
 import { reducedMotion, setReducedMotion } from './animator';
 import { pillBeam } from './beam';
@@ -16,10 +18,13 @@ import { PetBrain, type PetSignal } from './pet';
 import { beamSpec, BorderGlow, type GlowSpec } from './glow';
 import { loadShapes, restingTile, saveShapes, type TileShape } from './resting';
 import { cellsOf, CELLS, hiddenTest, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
-import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
-import { native, on, onFileDrop, onTermOpened, sendTo, type FileDrop, type MenuItem, type TermOpened } from './native';
+import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, shelfRect, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
+import { native, on, onFileDrop, onTermOpened, sendTo, type FileDrop, type MenuItem, type PowerState, type TermOpened } from './native';
 import { cardChips, choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
 import type { MirrorFrame } from './mirror';
+import { Strip, type StripView } from './strip';
+import { lookOf, WidgetHost } from './widgets';
+import { DockHost } from './dock';
 import { PillRenderer } from './renderer';
 import { menuMain, menuSegments } from './menu';
 import { quietMoon } from './quiet';
@@ -27,7 +32,7 @@ import { fitSegments, fitVertical, signature, type Placed, type Seg } from './se
 import { applyGlass } from './glass';
 import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
-import { mapActions, SheetRenderer, type Block, type SheetChip, type SheetView, type Tile } from './sheet';
+import { mapActions, SheetRenderer, type Block, type DropZone, type SheetChip, type SheetView, type Tile } from './sheet';
 import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
 import { tileCard } from './tilecard';
 import { pillMotion } from './spring';
@@ -52,18 +57,56 @@ const HOVER_HOLD_MS = 600;
 
 /** The sizes a list, card or player can take: two columns at least. */
 const WIDE_SIZES: TileSize[] = ['2x1', '2x2'];
+/** Music's lyrics: tall, so every line shows in full (Moss, 2026-11-13). */
+const LYRIC_SIZES: TileSize[] = ['1x2', '1x4', '2x4'];
+/** Island set Windows' taskbar to hide (kept across restarts and crashes, to put it back). */
+const HID_BAR_KEY = 'island.taskbar.hidWindows';
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+function writeFlag(key: string, on: boolean): void {
+  try {
+    if (on) localStorage.setItem(key, '1');
+    else localStorage.removeItem(key);
+  } catch {
+    /* the next start can't tell, and leaves the taskbar as it is */
+  }
+}
+
+const sizesOfKind = (k: string): TileSize[] => (k === 'lyrics' ? LYRIC_SIZES : NARROW_OK.has(k) ? TILE_SIZES : WIDE_SIZES);
 /** Row height per island size (the width comes from the pill). */
 const CELL_PX = { small: 80, medium: 92, large: 106 } as const;
 const SIZE_SCALE = { small: 0.88, medium: 1, large: 1.14 } as const;
 /** A card grown out of the pill (Music's player) at the medium size, about an iPhone's expanded island against the pill. */
 const MORPH_W = 372;
 const GRID_GAP = 8;
+/** The drop card's boxes (the Shelf, Land), CSS px tall. */
+const DROP_ZONE_H = 96;
 const GRID_PAD = 14;
 /** Every page of the grid is this many cells: always four across. */
 const GRID_COLS = 4;
 const GRID_ROWS = 4;
 /** Narrowest grid that still gives each of the four columns 90 px. */
 const GRID_MIN_W = GRID_COLS * 90 + GRID_GAP * (GRID_COLS - 1) + GRID_PAD * 2;
+/** Every size inside a tile is drawn for this cell and scaled by --k = cell / this (sheet.ts). */
+export const TILE_DESIGN_CELL = 92;
+/** The width a one-cell tile's content is drawn for: narrower columns shrink the tiles to fit. */
+const TILE_DESIGN_W = 120;
+
+/**
+ * The grid's row height for a grid `width` px wide (padding included): the island size's own,
+ * unless the columns are too narrow for a tile's design; then smaller in proportion. A tile's
+ * content scales with it, so it fits its cell at any island width or size instead of being cut off.
+ */
+export function gridCell(width: number, sizeCell: number): number {
+  const col = (width - GRID_PAD * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
+  const k = Math.min(sizeCell / TILE_DESIGN_CELL, col / TILE_DESIGN_W);
+  return Math.max(48, Math.round(TILE_DESIGN_CELL * k));
+}
 const atLeast = (a: Level, b: Level): Level => (levelIdx(a) >= levelIdx(b) ? a : b);
 /** Activities that stay in front once they pop up (a chat finished, a song started), until the user picks another. */
 const STAYS_IN_FRONT = new Set(['claude', 'music']);
@@ -101,6 +144,11 @@ export class Island {
   private lastOrientation: Orientation | null = null;
   private scheduled = false;
   private fullscreenOn: string | null = null;
+  private readonly strip: Strip;
+  private widgets: WidgetHost | null = null;
+  private dock: DockHost | null = null;
+  /** Windows' taskbar was set to hide by Island (put back when the taskbar is turned off). */
+  private hidWindowsBar = false;
   private inputActive = false;
   /** The pill itself shows an input (Continue Session, Ask). */
   private pillInput = false;
@@ -166,8 +214,16 @@ export class Island {
   private fullscreenAny: string | null = null;
   /** The activity whose own card the open island shows instead of Control Center (Land after a drop). */
   private cardFor: string | null = null;
-  /** Files are being dragged over the island: who would take them, and what the pill says meanwhile. */
-  private fileDrag: { owner: string; hint: string } | null = null;
+  /**
+   * Files are being dragged over the island (it opens on the drop card: the Shelf | Land) or over
+   * the Shelf's circle; `hot`: the side under the pointer; `was`: how the island was before, to go
+   * back to when they leave or are dropped on neither side.
+   */
+  private fileDrag: { where: 'island' | 'circle'; hot: string | null; was: { open: boolean; cardFor: string | null } } | null = null;
+  /** Files were just dropped on the Shelf: its card stays open until the pill or its x is clicked (Moss). */
+  private shelfPinned = false;
+  /** The Shelf's circle beside the pill, opposite the bot. */
+  private readonly shelfBubble: ShelfBubble;
   /** The window is hidden because the user hid the island for a while (`island.hiddenUntil`). */
   private windowHidden = false;
   /** Whether Rust holds the menu's Fade right now (it lets go for a right click, which opens the menu). */
@@ -212,7 +268,20 @@ export class Island {
     );
     // The light is drawn above the pill and the card, not inside them, so it can spill over their edges.
     this.pillGlow = new BorderGlow(stage, null, 'of-pill');
+    this.strip = new Strip(stage);
     this.bubble = new BubbleView(stage, { interactive: true, onClick: () => this.handleAction('island:bot', null, this.bubble.el) });
+    this.shelfBubble = new ShelfBubble(stage, {
+      act: (name, arg) => void this.runAct(`act:shelf:${name}`, arg),
+      open: () => {
+        this.open = true;
+        this.view = 'main';
+        this.cardFor = 'shelf';
+        this.shelfPinned = true;
+        this.chatOpen = false;
+        this.schedule();
+      },
+      changed: () => this.schedule(),
+    });
     this.chat = new ChatBar(stage, (action, arg) => this.chatAction(action, arg), () => this.publishHit(this.renderer.rect, true));
     this.cardGlow = new BorderGlow(stage, 24);
     this.grownGlow = new BorderGlow(stage, 34, 'of-grown');
@@ -252,7 +321,10 @@ export class Island {
       if (land?.action) Promise.resolve(land.action('paste', null)).catch((err) => native.log(`land paste failed: ${String(err)}`));
     });
     // The bot's eyes follow the pointer while Rust sees it near the island (the preview has no Rust).
-    await on<{ x: number; y: number } | null>('pointer', (p) => this.bubble.lookAt(p));
+    await on<{ x: number; y: number } | null>('pointer', (p) => {
+      this.bubble.lookAt(p);
+      this.shelfBubble.pointerAt(p);
+    });
     if (native.demo) window.addEventListener('pointermove', (e) => this.bubble.lookAt({ x: e.clientX, y: e.clientY }));
     await on('displays-changed', () => void this.place(false));
     await onFileDrop((e) => this.onFileDrop(e));
@@ -268,13 +340,91 @@ export class Island {
     // Rust reports presses outside the window's hit area; this catches the rest
     // (the thin margin around the pill, and everything in the browser preview).
     document.addEventListener('pointerdown', (e) => {
-      if (!(e.target as Element | null)?.closest?.('.pill, .sheet, .bubble, .chat')) this.dismiss();
+      if (!(e.target as Element | null)?.closest?.('.pill, .sheet, .bubble, .chat, .shelfb')) this.dismiss();
     });
     window.addEventListener('resize', () => {
       if (native.demo) void this.place(false);
     });
 
     // Island on your phone: paired phones see this island live and tap it.
+    this.widgets = new WidgetHost(
+      {
+        tiles: (now) => this.gridTiles(now, 460, false),
+        act: (action, arg) => void this.runAct(action, arg),
+        save: () => this.saveSettings(),
+        look: () => ({ accent: this.settings.island.accent, color: this.settings.island.color, glass: this.settings.island.glass, reduce: document.documentElement.classList.contains('reduce') }),
+        enabled: (kind) => this.running.has(kind),
+      },
+      () => this.settings.island.widgets,
+    );
+    this.widgets.start().catch((err) => native.log(`widgets failed to start: ${String(err)}`));
+    setInterval(() => this.widgets?.tick(Date.now()), 1000);
+    this.dock = new DockHost(
+      {
+        pinned: () => {
+          const saved = this.settings.activities.config.apps?.options.apps;
+          return Array.isArray(saved) ? (saved as Array<{ name: string; target: string }>).filter((a) => a && typeof a.target === 'string') : [];
+        },
+        setPinned: (apps) => {
+          // Through the Apps activity when it runs, so its own list (and the phone's) follows.
+          const act = this.running.get('apps');
+          if (act?.command) void act.command('set', apps);
+          else {
+            const cfg = this.settings.activities.config.apps;
+            if (!cfg) return;
+            cfg.options = { ...cfg.options, apps };
+            this.saveSettings();
+          }
+        },
+        music: () => this.dockMusic(),
+        timer: () => this.dockTimer(),
+        battery: () => this.dockBattery,
+        muted: () => this.dockMuted,
+        wifi: () => this.dockWifi,
+        hidden: () => this.settings.island.taskbar.hidden,
+        setHidden: (items) => {
+          this.settings.island.taskbar.hidden = items;
+          this.saveSettings();
+        },
+        look: () => ({ accent: this.settings.island.accent, ...lookOf(this.settings.island.taskbar.look, this.settings.island) }),
+        act: (action) => void this.runAct(action, null),
+        locked: () => this.settings.island.taskbar.locked,
+        setLocked: (on) => {
+          this.settings.island.taskbar.locked = on;
+          this.saveSettings();
+        },
+        open: () => {
+          this.view = 'main';
+          this.open = true;
+          this.schedule();
+        },
+        centre: () => this.settings.island.taskbar.centre,
+        saveCentre: (c) => {
+          this.settings.island.taskbar.centre = c;
+          this.saveSettings();
+        },
+      },
+      () => this.settings.island.taskbar.on,
+    );
+    void on<{ muted: boolean }>('audio', (a) => {
+      if (typeof a?.muted === 'boolean') this.dockMuted = a.muted;
+    });
+    // The taskbar's battery and Wi-Fi: the battery as Windows reports it, Wi-Fi asked now and then.
+    const power = (p: PowerState | null) => {
+      this.dockBattery = p?.hasBattery && typeof p.percent === 'number' ? { percent: p.percent, charging: p.charging } : null;
+    };
+    void on<PowerState>('power', power);
+    void native.powerState().then(power);
+    const radios = () => void native.radiosState().then((r) => (this.dockWifi = r?.wifi ?? null));
+    radios();
+    setInterval(() => {
+      if (this.settings.island.taskbar.on) radios();
+    }, 15000);
+    this.dock.start().catch((err) => native.log(`taskbar failed to start: ${String(err)}`));
+    setInterval(() => {
+      void this.dock?.tick();
+      this.syncWindowsBar();
+    }, 1000);
     this.hub = new PhoneHub(this.phoneHooks(), phoneNative);
     this.hub.start().catch((err) => native.log(`phones failed to start: ${String(err)}`));
     // A phone's terminals: Rust refuses them unless Settings › Your phone allows them.
@@ -717,9 +867,10 @@ export class Island {
     if (this.hover && s.hoverExpand && primary && !this.open && !morphing) level = atLeast(level, 'expanded');
     if (this.open || this.view !== 'main') level = 'maximum';
     // An activity's own card belongs to the open island; closing the island goes back to Control Center.
-    if (!this.open) this.cardFor = null;
-    // Files dragged over the island: the pill grows to say who takes them, a bigger target to drop on.
-    if (this.fileDrag) level = atLeast(level, 'expanded');
+    if (!this.open) {
+      this.cardFor = null;
+      this.shelfPinned = false;
+    }
     // The island's own note (a phone opened a terminal) holds the pill for a moment.
     if (this.note && this.note.until <= now) this.note = null;
     const note = this.note && !this.open && this.view === 'main' ? this.note : null;
@@ -738,7 +889,10 @@ export class Island {
     const hiddenEverywhere =
       this.moving ||
       (!primary && s.idle === 'hidden' && !this.open && !this.hover && this.view === 'main' && !this.previewLevel && !this.fileDrag && !note);
-    const hidden = hiddenEverywhere || (fsHide && this.fullscreenOn !== null);
+    // A strip in place of the pill over a full-screen app (Games set to a strip).
+    const strip = this.fullscreenOn !== null && !hiddenEverywhere && !urgentNow ? this.stripView(now) : null;
+    this.strip.show(strip);
+    const hidden = hiddenEverywhere || ((fsHide || strip !== null) && this.fullscreenOn !== null);
 
     const anchor = s.anchor;
     // Left/right pills stand vertical; an inline input needs a horizontal pill to type in.
@@ -750,10 +904,7 @@ export class Island {
       const vertical = orient === 'vertical';
       let segs: Seg[];
       let viewKey: string;
-      if (this.fileDrag) {
-        segs = this.dropSegments(this.fileDrag.hint, vertical);
-        viewKey = 'drop';
-      } else if (note) {
+      if (note) {
         segs = this.noteSegments(note, vertical);
         viewKey = 'note';
       } else if (this.view === 'hide') {
@@ -869,6 +1020,11 @@ export class Island {
     const morph = picked?.view.morph ? this.morphRect(restPill, this.sheetWidth(picked.view, orient, w)) : null;
     const botRect = bubbleRect(morph ? union(restPill, morph) : restPill, anchor, botD);
     this.bubble.place(botShown ? botRect : null, { immediate });
+    // The Shelf's circle, opposite the bot, while files wait on it and its card is closed.
+    const shelf = this.shelf();
+    const shelfShown = shelf !== null && !this.moving && !(fsHide && this.fullscreenOn !== null) && !(this.open && this.cardFor === 'shelf');
+    if (shelf) this.shelfBubble.show(shelf.files(), shelf.canUndo(now));
+    this.shelfBubble.place(shelfShown ? shelfRect(union(restPill, target), anchor, botD) : null, anchor, this.area);
     // The bot's chat: Local AI answers, in the bar under the bot; the island itself stays as it is.
     const chatView = botShown ? (this.running.get('local')?.chat?.() ?? null) : null;
     if (!chatView) this.chatOpen = false;
@@ -1057,11 +1213,33 @@ export class Island {
     setTimeout(() => this.schedule(), NOTE_MS + 30);
   }
 
-  /** What the pill says while files are dragged over it. */
-  private dropSegments(hint: string, vertical: boolean): Seg[] {
-    const segs: Seg[] = [{ t: 'icon', key: 'drop/icon', icon: 'land', tone: 'accent', anim: 'bob', prio: 0 }];
-    if (!vertical) segs.push({ t: 'text', key: 'drop/text', text: hint, weight: 'semibold', prio: 1 });
-    return segs;
+  /**
+   * The drop card: the island opens as it does for Control Center, at the grid's size, split in two:
+   * the Shelf on the left (the narrower side) and Land on the right. The side under the pointer lights.
+   */
+  private dropSheet(pillW: number): { owner: string; view: SheetView } {
+    const geo = this.gridGeometry(pillW);
+    // Short boxes (Moss: "WAY too big"): the grid's width, about one row of tiles tall.
+    const height = DROP_ZONE_H;
+    const land = this.running.get('land');
+    let landOk = false;
+    try {
+      landOk = Boolean(land?.accepts?.());
+    } catch {
+      landOk = false;
+    }
+    const onShelf = this.shelf()?.files().length ?? 0;
+    const items: DropZone[] = [
+      { key: 'shelf', icon: 'shelf', title: 'Shelf', sub: onShelf ? `Keep them with the ${onShelf === 1 ? 'file' : `${onShelf} files`} there` : 'Keep them here for later', grow: 1 },
+      { key: 'land', icon: 'land', title: 'Land', sub: landOk ? 'Send them to a computer or phone nearby' : land ? 'Land is starting' : 'Land is off', grow: 1, off: !landOk },
+    ];
+    return { owner: 'island', view: { key: 'island/drop', wide: true, width: geo.width, blocks: [{ t: 'zones', key: 'zones', height, hot: this.fileDrag?.hot ?? null, items }] } };
+  }
+
+  /** The Shelf (built in, so always running unless Island is starting or stopping). */
+  private shelf(): ShelfActivity | null {
+    const s = this.running.get('shelf');
+    return s instanceof ShelfActivity ? s : null;
   }
 
   private overflowSegments(ids: string[], statuses: Map<string, ActivityStatus>, vertical: boolean): Seg[] {
@@ -1106,6 +1284,7 @@ export class Island {
     this.raisedCard = false;
     if (this.view === 'hide' && !this.previewLevel) return this.hideSheet(now);
     if (this.view !== 'main' || this.previewLevel) return null;
+    if (this.open && this.fileDrag?.where === 'island') return this.dropSheet(pillW);
     const vertical = orient === 'vertical';
     const ask = (id: string, reason: SheetEnv['reason']) => this.askSheet(id, reason, now, this.sheetWidth(null, orient, pillW) - 28, vertical, id === choice.primary ? choice.surfaced : null);
     const primary = choice.primary;
@@ -1266,7 +1445,7 @@ export class Island {
     const scale = SIZE_SCALE[this.settings.island.size] ?? 1;
     const want = Math.max(460, Math.min(pillW, 760)) * scale;
     const width = Math.round(Math.min(this.area.width - 32, Math.max(GRID_MIN_W, want)));
-    return { cols: GRID_COLS, rows: GRID_ROWS, cell: Math.round(CELL_PX[this.settings.island.size] ?? CELL_PX.medium), width };
+    return { cols: GRID_COLS, rows: GRID_ROWS, cell: gridCell(width, CELL_PX[this.settings.island.size] ?? CELL_PX.medium), width };
   }
 
   /** Control Center: one tile per switched-on activity, in the user's order. */
@@ -1346,7 +1525,7 @@ export class Island {
     const drag = live ? this.gridDrag : null;
     const editing = live && this.gridEditing;
     const sized = natural.map((t) => {
-      const narrow = NARROW_OK.has(t.body.k);
+      const narrow = NARROW_OK.has(t.body.k) || t.body.k === 'lyrics';
       const [sw, sh] = cellsOf(t, layout.sizes[t.key]);
       // Lists, cards and players need two columns whatever was asked for.
       let w = Math.min(geo.cols, narrow ? sw : Math.max(2, sw));
@@ -1355,7 +1534,7 @@ export class Island {
       let h = Math.max(tall, Math.min(geo.rows, sh));
       if (drag?.key === t.key) ({ w, h } = drag.size);
       h = Math.max(tall, h);
-      const sizes = (narrow ? TILE_SIZES : WIDE_SIZES).map((x): [number, number] => [CELLS[x].w, CELLS[x].h]).filter(([, y]) => y >= tall);
+      const sizes = sizesOfKind(t.body.k).map((x): [number, number] => [CELLS[x].w, CELLS[x].h]).filter(([, y]) => y >= tall);
       return { ...t, w, h, sizes };
     });
 
@@ -1398,7 +1577,7 @@ export class Island {
 
   /** Sizes a tile may take: lists, cards and players need the width of two cells. */
   private sizesFor(key: string): TileSize[] {
-    return NARROW_OK.has(this.lastTiles.get(key) ?? '') ? TILE_SIZES : WIDE_SIZES;
+    return sizesOfKind(this.lastTiles.get(key) ?? '');
   }
 
   private lastTiles = new Map<string, string>();
@@ -1451,7 +1630,7 @@ export class Island {
         const drag = this.gridDrag;
         const a = (arg ?? {}) as { key?: unknown; page?: unknown; col?: unknown; row?: unknown; w?: unknown; h?: unknown };
         if (!drag || a.key !== drag.key || typeof a.page !== 'number' || typeof a.col !== 'number' || typeof a.row !== 'number') return;
-        if (typeof a.w === 'number' && typeof a.h === 'number' && a.w <= 2 && a.h <= 2 && this.sizesFor(drag.key).includes(sizeOf(a.w, a.h))) {
+        if (typeof a.w === 'number' && typeof a.h === 'number' && a.w <= 2 && a.h <= 4 && this.sizesFor(drag.key).includes(sizeOf(a.w, a.h))) {
           drag.size = { w: a.w, h: a.h };
         }
         const at = { page: a.page, col: a.col, row: a.row };
@@ -1563,6 +1742,8 @@ export class Island {
     if (strip) rects.push(strip);
     const bot = this.bubble?.hitRect;
     if (bot) rects.push(bot);
+    const shelf = this.shelfBubble?.hitRect;
+    if (shelf) rects.push(shelf);
     if (this.chat) rects.push(...this.chat.hitRects());
     const hiddenNow = this.renderer.targetRect.y < 0 || this.renderer.targetRect.x < 0 || this.renderer.targetRect.y > this.area.height || this.renderer.targetRect.x > this.area.width;
     void native.setHit(hiddenNow && strip ? [strip, ...(bot ? [bot] : [])] : rects);
@@ -1603,6 +1784,8 @@ export class Island {
    * event raises the pill again on its own.
    */
   private dismiss(): void {
+    // The Shelf just took files: it stays open until the pill or its x is clicked.
+    if (this.shelfPinned && this.open && this.cardFor === 'shelf' && !this.fileDrag) return;
     const cancel = this.inputActive ? this.findInputCancel() : null;
     if (cancel) this.handleAction(cancel, null, this.renderer.pill);
     clearTimeout(this.hoverTimer);
@@ -1758,6 +1941,10 @@ export class Island {
       case 'island:card-close':
         this.cardFor = null;
         break;
+      case 'island:shelf-close':
+        this.open = false;
+        this.shelfPinned = false;
+        break;
       default:
         break;
     }
@@ -1817,7 +2004,9 @@ export class Island {
         term: this.settings ? termAllowed(this.settings) : false,
         screen: this.screen,
         folders: this.recentFolders(),
+        power: platform === 'windows',
       }),
+      guarded: () => (['claude', 'codex', 'cursor', 'antigravity'] as const).filter((id) => this.settings?.activities.config[id]?.options.requireHello === true).map((id) => `act:${id}:allow`),
       fromPhone: (item) => this.fromPhone(item),
       prefs: () => (this.settings ? prefsOf(this.settings) : null),
       // The phone's Activities and Settings screens: only the allow-list in src/remote/prefs.ts.
@@ -1936,44 +2125,161 @@ export class Island {
    * happens when no running activity takes files.
    */
   private onFileDrop(e: FileDrop): void {
-    if (e.type === 'over') return;
-    if (e.type === 'enter') {
-      this.fileDrag = e.paths.length ? this.dropOwner() : null;
-    } else if (e.type === 'leave') {
-      this.fileDrag = null;
-    } else {
-      const owner = this.fileDrag?.owner ?? this.dropOwner()?.owner ?? null;
-      this.fileDrag = null;
-      const act = owner ? this.running.get(owner) : undefined;
-      let took = false;
-      try {
-        took = e.paths.length > 0 && (act?.drop?.(e.paths) ?? false);
-      } catch (err) {
-        console.error(`drop ${owner}`, err);
-      }
-      if (took && owner) {
-        this.open = true;
-        this.view = 'main';
-        this.cardFor = owner;
-        this.chatOpen = false;
-        this.pendingBump = true;
-      }
+    if (e.type === 'leave') {
+      if (!this.fileDrag) return;
+      this.dragBack();
+      this.schedule();
+      return;
     }
-    this.schedule();
+    if (e.type === 'enter' && !e.paths.length) return;
+    const where = this.shelfBubble.contains(e.x, e.y) ? 'circle' : 'island';
+    if (e.type === 'drop') {
+      this.onDrop(e.paths, where, where === 'island' ? (this.zoneAt(e.x, e.y) ?? this.fileDrag?.hot ?? null) : null);
+      this.schedule();
+      return;
+    }
+    let fd = this.fileDrag;
+    if (!fd) {
+      // An 'over' with no 'enter' first counts as one (a drag that started on the island itself).
+      fd = this.fileDrag = { where, hot: null, was: { open: this.open, cardFor: this.cardFor } };
+      if (where === 'island') this.openForDrop();
+      this.shelfBubble.dropping(where === 'circle');
+      this.schedule();
+      return;
+    }
+    let changed = false;
+    if (fd.where !== where) {
+      fd.where = where;
+      if (where === 'island') this.openForDrop();
+      else {
+        this.open = fd.was.open;
+        this.cardFor = fd.was.cardFor;
+      }
+      this.shelfBubble.dropping(where === 'circle');
+      changed = true;
+    }
+    const hot = where === 'island' ? this.zoneAt(e.x, e.y) : null;
+    if (hot !== fd.hot) {
+      fd.hot = hot;
+      changed = true;
+    }
+    if (changed) this.schedule();
   }
 
-  /** The first running activity that would take dropped files, and what it says about it. */
-  private dropOwner(): { owner: string; hint: string } | null {
+  /** Files dragged over the island open it on the drop card, as a click opens Control Center. */
+  private openForDrop(): void {
+    this.open = true;
+    this.view = 'main';
+    this.cardFor = null;
+    this.chatOpen = false;
+  }
+
+  /** The drag left, or was dropped on neither side: the island as it was before. */
+  private dragBack(): void {
+    const fd = this.fileDrag;
+    this.fileDrag = null;
+    this.shelfBubble.dropping(false);
+    if (!fd) return;
+    this.open = fd.was.open;
+    this.cardFor = fd.was.cardFor;
+  }
+
+  /** Which side of the drop card is at (x, y), CSS px in the island window. */
+  private zoneAt(x: number, y: number): string | null {
+    const el = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-zone]');
+    return el?.dataset.zone ?? null;
+  }
+
+  /**
+   * Files dropped: on the Shelf's side (or its circle) they go on the Shelf; on Land's, Land takes
+   * them as it always has and opens its card; anywhere else nothing happens.
+   */
+  private onDrop(paths: string[], where: 'island' | 'circle', zone: string | null): void {
+    const target = where === 'circle' ? 'shelf' : zone;
+    const act = target ? this.running.get(target) : undefined;
+    let took = false;
+    try {
+      took = paths.length > 0 && (target !== 'land' || Boolean(act?.accepts?.())) && (act?.drop?.(paths) ?? false);
+    } catch (err) {
+      console.error(`drop ${target}`, err);
+    }
+    if (!took || !target || where === 'circle') {
+      this.dragBack();
+      if (took) this.shelfBubble.bump();
+      return;
+    }
+    this.fileDrag = null;
+    this.shelfBubble.dropping(false);
+    this.open = true;
+    this.view = 'main';
+    this.cardFor = target;
+    this.chatOpen = false;
+    this.shelfPinned = target === 'shelf';
+    this.pendingBump = true;
+  }
+
+  /** Windows' own taskbar hides while Island's shows (Settings › Taskbar), and comes back after. */
+  /**
+   * Windows' own taskbar hides while Island's shows (Settings › Taskbar › Hide Windows' taskbar),
+   * and comes back when that is turned off. Island remembers that it hid it (also across a crash),
+   * so a taskbar the user set to hide themselves is never shown by Island.
+   */
+  private syncWindowsBar(): void {
+    const t = this.settings.island.taskbar;
+    const want = t.on && t.hideWindows;
+    if (!this.barSynced) {
+      this.barSynced = true;
+      this.hidWindowsBar = readFlag(HID_BAR_KEY);
+      if (want) {
+        this.hidWindowsBar = true;
+        writeFlag(HID_BAR_KEY, true);
+        void native.dockAutohide(true);
+        return;
+      }
+    }
+    if (want && !this.hidWindowsBar) {
+      this.hidWindowsBar = true;
+      writeFlag(HID_BAR_KEY, true);
+      void native.dockAutohide(true);
+    } else if (!want && this.hidWindowsBar) {
+      this.hidWindowsBar = false;
+      writeFlag(HID_BAR_KEY, false);
+      void native.dockAutohide(false);
+    }
+  }
+
+  private barSynced = false;
+
+  private dockMuted = false;
+  private dockBattery: { percent: number; charging: boolean } | null = null;
+  private dockWifi: boolean | null = null;
+
+  /** What is playing, for the taskbar: from Music's tile. */
+  private dockMusic(): { title: string; artist: string; playing: boolean; art: string | null } | null {
+    const env = { reason: 'open' as const, now: Date.now(), width: 400, vertical: false, interactive: true, surfaced: null };
+    const t = this.running.get('music')?.tile?.(env);
+    return t && t.body.k === 'media' ? { title: t.body.title, artist: t.body.artist, playing: t.body.playing, art: t.body.art ?? null } : null;
+  }
+
+  /** The timer running, for the taskbar: the first one's time left. */
+  private dockTimer(): string | null {
+    const st = this.running.get('timer')?.status();
+    return st?.active && st.summary ? (st.summary.match(/\d+:\d{2}(:\d{2})?/)?.[0] ?? null) : null;
+  }
+
+  /** The first running activity with a strip to show over a full-screen app. */
+  private stripView(now: number): StripView | null {
     for (const [id, act] of this.running) {
       try {
-        const hint = act.accepts?.() ?? null;
-        if (hint) return { owner: id, hint };
+        const v = act.strip?.(now) ?? null;
+        if (v) return v;
       } catch (err) {
-        console.error(`accepts ${id}`, err);
+        console.error(`strip ${id}`, err);
       }
     }
     return null;
   }
+
 
   /** Something in the bot's bar or card: close it, or hand it to Local AI. */
   private chatAction(action: ChatAction, arg: unknown): void {

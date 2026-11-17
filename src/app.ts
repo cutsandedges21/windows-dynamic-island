@@ -4,6 +4,7 @@
 
 import './styles/app.css';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { widgetsPage } from './widgets-page';
 import { CATALOG_BY_ID, type ActivityMeta, type Band, type OptionSpec } from './activities/catalog';
 import { SpringSet } from './core/animator';
 import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from './core/format';
@@ -13,6 +14,7 @@ import { MENU_ITEMS, menuSegments, normalizeMenuOrder, type MenuItemId } from '.
 import { isTauri, native, on, sendTo, type AutoModelState, type MonitorInfo } from './core/native';
 import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
+import { playSound, styleChoices, type ChimeKind } from './core/sounds';
 import { ACCENTS, backAt, cloneSettings, growsChoices, growsOf, GROWS_BELOW, HIDE_CHOICES, hideUntil, migrate, newPhoneTopic, type ActivityConfig, type Grows, type Settings } from './core/settings';
 import { springs } from './core/spring';
 import { catchErrors } from './core/errors';
@@ -29,8 +31,8 @@ import { confirmBox } from './workspaces/ui';
 import { workspacesPage, type WorkspacesPage } from './workspaces/page';
 
 /** 'welcome' is the first-run setup: the whole window, no sidebar. */
-type Page = 'activities' | 'workspaces' | 'settings' | 'controls' | 'welcome';
-const PAGES: Page[] = ['activities', 'workspaces', 'settings', 'controls', 'welcome'];
+type Page = 'activities' | 'workspaces' | 'widgets' | 'settings' | 'controls' | 'welcome';
+const PAGES: Page[] = ['activities', 'workspaces', 'widgets', 'settings', 'controls', 'welcome'];
 
 let settings: Settings = migrate(null);
 // Rust passes the page to open in an init script (a # in the window URL is not reliable).
@@ -40,6 +42,8 @@ let dragging = false;
 const openCards = new Set<string>();
 let monitors: MonitorInfo[] = [];
 let hotkeyFailures: string[] = [];
+/** Why the last sound picked could not be used ('' when it could). */
+let soundError = '';
 
 // ------------------------------------------------------------------ talking to the island
 
@@ -82,6 +86,7 @@ function nav(): HTMLElement {
     h('div', { class: 'brand' }, [h('span', { class: 'brand-pill' }, [h('i')]), h('span', { text: 'Island' })]),
     item('activities', 'Activities', 'pulse'),
     item('workspaces', 'Workspaces', 'grid'),
+    item('widgets', 'Widgets', 'widgets'),
     item('settings', 'Settings', 'settings'),
     item('controls', 'Controls', 'keyboard'),
   ]);
@@ -121,7 +126,8 @@ function render(): void {
     return;
   }
   const scroll = root.querySelector('.content')?.scrollTop ?? 0;
-  const body = page === 'activities' ? activitiesPage() : page === 'workspaces' ? workspacesView().el : page === 'controls' ? controlsPage() : settingsPage();
+  const body =
+    page === 'activities' ? activitiesPage() : page === 'workspaces' ? workspacesView().el : page === 'widgets' ? widgetsPage({ settings: () => settings, save, render, mac: platform === 'macos' }) : page === 'controls' ? controlsPage() : settingsPage();
   root.replaceChildren(h('div', { class: 'body' }, [nav(), h('main', { class: 'content' }, [body])]));
   const content = root.querySelector('.content');
   if (content) content.scrollTop = scroll;
@@ -262,6 +268,9 @@ function cardBody(meta: ActivityMeta): HTMLElement {
   ]);
   // Claude Code's panel (its hooks, limits and chats) closes its part of the options.
   if (meta.id === 'claude') body.append(claudePanel());
+  if (meta.id === 'codex') body.append(codexPanel());
+  if (meta.id === 'cursor') body.append(cursorPanel());
+  if (meta.id === 'antigravity') body.append(antigravityPanel());
   if (meta.id === 'local') body.append(localPanel());
   if (meta.id === 'land') body.append(landPanel());
   if (meta.id === 'workspaces') body.append(noticePanel({ ask, openWorkspaces: () => { go('workspaces'); void sendTo('app', 'ws-seed', null); } }));
@@ -730,19 +739,46 @@ interface ClaudeSnapshot {
 
 let claudeTimer: ReturnType<typeof setInterval> | undefined;
 
+/**
+ * Runs `load` once `panel` is on the page, then every 2 s while it stays there. A panel is built
+ * before its card joins the page, so the first run waits for that (checking at once used to stop
+ * it for good: the panels sat on "Loading…"). A switched-off activity has nobody to answer, and
+ * an island that doesn't answer is said so, instead of loading forever.
+ */
+function whileShown(panel: HTMLElement, id: string, load: () => Promise<void>): ReturnType<typeof setInterval> {
+  let shown = false;
+  let waits = 0;
+  let misses = 0;
+  const name = CATALOG_BY_ID.get(id)?.name ?? id;
+  const tick = async (): Promise<void> => {
+    if (!panel.isConnected) {
+      if (shown || ++waits > 10) clearInterval(timer);
+      return;
+    }
+    shown = true;
+    if (!cfg(id).enabled) {
+      panel.replaceChildren(h('div', { class: 'muted', text: `Turn ${name} on above to see its chats and set up its hooks.` }));
+      return;
+    }
+    await load();
+    const waiting = panel.textContent === 'Loading…';
+    misses = waiting ? misses + 1 : 0;
+    if (waiting && misses >= 3) panel.replaceChildren(h('div', { class: 'muted', text: `${name} didn't answer. Is Island running? This retries every 2 seconds.` }));
+  };
+  const timer = setInterval(() => void tick(), 2000);
+  setTimeout(() => void tick(), 0);
+  return timer;
+}
+
 function claudePanel(): HTMLElement {
   const panel = h('div', { class: 'claude-panel' }, [h('div', { class: 'muted', text: 'Loading…' })]);
   const load = async () => {
-    if (!panel.isConnected) {
-      clearInterval(claudeTimer);
-      return;
-    }
     const snap = await ask<ClaudeSnapshot>('claude', 'snapshot');
-    if (snap && panel.isConnected && !dragging) fillClaude(panel, snap);
+    // An open install preview stays put until it is answered.
+    if (snap && panel.isConnected && !dragging && !panel.querySelector('.hook-preview')) fillClaude(panel, snap);
   };
   clearInterval(claudeTimer);
-  claudeTimer = setInterval(load, 2000);
-  void load();
+  claudeTimer = whileShown(panel, 'claude', load);
   return panel;
 }
 
@@ -851,6 +887,426 @@ async function hookFlow(box: HTMLElement, install: boolean): Promise<void> {
   springAnimate(view, [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], springs.content);
 }
 
+// ------------------------------------------------------------------ Codex panel
+
+interface CodexSnapshot {
+  available: boolean;
+  usage: { data: { fiveHour: { pct: number; resetsAt: number | null } | null; sevenDay: { pct: number; resetsAt: number | null } | null } | null } | null;
+  asOf: number | null;
+  tokens: { fresh: number; cached: number } | null;
+  sessions: Array<{ id: string; displayTitle: string; label: string; tone: string; project: string; host: string; lastActivityMs: number; needsYou: boolean; cwd: string }>;
+  closed: Array<{ id: string; displayTitle: string; project: string; closedAt: number; entrypoint: string | null; host?: string }>;
+  hooks: { installed: boolean; upToDate: boolean; codexFound: boolean; hookReady: boolean; hooksPath: string; error: string | null } | null;
+  hooksSeenAt: number;
+}
+
+let codexTimer: ReturnType<typeof setInterval> | undefined;
+/** Does Codex run Island's hooks? Asked once per visit (it starts codex.exe for a moment), and after an install. */
+let codexTrust: { trusted: boolean; error: string | null } | null = null;
+let codexTrustAsked = false;
+
+function codexPanel(): HTMLElement {
+  const panel = h('div', { class: 'claude-panel' }, [h('div', { class: 'muted', text: 'Loading…' })]);
+  codexTrust = null;
+  codexTrustAsked = false;
+  const load = async () => {
+    const snap = await ask<CodexSnapshot>('codex', 'snapshot');
+    if (!snap || !panel.isConnected || dragging || panel.querySelector('.hook-preview')) return;
+    fillCodex(panel, snap);
+    if (snap.hooks?.installed && !codexTrustAsked) {
+      codexTrustAsked = true;
+      void checkCodexTrust(panel, false);
+    }
+  };
+  clearInterval(codexTimer);
+  codexTimer = whileShown(panel, 'codex', load);
+  return panel;
+}
+
+async function checkCodexTrust(panel: HTMLElement, trust: boolean): Promise<void> {
+  codexTrust = (await ask<{ trusted: boolean; error: string | null }>('codex', 'hooks-trust', trust)) ?? { trusted: false, error: 'No answer' };
+  const snap = await ask<CodexSnapshot>('codex', 'snapshot');
+  if (snap && panel.isConnected && !panel.querySelector('.hook-preview')) fillCodex(panel, snap);
+}
+
+function fillCodex(panel: HTMLElement, s: CodexSnapshot): void {
+  const now = Date.now();
+  const d = s.usage?.data;
+  const kids: Node[] = [];
+  if (!s.available) {
+    panel.replaceChildren(h('div', { class: 'muted', text: 'Codex has not run on this PC yet (no .codex folder). Install the Codex app or the Codex CLI, then come back.' }));
+    return;
+  }
+  if (d) {
+    kids.push(
+      h('div', { class: 'limits' }, [
+        meterRow('5 hours', d.fiveHour, SESSION_WINDOW_MS, d.fiveHour ? resetsIn(d.fiveHour.resetsAt, now) : '–'),
+        meterRow('This week', d.sevenDay, WEEK_WINDOW_MS, d.sevenDay ? resetsOn(d.sevenDay.resetsAt, now) : '–'),
+      ]),
+    );
+  }
+  const extra: Node[] = [];
+  if (!d) extra.push(h('span', { class: 'muted', text: 'Plan limits show here after a Codex turn on a ChatGPT plan.' }));
+  else if (s.asOf) extra.push(h('span', { class: 'muted', text: `As of ${agoText(now - s.asOf)}: Codex updates them after each turn.` }));
+  if (s.tokens) extra.push(h('span', { class: 'muted', text: `Tokens this week ${fmtTokens(s.tokens.fresh)}${s.tokens.cached ? `  +${fmtTokens(s.tokens.cached)} cache` : ''}` }));
+  kids.push(h('div', { class: 'limit-extra' }, extra));
+
+  const list = h('div', { class: 'sess-list' });
+  if (!s.sessions.length) list.append(h('div', { class: 'muted', text: 'No Codex chats open. Start one in the Codex app, a terminal or your editor.' }));
+  for (const x of s.sessions) {
+    list.append(
+      h('button', { class: `sess tone-${x.tone}`, title: `${x.displayTitle}\n${x.cwd}`, onclick: () => void ask('codex', 'switch', x.id) }, [
+        h('span', { class: 'slot', text: '' }),
+        h('span', { class: `dot${x.needsYou ? ' pulse' : ''}` }),
+        h('span', { class: 'sess-title', text: x.displayTitle }),
+        h('span', { class: 'sess-meta', text: [x.project, x.host, agoText(now - x.lastActivityMs)].filter(Boolean).join(' · ') }),
+        h('span', { class: 'sess-label', text: x.label }),
+      ]),
+    );
+  }
+  kids.push(h('h3', { text: 'Chats' }), list);
+  if (s.closed.length) {
+    kids.push(h('h3', { text: 'Closed in the last day' }));
+    kids.push(
+      h('div', { class: 'mini-list' }, s.closed.map((c) =>
+        h('button', { class: 'mini', title: c.entrypoint === 'codex-app' ? 'Reopens in the Codex app' : c.entrypoint === 'codex-editor' ? `Brings up ${c.host ?? 'your editor'}` : 'Reopens in a new terminal', onclick: () => void ask('codex', 'reopen', c.id) }, [
+          h('span', { text: c.displayTitle }),
+          h('span', { class: 'muted', text: agoText(now - c.closedAt) }),
+        ]),
+      )),
+    );
+  }
+
+  const hooks = s.hooks;
+  const stale = Boolean(hooks?.installed && hooks.upToDate === false);
+  const trust = codexTrust;
+  const trustText = !hooks?.installed ? '' : trust === null ? ', checking that Codex trusts them…' : trust.trusted ? ', trusted by Codex' : `, not trusted by Codex yet${trust.error ? ` (${trust.error})` : ''}`;
+  const hookText = !hooks
+    ? 'Hook status unknown'
+    : hooks.error
+      ? hooks.error
+      : stale
+        ? 'Installed, but from an older version. Update them so replies and answers from the island reach your chats.'
+        : hooks.installed
+          ? `Installed${trustText}${s.hooksSeenAt ? `. Last event ${agoText(now - s.hooksSeenAt)}` : '. Waiting for the first event'}`
+          : "Not installed. Without hooks the island still lists chats from Codex's files, but answering commands and replying from the island need them.";
+  const needsTrust = Boolean(hooks?.installed && trust && !trust.trusted);
+  const hookBox = h('div', { class: 'hooks' }, [
+    h('div', {}, [h('b', { text: 'Codex hooks ' }), h('span', { class: needsTrust || hooks?.error ? 'warn' : 'muted', text: hookText })]),
+    hooks && !hooks.codexFound ? h('div', { class: 'muted', text: "codex.exe isn't on this PC, so Island can't ask Codex to trust its hooks. Install the Codex app or the CLI first." }) : null,
+    h('div', { class: 'hook-actions' }, [
+      h('button', { class: stale ? 'btn primary' : 'btn', text: stale ? 'Update hooks…' : hooks?.installed ? 'Reinstall…' : 'Install hooks…', onclick: () => void codexHookFlow(panel, hookBox, true) }),
+      hooks?.installed ? h('button', { class: needsTrust ? 'btn primary' : 'btn ghost', text: needsTrust ? 'Trust them' : 'Check trust', onclick: () => { codexTrust = null; void checkCodexTrust(panel, needsTrust); } }) : null,
+      hooks?.installed ? h('button', { class: 'btn ghost', text: 'Remove…', onclick: () => void codexHookFlow(panel, hookBox, false) }) : null,
+      h('button', { class: 'btn ghost', text: 'Refresh', onclick: () => void ask('codex', 'refresh') }),
+    ]),
+  ]);
+  kids.push(hookBox);
+  panel.replaceChildren(...kids);
+}
+
+async function codexHookFlow(panel: HTMLElement, box: HTMLElement, install: boolean): Promise<void> {
+  const prev = await ask<{ diff?: string; backup?: string; hooksPath?: string; fingerprint?: string; trust?: string[]; error?: string }>('codex', 'hooks-preview', install);
+  box.querySelector('.hook-preview')?.remove();
+  if (!prev || prev.error) {
+    box.append(h('div', { class: 'hook-preview warn', text: prev?.error ?? "Could not read Codex's hooks.json." }));
+    return;
+  }
+  const confirm = h('button', { class: 'btn primary', text: install ? 'Install and trust' : 'Remove' });
+  const view = h('div', { class: 'hook-preview' }, [
+    h('div', { class: 'muted', text: `${prev.hooksPath} will change like this. A backup goes to ${prev.backup} first; your own hooks stay.` }),
+    h('pre', { text: prev.diff ?? '' }),
+    ...(install && prev.trust?.length
+      ? [
+          h('div', { class: 'muted', text: "Codex runs a new hook only once it's trusted. Island then asks Codex to trust these (Codex writes them to its config.toml):" }),
+          h('pre', { text: prev.trust.join('\n') }),
+        ]
+      : []),
+    h('div', { class: 'hook-actions' }, [confirm, h('button', { class: 'btn ghost', text: 'Cancel', onclick: () => view.remove() })]),
+  ]);
+  confirm.addEventListener('click', async () => {
+    confirm.setAttribute('disabled', '');
+    const r = await ask<{ ok: boolean; backup?: string; error?: string; trusted?: boolean; trustError?: string | null }>('codex', 'hooks-write', { install, fingerprint: prev.fingerprint });
+    const backup = r?.backup ? ` Backup: ${r.backup}.` : '';
+    let text = r?.error ?? 'Failed';
+    let ok = Boolean(r?.ok);
+    if (r?.ok && !install) text = `Removed.${backup}`;
+    else if (r?.ok && r.trusted) text = `Installed, and Codex trusts them.${backup} New Codex chats pick them up; restart running ones.`;
+    else if (r?.ok) {
+      ok = false;
+      text = `Installed, but Codex didn't trust them yet${r.trustError ? `: ${r.trustError}` : ''}. Fix that and press Trust them, or open Codex and type /hooks.${backup}`;
+    }
+    if (r?.ok) codexTrust = install ? { trusted: Boolean(r.trusted), error: r.trustError ?? null } : null;
+    view.replaceChildren(
+      h('div', { class: ok ? 'ok' : 'warn', text }),
+      h('div', { class: 'hook-actions' }, [
+        h('button', {
+          class: 'btn ghost',
+          text: 'Done',
+          onclick: () => {
+            view.remove();
+            void ask<CodexSnapshot>('codex', 'snapshot').then((snap) => {
+              if (snap && panel.isConnected) fillCodex(panel, snap);
+            });
+          },
+        }),
+      ]),
+    );
+  });
+  box.append(view);
+  springAnimate(view, [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], springs.content);
+}
+
+// ------------------------------------------------------------------ Cursor panel
+
+interface CursorSnapshot {
+  available: boolean;
+  sessions: Array<{ id: string; displayTitle: string; label: string; tone: string; project: string; host: string; lastActivityMs: number; needsYou: boolean; cwd: string }>;
+  closed: Array<{ id: string; displayTitle: string; project: string; closedAt: number }>;
+  hooks: { installed: boolean; upToDate: boolean; gate: boolean; cursorFound: boolean; hookReady: boolean; hooksPath: string; error: string | null } | null;
+  hooksSeenAt: number;
+  /** Ask me here before Cursor runs a command (the option). */
+  gate: boolean;
+}
+
+let cursorTimer: ReturnType<typeof setInterval> | undefined;
+
+function cursorPanel(): HTMLElement {
+  const panel = h('div', { class: 'claude-panel' }, [h('div', { class: 'muted', text: 'Loading…' })]);
+  const load = async () => {
+    const snap = await ask<CursorSnapshot>('cursor', 'snapshot');
+    if (!snap || !panel.isConnected || dragging || panel.querySelector('.hook-preview')) return;
+    fillCursor(panel, snap);
+  };
+  clearInterval(cursorTimer);
+  cursorTimer = whileShown(panel, 'cursor', load);
+  return panel;
+}
+
+function fillCursor(panel: HTMLElement, s: CursorSnapshot): void {
+  const now = Date.now();
+  if (!s.available) {
+    panel.replaceChildren(h('div', { class: 'muted', text: "Cursor isn't on this PC. Install Cursor, then come back." }));
+    return;
+  }
+  const kids: Node[] = [];
+  const list = h('div', { class: 'sess-list' });
+  if (!s.sessions.length) list.append(h('div', { class: 'muted', text: "No Cursor agent chats open. Start one in Cursor's chat." }));
+  for (const x of s.sessions) {
+    list.append(
+      h('button', { class: `sess tone-${x.tone}`, title: `${x.displayTitle}\n${x.cwd}`, onclick: () => void ask('cursor', 'switch', x.id) }, [
+        h('span', { class: 'slot', text: '' }),
+        h('span', { class: `dot${x.needsYou ? ' pulse' : ''}` }),
+        h('span', { class: 'sess-title', text: x.displayTitle }),
+        h('span', { class: 'sess-meta', text: [x.project, agoText(now - x.lastActivityMs)].filter(Boolean).join(' · ') }),
+        h('span', { class: 'sess-label', text: x.label }),
+      ]),
+    );
+  }
+  kids.push(h('h3', { text: 'Chats' }), list);
+  if (s.closed.length) {
+    kids.push(h('h3', { text: 'Closed in the last day' }));
+    kids.push(
+      h('div', { class: 'mini-list' }, s.closed.map((c) =>
+        h('button', { class: 'mini', title: 'Brings up Cursor at this folder', onclick: () => void ask('cursor', 'reopen', c.id) }, [
+          h('span', { text: c.displayTitle }),
+          h('span', { class: 'muted', text: agoText(now - c.closedAt) }),
+        ]),
+      )),
+    );
+  }
+
+  const hooks = s.hooks;
+  const stale = Boolean(hooks?.installed && hooks.upToDate === false);
+  const gateDiffers = Boolean(hooks?.installed && hooks.gate !== s.gate);
+  const hookText = !hooks
+    ? 'Hook status unknown'
+    : hooks.error
+      ? hooks.error
+      : stale
+        ? 'Installed, but from an older version. Update them so replies from the island reach your chats.'
+        : gateDiffers
+          ? s.gate
+            ? 'Installed without the command hooks. Update them so Cursor asks you here before running a command.'
+            : 'Installed with the command hooks, but asking here is off. Update them to take those out.'
+          : hooks.installed
+            ? `Installed${hooks.gate ? ', asking here before commands' : ''}${s.hooksSeenAt ? `. Last event ${agoText(now - s.hooksSeenAt)}` : '. Waiting for the first event'}`
+            : "Not installed. Without hooks the island still lists chats from Cursor's transcripts, but replies and finished cards need them.";
+  const hookBox = h('div', { class: 'hooks' }, [
+    h('div', {}, [h('b', { text: 'Cursor hooks ' }), h('span', { class: hooks?.error ? 'warn' : 'muted', text: hookText })]),
+    h('div', { class: 'hook-actions' }, [
+      h('button', { class: stale || gateDiffers ? 'btn primary' : 'btn', text: stale || gateDiffers ? 'Update hooks…' : hooks?.installed ? 'Reinstall…' : 'Install hooks…', onclick: () => void cursorHookFlow(panel, hookBox, true, s.gate) }),
+      hooks?.installed ? h('button', { class: 'btn ghost', text: 'Remove…', onclick: () => void cursorHookFlow(panel, hookBox, false, s.gate) }) : null,
+      h('button', { class: 'btn ghost', text: 'Refresh', onclick: () => void ask('cursor', 'refresh') }),
+    ]),
+  ]);
+  kids.push(hookBox);
+  panel.replaceChildren(...kids);
+}
+
+async function cursorHookFlow(panel: HTMLElement, box: HTMLElement, install: boolean, gate: boolean): Promise<void> {
+  const prev = await ask<{ diff?: string; backup?: string; hooksPath?: string; fingerprint?: string; error?: string }>('cursor', 'hooks-preview', { install, gate });
+  box.querySelector('.hook-preview')?.remove();
+  if (!prev || prev.error) {
+    box.append(h('div', { class: 'hook-preview warn', text: prev?.error ?? "Could not read Cursor's hooks.json." }));
+    return;
+  }
+  const confirm = h('button', { class: 'btn primary', text: install ? 'Install' : 'Remove' });
+  const view = h('div', { class: 'hook-preview' }, [
+    h('div', { class: 'muted', text: `${prev.hooksPath} will change like this. A backup goes to ${prev.backup} first; your own hooks stay.` }),
+    h('pre', { text: prev.diff ?? '' }),
+    h('div', { class: 'hook-actions' }, [confirm, h('button', { class: 'btn ghost', text: 'Cancel', onclick: () => view.remove() })]),
+  ]);
+  confirm.addEventListener('click', async () => {
+    confirm.setAttribute('disabled', '');
+    const r = await ask<{ ok: boolean; backup?: string; error?: string }>('cursor', 'hooks-write', { install, gate, fingerprint: prev.fingerprint });
+    const backup = r?.backup ? ` Backup: ${r.backup}.` : '';
+    const text = r?.ok ? (install ? `Installed.${backup} Cursor picks them up at once; if a chat misses them, restart Cursor.` : `Removed.${backup}`) : (r?.error ?? 'Failed');
+    view.replaceChildren(
+      h('div', { class: r?.ok ? 'ok' : 'warn', text }),
+      h('div', { class: 'hook-actions' }, [
+        h('button', {
+          class: 'btn ghost',
+          text: 'Done',
+          onclick: () => {
+            view.remove();
+            void ask<CursorSnapshot>('cursor', 'snapshot').then((snap) => {
+              if (snap && panel.isConnected) fillCursor(panel, snap);
+            });
+          },
+        }),
+      ]),
+    );
+  });
+  box.append(view);
+  springAnimate(view, [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], springs.content);
+}
+
+// ------------------------------------------------------------------ Antigravity panel
+
+interface AgSnapshot {
+  available: boolean;
+  sessions: Array<{ id: string; displayTitle: string; label: string; tone: string; project: string; host: string; lastActivityMs: number; needsYou: boolean; cwd: string }>;
+  closed: Array<{ id: string; displayTitle: string; project: string; closedAt: number }>;
+  hooks: { installed: boolean; upToDate: boolean; gate: boolean; cursorFound: boolean; hookReady: boolean; hooksPath: string; error: string | null } | null;
+  hooksSeenAt: number;
+  /** Ask me here before Antigravity runs a command (the option). */
+  gate: boolean;
+}
+
+let agTimer: ReturnType<typeof setInterval> | undefined;
+
+function antigravityPanel(): HTMLElement {
+  const panel = h('div', { class: 'claude-panel' }, [h('div', { class: 'muted', text: 'Loading…' })]);
+  const load = async () => {
+    const snap = await ask<AgSnapshot>('antigravity', 'snapshot');
+    if (!snap || !panel.isConnected || dragging || panel.querySelector('.hook-preview')) return;
+    fillAntigravity(panel, snap);
+  };
+  clearInterval(agTimer);
+  agTimer = whileShown(panel, 'antigravity', load);
+  return panel;
+}
+
+function fillAntigravity(panel: HTMLElement, s: AgSnapshot): void {
+  const now = Date.now();
+  if (!s.available) {
+    panel.replaceChildren(h('div', { class: 'muted', text: "Antigravity isn't on this PC. Install the Antigravity app, IDE or CLI, then come back." }));
+    return;
+  }
+  const kids: Node[] = [];
+  const list = h('div', { class: 'sess-list' });
+  if (!s.sessions.length) list.append(h('div', { class: 'muted', text: "No Antigravity chats open. Start one in the Antigravity app, IDE or CLI." }));
+  for (const x of s.sessions) {
+    list.append(
+      h('button', { class: `sess tone-${x.tone}`, title: `${x.displayTitle}\n${x.cwd}`, onclick: () => void ask('antigravity', 'switch', x.id) }, [
+        h('span', { class: 'slot', text: '' }),
+        h('span', { class: `dot${x.needsYou ? ' pulse' : ''}` }),
+        h('span', { class: 'sess-title', text: x.displayTitle }),
+        h('span', { class: 'sess-meta', text: [x.project, agoText(now - x.lastActivityMs)].filter(Boolean).join(' · ') }),
+        h('span', { class: 'sess-label', text: x.label }),
+      ]),
+    );
+  }
+  kids.push(h('h3', { text: 'Chats' }), list);
+  if (s.closed.length) {
+    kids.push(h('h3', { text: 'Closed in the last day' }));
+    kids.push(
+      h('div', { class: 'mini-list' }, s.closed.map((c) =>
+        h('button', { class: 'mini', title: 'Brings up Antigravity', onclick: () => void ask('antigravity', 'reopen', c.id) }, [
+          h('span', { text: c.displayTitle }),
+          h('span', { class: 'muted', text: agoText(now - c.closedAt) }),
+        ]),
+      )),
+    );
+  }
+
+  const hooks = s.hooks;
+  const stale = Boolean(hooks?.installed && hooks.upToDate === false);
+  const gateDiffers = Boolean(hooks?.installed && hooks.gate !== s.gate);
+  const hookText = !hooks
+    ? 'Hook status unknown'
+    : hooks.error
+      ? hooks.error
+      : stale
+        ? 'Installed, but from an older version. Update them so replies from the island reach your chats.'
+        : gateDiffers
+          ? s.gate
+            ? 'Installed without the command hooks. Update them so Antigravity asks you here before running a command.'
+            : 'Installed with the command hooks, but asking here is off. Update them to take those out.'
+          : hooks.installed
+            ? `Installed${hooks.gate ? ', asking here before commands' : ''}${s.hooksSeenAt ? `. Last event ${agoText(now - s.hooksSeenAt)}` : '. Waiting for the first event'}`
+            : "Not installed. Without hooks the island still lists chats from Antigravity's transcripts, but replies and finished cards need them.";
+  const hookBox = h('div', { class: 'hooks' }, [
+    h('div', {}, [h('b', { text: 'Antigravity hooks ' }), h('span', { class: hooks?.error ? 'warn' : 'muted', text: hookText })]),
+    h('div', { class: 'hook-actions' }, [
+      h('button', { class: stale || gateDiffers ? 'btn primary' : 'btn', text: stale || gateDiffers ? 'Update hooks…' : hooks?.installed ? 'Reinstall…' : 'Install hooks…', onclick: () => void antigravityHookFlow(panel, hookBox, true, s.gate) }),
+      hooks?.installed ? h('button', { class: 'btn ghost', text: 'Remove…', onclick: () => void antigravityHookFlow(panel, hookBox, false, s.gate) }) : null,
+      h('button', { class: 'btn ghost', text: 'Refresh', onclick: () => void ask('antigravity', 'refresh') }),
+    ]),
+  ]);
+  kids.push(hookBox);
+  panel.replaceChildren(...kids);
+}
+
+async function antigravityHookFlow(panel: HTMLElement, box: HTMLElement, install: boolean, gate: boolean): Promise<void> {
+  const prev = await ask<{ diff?: string; backup?: string; hooksPath?: string; fingerprint?: string; error?: string }>('antigravity', 'hooks-preview', { install, gate });
+  box.querySelector('.hook-preview')?.remove();
+  if (!prev || prev.error) {
+    box.append(h('div', { class: 'hook-preview warn', text: prev?.error ?? "Could not read Antigravity's hooks.json." }));
+    return;
+  }
+  const confirm = h('button', { class: 'btn primary', text: install ? 'Install' : 'Remove' });
+  const view = h('div', { class: 'hook-preview' }, [
+    h('div', { class: 'muted', text: `${prev.hooksPath} will change like this. A backup goes to ${prev.backup} first; your own hooks stay.` }),
+    h('pre', { text: prev.diff ?? '' }),
+    h('div', { class: 'hook-actions' }, [confirm, h('button', { class: 'btn ghost', text: 'Cancel', onclick: () => view.remove() })]),
+  ]);
+  confirm.addEventListener('click', async () => {
+    confirm.setAttribute('disabled', '');
+    const r = await ask<{ ok: boolean; backup?: string; error?: string }>('antigravity', 'hooks-write', { install, gate, fingerprint: prev.fingerprint });
+    const backup = r?.backup ? ` Backup: ${r.backup}.` : '';
+    const text = r?.ok ? (install ? `Installed.${backup} New Antigravity chats pick them up; restart running ones.` : `Removed.${backup}`) : (r?.error ?? 'Failed');
+    view.replaceChildren(
+      h('div', { class: r?.ok ? 'ok' : 'warn', text }),
+      h('div', { class: 'hook-actions' }, [
+        h('button', {
+          class: 'btn ghost',
+          text: 'Done',
+          onclick: () => {
+            view.remove();
+            void ask<AgSnapshot>('antigravity', 'snapshot').then((snap) => {
+              if (snap && panel.isConnected) fillAntigravity(panel, snap);
+            });
+          },
+        }),
+      ]),
+    );
+  });
+  box.append(view);
+  springAnimate(view, [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], springs.content);
+}
+
 // ------------------------------------------------------------------ settings page
 
 /** Everything that makes Island go online, for the Privacy section. Keep it in step with the Rust HTTP calls. */
@@ -953,13 +1409,14 @@ function settingsPage(): HTMLElement {
     ]),
     section('Notifications', [
       row(mac ? 'Mac notifications' : 'Windows notifications', 'A notification for moments that need you (Claude sessions, timers).', toggle(g.notifications, (v) => { g.notifications = v; save(true); })),
-      row('Sounds', 'A soft chime when something finishes or needs you.', toggle(g.sounds, (v) => { g.sounds = v; save(true); })),
+      row('Sounds', 'A chime when something finishes or needs you. Reminders chime either way.', toggle(g.sounds, (v) => { g.sounds = v; save(true); })),
+      ...soundRows(g.sound),
       row('Send to my phone', 'The same notifications, pushed to the free ntfy app on your phone, wherever it is.', toggle(g.phonePush, (v) => { g.phonePush = v; if (v && !g.phoneTopic) g.phoneTopic = newPhoneTopic(); save(true); render(); })),
       ...(g.phonePush && g.phoneTopic ? [phoneRow(g)] : []),
       ...(g.phonePush && g.phoneTopic && !mac
         ? [
             row(
-              'Answer Claude from my phone',
+              'Answer Claude and Codex from my phone',
               "Claude Code's permission pushes get Allow and Deny buttons. With Windows Hello asked before Allow (Activities › Claude Status › Claude Code), the phone can only Deny. Anyone who can read your topic could tap them too, so keep it to yourself.",
               toggle(g.phoneApprove, (v) => {
                 g.phoneApprove = v;
@@ -1013,6 +1470,54 @@ function controlsPage(): HTMLElement {
       ...(mac ? [] : [h('p', { class: 'muted', text: 'Claude Code sessions: Alt+Shift+1–9 switches, Alt+Shift+0 jumps to the one that needs you (Activities › Claude Status › Claude Code › Session hotkeys).' })]),
     ]),
   ]);
+}
+
+function soundRows(snd: Settings['general']['sound']): HTMLElement[] {
+  const volume = h('input', { type: 'range', min: 0, max: 100, value: String(snd.volume) });
+  volume.addEventListener('input', () => {
+    snd.volume = Number(volume.value);
+    save();
+  });
+  volume.addEventListener('change', () => void playSound('done', snd));
+  const hear = (kind: ChimeKind, text: string) => h('button', { class: 'btn', text, onclick: () => void playSound(kind, snd) });
+  // The dialog can outlast a settings update from the island, so the file goes on what is current then.
+  const pick = async (kind: ChimeKind) => {
+    const got = await native.soundPick(kind);
+    soundError = got.error ?? '';
+    if (got.name) {
+      const now = settings.general.sound;
+      now[kind] = got.name;
+      now.rev += 1;
+      save(true);
+      void playSound(kind, now);
+    }
+    render();
+  };
+  const forget = async (kind: ChimeKind) => {
+    await native.soundClear(kind);
+    const now = settings.general.sound;
+    now[kind] = '';
+    now.rev += 1;
+    save(true);
+    render();
+  };
+  const own = (kind: ChimeKind, title: string) =>
+    row(title, snd[kind] || 'No file yet: the Soft chime plays.', h('div', { class: 'sound-own' }, [
+      h('button', { class: 'btn', text: snd[kind] ? 'Change…' : 'Choose…', onclick: () => void pick(kind) }),
+      snd[kind] ? h('button', { class: 'btn ghost', text: 'Remove', onclick: () => void forget(kind) }) : null,
+    ]));
+  return [
+    stacked(row('Sound', 'Pick one to hear it.', segmented(snd.style, styleChoices(), (v) => { snd.style = v; save(true); render(); void playSound('done', snd); }))),
+    ...(snd.style === 'custom'
+      ? [
+          own('done', 'When something finishes'),
+          own('attention', 'When something needs you'),
+          ...(soundError ? [h('div', { class: 'row-help warn', text: soundError })] : []),
+        ]
+      : []),
+    row('Volume', null, volume),
+    row('Hear it', null, h('div', { class: 'sound-own' }, [hear('done', 'Finished'), hear('attention', 'Needs you')])),
+  ];
 }
 
 /** The island's right-click menu: a preview of it, and its items to drag into order, show or hide, and show as icon only or icon and name. Settings is always there, last: the way back here. */

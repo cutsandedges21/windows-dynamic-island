@@ -53,7 +53,18 @@ pub enum Reply {
     Hold(Duration),
     /// The answer, sent to island-hook as one line.
     Answer(String),
+    /// Not the island's to answer: the AI carries on as if Island weren't there.
+    Pass,
+    /// Handed back: the AI asks in its own window.
     Decline,
+}
+
+/// How a waiting hook ends, for island-hook.
+enum Outcome {
+    /// An answer (or `pass` / `decline`), one line.
+    Say(String),
+    /// Nothing said: the card's window closed or the island never confirmed it.
+    Silent,
 }
 
 #[derive(Default)]
@@ -154,10 +165,11 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
     }
     let ask = island == "ask";
     let event = payload.get("hook_event_name").and_then(Value::as_str).unwrap_or_default().to_string();
+    let agent = payload.get("agent").and_then(Value::as_str).unwrap_or("claude").to_string();
     let session: String = payload.get("session_id").and_then(Value::as_str).unwrap_or("").chars().take(8).collect();
     let tool = payload.get("tool_name").and_then(Value::as_str).unwrap_or_default().to_string();
-    let Some((limit, window)) = waits(&island, &event, &tool) else {
-        crate::log::line(format!("hook {event} session={session}"));
+    let Some((limit, window)) = waits(&island, &agent, &event, &tool) else {
+        crate::log::line(format!("hook {agent} {event} session={session}"));
         let _ = app.emit_to(ISLAND, "hook", payload);
         let _ = pipe.disconnect();
         return;
@@ -170,45 +182,53 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
     if ask {
         crate::log::line(format!("ask id={id} item={}", payload.get("id").and_then(Value::as_str).unwrap_or("-")));
     } else {
-        crate::log::line(format!("hook {event} id={id} session={session} tool={}", payload.get("tool_name").and_then(Value::as_str).unwrap_or("-")));
+        crate::log::line(format!("hook {agent} {event} id={id} session={session} tool={}", payload.get("tool_name").and_then(Value::as_str).unwrap_or("-")));
     }
     let _ = app.emit_to(ISLAND, if ask { "external-activity" } else { "hook" }, payload);
 
-    // Claude Code may stop waiting first (Esc, an answer typed in the terminal,
-    // its own timeout), and so may an ask's sender (it ends its island-hook): island-hook
-    // dies, the pipe closes, and the card must go.
-    let answer = tokio::select! {
-        a = wait_for_answer(&id, &mut rx, limit, window) => a,
+    // The AI may stop waiting first (Esc, an answer typed in the terminal, its own timeout), and
+    // so may an ask's sender (it ends its island-hook): island-hook dies, the pipe closes, and
+    // the card must go.
+    let outcome = tokio::select! {
+        o = wait_for_answer(&id, &mut rx, limit, window) => o,
         _ = closed_by_client(&mut pipe) => {
-            crate::log::line(format!("hook id={id}: {} stopped waiting", if ask { "the sender" } else { "Claude Code" }));
-            None
+            crate::log::line(format!("hook id={id}: {} stopped waiting", if ask { "the sender".to_string() } else { agent.clone() }));
+            Outcome::Silent
         }
     };
     app.state::<Pending>().0.lock().unwrap().remove(&id);
-    match answer {
-        Some(a) => {
+    let said = match outcome {
+        Outcome::Say(a) => {
             let _ = pipe.write_all(format!("{a}\n").as_bytes()).await;
             let _ = pipe.flush().await;
+            a != "pass" && a != "decline"
         }
-        // Claude Code carries on by itself now; the island's card must not pretend otherwise.
-        None => {
-            let _ = app.emit_to(ISLAND, "hook-expired", json!({ "request_id": id }));
-        }
+        Outcome::Silent => false,
+    };
+    // The AI carries on by itself now; the island's card must not pretend otherwise.
+    if !said {
+        let _ = app.emit_to(ISLAND, "hook-expired", json!({ "request_id": id }));
     }
     let _ = pipe.disconnect();
 }
 
-/// How long a connection may wait for the island's answer (the whole limit, and the window an
-/// `ack` without a length gives), or None when nothing waits: the line is only news.
-/// A question waits in the island before Claude Code asks it (see island-hook's waits_for);
-/// an activity API question (`island-hook ask`) waits as long as its sender keeps asking.
-fn waits(island: &str, event: &str, tool: &str) -> Option<(Duration, Duration)> {
+/// (ceiling, default window) for events that wait for the island; None passes straight
+/// through. Matches island-hook's `waits_for`: a Claude question waits in the island before
+/// Claude Code asks it; Codex has no question a hook can answer; Cursor's events have their
+/// own names.
+fn waits(island: &str, agent: &str, event: &str, tool: &str) -> Option<(Duration, Duration)> {
     if island == "ask" {
         return Some((ASK_TIMEOUT, ASK_TIMEOUT));
     }
-    match (event, tool) {
-        ("PermissionRequest", _) | ("PreToolUse", "AskUserQuestion") => Some((DECISION_TIMEOUT, DECISION_TIMEOUT)),
-        ("Stop", _) => Some((REPLY_MAX, REPLY_DEFAULT)),
+    match (agent, event, tool) {
+        ("cursor", "beforeShellExecution" | "beforeMCPExecution", _) => Some((DECISION_TIMEOUT, DECISION_TIMEOUT)),
+        ("cursor", "stop", _) => Some((REPLY_MAX, REPLY_DEFAULT)),
+        ("cursor", _, _) => None,
+        ("antigravity", "PreToolUse", _) => Some((DECISION_TIMEOUT, DECISION_TIMEOUT)),
+        ("antigravity", "Stop", _) => Some((REPLY_MAX, REPLY_DEFAULT)),
+        ("antigravity", _, _) => None,
+        (_, "PermissionRequest", _) | ("claude", "PreToolUse", "AskUserQuestion") => Some((DECISION_TIMEOUT, DECISION_TIMEOUT)),
+        (_, "Stop", _) => Some((REPLY_MAX, REPLY_DEFAULT)),
         _ => None,
     }
 }
@@ -227,23 +247,28 @@ async fn closed_by_client(pipe: &mut NamedPipeServer) {
 
 /// Waits for the island: first a quick "it's on screen" (or an answer, or a
 /// pass), then the answer until the window closes. `hold` moves the window;
-/// nothing moves it past `limit`.
-async fn wait_for_answer(id: &str, rx: &mut mpsc::Receiver<Reply>, limit: Duration, window: Duration) -> Option<String> {
+/// nothing moves it past `limit`. An island that never confirms the card is
+/// not answering at all: the AI carries on as if Island weren't there.
+async fn wait_for_answer(id: &str, rx: &mut mpsc::Receiver<Reply>, limit: Duration, window: Duration) -> Outcome {
     let started = Instant::now();
     let mut deadline = match tokio::time::timeout(ACK_TIMEOUT, rx.recv()).await {
         Ok(Some(Reply::Ack(w))) => Instant::now() + w.unwrap_or(window),
         Ok(Some(Reply::Hold(w))) => Instant::now() + w,
         Ok(Some(Reply::Answer(a))) => {
             crate::log::line(format!("hook id={id} answered at once"));
-            return Some(a);
+            return Outcome::Say(a);
         }
-        Ok(Some(Reply::Decline)) | Ok(None) => {
+        Ok(Some(Reply::Decline)) => {
+            crate::log::line(format!("hook id={id} handed back"));
+            return Outcome::Say("decline".into());
+        }
+        Ok(Some(Reply::Pass)) | Ok(None) => {
             crate::log::line(format!("hook id={id} passed"));
-            return None;
+            return Outcome::Say("pass".into());
         }
         Err(_) => {
             crate::log::line(format!("hook id={id} never acknowledged"));
-            return None;
+            return Outcome::Say("pass".into());
         }
     };
     loop {
@@ -251,12 +276,12 @@ async fn wait_for_answer(id: &str, rx: &mut mpsc::Receiver<Reply>, limit: Durati
         let now = Instant::now();
         if now >= deadline {
             crate::log::line(format!("hook id={id} window closed"));
-            return None;
+            return Outcome::Silent;
         }
         match tokio::time::timeout(deadline - now, rx.recv()).await {
             Ok(Some(Reply::Answer(a))) => {
                 crate::log::line(format!("hook id={id} answered"));
-                return Some(a);
+                return Outcome::Say(a);
             }
             Ok(Some(Reply::Hold(w))) => deadline = Instant::now() + w,
             Ok(Some(Reply::Ack(w))) => {
@@ -264,20 +289,24 @@ async fn wait_for_answer(id: &str, rx: &mut mpsc::Receiver<Reply>, limit: Durati
                     deadline = Instant::now() + w;
                 }
             }
-            Ok(Some(Reply::Decline)) | Ok(None) => {
+            Ok(Some(Reply::Decline)) => {
+                crate::log::line(format!("hook id={id} handed back"));
+                return Outcome::Say("decline".into());
+            }
+            Ok(Some(Reply::Pass)) | Ok(None) => {
                 crate::log::line(format!("hook id={id} let go"));
-                return None;
+                return Outcome::Say("pass".into());
             }
             Err(_) => {
                 crate::log::line(format!("hook id={id} window closed"));
-                return None;
+                return Outcome::Silent;
             }
         }
     }
 }
 
 /// One island word: `ack`, `ack:<ms>`, `hold:<ms>`, `allow`, `deny`,
-/// `pass`/`decline`, or a JSON object that island-hook knows how to read.
+/// `pass`, `decline`, or a JSON object that island-hook knows how to read.
 fn parse_reply(reply: &str) -> Reply {
     let ms = |s: &str| s.trim().parse::<u64>().ok().map(|ms| Duration::from_millis(ms.clamp(1_000, REPLY_MAX.as_millis() as u64)));
     let r = reply.trim();
@@ -289,6 +318,7 @@ fn parse_reply(reply: &str) -> Reply {
     }
     match r {
         "ack" => Reply::Ack(None),
+        "pass" => Reply::Pass,
         "allow" | "deny" => Reply::Answer(r.to_string()),
         _ if r.starts_with('{') => match serde_json::from_str::<Value>(r) {
             // Re-serialised: guaranteed to be one line on the wire.
@@ -328,13 +358,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_questions_keep_their_connection() {
-        assert_eq!(waits("ask", "", ""), Some((ASK_TIMEOUT, ASK_TIMEOUT)));
-        assert_eq!(waits("", "PermissionRequest", "Bash"), Some((DECISION_TIMEOUT, DECISION_TIMEOUT)));
-        assert_eq!(waits("", "PreToolUse", "AskUserQuestion"), Some((DECISION_TIMEOUT, DECISION_TIMEOUT)));
-        assert_eq!(waits("", "Stop", ""), Some((REPLY_MAX, REPLY_DEFAULT)));
-        assert_eq!(waits("", "PreToolUse", "Bash"), None);
-        assert_eq!(waits("", "Notification", ""), None);
+    fn waits_by_agent() {
+        assert_eq!(waits("", "claude", "PreToolUse", "AskUserQuestion"), Some((DECISION_TIMEOUT, DECISION_TIMEOUT)));
+        assert_eq!(waits("", "claude", "PreToolUse", "Bash"), None);
+        // Codex has no question a hook can answer: its PreToolUse goes straight through.
+        assert_eq!(waits("", "codex", "PreToolUse", "AskUserQuestion"), None);
+        assert_eq!(waits("", "codex", "PermissionRequest", "Bash"), Some((DECISION_TIMEOUT, DECISION_TIMEOUT)));
+        assert_eq!(waits("", "codex", "Stop", ""), Some((REPLY_MAX, REPLY_DEFAULT)));
+        assert_eq!(waits("", "codex", "SessionStart", ""), None);
+        // Cursor's own names: its command hooks and its stop wait; nothing else does.
+        assert_eq!(waits("", "cursor", "beforeShellExecution", ""), Some((DECISION_TIMEOUT, DECISION_TIMEOUT)));
+        assert_eq!(waits("", "cursor", "beforeMCPExecution", ""), Some((DECISION_TIMEOUT, DECISION_TIMEOUT)));
+        assert_eq!(waits("", "cursor", "stop", ""), Some((REPLY_MAX, REPLY_DEFAULT)));
+        assert_eq!(waits("", "cursor", "sessionStart", ""), None);
+        assert_eq!(waits("", "antigravity", "PreToolUse", "run_command"), Some((DECISION_TIMEOUT, DECISION_TIMEOUT)));
+        assert_eq!(waits("", "antigravity", "Stop", ""), Some((REPLY_MAX, REPLY_DEFAULT)));
+        assert_eq!(waits("", "antigravity", "PreInvocation", ""), None);
+        assert_eq!(waits("ask", "", "", ""), Some((ASK_TIMEOUT, ASK_TIMEOUT)));
         // A button's answer comes back as one JSON line.
         assert!(matches!(parse_reply(r#"{"kind":"button","id":"allow"}"#), Reply::Answer(ref a) if a.contains("\"button\"")));
     }
@@ -347,7 +387,8 @@ mod tests {
         assert!(matches!(parse_reply("hold:5"), Reply::Hold(d) if d == Duration::from_secs(1)));
         assert!(matches!(parse_reply("hold:99999999"), Reply::Hold(d) if d == REPLY_MAX));
         assert!(matches!(parse_reply("allow"), Reply::Answer(ref a) if a == "allow"));
-        assert!(matches!(parse_reply("pass"), Reply::Decline));
+        assert!(matches!(parse_reply("pass"), Reply::Pass));
+        assert!(matches!(parse_reply("decline"), Reply::Decline));
         assert!(matches!(parse_reply("{not json"), Reply::Decline));
         match parse_reply("{\"kind\": \"reply\",\n \"text\": \"a\\nb\"}") {
             Reply::Answer(a) => assert!(!a.contains('\n') && a.contains("\"kind\":\"reply\"")),

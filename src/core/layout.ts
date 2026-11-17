@@ -140,6 +140,36 @@ export function bubbleRect(pill: Rect, anchor: Anchor, d: number): Rect {
   }
 }
 
+/**
+ * The Shelf's circle: the bot's mirror, on the other side of the pill (to its right on the top and
+ * bottom edges, below it on the sides), lined up with the screen edge the pill is pinned to.
+ */
+export function shelfRect(pill: Rect, anchor: Anchor, d: number): Rect {
+  switch (anchor) {
+    case 'top':
+      return { x: pill.x + pill.w + BUBBLE_GAP, y: pill.y, w: d, h: d };
+    case 'bottom':
+      return { x: pill.x + pill.w + BUBBLE_GAP, y: pill.y + pill.h - d, w: d, h: d };
+    case 'left':
+      return { x: pill.x, y: pill.y + pill.h + BUBBLE_GAP, w: d, h: d };
+    case 'right':
+      return { x: pill.x + pill.w - d, y: pill.y + pill.h + BUBBLE_GAP, w: d, h: d };
+  }
+}
+
+/**
+ * The Shelf's circle opened by pointing at it: a panel `w`×`h` grown from the circle away from the
+ * pill and away from the screen edge (down from the top edge, up from the bottom), kept on screen.
+ */
+export function shelfPanelRect(circle: Rect, anchor: Anchor, w: number, h: number, area: { width: number; height: number }): Rect {
+  const m = 8;
+  let x = anchor === 'right' ? circle.x + circle.w - w : circle.x;
+  let y = anchor === 'bottom' ? circle.y + circle.h - h : circle.y;
+  x = Math.max(m, Math.min(x, area.width - w - m));
+  y = Math.max(m, Math.min(y, area.height - h - m));
+  return { x, y, w, h };
+}
+
 // ------------------------------------------------------------------ the bot's chat bar
 
 /** Height of the thin bar you type to the bot in, CSS px. */

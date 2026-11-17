@@ -58,7 +58,7 @@ export function timeView(ctx: Ctx): HTMLElement {
   el.append(
     weekRow(ctx, start, now),
     h('div', { class: 'ws-time-grid' }, [barsCard(ctx, week, series, now), shareCard(ctx, week, series, now)]),
-    h('p', { class: 'ws-time-note', text: `Counted while a workspace’s window is in front and you’re at the keyboard. Kept on this PC for ${ctx.noticing.days()} days.` }),
+    h('p', { class: 'ws-time-note', text: `Counted while a workspace’s window is in front and you’re at the keyboard (or it’s playing something). Kept on this PC for ${ctx.noticing.days()} days.` }),
   );
   return el;
 }
