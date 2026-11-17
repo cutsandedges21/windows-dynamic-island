@@ -23,8 +23,8 @@ export function headphonesLike(device: string | null | undefined): boolean {
   return /head(phone|set)|ear(bud|phone)|airpods|buds|beats|hands-free|wh-\d|wf-\d/i.test(device ?? '');
 }
 
-/** The lyrics panel beside the hover player (player.css .pl-ly: 380 + its 20 margin): more than half the card (Justin). */
-export const LYRICS_PANEL_W = 400;
+/** The lyrics panel beside the hover player (player.css .pl-ly: 320 + its 20 margin); the card is the player plus this (Justin: less wide). */
+export const LYRICS_PANEL_W = 340;
 
 export class MusicActivity extends BaseActivity {
   private m: MediaState | null = null;
@@ -35,8 +35,6 @@ export class MusicActivity extends BaseActivity {
   private sungAt = -1;
   /** The lyrics panel beside the hover player is open (its button; it stays open until closed). */
   private lyricsOpen = false;
-  /** The lyrics panel's width after its line was dragged; back to the default when the lyrics close. */
-  private lyricsW: number | null = null;
   /** Runs only while the player shows a song with lyrics (an idle island wakes for nothing). */
   private ticker: ReturnType<typeof setInterval> | null = null;
   private lastTrack = '';
@@ -276,6 +274,12 @@ export class MusicActivity extends BaseActivity {
     return { lines: lines.map((l) => l.text), at: pos != null ? lineIndex(lines, pos) : -1, close };
   }
 
+  /** Where the line between the player and the lyrics was last left (its panel's width, px), or null for the usual split. */
+  private lyricsSplit(): number | null {
+    const w = this.ctx.options<{ lyricsSplit?: unknown }>().lyricsSplit;
+    return typeof w === 'number' && Number.isFinite(w) && w > 0 ? w : null;
+  }
+
   /** The player's width on this island's size (island.ts MORPH_W), so the panel adds to it and the player itself stays put. */
   private playerWidth(): number {
     const scale = { small: 0.88, medium: 1, large: 1.14 }[this.ctx.settings().island.size] ?? 1;
@@ -322,7 +326,7 @@ export class MusicActivity extends BaseActivity {
       duration: m.duration && m.duration > 0 ? m.duration : null,
       color: this.barTint() ?? null,
       lyric,
-      lyrics: open ? { ...this.panel(pos, 'lyrics'), split: 'lyrics-split', width: this.lyricsW } : null,
+      lyrics: open ? { ...this.panel(pos, 'lyrics'), split: 'lyrics-split', width: this.lyricsSplit() } : null,
       lyricsButton: on && lyric != null ? { action: 'lyrics', on: open } : null,
       // Not interactive (Activities › Music): the player only shows, with no buttons.
       actions: on
@@ -368,15 +372,14 @@ export class MusicActivity extends BaseActivity {
   async action(name: string, arg?: unknown): Promise<void> {
     if (name === 'lyrics') {
       this.lyricsOpen = !this.lyricsOpen;
-      // Closed: the next time they open, the lyrics take their usual share again.
-      if (!this.lyricsOpen) this.lyricsW = null;
       this.ctx.update();
       return;
     }
     if (name === 'lyrics-split') {
       const w = Number(arg);
       if (!Number.isFinite(w)) return;
-      this.lyricsW = Math.round(Math.max(160, Math.min(900, w)));
+      // Kept with Music's options: the lyrics open where they were left, every time (Justin).
+      this.ctx.setOptions?.({ lyricsSplit: Math.round(Math.max(160, Math.min(900, w))) });
       this.ctx.update();
       return;
     }

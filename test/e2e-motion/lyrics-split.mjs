@@ -1,7 +1,7 @@
 // Headless check (not run by `npm test`): the line between Music's player and its lyrics panel drags
 // like the line between two apps side by side on Windows. Drags it left then right, and checks that
 // the card keeps its width, the lyrics follow the pointer, the player takes the rest, the split stays
-// through the next updates, and closing and reopening the lyrics brings the usual split back.
+// through the next updates and when the lyrics close and open again, and the line snaps to the middle.
 //
 //   npx vite --port 5198 --strictPort          (in this worktree, left running)
 //   node test/e2e-motion/lyrics-split.mjs [http://localhost:5198] [out-dir]
@@ -54,9 +54,9 @@ check('dragged left 60', wider.card === start.card && Math.abs(wider.lyrics - st
 if (out) await page.screenshot({ path: `${out}/lyrics-split-wide.png`, clip: { x: 200, y: 0, width: 880, height: 300 } });
 await sleep(2000);
 check('stays after updates', JSON.stringify(await look()) === JSON.stringify(wider), await look());
-await drag(400);
+await drag(200);
 const narrow = await look();
-check('dragged right 400 (stops at the narrowest)', narrow.card === start.card && narrow.lyrics >= 199 && narrow.lyrics <= 202, narrow);
+check('dragged right 200 (stops at the narrowest)', narrow.card === start.card && narrow.lyrics >= 199 && narrow.lyrics <= 202, narrow);
 if (out) await page.screenshot({ path: `${out}/lyrics-split-narrow.png`, clip: { x: 200, y: 0, width: 880, height: 300 } });
 await page.click('.sheet-inner:not(.leaving) .pl-ly-close');
 await sleep(1200);
@@ -69,12 +69,13 @@ await sleep(800);
 await page.click('.sheet-inner:not(.leaving) .pl-lyr');
 await sleep(1400);
 const again = await look();
-check('closed and reopened: the usual split', JSON.stringify(again) === JSON.stringify(start), again);
+check('closed and reopened: where it was left', JSON.stringify(again) === JSON.stringify(narrow), again);
 // Near the middle the line snaps onto it (a magnet), and further off it goes where it is put.
 const middle = await page.evaluate(() => Math.round(document.querySelector('.sheet-inner:not(.leaving) .sb-player').clientWidth / 2));
-await drag(5);
+// From the narrowest, to 6 px short of the middle.
+await drag(-(middle - again.lyrics - 6));
 const snapped = await look();
-check(`dragged 5 right near the middle: snapped to it (${middle})`, Math.abs(snapped.lyrics - middle) <= 1, snapped);
+check(`dragged to 6 px short of the middle: snapped to it (${middle})`, Math.abs(snapped.lyrics - middle) <= 1, snapped);
 await drag(-40);
 const off = await look();
 check('dragged 40 left: let go of the middle', Math.abs(off.lyrics - middle - 40) <= 2, off);

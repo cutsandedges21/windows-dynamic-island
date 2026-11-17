@@ -79,8 +79,8 @@ html.reduce .pl-lyric > span { animation-duration: 0.01s; }
 
 /* The lyrics panel beside the player (the card widens by its 320px, the player stays put): a
    window onto the song's lines, the sung one lit a third of the way down, gliding up as it goes. */
-/* more than half the card, and taller than the player alone (Justin): the player centres beside it */
-.pl-ly { position: relative; flex: 0 0 380px; box-sizing: border-box; margin-left: 20px; padding-left: 20px; border-left: 1px solid rgba(var(--ink), 0.1); min-height: 176px; }
+/* beside the player, taller than it alone (Justin): the player centres beside it; its line drags (wireGrip) */
+.pl-ly { position: relative; flex: 0 0 320px; box-sizing: border-box; margin-left: 20px; padding-left: 20px; border-left: 1px solid rgba(var(--ink), 0.1); min-height: 176px; }
 .sb-player.lyrics-open:not(.stage) .pl-main { justify-content: center; }
 .pl-ly[hidden] { display: none; }
 /* The line between the player and the lyrics: drag it to share the card another way (player.ts wireGrip). */

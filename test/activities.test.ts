@@ -1827,7 +1827,7 @@ describe('music lyrics', () => {
   });
 
   it('a button opens the lyrics beside the player, and the panel closes again', async () => {
-    const { act } = await boot(new MusicActivity(), { hoverPlayer: true, lyrics: true });
+    const { act, options } = await boot(new MusicActivity(), { hoverPlayer: true, lyrics: true });
     act.sheet(hover());
     await tick(0);
     let v = act.sheet(hover())!;
@@ -1838,17 +1838,17 @@ describe('music lyrics', () => {
     expect(v.blocks[0]).toMatchObject({ lyricsButton: { on: true }, lyrics: { lines: ['First line', 'Second line', '', 'Fourth line'], at: 1, close: 'lyrics' } });
     // Wider by the panel: the player keeps its own width.
     expect(v.width).toBe(372 + LYRICS_PANEL_W);
-    expect(LYRICS_PANEL_W / v.width!).toBeGreaterThan(0.5);
-    // The line between player and lyrics, dragged: the card keeps its width, the split stays until the lyrics close.
+    // The line between player and lyrics, dragged: the card keeps its width, and the split is kept for good.
     expect(v.blocks[0]).toMatchObject({ lyrics: { split: 'lyrics-split', width: null } });
     await act.action('lyrics-split', 452.4);
     v = act.sheet(hover())!;
     expect(v.blocks[0]).toMatchObject({ lyrics: { width: 452 } });
+    expect(options.lyricsSplit).toBe(452);
     expect(v.width).toBe(372 + LYRICS_PANEL_W);
     await act.action('lyrics');
     expect(act.sheet(hover())!.blocks[0]).toMatchObject({ lyrics: null });
     await act.action('lyrics');
-    expect(act.sheet(hover())!.blocks[0]).toMatchObject({ lyrics: { width: null } });
+    expect(act.sheet(hover())!.blocks[0]).toMatchObject({ lyrics: { width: 452 } });
   });
 
   it('no lyrics, no button; lyrics off, no tile button', async () => {
