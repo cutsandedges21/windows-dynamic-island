@@ -231,7 +231,7 @@ export function draftView(d: GridDraft, editing: boolean): SheetView {
       t: 'buttons',
       key: 'grid-edit',
       items: [
-        { key: 'reset', label: 'Reset layout', icon: 'refresh', action: 'island:grid-reset', style: 'ghost' },
+        { key: 'reset', label: 'Reset layout', icon: 'refresh', action: 'island:grid-reset', style: 'ghost', tip: 'Back to how it was before you changed it' },
         { key: 'done', label: 'Done', icon: 'check', action: 'island:grid-done', style: 'primary' },
       ],
     });

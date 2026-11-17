@@ -17,7 +17,7 @@ import { PillRenderer, type PillCover } from '../../../src/core/renderer';
 import type { Tone } from '../../../src/core/segments';
 import { SheetRenderer, type SheetView } from '../../../src/core/sheet';
 import { springs } from '../../../src/core/spring';
-import { draftAct, draftLayout, draftOf, draftView, layoutOf, rebaseDraft, type GridDraft, type PhoneLayout } from '../../../src/remote/grid-edit';
+import { draftAct, draftLayout, draftOf, draftView, rebaseDraft, type GridDraft, type PhoneLayout } from '../../../src/remote/grid-edit';
 import type { BotState } from '../../../src/remote/protocol';
 import { maxPillWidth, phonePill, placePill } from './pill-fit';
 import { isTap, type Point } from './tap';
@@ -293,8 +293,8 @@ export class IslandView {
       this.view = draftView(d, false);
       this.onSaveGrid(layout);
     } else if (did === 'reset') {
-      this.rebase = true;
-      this.onSaveGrid({ ...layoutOf(this.view), reset: true });
+      // Back to how it was before this edit: the PC's layout, which the phone has not changed yet.
+      this.draft = draftOf(this.view);
     }
     if (did) this.redraw();
   }

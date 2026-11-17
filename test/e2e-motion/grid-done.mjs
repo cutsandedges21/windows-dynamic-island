@@ -29,6 +29,7 @@ for (const height of [560, 700, 900]) {
   await sleep(900);
   await page.mouse.up();
   await sleep(1200);
+  const before = await page.evaluate(() => ({ grid: document.querySelectorAll('.sheet-inner:not(.leaving) .sb-tiles .page .tile').length, tray: [...document.querySelectorAll('.sheet-inner:not(.leaving) .sb-tiles .tile.hidden-tile')].length }));
   // Hide tiles until the tray holds several (it grows the content past the card).
   for (let i = 0; i < 4; i++) {
     // The tiles jiggle, so click through the page rather than wait for them to stand still.
@@ -49,7 +50,14 @@ for (const height of [560, 700, 900]) {
   if (!ok) failed = true;
   console.log(`h=${height}`, ok ? 'OK' : 'HIDDEN', JSON.stringify(r));
   await page.screenshot({ path: `${out}/grid-done-${height}.png` });
-  // Put the hidden tiles back for the next run (each page is fresh demo state anyway).
+  // Reset layout: back to how the grid was before this edit (Justin), not the default.
+  const changed = await page.evaluate(() => ({ grid: document.querySelectorAll('.sheet-inner:not(.leaving) .sb-tiles .page .tile').length, tray: [...document.querySelectorAll('.sheet-inner:not(.leaving) .sb-tiles .tile.hidden-tile')].length }));
+  await page.evaluate(() => document.querySelector('.sheet-inner:not(.leaving) [data-action$="grid-reset"]').click());
+  await sleep(900);
+  const after = await page.evaluate(() => ({ grid: document.querySelectorAll('.sheet-inner:not(.leaving) .sb-tiles .page .tile').length, tray: [...document.querySelectorAll('.sheet-inner:not(.leaving) .sb-tiles .tile.hidden-tile')].length }));
+  const back = after.grid === before.grid && after.tray === before.tray && changed.tray > before.tray;
+  if (!back) failed = true;
+  console.log(`  reset: before ${JSON.stringify(before)} changed ${JSON.stringify(changed)} after ${JSON.stringify(after)}`, back ? 'OK' : 'NOT BACK');
   await page.close();
 }
 await browser.close();

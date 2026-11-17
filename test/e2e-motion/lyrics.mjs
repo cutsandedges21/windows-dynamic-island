@@ -15,7 +15,8 @@ const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const page = await browser.newPage({ deviceScaleFactor: 1.25, viewport: { width: 1280, height: 760 } });
 page.on('pageerror', (e) => console.log('pageerror', e.message));
 await page.goto(`${base}/`);
-await sleep(2000);
+// Past the demo song (music.ts demo), which would replace this one.
+await sleep(4500);
 await page.evaluate(async () => {
   const lrc = Array.from({ length: 40 }, (_, i) => `[00:${String(20 + i * 3).padStart(2, '0').slice(-2)}.00]${i % 7 === 6 ? '' : `Line number ${i + 1} of this song, sung here`}`)
     .map((l, i) => l.replace(/^\[00:(\d\d)/, () => `[${String(Math.floor((20 + i * 3) / 60)).padStart(2, '0')}:${String((20 + i * 3) % 60).padStart(2, '0')}`))

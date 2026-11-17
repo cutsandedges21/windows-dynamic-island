@@ -30,7 +30,7 @@ import { menuMain, menuSegments } from './menu';
 import { quietMoon } from './quiet';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { applyGlass } from './glass';
-import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
+import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { mapActions, SheetRenderer, type Block, type DropZone, type SheetChip, type SheetView, type Tile } from './sheet';
 import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
@@ -174,6 +174,8 @@ export class Island {
   private sheetEngaged = false;
   /** The grid is in edit mode (a tile was long-pressed). */
   private gridEditing = false;
+  /** The layout when this edit began: Reset layout puts it back (Justin: not the default). */
+  private gridBefore: GridLayout | null = null;
   /** The layout of the last grid drawn: its pages and where every tile landed. */
   private gridPages: GridPages = [];
   private gridSlots: GridSlot[] = [];
@@ -1567,7 +1569,7 @@ export class Island {
         t: 'buttons',
         key: 'grid-edit',
         items: [
-          { key: 'reset', label: 'Reset layout', icon: 'refresh', action: 'island:grid-reset', style: 'ghost' },
+          { key: 'reset', label: 'Reset layout', icon: 'refresh', action: 'island:grid-reset', style: 'ghost', tip: 'Back to how it was before you changed it' },
           { key: 'done', label: 'Done', icon: 'check', action: 'island:grid-done', style: 'primary' },
         ],
       });
@@ -1593,15 +1595,19 @@ export class Island {
     const key = typeof arg === 'string' ? arg : '';
     switch (action) {
       case 'island:grid-edit':
+        if (!this.gridEditing) this.gridBefore = structuredClone(grid);
         this.gridEditing = true;
         this.open = true;
         return;
       case 'island:grid-done':
         this.gridEditing = false;
         this.gridDrag = null;
+        this.gridBefore = null;
         return;
       case 'island:grid-reset':
-        this.settings.island.grid = { order: [], sizes: {}, hidden: [], pages: [] };
+        // Back to how it was before this edit; editing goes on.
+        this.gridDrag = null;
+        this.settings.island.grid = this.gridBefore ? structuredClone(this.gridBefore) : { order: [], sizes: {}, hidden: [], pages: [] };
         break;
       case 'island:grid-hide':
         if (key && !grid.hidden.includes(key)) grid.hidden.push(key);
@@ -1794,6 +1800,7 @@ export class Island {
     this.sheetEngaged = false;
     this.gridEditing = false;
     this.gridDrag = null;
+    this.gridBefore = null;
     this.open = false;
     this.cardFor = null;
     this.fileDrag = null;
