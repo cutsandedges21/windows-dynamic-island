@@ -441,6 +441,11 @@ export class Island {
     setInterval(() => this.tick(), 1000);
     setInterval(() => this.followCursor(), 1500);
     await this.updateHotkeys();
+    // The native side outlives this page (a reload, an update): a keyboard it was given while typing
+    // on the last page, or a smart fade it was told about, would stay, and with the keyboard held
+    // Ctrl never peeks and smart fade never fades (Justin: Ctrl stopped fading the island).
+    void native.setFocusable(false);
+    void native.setSmart(false);
     void native.setPeek(this.settings.island.peekThrough, this.settings.island.peekUntilBack);
     void native.setAutoUpdate(this.settings.general.autoUpdate);
     this.compose(true);
