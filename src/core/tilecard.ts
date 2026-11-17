@@ -31,6 +31,7 @@ export function tileCard(tile: Tile, name: string, icon: string): Block[] {
       return [{ t: 'player', key: 'player', art: b.art ?? null, title: b.title, artist: b.artist, playing: b.playing, position: null, duration: null, color: null, actions: { prev: act('prev'), toggle: act('toggle'), next: act('next'), open: b.open } }];
     }
     case 'week':
+    case 'month':
       return [{ t: 'head', key: 'head', icon, tone: tile.tone, title: b.title, sub: b.sub }];
     case 'dots':
       return [

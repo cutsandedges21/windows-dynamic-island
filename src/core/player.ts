@@ -24,6 +24,16 @@ export interface PlayerBlock {
   output?: { icon: string; tip: string };
   /** The line being sung: '' between lines, null (no space) when the song has no synced lyrics. */
   lyric?: string | null;
+  /**
+   * The lyrics panel beside the player, while it is open: every line of the song, and the one being
+   * sung (-1 before the first), which sits a third of the way down and glides up as the song goes.
+   * `note` says why there are none (still looking, or the song has none); `close` is its back arrow.
+   */
+  lyrics?: { lines: string[]; at: number; note?: string; close?: string } | null;
+  /** The lyrics button at the controls' start (only when the song has synced lyrics): `on` while the panel is open. */
+  lyricsButton?: { action: string; on: boolean } | null;
+  /** Control Center's media card: the art big over the track, the lyrics beside, on the art's colour (`tint`). */
+  stage?: { tint: string | null } | null;
 }
 
 type Bind = (e: HTMLElement, action: string | undefined, arg: unknown) => void;
@@ -71,8 +81,21 @@ export function buildPlayer(b: PlayerBlock, bind: Bind, act: Act): HTMLElement {
   scrub.append(make('span', 'pl-time pl-now'), track, make('span', 'pl-time pl-left'));
 
   const ctl = make('div', 'pl-ctl');
-  ctl.append(make('span', 'pl-gap'), button('pl-prev', 'rewind', 'Previous'), button('pl-toggle', 'pause-fill', 'Pause'), button('pl-next', 'forward', 'Next'), button('pl-out', 'headphones', 'Sound output'));
-  e.append(top, scrub, ctl);
+  const gap = make('span', 'pl-gap');
+  gap.append(button('pl-lyr', 'chat', 'Lyrics'));
+  ctl.append(gap, button('pl-prev', 'rewind', 'Previous'), button('pl-toggle', 'pause-fill', 'Pause'), button('pl-next', 'forward', 'Next'), button('pl-out', 'headphones', 'Sound output'));
+  const main = make('div', 'pl-main');
+  main.append(top, scrub, ctl);
+  // The lyrics panel: a window onto the song's lines, which glide up through it as they are sung.
+  const panel = make('div', 'pl-ly');
+  panel.hidden = true;
+  const close = button('pl-ly-close', 'chevron-left', 'Close lyrics');
+  const view = make('div', 'pl-ly-view');
+  view.append(make('div', 'pl-ly-list'));
+  panel.append(close, view, make('div', 'pl-ly-note'));
+  e.append(main, panel);
+  // Pressing either lyrics button notes where the player is, for the glide when the panel closes.
+  for (const b of [ctl.querySelector('.pl-lyr'), close]) b?.addEventListener('pointerdown', () => (main.dataset.x0 = String(main.getBoundingClientRect().left)));
   wireScrub(e, track, act);
   patchPlayer(e, b, bind);
   return e;
@@ -96,7 +119,16 @@ export function patchPlayer(e: HTMLElement, b: PlayerBlock, bind: Bind): void {
   e.querySelector('.pl-t1')!.textContent = b.title;
   e.querySelector('.pl-t2')!.textContent = b.artist;
   e.querySelector('.pl-t2')!.toggleAttribute('hidden', !b.artist);
-  showLyric(e.querySelector<HTMLElement>('.pl-lyric')!, b.lyric);
+  // With the panel open the line is in the panel, not under the track.
+  showLyric(e.querySelector<HTMLElement>('.pl-lyric')!, b.lyrics ? null : b.lyric);
+  showLyrics(e, b, bind);
+  e.classList.toggle('stage', Boolean(b.stage));
+  e.style.setProperty('--tint', b.stage?.tint ?? 'var(--accent)');
+  const lyr = e.querySelector<HTMLElement>('.pl-lyr')!;
+  lyr.hidden = !b.lyricsButton;
+  lyr.classList.toggle('on', Boolean(b.lyricsButton?.on));
+  lyr.title = b.lyricsButton?.on ? 'Hide lyrics' : 'Lyrics';
+  bind(lyr, b.lyricsButton?.action, undefined);
   e.classList.toggle('playing', b.playing);
   e.style.setProperty('--bar', b.color ?? 'var(--accent)');
   e.querySelector('.pl-bars')!.classList.toggle('active', b.playing);
@@ -134,7 +166,66 @@ export function patchPlayer(e: HTMLElement, b: PlayerBlock, bind: Bind): void {
   showTime(e, b.position!, b.duration!, b.playing);
 }
 
+/** The lyrics panel: the song's lines (rebuilt only for a new song), the sung one lit and glided to a third of the way down. */
+function showLyrics(e: HTMLElement, b: PlayerBlock, bind: Bind): void {
+  const panel = e.querySelector<HTMLElement>('.pl-ly')!;
+  const ly = b.lyrics;
+  // Closing: the card narrows around the player, which would land in its new place at once; it
+  // glides there from where it was instead, as it glides aside when the panel opens.
+  const main = e.querySelector<HTMLElement>('.pl-main')!;
+  const closing = !ly && !panel.hidden && e.isConnected && !e.classList.contains('stage');
+  // Where it was when the button was pressed: by this patch the card has already taken its new width.
+  const x0 = Number(main.dataset.x0);
+  delete main.dataset.x0;
+  panel.hidden = !ly;
+  e.classList.toggle('lyrics-open', Boolean(ly));
+  if (closing && Number.isFinite(x0)) {
+    const dx = x0 - main.getBoundingClientRect().left;
+    if (Math.abs(dx) > 0.5) main.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 460, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+  }
+
+  if (!ly) return;
+
+  const closer = panel.querySelector<HTMLElement>('.pl-ly-close')!;
+  closer.hidden = !ly.close;
+  bind(closer, ly.close, undefined);
+  const note = panel.querySelector<HTMLElement>('.pl-ly-note')!;
+  note.textContent = ly.lines.length ? '' : (ly.note ?? '');
+  note.hidden = Boolean(ly.lines.length);
+  const list = panel.querySelector<HTMLElement>('.pl-ly-list')!;
+  const sig = ly.lines.join('\n');
+  if (list.dataset.sig !== sig) {
+    list.dataset.sig = sig;
+    list.replaceChildren(...ly.lines.map((text) => make('div', `pl-ly-line${text ? '' : ' gap'}`, text || '♪')));
+    list.style.transition = 'none';
+    list.dataset.at = '';
+  }
+  const at = Math.min(ly.at, ly.lines.length - 1);
+  if (list.dataset.at === String(at)) return;
+  list.dataset.at = String(at);
+  const rows = Array.from(list.children) as HTMLElement[];
+  rows.forEach((r, i) => {
+    r.classList.toggle('now', i === at);
+    r.classList.toggle('past', i < at);
+  });
+  // Laid out already (the panel is in the card): the sung line a third of the way down the window.
+  const view = panel.querySelector<HTMLElement>('.pl-ly-view')!;
+  // Not laid out yet (the card is being built): the next patch, a second on, places it.
+  if (!view.clientHeight) {
+    list.dataset.at = '';
+    return;
+  }
+  const line = rows[Math.max(0, at)];
+  const y = line ? line.offsetTop + line.offsetHeight / 2 - view.clientHeight / 3 : 0;
+  list.style.transform = `translateY(${-Math.max(0, Math.round(y))}px)`;
+  if (list.style.transition === 'none') {
+    void list.offsetWidth;
+    list.style.transition = '';
+  }
+}
+
 /** The sung line, cross-faded when it changes; no space at all without lyrics. */
+
 function showLyric(box: HTMLElement, line: string | null | undefined): void {
   box.hidden = line == null;
   const text = line ?? '';

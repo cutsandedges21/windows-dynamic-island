@@ -109,7 +109,8 @@ export interface Choice {
 }
 
 export type Block =
-  | { t: 'head'; key: string; icon?: string; tone?: Tone; title: string; sub?: string; buttons?: SheetButton[]; chips?: SheetChip[] }
+  /** `back`: a button before the title (an arrow back to Control Center), the rest at the end. */
+  | { t: 'head'; key: string; icon?: string; tone?: Tone; title: string; sub?: string; buttons?: SheetButton[]; chips?: SheetChip[]; back?: SheetButton }
   /** Wrapped text. `bubble` scrolls after `lines` lines (default 8). */
   | { t: 'text'; key: string; text: string; tone?: Tone; size?: 'sm' | 'md'; bubble?: boolean; lines?: number }
   | { t: 'code'; key: string; text: string }
@@ -139,7 +140,41 @@ export type Block =
    */
   | { t: 'tiles'; key: string; items: Tile[]; tray?: Tile[]; cols: number; rows: number; pages: number; cell: number; editing?: boolean }
   /** Music's player (player.ts); grown out of the pill it carries the pill's chips at its top. */
-  | (PlayerBlock & { chips?: SheetChip[] });
+  | (PlayerBlock & { chips?: SheetChip[] })
+  /**
+   * A calendar like a phone's: a month (or one week) of days to pick from, with week numbers, and
+   * beside it the picked day, its events and their buttons. `pick` gets the day's key (2026-11-13).
+   */
+  | { t: 'calendar'; key: string; title: string; year?: string; heads: string[]; weeks: Array<{ no: number; days: CalDay[] }>; pick: string; week?: boolean; day: CalPanel };
+
+/** A day in a calendar block or a month tile. `busy`: how many events (dots, up to 3). `out`: of the month around. */
+export interface CalDay {
+  key: string;
+  num: number;
+  today?: boolean;
+  selected?: boolean;
+  out?: boolean;
+  busy: number;
+}
+
+/** The picked day beside a calendar block: FRIDAY / 13 November / Today · Week 46, and its events. */
+export interface CalPanel {
+  kicker: string;
+  title: string;
+  sub: string;
+  events: CalEvent[];
+  empty: string;
+}
+
+export interface CalEvent {
+  key: string;
+  /** 14:30, or All day. */
+  time: string;
+  title: string;
+  sub?: string;
+  tone?: Tone;
+  buttons?: SheetButton[];
+}
 
 /** One cell of the open island's grid (Control Center style). */
 export interface Tile {
@@ -174,6 +209,8 @@ export type TileBody =
   /** `open`: clicking the art (Music: the app playing comes forward). */
   | { k: 'media'; art?: string | null; title: string; artist: string; playing: boolean; progress?: number | null; buttons: SheetButton[]; open?: string }
   | { k: 'week'; title: string; sub: string; days: Array<{ label: string; num: number; today: boolean; busy: number }> }
+  /** A month: `heads` (Su Mo…) over its weeks of days, row by row. */
+  | { k: 'month'; title: string; sub: string; heads: string[]; days: CalDay[] }
   | { k: 'dots'; label: string; pct: number; sub?: string }
   | { k: 'forecast'; icon: string; temp: string; label: string; hours: Array<{ t: string; icon: string; temp: string }> }
   /**
@@ -337,7 +374,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
   return blocks.map((b): Block => {
     switch (b.t) {
       case 'head':
-        return b.buttons ? { ...b, buttons: b.buttons.map(btn) } : b;
+        return { ...b, buttons: b.buttons?.map(btn), back: b.back ? btn(b.back) : undefined };
       case 'buttons':
         return { ...b, items: b.items.map(btn) };
       case 'input':
@@ -352,10 +389,17 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
         return { ...b, items: b.items.map((p) => ({ ...p, action: p.action ? fn(p.action) : undefined })) };
       case 'tiles':
         return { ...b, items: b.items.map((t) => ({ ...t, action: t.action ? fn(t.action) : undefined, body: body(t.body) })) };
+      case 'calendar':
+        return { ...b, pick: fn(b.pick), day: { ...b.day, events: b.day.events.map((x) => (x.buttons ? { ...x, buttons: x.buttons.map(btn) } : x)) } };
       case 'player': {
         // An empty action stays empty: a player with no buttons (not interactive).
         const m = <T extends string | undefined>(a: T): T => (a ? (fn(a) as T) : a);
-        return { ...b, actions: { prev: m(b.actions.prev), toggle: m(b.actions.toggle), next: m(b.actions.next), seek: m(b.actions.seek), output: m(b.actions.output), open: m(b.actions.open) } };
+        return {
+          ...b,
+          actions: { prev: m(b.actions.prev), toggle: m(b.actions.toggle), next: m(b.actions.next), seek: m(b.actions.seek), output: m(b.actions.output), open: m(b.actions.open) },
+          lyrics: b.lyrics ? { ...b.lyrics, close: m(b.lyrics.close) } : b.lyrics,
+          lyricsButton: b.lyricsButton ? { ...b.lyricsButton, action: m(b.lyricsButton.action) } : b.lyricsButton,
+        };
       }
       default:
         return b;
@@ -1415,6 +1459,7 @@ export class SheetRenderer {
   // ---------------------------------------------------------------- content
 
   private clear(): void {
+    this.gridPage = 0;
     this.boxX = null;
     this.boxY = null;
     this.drag?.abort();
@@ -1423,8 +1468,15 @@ export class SheetRenderer {
     this.engagedInput = null;
   }
 
+  /** Control Center's page when a tile's card took its place, to come back to. */
+  private gridPage = 0;
+
   /** The old content blurs out in place while the new content builds up. */
+
   private crossFade(fromGrown = false): void {
+    // Control Center giving way to an activity's card (a tile tapped): its page is kept for the way back.
+    const grid = [...this.nodes.values()].find((n) => n.t === 'tiles');
+    if (grid) this.gridPage = this.currentPage(grid.el);
     this.drag?.abort();
     const old = this.inner;
     old.classList.add('leaving');
@@ -1647,8 +1699,10 @@ export class SheetRenderer {
         return e;
       }
       case 'head': {
-        const e = make('div', 'sb sb-head');
+        const e = make('div', `sb sb-head${b.back ? ' has-back' : ''}`);
+        if (b.back) e.append(this.button(b.back));
         if (b.icon) e.append(iconEl(b.icon, `hi tone-${b.tone ?? 'default'}`));
+
         const tx = make('div', 'ht');
         tx.append(make('div', 'h1', b.title));
         if (b.sub) tx.append(make('div', 'h2', b.sub));
@@ -1735,6 +1789,8 @@ export class SheetRenderer {
         if (b.caption) e.append(make('div', 'qc', b.caption));
         return e;
       }
+      case 'calendar':
+        return this.buildCalendar(b);
       case 'tiles': {
         const e = make('div', 'sb sb-tiles');
         const bar = (side: string) => {
@@ -1745,12 +1801,71 @@ export class SheetRenderer {
         e.append(make('div', 'pages'), make('div', 'dots'), make('div', 'tray'), bar('left'), bar('right'));
         this.wireGrid(e);
         this.patchTiles(e, b);
+        // Back from a tile's card: the page that tile was on, not the first.
+        const page = this.gridPage;
+        this.gridPage = 0;
+        if (page > 0) {
+          requestAnimationFrame(() => {
+            const pages = e.querySelector<HTMLElement>('.pages');
+            if (!pages || page >= pages.children.length) return;
+            pages.scrollLeft = page * this.pageWidth(e);
+            this.markPage(e);
+          });
+        }
         return e;
       }
     }
   }
 
+  /** The calendar block: the grid of days (left) and the picked day with its events (right). */
+  private buildCalendar(b: Extract<Block, { t: 'calendar' }>): HTMLElement {
+    const e = make('div', `sb sb-cal${b.week ? ' week' : ''}`);
+    const left = make('div', 'cg');
+    const title = make('div', 'ct');
+    title.append(make('span', 'cm', b.title));
+    if (b.year) title.append(make('span', 'cy', b.year));
+    left.append(title);
+    const grid = make('div', 'cd');
+    grid.append(make('span', 'cw cwh', ''));
+    for (const x of b.heads) grid.append(make('span', 'ch', x));
+    for (const w of b.weeks) {
+      grid.append(make('span', 'cw', String(w.no)));
+      for (const d of w.days) {
+        const cell = make('button', `cday${d.today ? ' today' : ''}${d.selected ? ' sel' : ''}${d.out ? ' out' : ''}`);
+        cell.type = 'button';
+        cell.append(make('span', 'cn', String(d.num)));
+        const dots = make('span', 'cb');
+        for (let i = 0; i < Math.min(3, d.busy); i++) dots.append(make('i', ''));
+        cell.append(dots);
+        this.bind(cell, b.pick, d.key);
+        grid.append(cell);
+      }
+    }
+    left.append(grid);
+    const right = make('div', 'cp');
+    right.append(make('div', 'ck', b.day.kicker), make('div', 'cpt', b.day.title), make('div', 'cps', b.day.sub));
+    const list = make('div', 'ce');
+    if (!b.day.events.length) list.append(make('div', 'cempty', b.day.empty));
+    for (const x of b.day.events) {
+      const row = make('div', `cev tone-${x.tone ?? 'accent'}`);
+      const tx = make('div', 'cet');
+      tx.append(make('span', 'cetime', x.time), make('span', 'cetitle', x.title));
+      if (x.sub) tx.append(make('span', 'cesub', x.sub));
+      row.append(make('i', 'cebar'), tx);
+      if (x.buttons?.length) {
+        const bar = make('div', 'ceb');
+        for (const btn of x.buttons) bar.append(this.button(btn, 'sm'));
+        row.append(bar);
+      }
+      list.append(row);
+    }
+    right.append(list);
+    e.append(left, right);
+    return e;
+  }
+
   private buildInput(b: Extract<Block, { t: 'input' }>): HTMLElement {
+
     const multi = Boolean(b.lines);
     const e = make('div', `sb sb-input${multi ? ' multi' : ''}`);
     const box = make('div', 'ib');
@@ -3068,6 +3183,18 @@ export class SheetRenderer {
         const ctl = make('div', 'mc');
         for (const x of b.buttons) ctl.append(this.button(x));
         e.append(ctl);
+        break;
+      }
+      case 'month': {
+        const head = make('div', 'wh');
+        head.append(make('span', 'w1', b.title), make('span', 'w2', b.sub));
+        const grid = make('div', 'mg');
+        for (const x of b.heads) grid.append(make('span', 'mh', x));
+        for (const d of b.days) {
+          const cell = make('span', `md${d.today ? ' today' : ''}${d.out ? ' out' : ''}${d.busy ? ' busy' : ''}`, String(d.num));
+          grid.append(cell);
+        }
+        e.append(head, grid);
         break;
       }
       case 'week': {

@@ -7,15 +7,19 @@ import { clip, timeOfDay, until } from '../core/format';
 import { native } from '../core/native';
 import { platform } from '../core/platform';
 import type { Seg } from '../core/segments';
-import type { Tile } from '../core/sheet';
+import type { Block, CalDay, CalEvent, SheetButton, SheetView, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
+import { addDays, dayKey, dayStart, firstWeekday, fromDayKey, googleAddUrl, isoWeek, monthWeeks, parseAdded, weekdayHeads, weekDays, weekStartOf, type Added, type GridDay } from './calgrid';
 import { expand, parseIcs, type IcsEvent, type Occurrence } from './ics';
 
-type Options = { ics: string; leadMinutes: number; source: 'windows' | 'ics' };
+type Options = { ics: string; leadMinutes: number; source: 'windows' | 'ics'; view: 'week' | 'month'; added: Added[] };
+
+/** Events typed into the card are kept with the calendar's options; their uid says so. */
+const ADDED = 'island-added:';
+const ADDED_MAX = 300;
 
 const MIN = 60000;
 const HOUR = 60 * MIN;
-const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 const FETCH_MS = 10 * MIN;
 const RETRY_MS = 5 * MIN;
 /** A meeting that has started keeps its card (and Join button) this long, for people arriving late. */
@@ -36,19 +40,25 @@ function meetingLink(o: Occurrence): string | null {
   return null;
 }
 
-/** Monday 00:00, local time, of the week that contains `ms`. */
+/** Midnight of the first day of the week that contains `ms`, as the user's locale starts weeks. */
 function weekStart(ms: number): number {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-  return d.getTime();
+  return weekStartOf(ms, firstWeekday());
+}
+
+/** The events typed into the card, as saved (anything malformed is dropped). */
+export function savedAdded(raw: unknown): Added[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (a): a is Added =>
+      Boolean(a) && typeof a.id === 'string' && typeof a.title === 'string' && Number.isFinite(a.start) && Number.isFinite(a.end) && a.end > a.start && typeof a.allDay === 'boolean',
+  );
 }
 
 export class CalendarActivity extends BaseActivity {
   private events: IcsEvent[] = [];
   private occ: Occurrence[] = [];
   /** This week's events, kept until the week turns or a new feed arrives. */
-  private week: { start: number; events: IcsEvent[]; occ: Occurrence[] } | null = null;
+  private week: { start: number; events: IcsEvent[]; added: unknown; occ: Occurrence[] } | null = null;
   private url = '';
   /** Occurrences straight from Windows (already expanded, no repeat rules to work out). */
   private fromWindows: Occurrence[] = [];
@@ -61,6 +71,9 @@ export class CalendarActivity extends BaseActivity {
   private fetching = false;
   private phase = '';
   private readonly dismissed = new Set<string>();
+  /** The card: the day picked (midnight) and the day whose week or month shows. */
+  private picked = 0;
+  private shownAt = 0;
 
   constructor() {
     super('calendar');
@@ -129,8 +142,10 @@ export class CalendarActivity extends BaseActivity {
     const now = Date.now();
     if (now - this.fetchedAt < FETCH_MS && now < this.retryAt) return this.recompute(now);
     this.fetching = true;
-    const back = Math.ceil((now - weekStart(now)) / (24 * 60 * MIN)) + 1;
-    const agenda = await native.agendaRead(back, 14);
+    // This week and this month (for the grid), and the weeks ahead (what is next, the card).
+    const from = Math.min(weekStart(now), monthWeeks(now, firstWeekday())[0][0].start);
+    const back = Math.ceil((now - from) / (24 * 60 * MIN)) + 1;
+    const agenda = await native.agendaRead(back, 45);
     this.fetching = false;
     if (!this.alive) return;
     if (agenda?.ok) {
@@ -159,8 +174,25 @@ export class CalendarActivity extends BaseActivity {
   private recompute(now: number): void {
     const from = now - 60 * MIN;
     const to = now + 2 * 24 * 60 * MIN;
-    this.occ = this.source() === 'windows' ? this.fromWindows.filter((o) => o.end > from && o.start < to) : expand(this.events, from, to);
+    this.occ = this.occIn(from, to);
     this.ctx.update();
+  }
+
+  private added(): Added[] {
+    return savedAdded(this.ctx.options<Partial<Options>>().added);
+  }
+
+  private view(): 'week' | 'month' {
+    return this.ctx.options<Partial<Options>>().view === 'month' ? 'month' : 'week';
+  }
+
+  /** Everything between `from` and `to`: the feed's (or Windows') events and those typed into the card, soonest first. */
+  private occIn(from: number, to: number): Occurrence[] {
+    const base = this.source() === 'windows' ? this.fromWindows.filter((o) => o.end > from && o.start < to) : expand(this.events, from, to);
+    const mine = this.added()
+      .filter((a) => a.end > from && a.start < to)
+      .map((a): Occurrence => ({ uid: ADDED + a.id, title: a.title, start: a.start, end: a.end, allDay: a.allDay, location: '', description: '', url: '' }));
+    return [...base, ...mine].sort((a, b) => a.start - b.start);
   }
 
   /** The first timed event still worth showing, if it starts within the lead time. */
@@ -190,10 +222,10 @@ export class CalendarActivity extends BaseActivity {
     end.setDate(end.getDate() + 7);
     const windows = this.source() === 'windows';
     const events = windows ? this.windowsRev : this.events;
+    const added = this.ctx.options<Partial<Options>>().added;
     let w = this.week;
-    if (!w || w.start !== start || w.events !== events) {
-      const occ = windows ? this.fromWindows.filter((o) => o.start < end.getTime() && o.end > start) : expand(this.events, start, end.getTime());
-      w = this.week = { start, events, occ };
+    if (!w || w.start !== start || w.events !== events || w.added !== added) {
+      w = this.week = { start, events, added, occ: this.occIn(start, end.getTime()) };
     }
     return w;
   }
@@ -251,35 +283,149 @@ export class CalendarActivity extends BaseActivity {
     return { icon: 'calendar', label: until(o.start - env.now).replace(/^in /, ''), tone: o.start - env.now <= 5 * MIN ? 'warn' : 'accent' };
   }
 
-  /** This week, Monday to Sunday. Nothing until a feed is set and has loaded once. */
+  /**
+   * This week (or this month: Activities › Calendar › Show), starting on the locale's first day.
+   * A tap opens the calendar card. With a link that has not loaded yet it waits; with nothing set it
+   * still shows, for the events typed into the card.
+   */
   tile(env: SheetEnv): Tile | null {
     const windows = this.source() === 'windows';
-    if (windows ? !this.fetchedAt : !this.url || !this.fetchedAt) return null;
+    if (windows ? !this.fetchedAt : this.url && !this.fetchedAt) return null;
+    const open = env.interactive ? { action: 'card', tip: 'Open the calendar' } : {};
+    if (this.view() === 'month') {
+      const first = firstWeekday();
+      const weeks = monthWeeks(env.now, first);
+      const from = weeks[0][0].start;
+      const occ = this.occIn(from, addDays(weeks[weeks.length - 1][6].start, 1));
+      const days = weeks.flat().map((d) => this.calDay(d, occ, env.now, null));
+      const inMonth = occ.filter((o) => new Date(o.start).getMonth() === new Date(env.now).getMonth()).length;
+      return {
+        key: 'calendar',
+        span: 2,
+        rows: 2,
+        ...open,
+        body: {
+          k: 'month',
+          title: new Date(env.now).toLocaleDateString('en-US', { month: 'long' }),
+          sub: this.countText(inMonth, windows),
+          heads: weekdayHeads(first),
+          days,
+        },
+      };
+    }
     const { start, occ } = this.weekOf(env.now);
-    const today = new Date(env.now).toDateString();
-    const days = WEEKDAYS.map((label, i) => {
-      const from = new Date(start);
-      from.setDate(from.getDate() + i);
-      const to = new Date(from);
-      to.setDate(to.getDate() + 1);
-      // Overlap, the way expand() decides what is in a window: an event over midnight busies both days.
-      const busy = occ.filter((o) => o.start < to.getTime() && Math.max(o.end, o.start + 1) > from.getTime()).length;
-      return { label, num: from.getDate(), today: from.toDateString() === today, busy: Math.min(3, busy) };
+    const heads = weekdayHeads(firstWeekday());
+    const days = heads.map((label, i) => {
+      const d = this.calDay({ start: addDays(start, i), num: new Date(addDays(start, i)).getDate(), inMonth: true }, occ, env.now, null);
+      return { label, num: d.num, today: Boolean(d.today), busy: d.busy };
     });
-    const join = env.interactive ? this.joinable(env.now) : null;
     return {
       key: 'calendar',
       span: 2,
-      action: join ? 'join' : undefined,
-      tip: join ? `Join ${clip(join.o.title, 40)}` : undefined,
+      ...open,
       body: {
         k: 'week',
         title: new Date(env.now).toLocaleDateString('en-US', { month: 'long' }),
         // With nothing to show, say why rather than leaving an empty week.
-        sub: occ.length === 0 ? (windows ? (this.windowsNote ?? 'No events') : 'No events') : occ.length === 1 ? '1 event' : `${occ.length} events`,
+        sub: this.countText(occ.length, windows),
         days,
       },
     };
+  }
+
+  private countText(n: number, windows: boolean): string {
+    if (n === 0) return windows ? (this.windowsNote ?? 'No events') : 'No events';
+    return n === 1 ? '1 event' : `${n} events`;
+  }
+
+  /** One day of a grid: its number, whether it is today or picked, and how busy it is. */
+  private calDay(d: GridDay, occ: Occurrence[], now: number, picked: number | null): CalDay {
+    const to = addDays(d.start, 1);
+    // Overlap, the way expand() decides what is in a window: an event over midnight busies both days.
+    const busy = occ.filter((o) => o.start < to && Math.max(o.end, o.start + 1) > d.start).length;
+    return { key: dayKey(d.start), num: d.num, today: d.start === dayStart(now), selected: picked === d.start, out: !d.inMonth, busy: Math.min(3, busy) };
+  }
+
+  /**
+   * The calendar card (a tap on the tile): the week or month, arrows to move through them, the
+   * picked day with its events beside it, and a box to add one to that day ("14:30 Dentist").
+   */
+  sheet(env: SheetEnv): SheetView | null {
+    if (env.reason !== 'open') return null;
+    const now = env.now;
+    const picked = this.picked || dayStart(now);
+    const shown = this.shownAt || picked;
+    const first = firstWeekday();
+    const month = this.view() === 'month';
+    const weeks: GridDay[][] = month ? monthWeeks(shown, first) : [weekDays(shown, first)];
+    const from = weeks[0][0].start;
+    const to = addDays(weeks[weeks.length - 1][6].start, 1);
+    const occ = this.occIn(Math.min(from, picked), Math.max(to, addDays(picked, 1)));
+    const at = new Date(shown);
+    const head: SheetButton[] = [
+      { key: 'mode', label: month ? 'Week' : 'Month', action: 'cal-view', arg: month ? 'week' : 'month', style: 'ghost', tip: month ? 'Show one week' : 'Show the whole month' },
+      { key: 'today', label: 'Today', action: 'cal-today', style: 'ghost', tip: 'Back to today' },
+      { key: 'prev', icon: 'chevron-left', action: 'cal-prev', style: 'ghost', tip: month ? 'Last month' : 'Last week' },
+      { key: 'next', icon: 'chevron-right', action: 'cal-next', style: 'ghost', tip: month ? 'Next month' : 'Next week' },
+    ];
+    const pickedDate = new Date(picked);
+    const today = picked === dayStart(now);
+    const rel = today ? 'Today' : picked === dayStart(addDays(now, 1)) ? 'Tomorrow' : picked === dayStart(addDays(now, -1)) ? 'Yesterday' : pickedDate.getFullYear() !== new Date(now).getFullYear() ? String(pickedDate.getFullYear()) : '';
+    const dayEnd = addDays(picked, 1);
+    const events: CalEvent[] = occ
+      .filter((o) => o.start < dayEnd && Math.max(o.end, o.start + 1) > picked)
+      .sort((a, b) => Number(b.allDay) - Number(a.allDay) || a.start - b.start)
+      .map((o) => this.calEvent(o, now));
+    const blocks: Block[] = [
+      {
+        t: 'head',
+        key: 'head',
+        icon: 'calendar',
+        title: 'Calendar',
+        back: { key: 'back', icon: 'chevron-left', action: 'cal-back', style: 'ghost', tip: 'Back to Control Center' },
+        buttons: head,
+      },
+      {
+        t: 'calendar',
+        key: 'cal',
+        title: month ? at.toLocaleDateString('en-US', { month: 'long' }) : `Week ${isoWeek(weeks[0][3].start)}`,
+        year: month ? String(at.getFullYear()) : at.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+        heads: weekdayHeads(first),
+        week: !month,
+        weeks: weeks.map((w) => ({ no: isoWeek(w[3].start), days: w.map((d) => this.calDay(d, occ, now, picked)) })),
+        pick: 'cal-pick',
+        day: {
+          kicker: pickedDate.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase(),
+          title: pickedDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }),
+          sub: [rel, `Week ${isoWeek(picked)}`].filter(Boolean).join(' · '),
+          events,
+          empty: 'Nothing planned',
+        },
+      },
+      {
+        t: 'input',
+        key: 'add',
+        placeholder: `Add to ${pickedDate.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })}: 14:30 Dentist`,
+        action: 'cal-add',
+        hint: 'A time first or last ("2pm Gym", "Lunch 12:30", "9:00-10:30 Class"), or no time for all day. Enter adds it.',
+      },
+    ];
+    return { key: 'calendar-card', width: 660, blocks };
+  }
+
+  private calEvent(o: Occurrence, now: number): CalEvent {
+    const mine = o.uid.startsWith(ADDED);
+    const link = meetingLink(o);
+    const buttons: SheetButton[] = [];
+    if (link && o.end + LATE_MS > now) buttons.push({ key: 'join', icon: 'video', label: 'Join', action: 'cal-join', arg: link, style: 'primary', tip: 'Join meeting' });
+    if (mine) {
+      buttons.push(
+        { key: 'google', icon: 'external', action: 'cal-google', arg: o.uid.slice(ADDED.length), style: 'ghost', tip: 'Also add it to Google Calendar (opens its page; press Save there)' },
+        { key: 'remove', icon: 'x', action: 'cal-remove', arg: o.uid.slice(ADDED.length), style: 'ghost', tip: 'Remove' },
+      );
+    }
+    const time = o.allDay ? 'All day' : `${timeOfDay(o.start)} – ${timeOfDay(o.end)}`;
+    return { key: `${o.uid}${o.start}`, time, title: o.title, sub: mine ? 'Added here' : clip(o.location, 60) || undefined, tone: o.end <= now ? 'muted' : mine ? 'good' : 'accent', buttons };
   }
 
   render(env: RenderEnv): Seg[] {
@@ -301,7 +447,8 @@ export class CalendarActivity extends BaseActivity {
     return { t: 'button', key: 'join', icon: 'video', label: env.vertical ? undefined : 'Join', action: 'join', style: 'primary', side: 'end', prio: 1, tip: 'Join meeting' };
   }
 
-  action(name: string): void {
+  action(name: string, arg?: unknown): void {
+    if (name.startsWith('card') || name.startsWith('cal-')) return this.cardAction(name, arg);
     if (name !== 'join') return;
     // The card's Join button and the week tile both land here: the tile's meeting may be up to an hour away.
     const link = this.joinable(Date.now())?.link;
@@ -309,4 +456,78 @@ export class CalendarActivity extends BaseActivity {
     void native.open(link);
     this.ctx.close();
   }
+
+  private cardAction(name: string, arg: unknown): void {
+    const now = Date.now();
+    const month = this.view() === 'month';
+    const step = (n: number) => {
+      const d = new Date(this.shownAt || this.picked || dayStart(now));
+      if (month) {
+        d.setDate(1);
+        d.setMonth(d.getMonth() + n);
+      } else d.setDate(d.getDate() + 7 * n);
+      this.shownAt = d.getTime();
+      // The picked day moves along, to the same weekday (or the 1st of the month).
+      this.picked = month ? dayStart(d.getTime()) : dayStart(addDays(this.picked || dayStart(now), 7 * n));
+    };
+    switch (name) {
+      case 'card':
+        this.picked = this.shownAt = dayStart(now);
+        this.ctx.openCard?.();
+        return;
+      case 'cal-back':
+        this.ctx.closeCard?.();
+        return;
+      case 'cal-today':
+        this.picked = this.shownAt = dayStart(now);
+        break;
+      case 'cal-prev':
+        step(-1);
+        break;
+      case 'cal-next':
+        step(1);
+        break;
+      case 'cal-view':
+        if (arg === 'week' || arg === 'month') this.ctx.setOptions?.({ view: arg });
+        this.shownAt = this.picked || dayStart(now);
+        break;
+      case 'cal-pick': {
+        const day = fromDayKey(arg);
+        if (day == null) return;
+        this.picked = day;
+        // A day of the month before or after, picked from the grid's edge: that month shows.
+        if (month && new Date(day).getMonth() !== new Date(this.shownAt || day).getMonth()) this.shownAt = day;
+        if (!month) this.shownAt = day;
+        break;
+      }
+      case 'cal-add': {
+        const typed = parseAdded(String(arg ?? ''), this.picked || dayStart(now));
+        if (!typed) return;
+        const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+        const added = [...this.added(), { id, ...typed }].sort((a, b) => a.start - b.start).slice(-ADDED_MAX);
+        this.ctx.setOptions?.({ added });
+        this.recompute(now);
+        return;
+      }
+      case 'cal-remove':
+        this.ctx.setOptions?.({ added: this.added().filter((a) => a.id !== arg) });
+        this.recompute(now);
+        return;
+      case 'cal-google': {
+        const a = this.added().find((x) => x.id === arg);
+        if (a) void native.open(googleAddUrl(a));
+        return;
+      }
+      case 'cal-join':
+        if (typeof arg === 'string' && /^https:\/\//i.test(arg)) {
+          void native.open(arg);
+          this.ctx.close();
+        }
+        return;
+      default:
+        return;
+    }
+    this.ctx.update();
+  }
 }
+

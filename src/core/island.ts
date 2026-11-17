@@ -1350,9 +1350,12 @@ export class Island {
       const [sw, sh] = cellsOf(t, layout.sizes[t.key]);
       // Lists, cards and players need two columns whatever was asked for.
       let w = Math.min(geo.cols, narrow ? sw : Math.max(2, sw));
-      let h = Math.max(1, Math.min(geo.rows, sh));
+      // A month (Calendar) needs two rows, whatever size its week was given.
+      const tall = t.body.k === 'month' ? Math.min(2, geo.rows) : 1;
+      let h = Math.max(tall, Math.min(geo.rows, sh));
       if (drag?.key === t.key) ({ w, h } = drag.size);
-      const sizes = (narrow ? TILE_SIZES : WIDE_SIZES).map((x): [number, number] => [CELLS[x].w, CELLS[x].h]);
+      h = Math.max(tall, h);
+      const sizes = (narrow ? TILE_SIZES : WIDE_SIZES).map((x): [number, number] => [CELLS[x].w, CELLS[x].h]).filter(([, y]) => y >= tall);
       return { ...t, w, h, sizes };
     });
 

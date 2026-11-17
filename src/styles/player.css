@@ -5,7 +5,8 @@
 
 .sheet.morph .sheet-inner { padding: 18px 20px 14px; }
 
-.sb-player { display: flex; flex-direction: column; gap: 14px; }
+.sb-player { display: flex; align-items: stretch; }
+.pl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
 .pl-top { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .pl-art {
   width: 58px;
@@ -69,6 +70,47 @@ html.reduce .pl-lyric > span { animation-duration: 0.01s; }
 .pl-btn .ico { width: 30px; height: 30px; display: block; }
 .pl-toggle .ico { width: 36px; height: 36px; }
 .pl-out { justify-self: end; color: var(--muted); }
+
+/* The lyrics button, at the start of the controls; lit while the panel is open. */
+.pl-gap { justify-self: start; display: flex; }
+.pl-btn.pl-lyr { width: 36px; height: 36px; color: var(--muted); }
+.pl-btn.pl-lyr .ico { width: 21px; height: 21px; }
+.pl-btn.pl-lyr.on { color: var(--fg); background: rgba(var(--ink), 0.12); }
+
+/* The lyrics panel beside the player (the card widens by its 320px, the player stays put): a
+   window onto the song's lines, the sung one lit a third of the way down, gliding up as it goes. */
+.pl-ly { position: relative; flex: 0 0 300px; box-sizing: border-box; margin-left: 20px; padding-left: 20px; border-left: 1px solid rgba(var(--ink), 0.1); min-height: 120px; }
+.pl-ly[hidden] { display: none; }
+.pl-btn.pl-ly-close { position: absolute; top: -4px; left: 12px; width: 28px; height: 28px; color: var(--muted); z-index: 1; }
+.pl-btn.pl-ly-close[hidden] { display: none; }
+.pl-btn.pl-ly-close .ico { width: 18px; height: 18px; }
+.pl-ly-view { position: absolute; inset: 26px 0 0 20px; overflow: hidden; -webkit-mask-image: linear-gradient(transparent, #000 16%, #000 78%, transparent); mask-image: linear-gradient(transparent, #000 16%, #000 78%, transparent); }
+.pl-ly-list { transition: transform 0.55s cubic-bezier(0.2, 0.7, 0.2, 1); will-change: transform; }
+.pl-ly-line { font: 650 15px/1.28 var(--font); color: rgba(var(--ink), 0.34); padding: 4px 0; transition: color 0.35s ease, opacity 0.35s ease; overflow-wrap: anywhere; }
+.pl-ly-line.past { opacity: 0.7; }
+.pl-ly-line.now { color: var(--fg); }
+.pl-ly-line.gap { font-size: 12px; }
+.pl-ly-note { position: absolute; inset: 30px 0 0 20px; font: 600 14px/1.35 var(--font); color: var(--muted); }
+.pl-ly-note[hidden] { display: none; }
+html.reduce .pl-ly-list { transition: none; }
+@media (prefers-reduced-motion: reduce) { .pl-ly-list { transition: none; } }
+
+/* Control Center's lyrics card: the art big over the track, the song beside it, on the art's colour. */
+.sb-player.stage { padding: 22px 22px 18px; border-radius: 22px; background: linear-gradient(150deg, color-mix(in srgb, var(--tint) 46%, transparent), color-mix(in srgb, var(--tint) 12%, transparent) 70%); }
+.stage .pl-main { flex: 0 0 236px; }
+.stage .pl-top { flex-direction: column; align-items: center; text-align: center; gap: 12px; }
+.stage .pl-art { width: 168px; height: 168px; border-radius: 18px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); }
+.stage .pl-tx { align-items: center; width: 100%; }
+.stage .pl-t1, .stage .pl-t2 { max-width: 100%; }
+.stage .pl-bars { display: none; }
+.stage .pl-ctl { gap: 6px; }
+.stage .pl-ly { flex: 1; margin-left: 24px; padding-left: 0; border-left: 0; min-height: 330px; }
+.stage .pl-ly-view { inset: 0; }
+.stage .pl-ly-note { inset: 8px 0 0 0; }
+.stage .pl-ly-line { font-size: 20px; line-height: 1.3; padding: 6px 0; color: rgba(var(--ink), 0.38); }
+.stage .pl-ly-line.now { color: var(--fg); }
+.stage .pl-ly-line.gap { font-size: 14px; }
+
 .pl-out .ico { width: 24px; height: 24px; }
 
 /* a row's thin bar under its title, with its figure beside it */

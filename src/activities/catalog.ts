@@ -389,7 +389,7 @@ export const CATALOG: ActivityMeta[] = [
   {
     id: 'calendar',
     name: 'Calendar',
-    description: 'Your next event, with a Join button for meeting links. Reads an iCal (ICS) link, or on Windows every calendar in your Windows accounts.',
+    description: 'Your week or month in Control Center (tap it for the full calendar, where you can add events), and your next event with a Join button for meeting links. Reads an iCal (ICS) link, or on Windows every calendar in your Windows accounts.',
     icon: 'calendar',
     category: 'productivity',
     enabled: false,
@@ -411,6 +411,17 @@ export const CATALOG: ActivityMeta[] = [
       },
       { key: 'ics', type: 'text', label: 'Calendar link (ICS)', default: '', placeholder: 'https://calendar.google.com/…/basic.ics', secret: true, help: 'Used with "A calendar link" (always on a Mac). Google Calendar: Settings › your calendar › Secret address in iCal format. Outlook: Publish calendar › ICS.' },
       { key: 'leadMinutes', type: 'number', label: 'Show events this early', default: 15, min: 1, max: 120, unit: 'min' },
+      {
+        key: 'view',
+        type: 'choice',
+        label: 'Show',
+        default: 'week',
+        choices: [
+          { value: 'week', label: 'This week' },
+          { value: 'month', label: 'The whole month' },
+        ],
+        help: 'In Control Center and in the calendar card (a tap on its tile), where you can also switch and add events.',
+      },
     ],
   },
   {

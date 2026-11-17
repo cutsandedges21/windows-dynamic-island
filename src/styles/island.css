@@ -1647,6 +1647,58 @@ html[data-pill='glass'] .hub-menu .hm-lock { background: rgba(22, 24, 30, 0.8); 
 .tile.k-week .wb { display: flex; gap: 2px; height: 3px; }
 .tile.k-week .wb i { width: 3px; height: 3px; border-radius: 50%; background: var(--muted); }
 
+/* A month in a tile (Calendar › Show › The whole month): headings over its days, today in the accent. */
+.tile.k-month .wh { display: flex; align-items: baseline; gap: 8px; }
+.tile.k-month .w1 { font: 600 14px/1 var(--font); }
+.tile.k-month .w2 { font: 500 12px/1 var(--font); color: var(--muted); }
+.tile.k-month .mg { display: grid; grid-template-columns: repeat(7, 1fr); row-gap: 1px; margin-top: auto; justify-items: center; }
+.tile.k-month .mh { font: 500 10px/16px var(--font); color: var(--dim); }
+.tile.k-month .md { position: relative; width: 22px; height: 20px; border-radius: 10px; display: grid; place-items: center; font: 600 11px/1 var(--font); font-variant-numeric: tabular-nums; }
+.tile.k-month .md.out { opacity: 0.32; }
+.tile.k-month .md.busy::after { content: ""; position: absolute; bottom: 0; width: 3px; height: 3px; border-radius: 50%; background: var(--muted); }
+.tile.k-month .md.today { background: var(--accent); color: #1a0c06; }
+.tile.k-month .md.today::after { background: #1a0c06; }
+
+/* The calendar card: the grid of days on a soft panel (left), the picked day and its events (right). */
+.sb-head.has-back { margin-left: -6px; gap: 6px; }
+.sb-cal { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+/* One week: the strip of days across the card, the picked day under it (like a phone's calendar). */
+.sb-cal.week { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.sb-cal.week .cp { padding: 0 4px; }
+.sb-cal.week .cw { display: none; }
+.sb-cal.week .cd { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.sb-cal .cg { padding: 12px 10px 10px; border-radius: 16px; background: rgba(var(--ink), 0.05); }
+.sb-cal .ct { display: flex; align-items: baseline; gap: 6px; padding: 0 4px 8px; }
+.sb-cal .cm { font: 600 17px/1.1 var(--font); }
+.sb-cal .cy { font: 400 15px/1.1 var(--font); color: var(--dim); }
+.sb-cal .cd { display: grid; grid-template-columns: 18px repeat(7, minmax(0, 1fr)); align-items: center; justify-items: center; row-gap: 2px; }
+.sb-cal .ch { font: 600 10.5px/18px var(--font); color: var(--dim); }
+.sb-cal .cw { font: 500 9.5px/1 var(--font); color: var(--dim); opacity: 0.6; font-variant-numeric: tabular-nums; }
+.sb-cal .cday { appearance: none; border: 0; background: none; color: inherit; padding: 0; width: 100%; height: 34px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer; }
+.sb-cal .cn { width: 27px; height: 27px; border-radius: 50%; display: grid; place-items: center; font: 600 12.5px/1 var(--font); font-variant-numeric: tabular-nums; transition: background-color 120ms ease; }
+.sb-cal .cday:hover .cn { background: rgba(var(--ink), 0.1); }
+.sb-cal .cday.out .cn { opacity: 0.32; }
+.sb-cal .cday.today .cn { color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.sb-cal .cday.sel .cn { background: var(--accent); color: #1a0c06; box-shadow: none; opacity: 1; }
+.sb-cal .cb { display: flex; gap: 2px; height: 3px; }
+.sb-cal .cb i { width: 3px; height: 3px; border-radius: 50%; background: var(--muted); }
+.sb-cal.week .cday { height: 58px; }
+.sb-cal.week .cn { width: 34px; height: 34px; font-size: 15px; }
+.sb-cal .cp { min-width: 0; padding: 4px 2px 0; }
+.sb-cal .ck { font: 700 10.5px/1.2 var(--font); letter-spacing: 0.08em; color: var(--accent); }
+.sb-cal .cpt { font: 600 24px/1.15 var(--font); margin-top: 2px; }
+.sb-cal .cps { font: 500 12px/1.3 var(--font); color: var(--muted); margin-top: 3px; }
+.sb-cal .ce { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; max-height: 196px; overflow-y: auto; }
+.sb-cal .cempty { font: 500 13px/1.3 var(--font); color: var(--dim); padding: 4px 0; }
+.sb-cal .cev { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 11px; background: rgba(var(--ink), 0.05); }
+.sb-cal .cebar { flex: none; width: 3px; align-self: stretch; min-height: 26px; border-radius: 2px; background: currentColor; }
+.sb-cal .cev.tone-muted { color: var(--dim); }
+.sb-cal .cet { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; color: var(--fg); }
+.sb-cal .cetime { font: 500 11px/1.2 var(--font); color: var(--muted); font-variant-numeric: tabular-nums; }
+.sb-cal .cetitle { font: 600 13px/1.25 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-cal .cesub { font: 500 11px/1.2 var(--font); color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-cal .ceb { display: flex; gap: 2px; flex: none; }
+
 /* day progress dots */
 .tile.k-dots .dh { display: flex; justify-content: space-between; align-items: baseline; }
 .tile.k-dots .d1 { font: 500 12px/1 var(--font); color: var(--muted); }

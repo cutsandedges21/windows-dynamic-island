@@ -24,7 +24,7 @@ import { BatteryActivity, batteryTime } from '../src/activities/battery';
 import { TILE_SPAN, TimerActivity } from '../src/activities/timer';
 import { cellsOf } from '../src/core/grid';
 import { tileCard } from '../src/core/tilecard';
-import { CalendarActivity } from '../src/activities/calendar';
+import { CalendarActivity, savedAdded } from '../src/activities/calendar';
 import { CallsActivity } from '../src/activities/calls';
 import { ClipboardActivity } from '../src/activities/clipboard';
 import { DevicesActivity } from '../src/activities/devices';
@@ -1731,5 +1731,137 @@ describe('music', () => {
     expect(headphonesLike("Moss's AirPods Pro")).toBe(true);
     expect(headphonesLike('Speakers (Realtek(R) Audio)')).toBe(false);
     expect(headphonesLike(null)).toBe(false);
+  });
+});
+
+describe('calendar card', () => {
+  const open = () => ({ reason: 'open' as const, now: Date.now(), width: 600, vertical: false, interactive: true, surfaced: null });
+  const feed = (startIso: string) =>
+    ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:m1', 'SUMMARY:Design review', `DTSTART:${startIso}`, `DTEND:${startIso.replace('T15', 'T16')}`, 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const blockOf = (v: { blocks: Array<{ t: string }> } | null, t: string) => v!.blocks.find((b) => b.t === t) as any;
+
+  it('the tile opens the calendar: the week, the picked day and its events, a box to add one', async () => {
+    h.native.httpGet = vi.fn(async () => ({ status: 200, body: feed('20260930T150000Z') }));
+    const { act, calls, options } = await boot(new CalendarActivity(), { source: 'ics', ics: 'https://cal.example.com/a.ics', leadMinutes: 15 });
+    await tick(0);
+    const tile = act.tile(open())!;
+    expect(tile).toMatchObject({ action: 'card', span: 2, body: { k: 'week' } });
+    await act.action!('card', null);
+    expect(calls.openCard).toBe(1);
+    const v = act.sheet(open())!;
+    const cal = blockOf(v, 'calendar');
+    expect(cal.week).toBe(true);
+    expect(cal.weeks).toHaveLength(1);
+    expect(cal.weeks[0].days.filter((d: { today: boolean }) => d.today)).toHaveLength(1);
+    expect(cal.day.events.map((e: { title: string }) => e.title)).toEqual(['Design review']);
+    expect(blockOf(v, 'head').back).toMatchObject({ action: 'cal-back' });
+    expect(blockOf(v, 'input')).toMatchObject({ action: 'cal-add' });
+
+    // Typed in: saved with the calendar's options, on the picked day, and on the card.
+    await act.action!('cal-add', '17:30 Gym');
+    expect(options.added).toHaveLength(1);
+    const added = (options.added as Array<{ title: string; start: number; allDay: boolean }>)[0];
+    expect(added).toMatchObject({ title: 'Gym', allDay: false });
+    expect(new Date(added.start).getHours()).toBe(17);
+    const events = blockOf(act.sheet(open()), 'calendar').day.events;
+    expect(events.map((e: { title: string }) => e.title)).toContain('Gym');
+    const gym = events.find((e: { title: string }) => e.title === 'Gym');
+    expect(gym.buttons.map((b: { action: string }) => b.action)).toEqual(['cal-google', 'cal-remove']);
+    h.native.open = vi.fn(async () => true);
+    await act.action!('cal-google', gym.buttons[0].arg);
+    expect(h.native.open).toHaveBeenCalledWith(expect.stringContaining('calendar.google.com/calendar/render?action=TEMPLATE&text=Gym'));
+    await act.action!('cal-remove', gym.buttons[1].arg);
+    expect(options.added).toEqual([]);
+  });
+
+  it('picks a day, moves by week or month, and switches between them', async () => {
+    const { act, options } = await boot(new CalendarActivity(), { source: 'ics', ics: '', leadMinutes: 15 });
+    await act.action!('card', null);
+    const today = new Date(Date.now());
+    const next = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2);
+    const key = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+    await act.action!('cal-pick', key);
+    let cal = blockOf(act.sheet(open()), 'calendar');
+    const days = () => cal.weeks.flatMap((w: { days: unknown[] }) => w.days) as Array<{ key: string; selected: boolean }>;
+    expect(days().find((d) => d.selected)!.key).toBe(key);
+    expect(cal.day.events).toEqual([]);
+    expect(cal.day.empty).toBe('Nothing planned');
+
+    const firstDay = cal.weeks[0].days[0].key;
+    await act.action!('cal-next', null);
+    cal = blockOf(act.sheet(open()), 'calendar');
+    expect(cal.weeks[0].days[0].key).not.toBe(firstDay);
+
+    await act.action!('cal-view', 'month');
+    expect(options.view).toBe('month');
+    cal = blockOf(act.sheet(open()), 'calendar');
+    expect(cal.week).toBe(false);
+    expect(cal.weeks.length).toBeGreaterThanOrEqual(4);
+    expect(act.tile(open())).toMatchObject({ rows: 2, body: { k: 'month' } });
+    await act.action!('cal-today', null);
+    cal = blockOf(act.sheet(open()), 'calendar');
+    expect(cal.day.sub).toContain('Today');
+  });
+
+  it('keeps only well-formed added events', () => {
+    expect(savedAdded([{ id: 'a', title: 'x', start: 1, end: 2, allDay: false }, { id: 'b', title: 'y', start: 5, end: 1, allDay: false }, null, 'z'])).toHaveLength(1);
+    expect(savedAdded('nope')).toEqual([]);
+  });
+});
+
+describe('music lyrics', () => {
+  const lrc = ['[00:30.00]First line', '[00:40.00]Second line', '[00:50.00]', '[01:00.00]Fourth line'].join('\n');
+  const media = (over: Record<string, unknown> = {}) => ({
+    available: true, app: 'Spotify', appId: 'Spotify.exe', title: 'Paper Sky', artist: 'Lumen Coast', album: '', status: 'playing',
+    position: 42, duration: 200, updatedAt: Date.now(), canPlay: true, canPause: true, canNext: true, canPrev: true, thumbnail: null, ...over,
+  });
+  const hover = () => ({ reason: 'hover' as const, now: Date.now(), width: 340, vertical: false, interactive: true, surfaced: null });
+  const open = () => ({ ...hover(), reason: 'open' as const });
+
+  beforeEach(() => {
+    h.native.mediaState = vi.fn(async () => media());
+    h.native.spectrumWatch = vi.fn(async () => undefined);
+    h.native.mediaControl = vi.fn(async () => true);
+    h.native.httpGet = vi.fn(async () => ({ status: 200, body: JSON.stringify({ syncedLyrics: lrc }) }));
+  });
+
+  it('a button opens the lyrics beside the player, and the panel closes again', async () => {
+    const { act } = await boot(new MusicActivity(), { hoverPlayer: true, lyrics: true });
+    act.sheet(hover());
+    await tick(0);
+    let v = act.sheet(hover())!;
+    expect(v.blocks[0]).toMatchObject({ t: 'player', lyric: 'Second line', lyricsButton: { action: 'lyrics', on: false }, lyrics: null });
+    expect(v.width).toBeUndefined();
+    await act.action('lyrics');
+    v = act.sheet(hover())!;
+    expect(v.blocks[0]).toMatchObject({ lyricsButton: { on: true }, lyrics: { lines: ['First line', 'Second line', '', 'Fourth line'], at: 1, close: 'lyrics' } });
+    // Wider by the panel: the player keeps its own width.
+    expect(v.width).toBe(372 + 320);
+    await act.action('lyrics');
+    expect(act.sheet(hover())!.blocks[0]).toMatchObject({ lyrics: null });
+  });
+
+  it('no lyrics, no button; lyrics off, no tile button', async () => {
+    h.native.httpGet = vi.fn(async () => ({ status: 404, body: '' }));
+    const { act } = await boot(new MusicActivity(), { hoverPlayer: true, lyrics: true });
+    act.sheet(hover());
+    await tick(0);
+    expect(act.sheet(hover())!.blocks[0]).toMatchObject({ lyricsButton: null });
+    const off = await boot(new MusicActivity(), { hoverPlayer: true, lyrics: false });
+    expect((off.act.tile(hover())!.body as { buttons: Array<{ key: string }> }).buttons.map((b) => b.key)).not.toContain('lyrics');
+  });
+
+  it('the Music tile in Control Center opens the lyrics card, with a way back', async () => {
+    const { act, calls } = await boot(new MusicActivity(), { hoverPlayer: true, lyrics: true });
+    const tile = act.tile(hover())!;
+    expect((tile.body as { buttons: Array<{ key: string; action: string }> }).buttons[0]).toMatchObject({ key: 'lyrics', action: 'lyrics-card' });
+    await act.action('lyrics-card');
+    expect(calls.openCard).toBe(1);
+    act.sheet(open());
+    await tick(0);
+    const v = act.sheet(open())!;
+    expect(v.blocks[0]).toMatchObject({ t: 'head', title: 'Lyrics', back: { action: 'lyrics-back' } });
+    expect(v.blocks[1]).toMatchObject({ t: 'player', stage: { tint: null }, lyrics: { at: 1 } });
   });
 });

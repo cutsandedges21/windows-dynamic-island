@@ -36,6 +36,16 @@ export function lineAt(lines: LrcLine[], secs: number): string | null {
   return hit?.text || null;
 }
 
+/** The index of the line being sung at `secs` (gaps included, so the panel can place them); -1 before the first. */
+export function lineIndex(lines: LrcLine[], secs: number): number {
+  let at = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].at > secs) break;
+    at = i;
+  }
+  return at;
+}
+
 const CAP = 50;
 /**
  * After LRCLIB couldn't answer (busy, rate limit, no connection): the next try waits this long,
@@ -72,7 +82,13 @@ export class LyricsLoader {
     return null;
   }
 
+  /** LRCLIB has answered for this song (with lines, or that it has none). */
+  known(m: MediaState): boolean {
+    return this.cache.has(trackKey(m));
+  }
+
   private async load(m: MediaState, key: string, now: number): Promise<void> {
+
     this.busy.add(key);
     let got: LrcLine[] | null | undefined;
     try {

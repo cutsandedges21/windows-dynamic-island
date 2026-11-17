@@ -15,7 +15,8 @@ import type { PlayerBlock } from '../core/player';
 import type { Seg } from '../core/segments';
 import type { SheetButton, SheetView, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
-import { lineAt, LyricsLoader } from './lyrics';
+import { lineAt, lineIndex, LyricsLoader } from './lyrics';
+
 
 /** An output device that sounds like it sits on your head. */
 export function headphonesLike(device: string | null | undefined): boolean {
@@ -27,6 +28,10 @@ export class MusicActivity extends BaseActivity {
   private lyrics = new LyricsLoader(() => this.ctx.update());
   private shown = 0;
   private sung: string | null = null;
+  /** The index of the line being sung (-1 before the first): a repeated line is still a new one. */
+  private sungAt = -1;
+  /** The lyrics panel beside the hover player is open (its button; it stays open until closed). */
+  private lyricsOpen = false;
   /** Runs only while the player shows a song with lyrics (an idle island wakes for nothing). */
   private ticker: ReturnType<typeof setInterval> | null = null;
   private lastTrack = '';
@@ -211,6 +216,7 @@ export class MusicActivity extends BaseActivity {
     const buttons: SheetButton[] = [];
     if (env.interactive) {
       buttons.push(
+        ...(this.lyricsOn() ? [{ key: 'lyrics', icon: 'chat', action: 'lyrics-card', style: 'ghost', tip: 'Lyrics' } as SheetButton] : []),
         { key: 'prev', icon: 'prev', action: 'prev', style: 'ghost', tip: 'Previous' },
         { key: 'toggle', icon: playing ? 'pause' : 'play', action: 'toggle', style: 'secondary', tip: playing ? 'Pause' : 'Play' },
         { key: 'next', icon: 'next', action: 'next', style: 'ghost', tip: 'Next' },
@@ -235,8 +241,25 @@ export class MusicActivity extends BaseActivity {
     this.shown = now;
     const lines = this.lyrics.lines(this.m, this.lyricsOn());
     this.sung = lines && pos != null ? (lineAt(lines, pos) ?? '') : null;
+    this.sungAt = lines && pos != null ? lineIndex(lines, pos) : -1;
     if (this.sung != null && !this.ticker && this.alive) this.ticker = setInterval(() => this.tick(), 250);
     return this.sung;
+  }
+
+  /** The panel's lines: the whole song, the one being sung, or why there are none. */
+  private panel(pos: number | null, close?: string): NonNullable<PlayerBlock['lyrics']> {
+    const lines = this.lyrics.lines(this.m, this.lyricsOn());
+    if (!lines) {
+      const note = !this.lyricsOn() ? 'Lyrics are off in Activities › Music' : this.m && this.lyrics.known(this.m) ? 'No synced lyrics for this song' : 'Looking for lyrics…';
+      return { lines: [], at: -1, note, close };
+    }
+    return { lines: lines.map((l) => l.text), at: pos != null ? lineIndex(lines, pos) : -1, close };
+  }
+
+  /** The player's width on this island's size (island.ts MORPH_W), so the panel adds to it and the player itself stays put. */
+  private playerWidth(): number {
+    const scale = { small: 0.88, medium: 1, large: 1.14 }[this.ctx.settings().island.size] ?? 1;
+    return Math.round(372 * scale);
   }
 
   private stopTicker(): void {
@@ -250,7 +273,8 @@ export class MusicActivity extends BaseActivity {
     const lines = this.lyrics.lines(this.m, this.lyricsOn());
     const pos = this.position(Date.now());
     const line = lines && pos != null ? (lineAt(lines, pos) ?? '') : null;
-    if (line !== this.sung) this.ctx.update();
+    const at = lines && pos != null ? lineIndex(lines, pos) : -1;
+    if (line !== this.sung || at !== this.sungAt) this.ctx.update();
   }
 
   /**
@@ -259,9 +283,44 @@ export class MusicActivity extends BaseActivity {
    */
   sheet(env: SheetEnv): SheetView | null {
     const m = this.m;
+    if (env.reason === 'open') return m?.title ? this.stageCard(env) : null;
     if (env.reason !== 'hover' || !this.hoverPlayer() || !m?.title) return null;
     const on = env.interactive;
     const pos = this.position(env.now);
+    const showArt = this.ctx.options<{ showArt: boolean }>().showArt !== false;
+    const lyric = this.lyric(pos, env.now);
+    // The lyrics button shows only for a song with synced lyrics; the panel stays open until closed.
+    const open = on && this.lyricsOpen && lyric != null;
+    const block: PlayerBlock = {
+      t: 'player',
+      key: 'player',
+      art: showArt ? m.thumbnail : null,
+      title: m.title,
+      artist: m.artist || m.app || '',
+      playing: m.status === 'playing',
+      position: pos,
+      duration: m.duration && m.duration > 0 ? m.duration : null,
+      color: this.barTint() ?? null,
+      lyric,
+      lyrics: open ? this.panel(pos, 'lyrics') : null,
+      lyricsButton: on && lyric != null ? { action: 'lyrics', on: open } : null,
+      // Not interactive (Activities › Music): the player only shows, with no buttons.
+      actions: on
+        ? { prev: 'prev', toggle: 'toggle', next: 'next', seek: 'seek', output: platform === 'windows' ? 'output' : undefined, open: this.canOpen() ? 'open' : undefined }
+        : { prev: '', toggle: '', next: '' },
+      output: { icon: headphonesLike(this.device) ? 'headphones' : 'speaker', tip: this.device ? `Sound output: ${this.device}` : 'Sound output' },
+    };
+    return { key: 'player', morph: true, blocks: [block], width: open ? this.playerWidth() + 320 : undefined };
+  }
+
+  /**
+   * Control Center's lyrics card (the Music tile's lyrics button): the art big over the track and
+   * its controls, the whole song's lyrics beside it, on the art's colour. Back goes to Control Center.
+   */
+  private stageCard(env: SheetEnv): SheetView {
+    const m = this.m!;
+    const pos = this.position(env.now);
+    this.lyric(pos, env.now);
     const showArt = this.ctx.options<{ showArt: boolean }>().showArt !== false;
     const block: PlayerBlock = {
       t: 'player',
@@ -273,17 +332,27 @@ export class MusicActivity extends BaseActivity {
       position: pos,
       duration: m.duration && m.duration > 0 ? m.duration : null,
       color: this.barTint() ?? null,
-      lyric: this.lyric(pos, env.now),
-      // Not interactive (Activities › Music): the player only shows, with no buttons.
-      actions: on
-        ? { prev: 'prev', toggle: 'toggle', next: 'next', seek: 'seek', output: platform === 'windows' ? 'output' : undefined, open: this.canOpen() ? 'open' : undefined }
-        : { prev: '', toggle: '', next: '' },
+      lyric: null,
+      lyrics: this.panel(pos),
+      stage: { tint: this.barTint() ?? null },
+      actions: { prev: 'prev', toggle: 'toggle', next: 'next', seek: 'seek', output: platform === 'windows' ? 'output' : undefined, open: this.canOpen() ? 'open' : undefined },
       output: { icon: headphonesLike(this.device) ? 'headphones' : 'speaker', tip: this.device ? `Sound output: ${this.device}` : 'Sound output' },
     };
-    return { key: 'player', morph: true, blocks: [block] };
+    return {
+      key: 'music-lyrics',
+      width: 640,
+      blocks: [{ t: 'head', key: 'head', icon: 'music', title: 'Lyrics', sub: m.app || undefined, back: { key: 'back', icon: 'chevron-left', action: 'lyrics-back', style: 'ghost', tip: 'Back to Control Center' } }, block],
+    };
   }
 
   async action(name: string, arg?: unknown): Promise<void> {
+    if (name === 'lyrics') {
+      this.lyricsOpen = !this.lyricsOpen;
+      this.ctx.update();
+      return;
+    }
+    if (name === 'lyrics-card') return this.ctx.openCard?.();
+    if (name === 'lyrics-back') return this.ctx.closeCard?.();
     if (name === 'output') {
       await native.soundOutput();
       return;
