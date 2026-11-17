@@ -23,8 +23,8 @@ export function headphonesLike(device: string | null | undefined): boolean {
   return /head(phone|set)|ear(bud|phone)|airpods|buds|beats|hands-free|wh-\d|wf-\d/i.test(device ?? '');
 }
 
-/** The lyrics panel beside the hover player (player.css .pl-ly: 420 + its 20 margin): more than half the card (Justin). */
-export const LYRICS_PANEL_W = 440;
+/** The lyrics panel beside the hover player (player.css .pl-ly: 380 + its 20 margin): more than half the card (Justin). */
+export const LYRICS_PANEL_W = 400;
 
 export class MusicActivity extends BaseActivity {
   private m: MediaState | null = null;

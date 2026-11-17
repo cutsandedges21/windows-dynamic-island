@@ -80,7 +80,7 @@ html.reduce .pl-lyric > span { animation-duration: 0.01s; }
 /* The lyrics panel beside the player (the card widens by its 320px, the player stays put): a
    window onto the song's lines, the sung one lit a third of the way down, gliding up as it goes. */
 /* more than half the card, and taller than the player alone (Justin): the player centres beside it */
-.pl-ly { position: relative; flex: 0 0 420px; box-sizing: border-box; margin-left: 20px; padding-left: 20px; border-left: 1px solid rgba(var(--ink), 0.1); min-height: 176px; }
+.pl-ly { position: relative; flex: 0 0 380px; box-sizing: border-box; margin-left: 20px; padding-left: 20px; border-left: 1px solid rgba(var(--ink), 0.1); min-height: 176px; }
 .sb-player.lyrics-open:not(.stage) .pl-main { justify-content: center; }
 .pl-ly[hidden] { display: none; }
 .pl-btn.pl-ly-close { position: absolute; top: -4px; left: 12px; width: 28px; height: 28px; color: var(--muted); z-index: 1; }
