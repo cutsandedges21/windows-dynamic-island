@@ -172,6 +172,8 @@ export class Island {
   private windowHidden = false;
   /** Whether Rust holds the menu's Fade right now (it lets go for a right click, which opens the menu). */
   private holdOn = false;
+  /** What Rust was last told about smart fade (null: nothing yet). */
+  private smartOn: boolean | null = null;
   /** Island on your phone: what phones see of this island and what their taps do (src/remote/hub.ts). */
   private hub: PhoneHub | null = null;
   /** The pill as last composed, and the bot as last shown, for phones (also with no Duplicate copies). */
@@ -381,7 +383,14 @@ export class Island {
     this.syncHold();
   }
 
+  private syncSmart(on: boolean): void {
+    if (on === this.smartOn) return;
+    this.smartOn = on;
+    void native.setSmart(on);
+  }
+
   /** Rust holds the fade while faded, except while the menu it was right-clicked open for shows (then Show is at hand). */
+
   private syncHold(): void {
     const want = this.settings.island.faded && this.view !== 'menu';
     if (want === this.holdOn) return;
@@ -889,6 +898,10 @@ export class Island {
     if (this.sheet.grown && (!morphing || this.raisedCard) !== underCard) this.schedule();
     const beam: ActivityStatus['beam'] = this.fileDrag ? { tone: 'accent', motion: 'pulse' } : pillBeam(primary, [...choice.visible, ...this.settings.activities.order], statuses);
     this.syncGlow(hidden ? null : beam, !hidden && choice.urgent && this.sheet.visible, morph !== null || this.sheet.covering);
+    // Smart fade: faded while the pointer is away, except while something pops up (a surfaced event,
+    // an urgent card, a card still showing after the pointer left) or the island is in use.
+    const popUp = Boolean(surf) || urgentNow || Boolean(note) || Boolean(this.fileDrag) || (this.sheet.visible && !this.hover);
+    this.syncSmart(s.smartFade && !popUp && !this.open && this.view === 'main' && !this.inputActive && !this.sheetEngaged);
     // Every frame is kept for phones, whether or not Duplicate copies run.
     this.lastFrame = {
       sig, swap, bump: bump && !hiddenEverywhere, placed, w, h, orient, anchor, edge: s.edge,

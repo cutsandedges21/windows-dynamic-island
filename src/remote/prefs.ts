@@ -43,6 +43,7 @@ export const PREFS: readonly PrefDef[] = [
   { key: 'island.showSecondary', section: 'Behavior', label: 'Second activity beside the first', kind: 'bool', get: (s) => s.island.showSecondary, set: (s, v: boolean) => void (s.island.showSecondary = v) },
   { key: 'island.hideInFullscreen', section: 'Behavior', label: 'Hide in full screen', kind: 'bool', get: (s) => s.island.hideInFullscreen, set: (s, v: boolean) => void (s.island.hideInFullscreen = v) },
   { key: 'island.peekThrough', section: 'Behavior', label: 'Ctrl peeks through', kind: 'bool', get: (s) => s.island.peekThrough, set: (s, v: boolean) => void (s.island.peekThrough = v) },
+  { key: 'island.smartFade', section: 'Behavior', label: 'Smart fade', kind: 'bool', get: (s) => s.island.smartFade, set: (s, v: boolean) => void (s.island.smartFade = v) },
   { key: 'general.dnd', section: 'General', label: 'Quiet', kind: 'bool', get: (s) => s.general.dnd, set: (s, v: boolean) => void (s.general.dnd = v) },
   { key: 'general.notifications', section: 'General', label: 'Notifications', kind: 'bool', get: (s) => s.general.notifications, set: (s, v: boolean) => void (s.general.notifications = v) },
   { key: 'general.sounds', section: 'General', label: 'Sounds', kind: 'bool', get: (s) => s.general.sounds, set: (s, v: boolean) => void (s.general.sounds = v) },

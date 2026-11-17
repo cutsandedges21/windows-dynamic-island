@@ -714,6 +714,8 @@ export const native = {
   setPeek: (enabled: boolean) => call('island_set_peek', { enabled }, undefined),
   /** The menu's Fade: Rust holds the island faded and click-through (a peek that never ends) until told otherwise or a right click on it. */
   setHold: (held: boolean) => call('island_set_hold', { held }, undefined),
+  /** Smart fade: Rust fades the island while the pointer is away from it, until it comes back. */
+  setSmart: (on: boolean) => call('island_set_smart', { on }, undefined),
   /** Install newer releases from GitHub on their own (release builds only). */
   setAutoUpdate: (enabled: boolean) => call('update_set', { enabled }, undefined),
   /** Duplicate mode: one click-through copy of the pill on each of these monitors. */

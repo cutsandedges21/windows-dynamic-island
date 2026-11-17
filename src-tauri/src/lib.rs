@@ -194,6 +194,7 @@ pub fn run() {
             overlay::island_set_hit,
             overlay::island_set_peek,
             overlay::island_set_hold,
+            overlay::island_set_smart,
             overlay::island_paste_arm,
             msgwin::clipboard_paste,
             overlay::island_show,

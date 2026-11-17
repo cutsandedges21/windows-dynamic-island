@@ -101,6 +101,8 @@ export interface Settings {
     hiddenUntil: number;
     /** Faded from the right-click menu's Fade: see-through and click-through until Show (kept across restarts). */
     faded: boolean;
+    /** Smart fade: faded whenever the pointer is off the island; pop-ups still show in full. */
+    smartFade: boolean;
     /** What the right-click menu shows (src/core/menu.ts); Settings is always in it. */
     menu: MenuShown;
     /** The right-click menu's order (Settings � Behavior � Right-click menu, by dragging); Settings stays last. */
@@ -209,6 +211,7 @@ export function defaultSettings(): Settings {
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       hiddenUntil: 0,
       faded: false,
+      smartFade: false,
       menu: { ...FULL_MENU },
       menuOrder: [...DEFAULT_MENU_ORDER],
       menuIconOnly: { ...DEFAULT_ICON_ONLY },
@@ -355,6 +358,8 @@ export function migrate(saved: unknown): Settings {
   out.island.hiddenUntil = Math.min(out.island.hiddenUntil, HIDE_UNTIL_SHOWN);
   // Fade came after 0.4.2: missing (older settings) or junk means not faded.
   if (typeof out.island.faded !== 'boolean') out.island.faded = false;
+  if (typeof out.island.smartFade !== 'boolean') out.island.smartFade = false;
+
   if (!['primary', 'cursor', 'active', 'specific', 'duplicate'].includes(out.island.display)) out.island.display = 'primary';
   // The menu's order and icon-only choices came after 0.4.2: missing (older settings) means the menu as it always was.
   out.island.menuOrder = normalizeMenuOrder(isObj(saved.island) ? saved.island.menuOrder : null);
