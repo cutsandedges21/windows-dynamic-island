@@ -520,8 +520,8 @@ const contextArgs = new WeakMap<HTMLElement, unknown>();
 /** A dial's way to take a new length from the activity without being rebuilt. */
 const dialSetters = new WeakMap<Element, (seconds: number) => void>();
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
-/** A hub slider being dragged sends its value at most this often (setting the brightness runs PowerShell). */
-const SLIDER_SEND_MS = 150;
+/** A hub slider being dragged sends its value at most this often (brightness.rs sets only the latest, about 15 ms each). */
+const SLIDER_SEND_MS = 60;
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 /** Rounds a CSS length to whole device pixels (125% and 150% scaling make those fractions of a CSS px). */
 const snapPx = (v: number) => {
