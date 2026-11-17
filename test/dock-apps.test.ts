@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
-import { clickPlan, movePins, pinToggle, riseAt, type DockApp } from '../src/core/dock';
+import { clickPlan, dockApps, movePins, openOrder, pinToggle, riseAt, type DockApp } from '../src/core/dock';
 
 const app = (key: string, pinned: boolean, windows: number[] = [], front = false): DockApp => ({ key, name: key.toUpperCase(), icon: null, windows, front, pinned });
 const pin = (key: string) => ({ name: key.toUpperCase(), target: key });
@@ -44,6 +44,23 @@ describe('taskbar apps', () => {
   it('keeps pins that are not on the taskbar right now at the end', () => {
     const pins = [pin('a'), pin('b'), pin('far')];
     expect(keys(movePins(pins, [app('a', true), app('b', true)], 'a', 1))).toEqual(['b', 'a', 'far']);
+  });
+
+  it('keeps open apps where they are when another comes to the front', () => {
+    const win = (hwnd: number, exe: string) => ({ hwnd, pid: hwnd, exe, title: exe, className: 'X', rect: { x: 0, y: 0, width: 10, height: 10 }, state: 'normal' as const, monitor: 'm', dpi: 96 });
+    // Opened in this order: chrome, then code.
+    let seen = openOrder([], [win(1, 'C:\\chrome.exe')]);
+    seen = openOrder(seen, [win(2, 'C:\\code.exe'), win(1, 'C:\\chrome.exe')]);
+    expect(seen).toEqual(['c:\\chrome.exe', 'c:\\code.exe']);
+    // Chrome comes to the front: it keeps its place.
+    const front = [win(1, 'C:\\chrome.exe'), win(2, 'C:\\code.exe')];
+    expect(dockApps([], front, 1, new Map(), seen).map((a) => a.key)).toEqual(['c:\\chrome.exe', 'c:\\code.exe']);
+    const back = [win(2, 'C:\\code.exe'), win(1, 'C:\\chrome.exe')];
+    expect(dockApps([], back, 2, new Map(), seen).map((a) => a.key)).toEqual(['c:\\chrome.exe', 'c:\\code.exe']);
+    // Chrome closes and opens again: now it's last.
+    seen = openOrder(seen, [win(2, 'C:\\code.exe')]);
+    seen = openOrder(seen, [win(3, 'C:\\chrome.exe'), win(2, 'C:\\code.exe')]);
+    expect(seen).toEqual(['c:\\code.exe', 'c:\\chrome.exe']);
   });
 
   it('rises most under the pointer and not at all two icons away', () => {

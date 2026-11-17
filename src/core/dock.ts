@@ -100,9 +100,10 @@ const nameOf = (path: string) => (path.split(/[\\/]/).pop() ?? path).replace(/\.
 
 /**
  * The dock's apps: the pinned ones in their order (with their windows), then every other program
- * with a window, in the order they were last in front. `front` is the window in front now.
+ * with a window, each keeping its place: in `seen`'s order (the order they opened in), new ones at
+ * the end. `front` is the window in front now.
  */
-export function dockApps(pinned: readonly InstalledApp[], windows: readonly LiveWindow[], front: number, icons: ReadonlyMap<string, string | null>): DockApp[] {
+export function dockApps(pinned: readonly InstalledApp[], windows: readonly LiveWindow[], front: number, icons: ReadonlyMap<string, string | null>, seen: readonly string[] = []): DockApp[] {
   const byExe = new Map<string, LiveWindow[]>();
   for (const w of windows) {
     if (!w.exe || SKIP.test(w.exe)) continue;
@@ -117,8 +118,24 @@ export function dockApps(pinned: readonly InstalledApp[], windows: readonly Live
     return { key, name, icon: icons.get(key) ?? null, windows: wins.map((w) => w.hwnd), front: wins.some((w) => w.hwnd === front), pinned: pin };
   };
   const out = pinned.map((p) => app(keyOf(p.target), p.name, true));
-  for (const [key, wins] of [...byExe]) out.push(app(key, nameOf(wins[0].exe), false));
+  const rank = (key: string) => {
+    const i = seen.indexOf(key);
+    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  const rest = [...byExe].sort((a, b) => rank(a[0]) - rank(b[0]));
+  for (const [key, wins] of rest) out.push(app(key, nameOf(wins[0].exe), false));
   return out.slice(0, DOCK_MAX);
+}
+
+/** The programs with a window, in the order they opened: `seen` plus newly opened ones, less closed ones. */
+export function openOrder(seen: readonly string[], windows: readonly LiveWindow[]): string[] {
+  const open: string[] = [];
+  for (const w of windows) {
+    if (!w.exe || SKIP.test(w.exe)) continue;
+    const k = keyOf(w.exe);
+    if (!open.includes(k)) open.push(k);
+  }
+  return [...seen.filter((k) => open.includes(k)), ...open.filter((k) => !seen.includes(k))];
 }
 
 /**
@@ -186,6 +203,8 @@ export interface DockHooks {
 
 export class DockHost {
   private apps: DockApp[] = [];
+  /** Programs with a window, in the order they opened (their places on the dock). */
+  private seen: string[] = [];
   private readonly icons = new Map<string, string | null>();
   private sent = '';
   private shown = false;
@@ -244,7 +263,8 @@ export class DockHost {
         const got = await native.appsIcons(want, 48);
         want.forEach((t, i) => this.icons.set(keyOf(t), got[i] ?? null));
       }
-      this.apps = dockApps(pinned, live, front, this.icons);
+      this.seen = openOrder(this.seen, live);
+      this.apps = dockApps(pinned, live, front, this.icons, this.seen);
       const frame: DockFrame = {
         apps: this.apps,
         music: this.hooks.music(),
@@ -707,6 +727,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (!(e.target as HTMLElement).closest('button') && !frame?.locked) void native.dockAt(-1, true);
   });
 
+  await on<{ full: boolean; up: boolean }>('dock-full', (st) => bar.classList.toggle('faint', Boolean(st?.full && !st.up)));
   await on<DockFrame>('dock-frame', (f) => {
     frame = f;
     draw();

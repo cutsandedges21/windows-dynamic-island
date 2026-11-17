@@ -8,7 +8,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::monitors;
 
@@ -58,18 +58,98 @@ fn style(win: &WebviewWindow) {
 #[cfg(not(windows))]
 fn style(_win: &WebviewWindow) {}
 
-/// Sizes the dock to `w` x `h` logical px and puts it where it belongs: just above the bottom of
-/// the work area (above Windows' taskbar while that one shows), floating over the windows.
-fn put(win: &WebviewWindow, w: f64, h: f64) {
-    let Some(m) = monitors::primary() else { return };
-    let _ = win.set_size(LogicalSize::new(w.ceil(), h.ceil()));
+/// The bar's margin under it inside the dock window, logical px (src/core/dock.ts: the window is the
+/// bar plus 16 px and the headroom for risen icons; the bar sits 18 px from its top).
+const BAR_BELOW: f64 = 12.0;
+/// How long the dock takes to glide down to the screen's edge, or back up, ms.
+const GLIDE_MS: f64 = 240.0;
+/// The pointer gone from the raised dock this long, it goes back down, ms.
+const LEAVE_MS: u128 = 350;
+
+/// The size the page last asked for (logical px), to place the dock again when its mode changes.
+static SIZE: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
+/// A full-screen app is in front: the dock waits at the screen's bottom edge, faint ...
+static FULL: AtomicBool = AtomicBool::new(false);
+/// ... and while the pointer is on it (or on its way up), it is raised to its usual place.
+static UP: AtomicBool = AtomicBool::new(false);
+
+/// The dock window's top (physical px) while it waits at the bottom of a screen ending at `bottom`:
+/// the bar's bottom on the screen's edge. `ph`: the window's height.
+pub fn tucked_y(bottom: i32, ph: i32, scale: f64) -> i32 {
+    bottom - ph + (BAR_BELOW * scale).round() as i32
+}
+
+/// Where the dock's window goes (physical x, y, width, height) at `w` x `h` logical px, by its mode.
+fn spot(w: f64, h: f64) -> Option<(i32, i32, i32, i32)> {
+    let m = monitors::primary()?;
     let centre = *CENTRE.lock().unwrap();
     let (x, y) = place(m.work.x, m.work.width, m.work.y + m.work.height, m.scale, w, h, centre);
+    let (pw, ph) = ((w.ceil() * m.scale).round() as i32, (h.ceil() * m.scale).round() as i32);
+    let y = if FULL.load(Ordering::SeqCst) && !UP.load(Ordering::SeqCst) { tucked_y(m.bounds.y + m.bounds.height, ph, m.scale).max(y) } else { y };
+    Some((x, y, pw, ph))
+}
+
+/// Sizes the dock to `w` x `h` logical px and puts it where it belongs: just above the bottom of
+/// the work area (above Windows' taskbar while that one shows), floating over the windows; with a
+/// full-screen app in front, at the screen's bottom edge until the pointer comes to it.
+fn put(win: &WebviewWindow, w: f64, h: f64) {
+    *SIZE.lock().unwrap() = (w, h);
+    let Some((x, y, pw, ph)) = spot(w, h) else { return };
+    set_rect(win, x, y, pw, ph);
+    tell(win);
+}
+
+/// The page hears whether the dock waits faint at the edge.
+fn tell(win: &WebviewWindow) {
+    let full = FULL.load(Ordering::SeqCst);
+    let up = UP.load(Ordering::SeqCst);
+    let _ = win.app_handle().emit_to(LABEL, "dock-full", serde_json::json!({ "full": full, "up": up }));
+}
+
+/// Moves and sizes the window in one step (two steps can show a frame with the new size in the old
+/// place), topmost again (a full-screen game may have put itself above it).
+#[cfg(windows)]
+fn set_rect(win: &WebviewWindow, x: i32, y: i32, w: i32, h: i32) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE};
+    let Ok(hw) = win.hwnd() else { return };
+    unsafe {
+        let _ = SetWindowPos(HWND(hw.0), Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
+    }
+}
+
+#[cfg(not(windows))]
+fn set_rect(win: &WebviewWindow, x: i32, y: i32, w: i32, h: i32) {
+    let _ = win.set_size(tauri::PhysicalSize::new(w.max(1) as u32, h.max(1) as u32));
     let _ = win.set_position(PhysicalPosition::new(x, y));
 }
 
-/// The foreground window covers its whole screen (a game, a video, F11): the dock steps aside,
-/// as Windows' taskbar does.
+/// The dock's window glides from where it is to `to_y` (physical px), easing out, a frame at a time.
+#[cfg(windows)]
+fn glide(win: &WebviewWindow, to_y: i32) {
+    use windows::Win32::Graphics::Dwm::DwmFlush;
+    let (Ok(at), Ok(size)) = (win.outer_position(), win.outer_size()) else { return };
+    if at.y == to_y {
+        return;
+    }
+    let start = std::time::Instant::now();
+    loop {
+        let t = (start.elapsed().as_secs_f64() * 1000.0 / GLIDE_MS).min(1.0);
+        let e = 1.0 - (1.0 - t).powi(3);
+        let y = at.y + ((to_y - at.y) as f64 * e).round() as i32;
+        set_rect(win, at.x, y, size.width as i32, size.height as i32);
+        if t >= 1.0 {
+            return;
+        }
+        // The next frame (and a guard against a DWM that doesn't wait).
+        unsafe {
+            let _ = DwmFlush();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+/// The foreground window covers its whole screen (a game, a video, F11).
 #[cfg(windows)]
 fn fullscreen_in_front(own: isize) -> bool {
     use windows::Win32::Foundation::HWND;
@@ -95,32 +175,75 @@ fn fullscreen_in_front(own: isize) -> bool {
     r.left <= b.x && r.top <= b.y && r.right >= b.x + b.width && r.bottom >= b.y + b.height
 }
 
+/// The pointer is on the dock or anywhere on its way up: across the dock, from its usual top to the
+/// screen's bottom edge (so a raised dock doesn't drop from under a pointer at the very bottom).
+#[cfg(windows)]
+fn pointer_near() -> bool {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let (w, h) = *SIZE.lock().unwrap();
+    let Some(m) = monitors::primary() else { return false };
+    let centre = *CENTRE.lock().unwrap();
+    let (x, y) = place(m.work.x, m.work.width, m.work.y + m.work.height, m.scale, w, h, centre);
+    let pw = (w.ceil() * m.scale).round() as i32;
+    let mut p = POINT::default();
+    if unsafe { GetCursorPos(&mut p) }.is_err() {
+        return false;
+    }
+    p.x >= x && p.x < x + pw && p.y >= y && p.y <= m.bounds.y + m.bounds.height
+}
+
 static WATCHER: AtomicBool = AtomicBool::new(false);
 
-/// While the dock exists: hidden over a full-screen app, back after.
+/// While the dock exists: with a full-screen app in front it glides down to the screen's bottom
+/// edge and goes faint; the pointer coming to it glides it back up, and it works as usual there.
 fn watch_fullscreen(app: AppHandle) {
     if WATCHER.swap(true, Ordering::SeqCst) {
         return;
     }
     std::thread::spawn(move || {
-        let mut hidden = false;
+        let mut away: Option<std::time::Instant> = None;
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(400));
+            let full = FULL.load(Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(if full { 30 } else { 300 }));
             let Some(win) = app.get_webview_window(LABEL) else {
                 WATCHER.store(false, Ordering::SeqCst);
+                FULL.store(false, Ordering::SeqCst);
+                UP.store(false, Ordering::SeqCst);
                 return;
             };
             #[cfg(windows)]
             {
                 let own = win.hwnd().map(|h| h.0 as isize).unwrap_or(0);
-                let full = fullscreen_in_front(own);
-                if full != hidden {
-                    hidden = full;
-                    let _ = if full { win.hide() } else { win.show() };
+                let now = fullscreen_in_front(own);
+                let up = UP.load(Ordering::SeqCst);
+                let want_up = now && {
+                    if pointer_near() {
+                        away = None;
+                        true
+                    } else if up {
+                        // A moment's grace before it goes back down.
+                        let since = *away.get_or_insert_with(std::time::Instant::now);
+                        since.elapsed().as_millis() < LEAVE_MS
+                    } else {
+                        false
+                    }
+                };
+                if now != full || want_up != up {
+                    FULL.store(now, Ordering::SeqCst);
+                    UP.store(want_up, Ordering::SeqCst);
+                    if !want_up {
+                        away = None;
+                    }
+                    tell(&win);
+                    let (w, h) = *SIZE.lock().unwrap();
+                    if let Some((_, y, _, _)) = spot(w, h) {
+                        glide(&win, y);
+                    }
                 }
             }
             #[cfg(not(windows))]
-            let _ = (&win, &mut hidden);
+            let _ = (&win, &mut away, full);
         }
     });
 }
@@ -290,6 +413,13 @@ mod tests {
         assert_eq!(place(0, 1920, 1032, 1.0, 600.0, 56.0, -1.0), (660, 1032 - 64));
         // A 125 % screen counts physical pixels.
         assert_eq!(place(0, 1920, 1020, 1.25, 600.0, 56.0, -1.0), (585, 1020 - 80));
+    }
+
+    #[test]
+    fn waiting_at_the_edge_the_bar_sits_on_the_screens_bottom() {
+        // An 82 px window at 125 %: 103 px tall, its bar 15 px above the window's bottom.
+        assert_eq!(super::tucked_y(1080, 103, 1.25), 1080 - 103 + 15);
+        assert_eq!(super::tucked_y(1080, 82, 1.0), 1080 - 82 + 12);
     }
 
     #[test]

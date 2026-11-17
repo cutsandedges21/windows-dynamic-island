@@ -2070,6 +2070,10 @@ html[data-pill='glass'] .hub-menu .hm-lock { background: rgba(22, 24, 30, 0.8); 
   box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.6);
 }
 .dock.locked { cursor: default; }
+/* A full-screen app in front: the bar waits at the screen's bottom edge, as faint as the island when
+   Ctrl lets the mouse through it (html.peek #stage), until the pointer comes to it. */
+.dock { transition: opacity 0.24s ease; }
+.dock.faint { opacity: 0.12; }
 .dock.grabbing { cursor: grabbing; }
 .dock-bg {
   position: absolute;
