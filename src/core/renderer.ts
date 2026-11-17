@@ -81,7 +81,9 @@ export function springAnimate(target: Element, keyframes: Keyframe[], cfg: Sprin
 
 /** How far a wheel event scrolls, in px (a line-based wheel counts 40 px a line). */
 export function wheelDelta(e: WheelEvent): number {
-  const d = e.deltaY || e.deltaX;
+  // The way the fingers mostly went: a sideways swipe on a touchpad wobbles a pixel or two up and
+  // down too, and taking that wobble (deltaY first) made it switch back and forth at random (Justin).
+  const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
   return e.deltaMode === 1 ? d * 40 : e.deltaMode === 2 ? d * 400 : d;
 }
 

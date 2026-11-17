@@ -49,6 +49,10 @@ describe('scrolling the pill', () => {
     expect(notch).toBe(120);
     expect(new WheelGesture().step(notch, 0)).toBe(1);
     expect(wheelDelta({ deltaY: 0, deltaX: -1, deltaMode: 2 } as WheelEvent)).toBe(-400);
+    // A sideways swipe that wobbles up and down a little goes by the sideways part (Justin).
+    expect(wheelDelta({ deltaY: -2, deltaX: 18, deltaMode: 0 } as WheelEvent)).toBe(18);
+    expect(wheelDelta({ deltaY: 2, deltaX: -18, deltaMode: 0 } as WheelEvent)).toBe(-18);
+    expect(wheelDelta({ deltaY: 12, deltaX: 3, deltaMode: 0 } as WheelEvent)).toBe(12);
     expect(wheelDelta({ deltaY: -57, deltaX: 0, deltaMode: 0 } as WheelEvent)).toBe(-57);
   });
 
