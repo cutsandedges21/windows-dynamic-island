@@ -897,10 +897,22 @@ describe('text and links', () => {
     emit('land-peers', [MAC]);
     act.drop(['C:\\x\\photo.jpg']);
     await tick(0);
-    expect(block(act.sheet(sheetEnv('open'))!, 'input', 'text')).toMatchObject({ placeholder: 'Add a note to send with them, then Enter' });
+    expect(block(act.sheet(sheetEnv('open'))!, 'input', 'text')).toMatchObject({ placeholder: 'Add a note, or paste another picture, then Enter', pasteFiles: 'paste' });
     await act.action('stage-text', 'for you');
     await act.action('send');
     expect(h.native.landSend).toHaveBeenCalledWith(MAC.id, ['C:\\x\\photo.jpg'], 'for you');
+  });
+
+  it('a new picture next to an old one on the shelf is the one that goes, with the note', async () => {
+    const { act } = await boot();
+    emit('land-peers', [MAC]);
+    act.drop(['C:\\x\\old.png']);
+    await tick(0);
+    await act.action('stage-text', 'look');
+    act.drop(['C:\\x\\new.png']);
+    await tick(0);
+    await act.action('send');
+    expect(h.native.landSend).toHaveBeenCalledWith(MAC.id, ['C:\\x\\new.png'], 'look');
   });
 
   it('a link that arrives can be opened instead', async () => {

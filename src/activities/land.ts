@@ -1012,7 +1012,8 @@ export class LandActivity extends BaseActivity {
       }));
       blocks.push({ t: 'files', key: 'files', items, drag: env.interactive ? 'drag-out' : undefined });
       // A note to go with them, in the same message (the receiver gets a Copy for each).
-      if (!this.stagedText && env.interactive) blocks.push({ t: 'input', key: 'text', placeholder: 'Add a note to send with them, then Enter', action: 'stage-text' });
+      // A picture pasted into it joins the shelf too (Justin: a new screenshot did nothing there).
+      if (!this.stagedText && env.interactive) blocks.push({ t: 'input', key: 'text', placeholder: 'Add a note, or paste another picture, then Enter', action: 'stage-text', pasteFiles: 'paste' });
     } else if (!this.stagedText) {
       blocks.push({ t: 'text', key: 'hint', text: 'Drag files or folders onto the island, or paste a link or a note below, then pick who gets it.', tone: 'muted', size: 'sm' });
       blocks.push({ t: 'input', key: 'text', placeholder: 'Paste a link or type a note, then Enter', action: 'stage-text', pasteFiles: 'paste' });
@@ -1175,7 +1176,17 @@ export class LandActivity extends BaseActivity {
     if (!fresh.length) return;
     const got = await native.landStage(fresh);
     if (!this.alive) return;
+    const had = this.staged.length > 0;
     for (const s of got) if (!this.staged.some((x) => x.path === s.path)) this.staged.push(s);
+    // Files from before are still on the shelf: what just came is what goes next, ticked on its own
+    // (Justin: a new screenshot went with the old picture). Tap the others to send them too.
+    if (had) {
+      const fresh = got.filter((s) => !s.error).map((s) => s.path);
+      if (fresh.length) {
+        this.ticked.clear();
+        for (const p of fresh) this.ticked.add(p);
+      }
+    }
     this.shelfChanged();
     this.note = null;
     this.ctx.update();
@@ -1261,7 +1272,7 @@ export class LandActivity extends BaseActivity {
           void native.landShareStop();
         }
         if (pasted.files.length) {
-          this.stagedText = null;
+          // A note waiting goes with them (one message).
           await this.stage(pasted.files);
         } else if (pasted.text?.trim()) {
           await this.action('stage-text', pasted.text);
