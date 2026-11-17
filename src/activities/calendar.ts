@@ -7,7 +7,7 @@ import { clip, timeOfDay, until } from '../core/format';
 import { native } from '../core/native';
 import { platform } from '../core/platform';
 import type { Seg } from '../core/segments';
-import type { Block, CalDay, CalEvent, SheetButton, SheetView, Tile } from '../core/sheet';
+import type { Block, CalDay, CalEvent, SheetButton, SheetRow, SheetView, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
 import { addDays, dayKey, dayStart, firstWeekday, fromDayKey, googleAddUrl, isoWeek, monthWeeks, parseAdded, weekdayHeads, weekDays, weekStartOf, type Added, type GridDay } from './calgrid';
 import { expand, parseIcs, type IcsEvent, type Occurrence } from './ics';
@@ -290,7 +290,7 @@ export class CalendarActivity extends BaseActivity {
   }
 
   /**
-   * This week (or this month: Activities › Calendar › Show), starting on the locale's first day.
+   * Today's events (or this month: Activities › Calendar › Show).
    * A tap opens the calendar card. It always shows (Justin: "Nothing right now" when the link had not
    * loaded yet): the days and the events typed into the card, the link's as soon as it loads.
    */
@@ -319,22 +319,37 @@ export class CalendarActivity extends BaseActivity {
         },
       };
     }
-    const { start, occ } = this.weekOf(env.now);
-    const heads = weekdayHeads(firstWeekday());
-    const days = heads.map((label, i) => {
-      const d = this.calDay({ start: addDays(start, i), num: new Date(addDays(start, i)).getDate(), inMonth: true }, occ, env.now, null);
-      return { label, num: d.num, today: Boolean(d.today), busy: d.busy };
+    // Today's events, not the week's days (Justin): all-day ones first, then what is on now and
+    // what comes next; the ones already over are left off.
+    const { occ } = this.weekOf(env.now);
+    const from = dayStart(env.now);
+    const to = addDays(from, 1);
+    const today = occ.filter((o) => o.start < to && Math.max(o.end, o.start + 1) > from);
+    const left = today
+      .filter((o) => o.allDay || Math.max(o.end, o.start + 1) > env.now)
+      .sort((a, b) => Number(b.allDay) - Number(a.allDay) || a.start - b.start);
+    const rows = left.map((o): SheetRow => {
+      const now = !o.allDay && o.start <= env.now;
+      return {
+        key: `${o.uid}${o.start}`,
+        dot: now ? 'good' : 'accent',
+        title: o.title || 'Event',
+        detail: o.allDay ? 'All day' : now ? `Now, until ${timeOfDay(o.end)}` : `${timeOfDay(o.start)} - ${timeOfDay(o.end)}`,
+      };
     });
+    const empty = windows && !today.length && this.windowsNote ? this.windowsNote : today.length ? 'Nothing else today' : 'Nothing today';
     return {
       key: 'calendar',
       span: 2,
+      rows: rows.length > 2 ? 2 : 1,
       ...open,
       body: {
-        k: 'week',
-        title: new Date(env.now).toLocaleDateString('en-US', { month: 'long' }),
-        // With nothing to show, say why rather than leaving an empty week.
-        sub: this.countText(occ.length, windows),
-        days,
+        k: 'list',
+        icon: 'calendar',
+        label: 'Today',
+        sub: new Date(env.now).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }),
+        rows,
+        empty,
       },
     };
   }

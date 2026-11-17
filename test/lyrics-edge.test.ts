@@ -107,7 +107,7 @@ describe('loader edges', () => {
 });
 
 describe('the player gets the line', () => {
-  it('puts the sung line on the PlayerBlock from the live position, and none when off', async () => {
+  it('no sung line under the artist (the button opens the song), and no button when off', async () => {
     h.native.httpGet = vi.fn(async () => ({ status: 200, body: JSON.stringify({ syncedLyrics: '[00:01.00]one\n[00:05.00]five' }) }));
     const { MusicActivity } = await import('../src/activities/music');
     let opts: Record<string, unknown> = {};
@@ -120,8 +120,9 @@ describe('the player gets the line', () => {
     const find = (v: any) => JSON.stringify(v).match(/"lyric":("[^"]*"|null)/)?.[1];
     act.sheet(env);
     await flush();
-    expect(find(act.sheet(env))).toBe('"five"');
-    opts = { lyrics: false };
     expect(find(act.sheet(env))).toBe('null');
+    expect(act.sheet(env).blocks[0].lyricsButton).toMatchObject({ action: 'lyrics' });
+    opts = { lyrics: false };
+    expect(act.sheet(env).blocks[0].lyricsButton).toBeNull();
   });
 });

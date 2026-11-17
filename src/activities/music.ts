@@ -325,7 +325,8 @@ export class MusicActivity extends BaseActivity {
       position: pos,
       duration: m.duration && m.duration > 0 ? m.duration : null,
       color: this.barTint() ?? null,
-      lyric,
+      // No sung line under the artist (Justin): the lyrics button opens the whole song instead.
+      lyric: null,
       lyrics: open ? { ...this.panel(pos, 'lyrics'), split: 'lyrics-split', width: this.lyricsSplit() } : null,
       lyricsButton: on && lyric != null ? { action: 'lyrics', on: open } : null,
       // Not interactive (Activities › Music): the player only shows, with no buttons.

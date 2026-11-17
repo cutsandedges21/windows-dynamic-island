@@ -1337,6 +1337,9 @@ describe('calendar', () => {
     expect(segs.find((s) => s.key === 'join')).toMatchObject({ t: 'button', icon: 'video', label: 'Join' });
     expect(act.render(env('maximum')).find((s) => s.key === 'at')).toBeTruthy();
     smoke(act, 'calendar');
+    // The tile: today's events (Justin), not the week's days.
+    const tileNow = () => act.tile!({ reason: 'open', now: Date.now(), width: 600, vertical: false, interactive: true, surfaced: null });
+    expect(tileNow()).toMatchObject({ action: 'card', body: { k: 'list', label: 'Today', rows: [{ title: 'Design review', dot: 'accent' }] } });
     await tick(1000);
     expect(calls.surface.at(-1)).toMatchObject({ key: expect.stringContaining('soon-') });
 
@@ -1347,6 +1350,7 @@ describe('calendar', () => {
     expect(act.status().urgent!.key).toMatch(/^start-m1/);
     expect(calls.surface.at(-1)).toMatchObject({ ms: 60000 });
     expect(act.render(env('expanded')).find((s) => s.key === 'when')).toMatchObject({ text: 'now' });
+    expect(tileNow()).toMatchObject({ body: { rows: [{ title: 'Design review', dot: 'good', detail: expect.stringMatching(/^Now, until /) }] } });
     act.dismiss(act.status().urgent!.key);
     expect(act.status().urgent ?? null).toBe(null);
 
@@ -1378,7 +1382,7 @@ describe('calendar', () => {
     await tick(60000);
     expect(h.native.httpGet).toHaveBeenCalledTimes(2);
     // The tile shows anyway (the days, and events typed in), not 'Nothing right now'.
-    expect(bad.act.tile!({ reason: 'open', now: Date.now(), width: 600, vertical: false, interactive: true, surfaced: null })).toMatchObject({ body: { k: 'week' } });
+    expect(bad.act.tile!({ reason: 'open', now: Date.now(), width: 600, vertical: false, interactive: true, surfaced: null })).toMatchObject({ body: { k: 'list', label: 'Today', rows: [], empty: 'Nothing today' } });
 
     resetNative();
     const empty = await boot(new CalendarActivity(), { source: 'ics', ics: '', leadMinutes: 15 });
@@ -1751,7 +1755,7 @@ describe('calendar card', () => {
     const { act, calls, options } = await boot(new CalendarActivity(), { source: 'ics', ics: 'https://cal.example.com/a.ics', leadMinutes: 15 });
     await tick(0);
     const tile = act.tile(open())!;
-    expect(tile).toMatchObject({ action: 'card', span: 2, body: { k: 'week' } });
+    expect(tile).toMatchObject({ action: 'card', span: 2, body: { k: 'list', label: 'Today' } });
     await act.action!('card', null);
     expect(calls.openCard).toBe(1);
     const v = act.sheet(open())!;
@@ -1836,7 +1840,8 @@ describe('music lyrics', () => {
     act.sheet(hover());
     await tick(0);
     let v = act.sheet(hover())!;
-    expect(v.blocks[0]).toMatchObject({ t: 'player', lyric: 'Second line', lyricsButton: { action: 'lyrics', on: false }, lyrics: null });
+    // No sung line under the artist (Justin): the button opens the whole song.
+    expect(v.blocks[0]).toMatchObject({ t: 'player', lyric: null, lyricsButton: { action: 'lyrics', on: false }, lyrics: null });
     expect(v.width).toBeUndefined();
     await act.action('lyrics');
     v = act.sheet(hover())!;

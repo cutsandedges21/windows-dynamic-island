@@ -580,7 +580,7 @@ export const CATALOG: ActivityMeta[] = [
         label: 'Show',
         default: 'week',
         choices: [
-          { value: 'week', label: 'This week' },
+          { value: 'week', label: "Today's events (the card shows the week)" },
           { value: 'month', label: 'The whole month' },
         ],
         help: 'In Control Center and in the calendar card (a tap on its tile), where you can also switch and add events.',
