@@ -524,6 +524,8 @@ const dialSetters = new WeakMap<Element, (seconds: number) => void>();
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 /** A hub slider being dragged sends its value at most this often (brightness.rs sets only the latest, about 15 ms each). */
 const SLIDER_SEND_MS = 60;
+/** After a slider is let go, its fill stays where it was left this long: the level read back from Windows lags behind. */
+const SLIDER_HOLD_MS = 1500;
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 /** Rounds a CSS length to whole device pixels (125% and 150% scaling make those fractions of a CSS px). */
 const snapPx = (v: number) => {
@@ -3179,13 +3181,25 @@ export class SheetRenderer {
     // Only what shows on the tile counts: the sliders' levels slide, and the pills' hold menus are kept aside.
     const flat = (x: Tile) => {
       const hb = x.body as { sliders: HubSlider[]; pills: HubPill[] };
-      return this.tileSig({ ...x, body: { ...x.body, sliders: hb.sliders.map((h) => ({ ...h, value: 0 })), pills: hb.pills.map((p) => ({ ...p, menu: undefined })) } } as Tile, false);
+      // A slider's level, and the icon and tip that follow it (sun-low under half, "Brightness 40%"):
+      // rebuilding the tile for those replaced the slider mid-drag, and the fill stopped following.
+      return this.tileSig({ ...x, body: { ...x.body, sliders: hb.sliders.map((h) => ({ ...h, value: 0, icon: '', tip: undefined })), pills: hb.pills.map((p) => ({ ...p, menu: undefined })) } } as Tile, false);
     };
     if (flat(prev) !== flat(t)) return false;
     for (const p of t.body.pills) if (p.menu) this.hubMenus.set(`${t.key}/${p.key}`, p.menu);
     for (const h of t.body.sliders) {
       const track = el.querySelector<HTMLElement>(`.hs[data-key="${h.key}"]`);
-      if (track && !track.classList.contains('dragging')) track.style.setProperty('--v', String(clamp01(h.value)));
+      if (!track) continue;
+      // Being dragged, or just let go (what Windows reports back lags behind): the fill stays the user's.
+      const held = track.classList.contains('dragging') || Date.now() < Number(track.dataset.heldUntil ?? 0);
+      if (!held) {
+        track.style.setProperty('--v', String(clamp01(h.value)));
+        if (h.tip) track.title = h.tip;
+      }
+      if (track.dataset.icon !== h.icon) {
+        track.dataset.icon = h.icon;
+        track.querySelector('.hsi')?.replaceWith(iconEl(h.icon, 'hsi'));
+      }
     }
     return true;
   }
@@ -3345,6 +3359,7 @@ export class SheetRenderer {
   private hubSlider(h: HubSlider, live: boolean): HTMLElement {
     const track = make('div', 'hs');
     track.dataset.key = h.key;
+    track.dataset.icon = h.icon;
     track.style.setProperty('--v', String(clamp01(h.value)));
     if (h.tip) track.title = h.tip;
     track.append(make('i', 'hf'), iconEl(h.icon, 'hsi'));
@@ -3384,6 +3399,7 @@ export class SheetRenderer {
       if (!track.classList.contains('dragging')) return;
       if (track.hasPointerCapture(ev.pointerId)) track.releasePointerCapture(ev.pointerId);
       track.classList.remove('dragging');
+      track.dataset.heldUntil = String(Date.now() + SLIDER_HOLD_MS);
       send(true);
     };
     track.addEventListener('pointerup', end);
@@ -3396,6 +3412,7 @@ export class SheetRenderer {
         ev.stopPropagation();
         value = clamp01(Math.round((value - Math.sign(ev.deltaY) * 0.05) * 100) / 100);
         track.style.setProperty('--v', String(value));
+        track.dataset.heldUntil = String(Date.now() + SLIDER_HOLD_MS);
         send(false);
       },
       { passive: false },
