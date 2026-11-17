@@ -21,8 +21,24 @@ pub struct Offer {
     pub total: u64,
     /// The sender's id for this transfer: the same when it comes back after a dropped connection.
     pub tid: Option<String>,
-    /// Text or a link instead of files (an Island before 0.3.0 declines it as "bad").
+    /// Text or a link instead of files (an Island before 0.3.0 declines it as "bad"), or a note with them.
     pub text: Option<String>,
+    /// A note's picture, small (a PNG data address), so the ask shows the two together (Justin).
+    pub thumb: Option<String>,
+}
+
+/// The largest picture preview an offer carries (its data address), bytes.
+pub const MAX_THUMB: usize = 400_000;
+
+/// A preview worth keeping: a picture's data address, not too big.
+pub fn clean_thumb(v: Option<&Value>) -> Option<String> {
+    v.and_then(Value::as_str).filter(|s| s.starts_with("data:image/") && s.len() <= MAX_THUMB).map(String::from)
+}
+
+/// Whether a file's name says it is a picture (the ones a preview is made for).
+pub fn image_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".tif", ".tiff"].iter().any(|e| n.ends_with(e))
 }
 
 /// The longest text one send carries.
@@ -64,7 +80,8 @@ impl Offer {
         let from = clean_name(v.get("from").and_then(Value::as_str).unwrap_or(""));
         let os = clean_os(v.get("os").and_then(Value::as_str).unwrap_or(""));
         let tid = v.get("tid").and_then(Value::as_str).filter(|t| !t.is_empty() && t.len() <= 80).map(String::from);
-        Some(Offer { from, os, files, total, tid, text })
+        let thumb = if text.is_some() { clean_thumb(v.get("thumb")) } else { None };
+        Some(Offer { from, os, files, total, tid, text, thumb })
     }
 }
 
@@ -131,9 +148,12 @@ pub struct Transfer {
     pub expires: Option<u64>,
     /// How it goes: "lan" (a computer nearby), or for a friend "direct" or "relay" (it can change midway).
     pub via: Option<&'static str>,
-    /// What a text send carries, instead of files.
+    /// What a text send carries, instead of files (or a note that came with them).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// A note's picture, small, shown with it before it is taken.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumb: Option<String>,
 }
 
 impl Transfer {
@@ -153,6 +173,7 @@ impl Transfer {
             expires: None,
             via: None,
             text: None,
+            thumb: None,
         }
     }
 }

@@ -126,6 +126,12 @@ fn text_offers_are_checked() {
     assert!(Offer::parse(&json!({ "t": "offer", "files": [], "text": "   " })).is_none(), "blank text");
     assert!(Offer::parse(&json!({ "t": "offer", "files": [], "text": "x".repeat(MAX_TEXT + 1) })).is_none(), "too long");
     assert!(Offer::parse(&json!({ "t": "offer", "files": [], "text": 5 })).is_none());
+    // A note's picture preview: kept when it is a picture's data address and not too big.
+    let with = |thumb: Value| Offer::parse(&json!({ "t": "offer", "files": [{ "name": "a.png", "size": 3 }], "text": "hi", "thumb": thumb })).unwrap().thumb;
+    assert_eq!(with(json!("data:image/png;base64,AAAA")).as_deref(), Some("data:image/png;base64,AAAA"));
+    assert_eq!(with(json!("https://example.com/x.png")), None);
+    assert_eq!(with(json!(format!("data:image/png;base64,{}", "A".repeat(MAX_THUMB)))), None);
+    assert!(image_name("Photo.JPG") && !image_name("notes.txt"));
 }
 
 #[test]

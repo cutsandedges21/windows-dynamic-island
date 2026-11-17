@@ -790,6 +790,8 @@ export class LandActivity extends BaseActivity {
       { t: 'head', key: 'head', icon: 'land', tone: 'accent', title: `${t.peer.name} sent you a note and ${t.count === 1 ? t.items[0]?.name ?? 'a file' : plural(t.count, 'file')}`, sub: `${bytes(t.total)}${osLabel(t.peer.os) ? ` · ${osLabel(t.peer.os)}` : ''}` },
       { t: 'text', key: 'text', text, bubble: true, lines: 6 },
     ];
+    // The picture itself with its note, both at once (Justin), when the sender sent its preview.
+    if (t.thumb) blocks.push({ t: 'image', key: 'picture', src: t.thumb, alt: t.items[0]?.name ?? '', max: 200 });
     if (t.count > 1) blocks.push({ t: 'rows', key: 'files', items: t.items.slice(0, FILE_ROWS).map((it, i) => ({ key: `f${i}`, icon: it.dir ? 'folder' : 'file', title: it.name, detail: bytes(it.size) })) });
     if (t.expires) blocks.push({ t: 'countdown', key: 'left', until: t.expires, total: ASK_MS, tone: 'accent' });
     if (env.interactive) {
@@ -830,6 +832,8 @@ export class LandActivity extends BaseActivity {
     ];
     const saved = this.transfers.get(n.id)?.saved ?? [];
     const image = saved.find((p) => isImageName(p));
+    const thumb = this.transfers.get(n.id)?.thumb;
+    if (thumb) blocks.push({ t: 'image', key: 'picture', src: thumb, alt: image ? baseName(image) : '', max: 200 });
     if (saved.length) blocks.push({ t: 'rows', key: 'saved', items: saved.slice(0, FILE_ROWS).map((p) => ({ key: p, icon: isImageName(p) ? 'image' : 'file', title: baseName(p), action: 'open', arg: p, tip: 'Open' })) });
     if (env.interactive) {
       const items: SheetButton[] = [

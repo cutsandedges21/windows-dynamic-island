@@ -170,6 +170,8 @@ export type Block =
   | { t: 'zones'; key: string; height: number; hot?: string | null; items: DropZone[] }
   /** A QR code: `size` modules a side, `cells` row by row with '1' for dark. */
   | { t: 'qr'; key: string; size: number; cells: string; caption?: string }
+  /** A picture (a data address or a URL), as big as the card allows up to `max` px tall. */
+  | { t: 'image'; key: string; src: string; alt?: string; max?: number }
   /**
    * The Control Center grid. `items` already know where they sit (the island
    * packed them); `tray` holds the ones taken off the grid, shown while editing.
@@ -1919,6 +1921,17 @@ export class SheetRenderer {
         const e = make('div', 'sb sb-qr');
         e.append(qrSvg(b.size, b.cells));
         if (b.caption) e.append(make('div', 'qc', b.caption));
+        return e;
+      }
+      case 'image': {
+        const e = make('div', 'sb sb-img');
+        const img = make('img', '');
+        img.alt = b.alt ?? '';
+        img.decoding = 'async';
+        img.draggable = false;
+        img.src = b.src;
+        if (b.max) img.style.maxHeight = `${b.max}px`;
+        e.append(img);
         return e;
       }
       case 'calendar':

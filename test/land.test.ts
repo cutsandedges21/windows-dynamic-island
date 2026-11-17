@@ -867,11 +867,13 @@ describe('text and links', () => {
 
   it('a picture with a note: one card, a Copy for each, the picture copied once it lands', async () => {
     const { act } = await boot();
-    const combo = (over: Partial<LandTransfer>) => transfer({ id: 'in-c', dir: 'in', count: 1, total: 2048, items: [{ name: 'photo.png', size: 2048, files: 1, dir: false }], text: 'here it is', ...over });
+    const combo = (over: Partial<LandTransfer>) => transfer({ id: 'in-c', dir: 'in', count: 1, total: 2048, items: [{ name: 'photo.png', size: 2048, files: 1, dir: false }], text: 'here it is', thumb: 'data:image/png;base64,AAAA', ...over });
     emit('land-transfer', combo({ state: 'asking', expires: T0 + 120_000 }));
     let card = act.sheet(sheetEnv('urgent'))!;
     expect(block(card, 'head', 'head')!.title).toBe("Moss's MacBook Air sent you a note and photo.png");
     expect(block(card, 'text', 'text')!.text).toBe('here it is');
+    // The picture and its note together.
+    expect(block(card, 'image', 'picture')).toMatchObject({ src: 'data:image/png;base64,AAAA' });
     expect(block(card, 'buttons', 'answer')!.items.map((b) => b.label)).toEqual(['Decline', 'Reply', 'Copy text', 'Copy image']);
     // Copy image takes the message; the picture goes on the clipboard when it is in Downloads.
     await act.action('combo-image', 'in-c');

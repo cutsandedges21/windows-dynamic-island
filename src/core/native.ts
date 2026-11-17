@@ -497,8 +497,10 @@ export interface LandTransfer {
   expires: number | null;
   /** How it goes: a computer nearby ('lan'), or a friend 'direct' or through a 'relay' (it can change midway). */
   via?: 'lan' | 'direct' | 'relay' | null;
-  /** A text send (a link, a note) instead of files. */
+  /** A text send (a link, a note) instead of files, or a note that came with them. */
   text?: string | null;
+  /** That note's picture, small (a data address): shown with it before it is taken. */
+  thumb?: string | null;
 }
 /** A dropped path before it is sent. */
 export interface LandStaged {

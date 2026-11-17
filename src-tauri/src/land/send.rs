@@ -305,6 +305,14 @@ impl Running {
         let mut offer = json!({ "t": "offer", "from": self.name(), "os": std::env::consts::OS, "files": offered, "tid": t.id });
         if let Some(text) = &t.text {
             offer["text"] = json!(text);
+            // A note with one picture: a small preview goes along, so the ask shows both at once.
+            if let [one] = items {
+                if image_name(&one.name) {
+                    if let Some(thumb) = preview(&one.path).await {
+                        offer["thumb"] = json!(thumb);
+                    }
+                }
+            }
         }
         send_json(&mut wr, &wire, &offer).await.map_err(|_| lost())?;
 
@@ -411,3 +419,21 @@ impl Running {
     }
 
 }
+
+/// A picture's preview for an offer (Windows' own thumbnail, as a PNG data address), or none.
+async fn preview(path: &std::path::Path) -> Option<String> {
+    #[cfg(windows)]
+    {
+        let p = path.to_string_lossy().to_string();
+        return tokio::task::spawn_blocking(move || crate::shelf::shell_image(&p, PREVIEW_PX, false)).await.ok().flatten().filter(|t| t.len() <= MAX_THUMB);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// How big that preview is drawn, px.
+#[cfg_attr(not(windows), allow(dead_code))]
+const PREVIEW_PX: u32 = 320;

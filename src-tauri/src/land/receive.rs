@@ -109,6 +109,7 @@ impl Running {
         let id = self.next_id("in");
         let mut t = Transfer::new(&id, "in", peer.clone(), &offer.files);
         t.text = offer.text.clone();
+        t.thumb = offer.thumb.clone();
         t.via = Some(via);
 
         let quiet = self.declined.lock().unwrap().get(&sender).is_some_and(|t| t.elapsed() < DECLINE_QUIET);
