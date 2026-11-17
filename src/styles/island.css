@@ -1022,8 +1022,9 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
   z-index: -1;
 }
 
-/* A card on a colour (Music's hover player on the art's): over the glass, fading in and out with it. */
-.sheet-bg::after {
+/* A card on a colour (Music's hover player on the art's): over the glass, fading in and out with it.
+   ::before, as the glass look draws its rim with ::after (Justin: no colour with it). */
+.sheet-bg::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -1033,7 +1034,7 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
   transition: opacity 0.3s ease;
   pointer-events: none;
 }
-.sheet.tinted .sheet-bg::after { opacity: 1; }
+.sheet.tinted .sheet-bg::before { opacity: 1; }
 
 .sheet-inner {
   position: absolute;
