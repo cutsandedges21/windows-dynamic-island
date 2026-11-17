@@ -1372,8 +1372,13 @@ describe('calendar', () => {
     const bad = await boot(new CalendarActivity(), { source: 'ics', ics: 'https://x.test/c.ics', leadMinutes: 15 });
     await tick(0);
     expect(bad.act.status().active).toBe(false);
+    // The first few failures try again after half a minute (a network still coming up), then it backs off.
+    await tick(20000);
+    expect(h.native.httpGet).toHaveBeenCalledTimes(1);
     await tick(60000);
-    expect(h.native.httpGet).toHaveBeenCalledTimes(1); // backs off
+    expect(h.native.httpGet).toHaveBeenCalledTimes(2);
+    // The tile shows anyway (the days, and events typed in), not 'Nothing right now'.
+    expect(bad.act.tile!({ reason: 'open', now: Date.now(), width: 600, vertical: false, interactive: true, surfaced: null })).toMatchObject({ body: { k: 'week' } });
 
     resetNative();
     const empty = await boot(new CalendarActivity(), { source: 'ics', ics: '', leadMinutes: 15 });

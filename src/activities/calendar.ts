@@ -68,6 +68,8 @@ export class CalendarActivity extends BaseActivity {
   private windowsNote: string | null = null;
   private fetchedAt = 0;
   private retryAt = 0;
+  /** Loads of the link that failed in a row: the first few try again soon (a network still coming up). */
+  private fails = 0;
   private fetching = false;
   private phase = '';
   private readonly dismissed = new Set<string>();
@@ -128,7 +130,11 @@ export class CalendarActivity extends BaseActivity {
       if (events) {
         this.events = events;
         this.fetchedAt = Date.now();
-      } else this.retryAt = Date.now() + RETRY_MS;
+        this.fails = 0;
+      } else {
+        this.fails++;
+        this.retryAt = Date.now() + (this.fails <= 3 ? MIN / 2 : RETRY_MS);
+      }
     }
     this.recompute(Date.now());
   }
@@ -285,12 +291,12 @@ export class CalendarActivity extends BaseActivity {
 
   /**
    * This week (or this month: Activities › Calendar › Show), starting on the locale's first day.
-   * A tap opens the calendar card. With a link that has not loaded yet it waits; with nothing set it
-   * still shows, for the events typed into the card.
+   * A tap opens the calendar card. It always shows (Justin: "Nothing right now" when the link had not
+   * loaded yet): the days and the events typed into the card, the link's as soon as it loads.
    */
   tile(env: SheetEnv): Tile | null {
     const windows = this.source() === 'windows';
-    if (windows ? !this.fetchedAt : this.url && !this.fetchedAt) return null;
+    if (windows && !this.fetchedAt) return null;
     const open = env.interactive ? { action: 'card', tip: 'Open the calendar' } : {};
     if (this.view() === 'month') {
       const first = firstWeekday();
