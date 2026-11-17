@@ -28,8 +28,10 @@ export interface PlayerBlock {
    * The lyrics panel beside the player, while it is open: every line of the song, and the one being
    * sung (-1 before the first), which sits a third of the way down and glides up as the song goes.
    * `note` says why there are none (still looking, or the song has none); `close` is its back arrow.
+   * `split` is dragging the line between the player and the lyrics (it gets the panel's new width in
+   * px), like the line between two apps side by side on Windows; `width` is where it was left.
    */
-  lyrics?: { lines: string[]; at: number; note?: string; close?: string } | null;
+  lyrics?: { lines: string[]; at: number; note?: string; close?: string; split?: string; width?: number | null } | null;
   /** The lyrics button at the controls' start (only when the song has synced lyrics): `on` while the panel is open. */
   lyricsButton?: { action: string; on: boolean } | null;
   /** Control Center's media card: the art big over the track, the lyrics beside, on the art's colour (`tint`). */
@@ -92,11 +94,14 @@ export function buildPlayer(b: PlayerBlock, bind: Bind, act: Act): HTMLElement {
   const close = button('pl-ly-close', 'chevron-left', 'Close lyrics');
   const view = make('div', 'pl-ly-view');
   view.append(make('div', 'pl-ly-list'));
-  panel.append(close, view, make('div', 'pl-ly-note'));
+  const grip = make('div', 'pl-ly-grip');
+  grip.title = 'Drag to make the lyrics wider or narrower';
+  panel.append(close, view, make('div', 'pl-ly-note'), grip);
   e.append(main, panel);
   // Pressing either lyrics button notes where the player is, for the glide when the panel closes.
   for (const b of [ctl.querySelector('.pl-lyr'), close]) b?.addEventListener('pointerdown', () => (main.dataset.x0 = String(main.getBoundingClientRect().left)));
   wireScrub(e, track, act);
+  wireGrip(e, panel, grip, act);
   patchPlayer(e, b, bind);
   return e;
 }
@@ -184,8 +189,14 @@ function showLyrics(e: HTMLElement, b: PlayerBlock, bind: Bind): void {
     if (Math.abs(dx) > 0.5) main.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 460, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
   }
 
-  if (!ly) return;
+  if (!ly) {
+    panel.style.flexBasis = '';
+    return;
+  }
 
+  // Where the line between player and lyrics was left (not while it is being dragged).
+  panel.dataset.split = ly.split ?? '';
+  if (!panel.dataset.dragging) panel.style.flexBasis = ly.width ? `${ly.width}px` : '';
   const closer = panel.querySelector<HTMLElement>('.pl-ly-close')!;
   closer.hidden = !ly.close;
   bind(closer, ly.close, undefined);
@@ -201,8 +212,10 @@ function showLyrics(e: HTMLElement, b: PlayerBlock, bind: Bind): void {
     list.dataset.at = '';
   }
   const at = Math.min(ly.at, ly.lines.length - 1);
-  if (list.dataset.at === String(at)) return;
-  list.dataset.at = String(at);
+  // Placed again when the line moves on, or when the panel's width changed (its split was dragged: the lines wrap anew).
+  const placed = `${at}|${panel.querySelector<HTMLElement>('.pl-ly-view')!.clientWidth}`;
+  if (list.dataset.at === placed) return;
+  list.dataset.at = placed;
   const rows = Array.from(list.children) as HTMLElement[];
   rows.forEach((r, i) => {
     r.classList.toggle('now', i === at);
@@ -255,6 +268,56 @@ function showTime(e: HTMLElement, pos: number, dur: number, playing: boolean): v
   fill.style.transition = '';
   e.querySelector('.pl-now')!.textContent = trackTime(pos);
   e.querySelector('.pl-left')!.textContent = trackTime(dur - pos, true);
+}
+
+/** The narrowest the lyrics and the player get when the line between them is dragged. */
+const LYRICS_MIN = 200;
+const PLAYER_MIN = 260;
+
+/**
+ * Dragging the line between the player and the lyrics: the lyrics get wider or narrower and the
+ * player takes the rest, the card keeping its width (like two apps side by side on Windows).
+ * Letting go tells the activity, which keeps the split until the lyrics close.
+ */
+function wireGrip(e: HTMLElement, panel: HTMLElement, grip: HTMLElement, act: Act): void {
+  let id: number | null = null;
+  let x0 = 0;
+  let w0 = 0;
+  let w = 0;
+  const widthAt = (x: number) => {
+    const gap = parseFloat(getComputedStyle(panel).marginLeft) || 0;
+    const most = e.clientWidth - gap - PLAYER_MIN;
+    return Math.round(Math.max(LYRICS_MIN, Math.min(most, w0 - (x - x0))));
+  };
+  grip.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0 || !panel.dataset.split) return;
+    ev.stopPropagation();
+    ev.preventDefault();
+    id = ev.pointerId;
+    grip.setPointerCapture(id);
+    x0 = ev.clientX;
+    w0 = w = panel.getBoundingClientRect().width;
+    panel.dataset.dragging = '1';
+    e.classList.add('splitting');
+  });
+  grip.addEventListener('pointermove', (ev) => {
+    if (ev.pointerId !== id) return;
+    w = widthAt(ev.clientX);
+    panel.style.flexBasis = `${w}px`;
+  });
+  const end = (ev: PointerEvent, commit: boolean) => {
+    if (ev.pointerId !== id) return;
+    id = null;
+    delete panel.dataset.dragging;
+    e.classList.remove('splitting');
+    const split = panel.dataset.split;
+    if (!commit) panel.style.flexBasis = `${w0}px`;
+    else if (split) act(split, w, grip);
+  };
+  grip.addEventListener('pointerup', (ev) => end(ev, true));
+  grip.addEventListener('pointercancel', (ev) => end(ev, false));
+  // The press is the line's: it must not also count as a click on the card.
+  grip.addEventListener('click', (ev) => ev.stopPropagation());
 }
 
 /** Press or drag on the scrubber to move through the track; letting go jumps there. */

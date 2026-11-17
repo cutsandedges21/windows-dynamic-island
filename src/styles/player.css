@@ -83,6 +83,14 @@ html.reduce .pl-lyric > span { animation-duration: 0.01s; }
 .pl-ly { position: relative; flex: 0 0 380px; box-sizing: border-box; margin-left: 20px; padding-left: 20px; border-left: 1px solid rgba(var(--ink), 0.1); min-height: 176px; }
 .sb-player.lyrics-open:not(.stage) .pl-main { justify-content: center; }
 .pl-ly[hidden] { display: none; }
+/* The line between the player and the lyrics: drag it to share the card another way (player.ts wireGrip). */
+.pl-ly-grip { position: absolute; top: 0; bottom: 0; left: -10px; width: 20px; cursor: col-resize; z-index: 2; touch-action: none; }
+.pl-ly-grip::after { content: ''; position: absolute; left: 9px; top: 18%; bottom: 18%; width: 3px; border-radius: 2px; background: transparent; transition: background-color 0.15s ease; }
+.pl-ly-grip:hover::after,
+.sb-player.splitting .pl-ly-grip::after { background: rgba(var(--ink), 0.4); }
+.sb-player.splitting,
+.sb-player.splitting * { cursor: col-resize !important; -webkit-user-select: none; user-select: none; }
+.stage .pl-ly-grip { display: none; }
 .pl-btn.pl-ly-close { position: absolute; top: -4px; left: 12px; width: 28px; height: 28px; color: var(--muted); z-index: 1; }
 .pl-btn.pl-ly-close[hidden] { display: none; }
 .pl-btn.pl-ly-close .ico { width: 18px; height: 18px; }

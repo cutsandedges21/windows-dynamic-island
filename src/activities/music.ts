@@ -35,6 +35,8 @@ export class MusicActivity extends BaseActivity {
   private sungAt = -1;
   /** The lyrics panel beside the hover player is open (its button; it stays open until closed). */
   private lyricsOpen = false;
+  /** The lyrics panel's width after its line was dragged; back to the default when the lyrics close. */
+  private lyricsW: number | null = null;
   /** Runs only while the player shows a song with lyrics (an idle island wakes for nothing). */
   private ticker: ReturnType<typeof setInterval> | null = null;
   private lastTrack = '';
@@ -320,7 +322,7 @@ export class MusicActivity extends BaseActivity {
       duration: m.duration && m.duration > 0 ? m.duration : null,
       color: this.barTint() ?? null,
       lyric,
-      lyrics: open ? this.panel(pos, 'lyrics') : null,
+      lyrics: open ? { ...this.panel(pos, 'lyrics'), split: 'lyrics-split', width: this.lyricsW } : null,
       lyricsButton: on && lyric != null ? { action: 'lyrics', on: open } : null,
       // Not interactive (Activities › Music): the player only shows, with no buttons.
       actions: on
@@ -366,6 +368,15 @@ export class MusicActivity extends BaseActivity {
   async action(name: string, arg?: unknown): Promise<void> {
     if (name === 'lyrics') {
       this.lyricsOpen = !this.lyricsOpen;
+      // Closed: the next time they open, the lyrics take their usual share again.
+      if (!this.lyricsOpen) this.lyricsW = null;
+      this.ctx.update();
+      return;
+    }
+    if (name === 'lyrics-split') {
+      const w = Number(arg);
+      if (!Number.isFinite(w)) return;
+      this.lyricsW = Math.round(Math.max(160, Math.min(900, w)));
       this.ctx.update();
       return;
     }

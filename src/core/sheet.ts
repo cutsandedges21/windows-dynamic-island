@@ -445,7 +445,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
         return {
           ...b,
           actions: { prev: m(b.actions.prev), toggle: m(b.actions.toggle), next: m(b.actions.next), seek: m(b.actions.seek), output: m(b.actions.output), open: m(b.actions.open) },
-          lyrics: b.lyrics ? { ...b.lyrics, close: m(b.lyrics.close) } : b.lyrics,
+          lyrics: b.lyrics ? { ...b.lyrics, close: m(b.lyrics.close), split: m(b.lyrics.split) } : b.lyrics,
           lyricsButton: b.lyricsButton ? { ...b.lyricsButton, action: m(b.lyricsButton.action) } : b.lyricsButton,
         };
       }

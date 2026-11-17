@@ -1839,8 +1839,16 @@ describe('music lyrics', () => {
     // Wider by the panel: the player keeps its own width.
     expect(v.width).toBe(372 + LYRICS_PANEL_W);
     expect(LYRICS_PANEL_W / v.width!).toBeGreaterThan(0.5);
+    // The line between player and lyrics, dragged: the card keeps its width, the split stays until the lyrics close.
+    expect(v.blocks[0]).toMatchObject({ lyrics: { split: 'lyrics-split', width: null } });
+    await act.action('lyrics-split', 452.4);
+    v = act.sheet(hover())!;
+    expect(v.blocks[0]).toMatchObject({ lyrics: { width: 452 } });
+    expect(v.width).toBe(372 + LYRICS_PANEL_W);
     await act.action('lyrics');
     expect(act.sheet(hover())!.blocks[0]).toMatchObject({ lyrics: null });
+    await act.action('lyrics');
+    expect(act.sheet(hover())!.blocks[0]).toMatchObject({ lyrics: { width: null } });
   });
 
   it('no lyrics, no button; lyrics off, no tile button', async () => {
