@@ -1723,13 +1723,13 @@ describe('music', () => {
     expect(quiet.act.sheet(hover(false))!.blocks[0]).toMatchObject({ t: 'player', actions: { toggle: '', prev: '', next: '' } });
   });
 
-  it('clicking the art, in the player or on the tile, brings the app playing forward and closes the island', async () => {
+  it('clicking the art in the player brings the app playing forward and closes the island (on the tile it opens the card)', async () => {
     const { act, calls } = await boot(new MusicActivity(), { hoverPlayer: true });
     expect(act.sheet(hover())!.blocks[0]).toMatchObject({ actions: { open: 'open' } });
-    expect(act.tile(hover())!.body).toMatchObject({ open: 'open' });
+    // On the Control Center tile the cover opens the lyrics card like the rest of it (Justin).
+    expect((act.tile(hover())!.body as { open?: string }).open).toBeUndefined();
     // Not interactive: the art is only a picture.
     expect((act.sheet(hover(false))!.blocks[0] as { actions: { open?: string } }).actions.open).toBeUndefined();
-    expect((act.tile(hover(false))!.body as { open?: string }).open).toBeUndefined();
     await act.action('open');
     expect(h.native.mediaControl).toHaveBeenCalledWith('focus');
     expect(calls.close).toBe(1);
@@ -1873,9 +1873,11 @@ describe('music lyrics', () => {
 
   it('the Music tile in Control Center opens the lyrics card, with a way back', async () => {
     const { act, calls } = await boot(new MusicActivity(), { hoverPlayer: true, lyrics: true });
-    // With lyrics on, the tile is the lyrics (Moss's tile); a click on it opens the lyrics card.
+    // The cover, the song, and back, play/pause and next (Justin); a click anywhere else opens the lyrics card.
     const tile = act.tile(hover())!;
-    expect(tile).toMatchObject({ action: 'card', body: { k: 'lyrics' } });
+    expect(tile).toMatchObject({ action: 'card', body: { k: 'media', progress: null } });
+    expect((tile.body as { buttons: Array<{ key: string }> }).buttons.map((b) => b.key)).toEqual(['prev', 'toggle', 'next']);
+    expect((tile.body as { open?: string }).open).toBeUndefined();
     await act.action('card');
     expect(calls.openCard).toBe(1);
     await act.action('lyrics-card');

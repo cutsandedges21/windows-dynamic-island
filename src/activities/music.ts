@@ -208,41 +208,32 @@ export class MusicActivity extends BaseActivity {
     return segs;
   }
 
-  /** Now playing, or paused not long ago: the same moment status() calls active. */
+  /**
+   * Now playing, or paused not long ago (the same moment status() calls active): the cover, the
+   * song, and back, play/pause and next (Justin). A click anywhere else opens the lyrics card.
+   */
   tile(env: SheetEnv): Tile | null {
     const m = this.m;
     if (!m || !this.status().active) return null;
     const playing = m.status === 'playing';
-    const pos = this.position(env.now);
-    // In whole percents: the grid rebuilds a tile whenever its content changes, and a finer bar would rebuild it every frame.
-    const progress = m.duration && pos != null ? Math.round(Math.min(1, pos / m.duration) * 100) / 100 : null;
     const buttons: SheetButton[] = [];
     if (env.interactive) {
       buttons.push(
-        ...(this.lyricsOn() ? [{ key: 'lyrics', icon: 'chat', action: 'lyrics-card', style: 'ghost', tip: 'Lyrics' } as SheetButton] : []),
         { key: 'prev', icon: 'prev', action: 'prev', style: 'ghost', tip: 'Previous' },
         { key: 'toggle', icon: playing ? 'pause' : 'play', action: 'toggle', style: 'secondary', tip: playing ? 'Pause' : 'Play' },
         { key: 'next', icon: 'next', action: 'next', style: 'ghost', tip: 'Next' },
       );
     }
     const showArt = this.ctx.options<{ showArt: boolean }>().showArt !== false;
-    const open = env.interactive && this.canOpen() ? 'open' : undefined;
-    // Lyrics on: the tile is the lyrics, every line in full (the pill's player shows one line, cut).
-    if (this.lyricsOn()) {
-      const lines = this.lyrics.lines(m, true);
-      const at = lines && pos != null ? lines.reduce((n, l, i) => (l.at <= pos ? i : n), -1) : -1;
-      // Keeps the line ticking while Control Center shows it.
-      if (lines?.length) this.lyric(pos, env.now);
-      return {
-        key: 'music',
-        span: 2,
-        rows: 4,
-        action: env.interactive ? 'card' : undefined,
-        tip: 'Now playing',
-        body: { k: 'lyrics', art: showArt ? m.thumbnail : null, title: m.title, artist: m.artist || m.app || '', playing, lines: (lines ?? []).map((l) => l.text), at, note: lines ? undefined : 'Looking for the lyrics…', open },
-      };
-    }
-    return { key: 'music', span: 2, rows: 2, action: env.interactive ? 'card' : undefined, tip: 'Now playing', body: { k: 'media', art: showArt ? m.thumbnail : null, title: m.title, artist: m.artist || m.app || '', playing, progress, buttons, open } };
+    // The cover too opens the card (no `open`): only the three buttons do something else.
+    return {
+      key: 'music',
+      span: 2,
+      rows: 2,
+      action: env.interactive ? 'card' : undefined,
+      tip: this.lyricsOn() ? 'Lyrics' : 'Now playing',
+      body: { k: 'media', art: showArt ? m.thumbnail : null, title: m.title, artist: m.artist || m.app || '', playing, progress: null, buttons },
+    };
   }
 
   /** Clicking the art brings the app playing forward: Windows finds its tab or window (media.rs `focus`). */
