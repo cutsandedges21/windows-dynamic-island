@@ -1802,6 +1802,26 @@ html[data-pill='glass'] .hub-menu .hm-lock { background: rgba(22, 24, 30, 0.8); 
 .sb-tiles.editing .tile { animation: jiggle 0.3s ease-in-out infinite alternate; cursor: grab; touch-action: none; }
 .sb-tiles.editing .tile:nth-child(2n) { animation-delay: -0.15s; }
 .sb-tiles.editing .tile.hidden-tile { animation: none; opacity: 0.45; cursor: default; }
+/* Reset layout and Done: pinned to the card's bottom while editing, so a tall grid or a full tray
+   never scrolls them out of sight (Justin's screenshot). A smoked glass of their own, so the tiles
+   passing under them do not show through the buttons. */
+.sb-tiles.editing ~ .sb-buttons {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  flex: none;
+  margin: 0 -6px;
+  padding: 8px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--fg) 10%, color-mix(in srgb, var(--pill) 86%, transparent));
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+  box-shadow: inset 0 0 0 0.5px rgba(var(--ink), 0.14), 0 8px 24px -10px rgba(0, 0, 0, 0.5);
+}
+html[data-pill='glass'] .sb-tiles.editing ~ .sb-buttons {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02)), rgba(22, 24, 30, 0.82);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 24px -10px rgba(0, 0, 0, 0.5);
+}
 /* while arranging, a tile's own buttons do nothing: pressing one picks the tile up */
 .sb-tiles.editing .tile > :not(.tile-x):not(.tile-resize):not(.tile-add) { pointer-events: none; }
 .sb-tiles.carrying,

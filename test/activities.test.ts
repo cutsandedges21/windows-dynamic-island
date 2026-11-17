@@ -37,7 +37,7 @@ import { ServersActivity } from '../src/activities/servers';
 import { parseOrder, pickedStats, SystemActivity } from '../src/activities/system';
 import { CAPTURE_DELAY_MS, SAVER_NOTE_MS, SAVER_SETTINGS, SystemControlsActivity } from '../src/activities/system-controls';
 import { PhoneError } from '../src/remote/hub';
-import { headphonesLike, MusicActivity } from '../src/activities/music';
+import { headphonesLike, LYRICS_PANEL_W, MusicActivity } from '../src/activities/music';
 import { PhoneActivity } from '../src/activities/phone';
 import { WeatherActivity } from '../src/activities/weather';
 
@@ -1837,7 +1837,8 @@ describe('music lyrics', () => {
     v = act.sheet(hover())!;
     expect(v.blocks[0]).toMatchObject({ lyricsButton: { on: true }, lyrics: { lines: ['First line', 'Second line', '', 'Fourth line'], at: 1, close: 'lyrics' } });
     // Wider by the panel: the player keeps its own width.
-    expect(v.width).toBe(372 + 320);
+    expect(v.width).toBe(372 + LYRICS_PANEL_W);
+    expect(LYRICS_PANEL_W / v.width!).toBeGreaterThan(0.5);
     await act.action('lyrics');
     expect(act.sheet(hover())!.blocks[0]).toMatchObject({ lyrics: null });
   });

@@ -79,17 +79,19 @@ html.reduce .pl-lyric > span { animation-duration: 0.01s; }
 
 /* The lyrics panel beside the player (the card widens by its 320px, the player stays put): a
    window onto the song's lines, the sung one lit a third of the way down, gliding up as it goes. */
-.pl-ly { position: relative; flex: 0 0 300px; box-sizing: border-box; margin-left: 20px; padding-left: 20px; border-left: 1px solid rgba(var(--ink), 0.1); min-height: 120px; }
+/* more than half the card, and taller than the player alone (Justin): the player centres beside it */
+.pl-ly { position: relative; flex: 0 0 420px; box-sizing: border-box; margin-left: 20px; padding-left: 20px; border-left: 1px solid rgba(var(--ink), 0.1); min-height: 176px; }
+.sb-player.lyrics-open:not(.stage) .pl-main { justify-content: center; }
 .pl-ly[hidden] { display: none; }
 .pl-btn.pl-ly-close { position: absolute; top: -4px; left: 12px; width: 28px; height: 28px; color: var(--muted); z-index: 1; }
 .pl-btn.pl-ly-close[hidden] { display: none; }
 .pl-btn.pl-ly-close .ico { width: 18px; height: 18px; }
 .pl-ly-view { position: absolute; inset: 26px 0 0 20px; overflow: hidden; -webkit-mask-image: linear-gradient(transparent, #000 16%, #000 78%, transparent); mask-image: linear-gradient(transparent, #000 16%, #000 78%, transparent); }
 .pl-ly-list { transition: transform 0.55s cubic-bezier(0.2, 0.7, 0.2, 1); will-change: transform; }
-.pl-ly-line { font: 650 15px/1.28 var(--font); color: rgba(var(--ink), 0.34); padding: 4px 0; transition: color 0.35s ease, opacity 0.35s ease; overflow-wrap: anywhere; }
+.pl-ly-line { font: 650 17px/1.28 var(--font); color: rgba(var(--ink), 0.34); padding: 4px 0; transition: color 0.35s ease, opacity 0.35s ease; overflow-wrap: anywhere; }
 .pl-ly-line.past { opacity: 0.7; }
 .pl-ly-line.now { color: var(--fg); }
-.pl-ly-line.gap { font-size: 12px; }
+.pl-ly-line.gap { font-size: 13px; }
 .pl-ly-note { position: absolute; inset: 30px 0 0 20px; font: 600 14px/1.35 var(--font); color: var(--muted); }
 .pl-ly-note[hidden] { display: none; }
 html.reduce .pl-ly-list { transition: none; }
