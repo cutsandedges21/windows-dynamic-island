@@ -272,7 +272,8 @@ function showTime(e: HTMLElement, pos: number, dur: number, playing: boolean): v
 
 /** The narrowest the lyrics and the player get when the line between them is dragged. */
 const LYRICS_MIN = 200;
-const PLAYER_MIN = 260;
+// The player squeezes to its art, title and buttons (player.css drops the bars and chips under 250 px).
+const PLAYER_MIN = 200;
 /** How close to the card's middle the line has to come to snap onto it, px. */
 const SPLIT_SNAP = 22;
 
@@ -306,6 +307,8 @@ function wireGrip(e: HTMLElement, panel: HTMLElement, grip: HTMLElement, act: Ac
     w0 = w = panel.getBoundingClientRect().width;
     panel.dataset.dragging = '1';
     e.classList.add('splitting');
+    // The card stays open and keeps the pointer, past its edges too, till the line is let go.
+    e.dispatchEvent(new CustomEvent('island-hold', { bubbles: true, detail: true }));
   });
   grip.addEventListener('pointermove', (ev) => {
     if (ev.pointerId !== id) return;
@@ -317,6 +320,7 @@ function wireGrip(e: HTMLElement, panel: HTMLElement, grip: HTMLElement, act: Ac
     id = null;
     delete panel.dataset.dragging;
     e.classList.remove('splitting', 'split-middle');
+    e.dispatchEvent(new CustomEvent('island-hold', { bubbles: true, detail: false }));
     const split = panel.dataset.split;
     if (!commit) panel.style.flexBasis = `${w0}px`;
     else if (split) act(split, w, grip);

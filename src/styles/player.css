@@ -6,7 +6,7 @@
 .sheet.morph .sheet-inner { padding: 18px 20px 14px; }
 
 .sb-player { display: flex; align-items: stretch; }
-.pl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.pl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; container-type: inline-size; }
 .pl-top { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .pl-art {
   width: 58px;
@@ -76,6 +76,15 @@ html.reduce .pl-lyric > span { animation-duration: 0.01s; }
 .pl-btn.pl-lyr { width: 36px; height: 36px; color: var(--muted); }
 .pl-btn.pl-lyr .ico { width: 21px; height: 21px; }
 .pl-btn.pl-lyr.on { color: var(--fg); background: rgba(var(--ink), 0.12); }
+/* Squeezed by the lyrics' split line: the bars and the carried chips make room for the track and the buttons. */
+@container (max-width: 250px) {
+  .pl-top .pl-bars, .pl-top .pk { display: none; }
+  .pl-ctl { gap: 2px; }
+  .pl-ctl .pl-btn { width: 38px; }
+  .pl-ctl .pl-btn.pl-lyr { width: 34px; }
+  .pl-ctl .pl-btn .ico { width: 26px; height: 26px; }
+  .pl-ctl .pl-toggle .ico { width: 32px; height: 32px; }
+}
 
 /* The lyrics panel beside the player (the card widens by its 320px, the player stays put): a
    window onto the song's lines, the sung one lit a third of the way down, gliding up as it goes. */

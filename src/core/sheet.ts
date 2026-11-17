@@ -505,6 +505,8 @@ const EDGE_ZONE = 30;
 const EDGE_HOLD_MS = 2000;
 /** How far past the card a carried tile keeps the mouse (beyond, clicks reach the desktop). */
 const DRAG_REACH = 160;
+/** How far past the island a held drag keeps the mouse, px: past any screen. */
+const HOLD_REACH = 20000;
 /** How long a carried tile rests over a spot before the grid makes room for it there. */
 const REFLOW_DWELL_MS = 150;
 /** A card grown out of the pill: its corners at full size (island.css .sheet.morph). */
@@ -569,6 +571,8 @@ export class SheetRenderer {
   private swallowTimer: ReturnType<typeof setTimeout> | undefined;
   /** The tile being carried or resized right now: `abort` ends it unsaved, `rescan` re-aims it after a page turn. */
   private drag: { key: string; mode: 'move' | 'resize'; host: HTMLElement; abort: () => void; rescan: () => void } | null = null;
+  /** Something on the card is being dragged (the lyrics' split line): the mouse stays the card's anywhere on screen. */
+  private pointerHeld = false;
   /** Pages the grid keeps while a tile is carried (a page made at the edge stays until the drop). */
   private dragPages = 0;
   /** A dropped tile whose floating copy is still flying home: its spot stays empty until it lands. */
@@ -726,7 +730,18 @@ export class SheetRenderer {
       { passive: true },
     );
     this.el.addEventListener('pointerenter', () => this.onAction('island:sheet-hover', true, this.el));
-    this.el.addEventListener('pointerleave', () => this.onAction('island:sheet-hover', false, this.el));
+    this.el.addEventListener('pointerleave', () => {
+      // Dragged past the card's edge: the card stays (Justin), it was not left.
+      if (!this.pointerHeld) this.onAction('island:sheet-hover', false, this.el);
+    });
+    // A drag on the card (player.ts wireGrip) holds the pointer: the mouse is the card's anywhere till it
+    // is let go, so the card stays open and the drag keeps getting the pointer past its edges.
+    this.el.addEventListener('island-hold', (ev) => {
+      const on = Boolean((ev as CustomEvent<boolean>).detail);
+      if (on === this.pointerHeld) return;
+      this.pointerHeld = on;
+      this.onAction('island:pointer-hold', on, this.el);
+    });
   }
 
   get visible(): boolean {
@@ -761,6 +776,8 @@ export class SheetRenderer {
   hitRect(): Rect | null {
     const d = this.drawn;
     if (!d || this.springs.get('o') < 0.05) return null;
+    // Dragging something on the card: the whole screen, till it is let go.
+    if (this.pointerHeld) return { x: -HOLD_REACH, y: -HOLD_REACH, w: HOLD_REACH * 2 + d.w + d.x, h: HOLD_REACH * 2 + d.h + d.y };
     // A carried tile can go past the card (to its side, to turn the page): keep the mouse that far.
     if (this.drag) return { x: d.x - DRAG_REACH, y: d.y - DRAG_REACH, w: d.w + DRAG_REACH * 2, h: d.h + DRAG_REACH * 2 };
     // Over the pill: no gap to cross.
@@ -775,6 +792,11 @@ export class SheetRenderer {
       case 'right':
         return { x: d.x, y: d.y, w: d.w + GAP, h: d.h };
     }
+  }
+
+  /** Whether the pointer is over the card now (its :hover, which a held drag does not change). */
+  pointerInside(): boolean {
+    return this.el.matches(':hover');
   }
 
   /** The input the user clicked into, if it is still on the card. */

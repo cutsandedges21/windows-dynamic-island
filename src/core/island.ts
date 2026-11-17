@@ -1872,6 +1872,12 @@ export class Island {
         // Fade and Show are the same button.
         this.setFaded(!this.settings.island.faded);
         break;
+      case 'island:pointer-hold':
+        // A drag on the card began or ended (sheet.ts pointerHeld): its hit area is the whole screen
+        // while it lasts. Let go off the card, the pointer has left it.
+        this.publishHit(this.renderer.rect, true);
+        if (!arg && !this.sheet.pointerInside()) this.setHover(false);
+        return;
       case 'island:fade-menu':
         // The menu's Fade, opened: fade now, and the two ways it fades on its own (fade-menu.ts).
         this.view = 'fade';

@@ -79,5 +79,23 @@ check(`dragged to 6 px short of the middle: snapped to it (${middle})`, Math.abs
 await drag(-40);
 const off = await look();
 check('dragged 40 left: let go of the middle', Math.abs(off.lyrics - middle - 40) <= 2, off);
+// All the way left, far past the card's edge (Justin: it stopped too soon, and the card closed when
+// the pointer left it): the player squeezes to its least, the card stays open through the drag.
+{
+  const g = await grip();
+  await page.mouse.move(g.x, g.y);
+  await page.mouse.down();
+  await page.mouse.move(g.x - 300, g.y + 200, { steps: 8 });
+  await page.mouse.move(20, 500, { steps: 8 });
+  await sleep(700);
+  const mid = await look();
+  check('held far outside the card: still open', mid.card === start.card && mid.main >= 199 && mid.main <= 202, mid);
+  await page.mouse.up();
+  await sleep(400);
+  if (out) await page.screenshot({ path: `${out}/lyrics-split-least.png`, clip: { x: 200, y: 0, width: 880, height: 300 } });
+  await sleep(1400);
+  const after = await page.evaluate(() => Boolean(document.querySelector('.sheet-inner:not(.leaving) .pl-ly')));
+  check('let go outside: the card goes', !after, { open: after });
+}
 await browser.close();
 process.exit(failed ? 1 : 0);
