@@ -711,7 +711,7 @@ export const native = {
   setHit: (rects: Array<{ x: number; y: number; w: number; h: number }>) => call('island_set_hit', { rects }, undefined),
   show: (visible: boolean) => call('island_show', { visible }, undefined),
   /** Peek behind: tapping Ctrl over the pill lets clicks through it until the pointer leaves. */
-  setPeek: (enabled: boolean) => call('island_set_peek', { enabled }, undefined),
+  setPeek: (enabled: boolean, untilBack = false) => call('island_set_peek', { enabled, untilBack }, undefined),
   /** The menu's Fade: Rust holds the island faded and click-through (a peek that never ends) until told otherwise or a right click on it. */
   setHold: (held: boolean) => call('island_set_hold', { held }, undefined),
   /** Smart fade: Rust fades the island while the pointer is away from it, until it comes back. */

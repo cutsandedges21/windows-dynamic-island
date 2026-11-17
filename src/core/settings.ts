@@ -94,6 +94,8 @@ export interface Settings {
     defaultGrows: Exclude<Grows, 'below' | 'more'>;
     /** Tapping Ctrl over the pill fades it and lets clicks through to what is behind. */
     peekThrough: boolean;
+    /** That fade lasts until the pointer comes back onto the island, not just until it moves off. */
+    peekUntilBack: boolean;
     /** The bot in its bubble beside the pill (src/core/bubble.ts). */
     bot: boolean;
     grid: GridLayout;
@@ -207,6 +209,7 @@ export function defaultSettings(): Settings {
       hoverCard: 'pointer',
       defaultGrows: 'card',
       peekThrough: true,
+      peekUntilBack: false,
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       hiddenUntil: 0,
@@ -359,6 +362,8 @@ export function migrate(saved: unknown): Settings {
   // Fade came after 0.4.2: missing (older settings) or junk means not faded.
   if (typeof out.island.faded !== 'boolean') out.island.faded = false;
   if (typeof out.island.smartFade !== 'boolean') out.island.smartFade = false;
+  if (typeof out.island.peekUntilBack !== 'boolean') out.island.peekUntilBack = false;
+
 
   if (!['primary', 'cursor', 'active', 'specific', 'duplicate'].includes(out.island.display)) out.island.display = 'primary';
   // The menu's order and icon-only choices came after 0.4.2: missing (older settings) means the menu as it always was.

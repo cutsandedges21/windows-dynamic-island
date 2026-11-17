@@ -288,7 +288,7 @@ export class Island {
     setInterval(() => this.tick(), 1000);
     setInterval(() => this.followCursor(), 1500);
     await this.updateHotkeys();
-    void native.setPeek(this.settings.island.peekThrough);
+    void native.setPeek(this.settings.island.peekThrough, this.settings.island.peekUntilBack);
     void native.setAutoUpdate(this.settings.general.autoUpdate);
     this.compose(true);
     // Hidden for a while before Island last quit: it stays hidden, and says so once.
@@ -321,7 +321,7 @@ export class Island {
     if (prev.island.display !== next.island.display || prev.island.displayId !== next.island.displayId || prev.island.displayIds.join() !== next.island.displayIds.join()) void this.place(false);
     this.syncActivities(prev);
     void this.updateHotkeys();
-    if (prev.island.peekThrough !== next.island.peekThrough) void native.setPeek(next.island.peekThrough);
+    if (prev.island.peekThrough !== next.island.peekThrough || prev.island.peekUntilBack !== next.island.peekUntilBack) void native.setPeek(next.island.peekThrough, next.island.peekUntilBack);
     if (prev.general.autoUpdate !== next.general.autoUpdate) void native.setAutoUpdate(next.general.autoUpdate);
     // Terminal from your phone, or Windows Hello for Allow, changed: Rust is told, and phones get a fresh hello.
     const term = termAllowed(next);

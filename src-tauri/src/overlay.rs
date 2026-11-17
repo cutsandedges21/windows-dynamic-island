@@ -74,6 +74,8 @@ pub struct Overlay {
     mirrors: Mutex<Vec<String>>,
     /// Peek behind (a setting): tapping Ctrl over the pill lets clicks through it.
     peek_enabled: AtomicBool,
+    /// A Ctrl peek lasts until the pointer comes back onto the island (a setting), not just until it moves off.
+    peek_until_back: AtomicBool,
     /// The menu's Fade: the island stays faded and click-through, like a peek that never ends,
     /// until the page lets go (Show) or a right click on it (which opens the menu, with Show).
     held: AtomicBool,
@@ -88,6 +90,7 @@ impl Overlay {
             rects: Mutex::new(Vec::new()),
             ignoring: AtomicBool::new(false),
             peek_enabled: AtomicBool::new(false),
+            peek_until_back: AtomicBool::new(false),
             held: AtomicBool::new(false),
             smart: AtomicBool::new(false),
             visible: AtomicBool::new(true),
@@ -621,7 +624,8 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
             // The menu's Fade holds the peek, whatever the pointer does and with or without the setting.
             let held = state.held.load(Ordering::Relaxed);
             let smart = state.smart.load(Ordering::Relaxed) && !KEYBOARD.load(Ordering::Relaxed);
-            let next = peek_step(peek, held, was_held, peek_on, smart, on_island, gap);
+            let until_back = state.peek_until_back.load(Ordering::Relaxed);
+            let next = peek_step(peek, held, was_held, peek_on, until_back, smart, on_island, gap);
             if next.on != peek.on {
                 let _ = app.emit_to(LABEL, "peek", next.on);
             }
@@ -725,11 +729,12 @@ struct Peek {
 }
 
 /// The peek after this tick. A hold (the menu's Fade) keeps it wherever the pointer is, and when the
-/// hold ends the peek ends with it. A Ctrl peek lasts while the pointer is away and ends when it comes
-/// back onto the island (Justin: not when it moves off), or when the setting goes off. Smart fade
-/// peeks whenever the pointer is away, and stops when the page turns it off (a pop-up shows).
-/// Starting a peek with Ctrl is decided before this.
-fn peek_step(p: Peek, held: bool, was_held: bool, peek_on: bool, smart: bool, on_island: bool, gap: f64) -> Peek {
+/// hold ends the peek ends with it. A Ctrl peek ends once the pointer moves off the island, or with
+/// `until_back` (Settings › Behavior › Peek lasts) once it has moved off and comes back onto it; and
+/// when the setting goes off. Smart fade peeks whenever the pointer is away, and stops when the page
+/// turns it off (a pop-up shows). Starting a peek with Ctrl is decided before this.
+#[allow(clippy::too_many_arguments)]
+fn peek_step(p: Peek, held: bool, was_held: bool, peek_on: bool, until_back: bool, smart: bool, on_island: bool, gap: f64) -> Peek {
     let off = Peek::default();
     if held {
         return Peek { on: true, left: false, smart: false };
@@ -745,6 +750,9 @@ fn peek_step(p: Peek, held: bool, was_held: bool, peek_on: bool, smart: bool, on
         return off;
     }
     let left = p.left || gap > PEEK_LEAVE_PX;
+    if !p.smart && !until_back && left {
+        return off;
+    }
     if left && on_island {
         return off;
     }
@@ -758,9 +766,11 @@ pub fn island_set_smart(state: tauri::State<'_, Arc<Overlay>>, on: bool) {
 }
 
 #[tauri::command]
-pub fn island_set_peek(state: tauri::State<'_, Arc<Overlay>>, enabled: bool) {
+pub fn island_set_peek(state: tauri::State<'_, Arc<Overlay>>, enabled: bool, until_back: Option<bool>) {
     state.peek_enabled.store(enabled, Ordering::Relaxed);
+    state.peek_until_back.store(until_back.unwrap_or(false), Ordering::Relaxed);
 }
+
 
 #[tauri::command]
 pub fn island_show(app: AppHandle, state: tauri::State<'_, Arc<Overlay>>, visible: bool) {
@@ -833,48 +843,56 @@ mod tests {
         let off = Peek::default();
         let ctrl = Peek { on: true, left: false, smart: false };
         // Held: peeks wherever the pointer is, with the Peek setting off too.
-        assert!(peek_step(off, true, false, false, false, false, 500.0).on);
-        assert!(peek_step(ctrl, true, true, false, false, true, 0.0).on);
+        assert!(peek_step(off, true, false, false, false, false, false, 500.0).on);
+        assert!(peek_step(ctrl, true, true, false, false, false, true, 0.0).on);
         // Let go (Show, or a right click): the peek ends even with the pointer on the island.
-        assert!(!peek_step(ctrl, false, true, true, false, true, 0.0).on);
+        assert!(!peek_step(ctrl, false, true, true, false, false, true, 0.0).on);
         // Nothing starts a peek on its own without smart fade.
-        assert!(!peek_step(off, false, false, true, false, false, 500.0).on);
+        assert!(!peek_step(off, false, false, true, false, false, false, 500.0).on);
     }
 
     #[test]
-    fn a_ctrl_peek_lasts_until_the_pointer_comes_back() {
+    fn a_ctrl_peek_ends_when_the_pointer_moves_off() {
         let ctrl = Peek { on: true, left: false, smart: false };
-        // Still on the island (clicking what is behind): faded.
-        let p = peek_step(ctrl, false, false, true, false, true, 0.0);
+        // On the island (clicking what is behind): faded. Off it: back, as it always was.
+        assert!(peek_step(ctrl, false, false, true, false, false, true, 0.0).on);
+        assert!(peek_step(ctrl, false, false, true, false, false, false, 10.0).on);
+        assert!(!peek_step(ctrl, false, false, true, false, false, false, PEEK_LEAVE_PX + 1.0).on);
+        // The setting going off ends it.
+        assert!(!peek_step(ctrl, false, false, false, false, false, true, 0.0).on);
+    }
+
+    #[test]
+    fn with_peek_lasts_until_back_it_ends_when_the_pointer_comes_back() {
+        let ctrl = Peek { on: true, left: false, smart: false };
+        let p = peek_step(ctrl, false, false, true, true, false, true, 0.0);
         assert!(p.on && !p.left);
         // Moved away: still faded, now waiting for the pointer to come back.
-        let p = peek_step(p, false, false, true, false, false, PEEK_LEAVE_PX + 1.0);
+        let p = peek_step(p, false, false, true, true, false, false, PEEK_LEAVE_PX + 1.0);
         assert!(p.on && p.left);
-        let p = peek_step(p, false, false, true, false, false, 300.0);
+        let p = peek_step(p, false, false, true, true, false, false, 300.0);
         assert!(p.on);
         // Near but not on it: still faded. On it: back.
-        let p = peek_step(p, false, false, true, false, false, 10.0);
+        let p = peek_step(p, false, false, true, true, false, false, 10.0);
         assert!(p.on);
-        assert!(!peek_step(p, false, false, true, false, true, 0.0).on);
-        // The setting going off ends it.
-        assert!(!peek_step(ctrl, false, false, false, false, true, 0.0).on);
+        assert!(!peek_step(p, false, false, true, true, false, true, 0.0).on);
     }
 
     #[test]
     fn smart_fade_fades_whenever_the_pointer_is_away() {
         let off = Peek::default();
         // Pointer on or near the island: shown.
-        assert!(!peek_step(off, false, false, true, true, true, 0.0).on);
-        assert!(!peek_step(off, false, false, true, true, false, 10.0).on);
-        // Away: faded, until it comes back.
-        let p = peek_step(off, false, false, true, true, false, 200.0);
+        assert!(!peek_step(off, false, false, true, false, true, true, 0.0).on);
+        assert!(!peek_step(off, false, false, true, false, true, false, 10.0).on);
+        // Away: faded, until it comes back (whichever way Ctrl peeks end).
+        let p = peek_step(off, false, false, true, false, true, false, 200.0);
         assert!(p.on && p.smart);
-        assert!(peek_step(p, false, false, true, true, false, 10.0).on);
-        assert!(!peek_step(p, false, false, true, true, true, 0.0).on);
+        assert!(peek_step(p, false, false, true, false, true, false, 10.0).on);
+        assert!(!peek_step(p, false, false, true, false, true, true, 0.0).on);
         // A pop-up (the page turns smart off): shown at once, wherever the pointer is.
-        assert!(!peek_step(p, false, false, true, false, false, 200.0).on);
+        assert!(!peek_step(p, false, false, true, false, false, false, 200.0).on);
         // The Ctrl setting going off does not end smart's own fade.
-        assert!(peek_step(p, false, false, false, true, false, 200.0).on);
+        assert!(peek_step(p, false, false, false, false, true, false, 200.0).on);
     }
 
 
