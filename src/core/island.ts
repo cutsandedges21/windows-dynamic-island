@@ -131,9 +131,11 @@ export function withBack(c: { owner: string; view: SheetView }): { owner: string
   const back: SheetButton = { key: 'cc-back', icon: 'chevron-left', action: 'island:card-close', style: 'ghost', tip: 'Back to Control Center' };
   if (i < 0) return { ...c, view: { ...c.view, blocks: [{ t: 'buttons', key: 'cc-back', align: 'start', items: [{ ...back, label: 'Control Center' }] }, ...c.view.blocks] } };
   const head = c.view.blocks[i] as Extract<SheetView['blocks'][number], { t: 'head' }>;
-  if (head.back) return c;
+  // The card's own way back to Control Center (the grid icon at its right, on Apps, Reminders, Game and
+  // Land's cards) does what the arrow does: only the arrow stays (Justin).
+  const buttons = head.buttons?.filter((b) => b.action !== 'island:card-close');
   const blocks = [...c.view.blocks];
-  blocks[i] = { ...head, back };
+  blocks[i] = { ...head, back: head.back ?? back, buttons: buttons?.length ? buttons : undefined };
   return { ...c, view: { ...c.view, blocks } };
 }
 

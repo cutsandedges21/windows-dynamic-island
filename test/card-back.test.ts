@@ -15,7 +15,15 @@ describe('a card opened from Control Center', () => {
 
   it("keeps the activity's own Back", () => {
     const own = card([{ t: 'head', key: 'h', title: 'Lyrics', back: { key: 'b', action: 'act:music:lyrics-back' } }]);
-    expect(withBack(own)).toBe(own);
+    expect(withBack(own).view.blocks[0]).toMatchObject({ back: { key: 'b', action: 'act:music:lyrics-back' } });
+  });
+
+  it("drops the card's own Control Center button, which did what Back does (Justin: the grid icon at the right)", () => {
+    const c = withBack(card([{ t: 'head', key: 'h', title: 'Apps', buttons: [{ key: 'edit', label: 'Edit', action: 'edit' }, { key: 'back', icon: 'grid', action: 'island:card-close' }] }]));
+    expect(c.view.blocks[0]).toMatchObject({ back: { icon: 'chevron-left' }, buttons: [{ key: 'edit' }] });
+    expect((c.view.blocks[0] as { buttons: unknown[] }).buttons).toHaveLength(1);
+    const only = withBack(card([{ t: 'head', key: 'h', title: 'Reminders', buttons: [{ key: 'back', icon: 'grid', action: 'island:card-close' }] }]));
+    expect((only.view.blocks[0] as { buttons?: unknown[] }).buttons).toBeUndefined();
   });
 
   it('with no head, a Control Center button goes first', () => {
