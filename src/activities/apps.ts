@@ -121,7 +121,7 @@ export class AppsActivity extends BaseActivity {
         icon: this.meta.icon,
         tone: 'accent',
         title: 'Apps',
-        sub: note?.text ?? (this.editing ? 'Take apps off, or add one below' : 'Tap one to open it on this computer'),
+        sub: note?.text ?? (this.editing ? 'Drag to reorder, take apps off, or add one below' : 'Tap one to open it on this computer'),
         buttons: [
           { key: 'edit', label: this.editing ? 'Done' : 'Edit', action: 'edit', style: this.editing ? 'primary' : 'ghost' },
           { key: 'back', icon: 'grid', action: 'island:card-close', style: 'ghost', tip: 'Control Center' },
@@ -139,7 +139,8 @@ export class AppsActivity extends BaseActivity {
         tip: this.editing ? a.name : `Open ${a.name}`,
         remove: this.editing ? { key: 'rm', icon: 'x', action: 'remove', arg: a.target, style: 'ghost', tip: `Take ${a.name} off` } : undefined,
       }));
-      blocks.push({ t: 'files', key: 'apps', items, wrap: true });
+      // While editing, an app drags to a new place (Justin).
+      blocks.push({ t: 'files', key: 'apps', items, wrap: true, reorder: this.editing ? 'move' : undefined });
     } else if (!this.editing) {
       blocks.push({ t: 'text', key: 'none', text: 'No apps here yet. Press Edit and add the ones you open most.', tone: 'muted', size: 'sm' });
     }
@@ -199,6 +200,19 @@ export class AppsActivity extends BaseActivity {
         this.apps = this.apps.filter((a) => a.target !== target);
         this.save();
         break;
+      case 'move': {
+        // { key: the app's target, to: its new place }.
+        const m = arg as { key?: unknown; to?: unknown } | null;
+        const from = this.apps.findIndex((a) => a.target === m?.key);
+        const to = typeof m?.to === 'number' ? Math.max(0, Math.min(this.apps.length - 1, Math.round(m.to))) : -1;
+        if (from < 0 || to < 0 || from === to) break;
+        const next = [...this.apps];
+        const [app] = next.splice(from, 1);
+        next.splice(to, 0, app);
+        this.apps = next;
+        this.save();
+        break;
+      }
       default:
         return;
     }

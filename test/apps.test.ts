@@ -114,4 +114,19 @@ describe('apps', () => {
     await act.action('add', 'C:\evil.exe');
     expect(saved.at(-1)).toEqual({ apps: [PHOTOS, NOTEPAD] });
   });
+
+  it('while editing, an app drags to a new place', async () => {
+    const { act, saved } = await boot();
+    expect(files(act)!.reorder).toBeUndefined();
+    await act.action('edit');
+    expect(files(act)!.reorder).toBe('move');
+    await act.action('move', { key: PAINT.target, to: 0 });
+    expect(saved.at(-1)).toEqual({ apps: [PAINT, PHOTOS] });
+    expect(files(act)!.items.map((f) => f.key)).toEqual([PAINT.target, PHOTOS.target]);
+    // Nowhere to go, or no such app: nothing changes.
+    const n = saved.length;
+    await act.action('move', { key: 'C:\\nope.exe', to: 1 });
+    await act.action('move', { key: PAINT.target, to: 0 });
+    expect(saved.length).toBe(n);
+  });
 });

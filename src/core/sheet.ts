@@ -161,7 +161,7 @@ export type Block =
    * with the tile's key, once, for the activity to start a real drag out of the island (a pointer
    * gesture, so never something a phone can press). `wrap`: a grid that wraps instead (Apps).
    */
-  | { t: 'files'; key: string; items: FileTile[]; drag?: string; wrap?: boolean }
+  | { t: 'files'; key: string; items: FileTile[]; drag?: string; wrap?: boolean; reorder?: string }
   /**
    * Places to drop files dragged over the island, side by side (the Shelf, Land): `grow` is each
    * one's share of the width, `hot` the one under the pointer, `off` one that takes nothing now.
@@ -442,7 +442,7 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
       case 'people':
         return { ...b, items: b.items.map((p) => ({ ...p, action: p.action ? fn(p.action) : undefined })) };
       case 'files':
-        return { ...b, drag: b.drag ? fn(b.drag) : undefined, items: b.items.map((f) => ({ ...f, action: f.action ? fn(f.action) : undefined, remove: f.remove ? btn(f.remove) : undefined })) };
+        return { ...b, drag: b.drag ? fn(b.drag) : undefined, reorder: b.reorder ? fn(b.reorder) : undefined, items: b.items.map((f) => ({ ...f, action: f.action ? fn(f.action) : undefined, remove: f.remove ? btn(f.remove) : undefined })) };
       case 'tiles':
         return { ...b, items: b.items.map((t) => ({ ...t, action: t.action ? fn(t.action) : undefined, body: body(t.body) })) };
       case 'calendar':
@@ -573,6 +573,8 @@ export class SheetRenderer {
   private swallowTimer: ReturnType<typeof setTimeout> | undefined;
   /** The tile being carried or resized right now: `abort` ends it unsaved, `rescan` re-aims it after a page turn. */
   private drag: { key: string; mode: 'move' | 'resize'; host: HTMLElement; abort: () => void; rescan: () => void } | null = null;
+  /** A tile is being dragged to a new place (wireReorder): its row is not redrawn under it meanwhile. */
+  private reordering = false;
   /** Something on the card is being dragged (the lyrics' split line): the mouse stays the card's anywhere on screen. */
   private pointerHeld = false;
   /** Pages the grid keeps while a tile is carried (a page made at the edge stays until the drop). */
@@ -1683,6 +1685,8 @@ export class SheetRenderer {
       case 'people':
         return this.fillPeople(e, b);
       case 'files':
+        // A tile being dragged into a new place: left as it is till it is let go.
+        if (this.reordering) return true;
         this.fillFiles(e, b);
         return true;
       case 'zones': {
@@ -2149,6 +2153,7 @@ export class SheetRenderer {
           x.classList.add('frm');
           el.append(x);
         }
+        if (b.reorder) this.wireReorder(e, el, f.key, b.reorder);
         const drag = b.drag;
         if (drag) {
           let dragged = false;
@@ -2181,6 +2186,67 @@ export class SheetRenderer {
         return el;
       }),
     );
+  }
+
+  /**
+   * Drag a tile to a new place among the others (Apps while editing, Justin): it lifts and follows
+   * the pointer, the others make room as it passes over them, and letting go sends `action` with
+   * { key, to } (its new index). A press that doesn't move stays a click.
+   */
+  private wireReorder(box: HTMLElement, el: HTMLElement, key: string, action: string): void {
+    let moved = false;
+    el.addEventListener('click', (c) => {
+      if (moved) c.stopPropagation();
+      moved = false;
+    }, { capture: true });
+    el.addEventListener('pointerdown', (down) => {
+      if (down.button !== 0 || (down.target as HTMLElement).closest('.frm')) return;
+      moved = false;
+      const from = [...box.children].indexOf(el);
+      const r0 = el.getBoundingClientRect();
+      const grab = { x: down.clientX - r0.left, y: down.clientY - r0.top };
+      const place = (x: number, y: number) => {
+        el.style.transform = '';
+        const r = el.getBoundingClientRect();
+        el.style.transform = `translate(${x - grab.x - r.left}px, ${y - grab.y - r.top}px) scale(1.06)`;
+      };
+      const move = (ev: PointerEvent) => {
+        if (!moved) {
+          if (Math.hypot(ev.clientX - down.clientX, ev.clientY - down.clientY) < 6) return;
+          moved = true;
+          this.reordering = true;
+          el.setPointerCapture(ev.pointerId);
+          el.classList.add('lifted');
+          box.classList.add('reordering');
+        }
+        // Over another tile: this one takes its place, the rest shift along.
+        const over = ([...box.children] as HTMLElement[]).find((c) => {
+          if (c === el) return false;
+          const r = c.getBoundingClientRect();
+          return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+        });
+        if (over) {
+          const kids = [...box.children];
+          box.insertBefore(el, kids.indexOf(over) > kids.indexOf(el) ? over.nextSibling : over);
+        }
+        place(ev.clientX, ev.clientY);
+      };
+      const stop = () => {
+        el.removeEventListener('pointermove', move);
+        el.removeEventListener('pointerup', stop);
+        el.removeEventListener('pointercancel', stop);
+        if (!moved) return;
+        el.classList.remove('lifted');
+        box.classList.remove('reordering');
+        el.style.transform = '';
+        this.reordering = false;
+        const to = [...box.children].indexOf(el);
+        if (to !== from) this.onAction(action, { key, to }, el);
+      };
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', stop);
+      el.addEventListener('pointercancel', stop);
+    });
   }
 
   /**
