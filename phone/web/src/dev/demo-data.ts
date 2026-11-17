@@ -343,6 +343,9 @@ function claudeCard(d: DemoState): SheetView {
   return ns('claude', { key: 'open', blocks });
 }
 
+/** Made-up lines for the demo's lyrics card. */
+const DEMO_LYRICS = ['Lights come on across the bay', 'We were talking anyway', '', 'Every window holds the sun', 'Running till the night is done', 'Hold the line and let it play', 'Paper sky and summer day'];
+
 function musicCard(d: DemoState, now: number): SheetView {
   const track = TRACKS[d.track];
   return ns('music', {
@@ -359,6 +362,9 @@ function musicCard(d: DemoState, now: number): SheetView {
         duration: track.duration,
         color: '#e2581c',
         actions: { prev: 'prev', toggle: 'toggle', next: 'next', seek: 'seek' },
+        // As the PC's lyrics card sends it (music.ts stageCard): the art's colour and the song's lines.
+        stage: { tint: '#e2581c' },
+        lyrics: { lines: DEMO_LYRICS, at: Math.min(DEMO_LYRICS.length - 1, Math.floor(position(d, now) / 6) % DEMO_LYRICS.length) },
       },
     ],
   });
