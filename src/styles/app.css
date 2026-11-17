@@ -518,6 +518,12 @@ button.me-grip:hover, button.me-grip:focus-visible { background: rgba(255, 255, 
 .look .lk { display: block; width: 58px; height: 22px; border-radius: 11px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); }
 .look .lk-label { font-size: 11.5px; color: var(--muted); }
 .look.on .lk-label { color: inherit; }
+/* Settings > Widgets > Show on the taskbar: one chip per item, ringed when it shows */
+.dockpick { display: flex; flex-wrap: wrap; gap: 6px; }
+.dockpick .dpi { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px 0 9px; border-radius: 15px; border: 1px solid rgba(127, 127, 127, 0.25); background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
+.dockpick .dpi:hover { background: var(--card-hi); }
+.dockpick .dpi svg { width: 14px; height: 14px; }
+.dockpick .dpi.on { color: inherit; border-color: color-mix(in srgb, var(--accent) 60%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .lk-island { background: linear-gradient(90deg, #040405 50%, transparent 50%), conic-gradient(from 90deg, #f4f5f7, #b4b8be, #f4f5f7); position: relative; }
 .lk-island::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--accent); }
 .lk-black { background: #040405; }

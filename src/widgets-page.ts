@@ -5,7 +5,8 @@
 import { section, row, toggle } from './controls';
 import { icon, type IconName } from './core/icons';
 import { sendTo } from './core/native';
-import type { ItemLook, Settings } from './core/settings';
+import { DOCK_LABELS, toggleDockItem } from './core/dock';
+import { DOCK_ITEMS, type ItemLook, type Settings } from './core/settings';
 import { MAX_WIDGETS, newWidgetId, WIDGET_KINDS } from './core/widgets';
 import { h } from './dom';
 
@@ -62,6 +63,35 @@ function lookPicker(look: ItemLook, host: WidgetsPageHost): HTMLElement[] {
     out.push(row('Glass', 'Clear is more see-through; tinted lets less of what is behind show through.', h('div', { class: 'glass-slider' }, [h('span', { class: 'muted', text: 'Clear' }), slider, h('span', { class: 'muted', text: 'Tinted' })])));
   }
   return out;
+}
+
+/** What the taskbar shows: a chip per item, ticked when it is on the taskbar. */
+function dockPicker(host: WidgetsPageHost): HTMLElement {
+  const t = host.settings().island.taskbar;
+  const chips = h(
+    'div',
+    { class: 'dockpick' },
+    DOCK_ITEMS.map((k) => {
+      const on = !t.hidden.includes(k);
+      return h(
+        'button',
+        {
+          class: `dpi${on ? ' on' : ''}`,
+          'aria-pressed': String(on),
+          title: on ? `Take ${DOCK_LABELS[k]} off the taskbar` : `Put ${DOCK_LABELS[k]} on the taskbar`,
+          onclick: () => {
+            t.hidden = toggleDockItem(t.hidden, k);
+            host.save(true);
+            host.render();
+          },
+        },
+        [h('span', { html: on ? icon('check') : icon('plus') }), h('span', { text: DOCK_LABELS[k] })],
+      );
+    }),
+  );
+  const r = row('Show on the taskbar', 'Pick what it shows. The battery only shows on a PC that has one.', chips);
+  r.classList.add('stack');
+  return r;
 }
 
 /** Every widget there is, as cards: its icon, name and what it shows, and whether it is on the desktop. */
@@ -137,6 +167,7 @@ export function widgetsPage(host: WidgetsPageHost): HTMLElement {
     ),
     ...(t.on
       ? [
+          dockPicker(host),
           ...lookPicker(t.look, host),
           row(
             "Hide Windows' taskbar",

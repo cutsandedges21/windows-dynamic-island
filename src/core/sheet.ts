@@ -155,6 +155,12 @@ export type Block =
    * gesture, so never something a phone can press). `wrap`: a grid that wraps instead (Apps).
    */
   | { t: 'files'; key: string; items: FileTile[]; drag?: string; wrap?: boolean }
+  /**
+   * Places to drop files dragged over the island, side by side (the Shelf, Land): `grow` is each
+   * one's share of the width, `hot` the one under the pointer, `off` one that takes nothing now.
+   * Each carries `data-zone` = its key, which the island looks up under the drop.
+   */
+  | { t: 'zones'; key: string; height: number; hot?: string | null; items: DropZone[] }
   /** A QR code: `size` modules a side, `cells` row by row with '1' for dark. */
   | { t: 'qr'; key: string; size: number; cells: string; caption?: string }
   /**
@@ -164,6 +170,16 @@ export type Block =
   | { t: 'tiles'; key: string; items: Tile[]; tray?: Tile[]; cols: number; rows: number; pages: number; cell: number; editing?: boolean }
   /** Music's player (player.ts); grown out of the pill it carries the pill's chips at its top. */
   | (PlayerBlock & { chips?: SheetChip[] });
+
+/** One side of the drop card. */
+export interface DropZone {
+  key: string;
+  icon: string;
+  title: string;
+  sub: string;
+  grow: number;
+  off?: boolean;
+}
 
 /** One cell of the open island's grid (Control Center style). */
 export interface Tile {
@@ -1582,6 +1598,12 @@ export class SheetRenderer {
       case 'files':
         this.fillFiles(e, b);
         return true;
+      case 'zones': {
+        // Only which one is lit, or what they say: patched where they are, so nothing flickers mid-drag.
+        if (node.spec.t !== 'zones' || node.spec.items.length !== b.items.length || node.spec.items.some((z, i) => z.key !== b.items[i].key)) return false;
+        this.fillZones(e, b);
+        return true;
+      }
       case 'player':
         // Every second while it plays: the bars and a drag on the scrubber must survive it.
         patchPlayer(e, b, this.bindPlayer);
@@ -1776,6 +1798,19 @@ export class SheetRenderer {
         this.fillFiles(e, b);
         return e;
       }
+      case 'zones': {
+        const e = make('div', 'sb sb-zones');
+        for (const z of b.items) {
+          const c = make('div', `zone z-${z.key}`);
+          c.dataset.zone = z.key;
+          const ring = make('div', 'zr');
+          ring.append(iconEl(z.icon, 'zi'));
+          c.append(ring, make('div', 'zt', z.title), make('div', 'zs', z.sub));
+          e.append(c);
+        }
+        this.fillZones(e, b);
+        return e;
+      }
       case 'qr': {
         const e = make('div', 'sb sb-qr');
         e.append(qrSvg(b.size, b.cells));
@@ -1795,6 +1830,21 @@ export class SheetRenderer {
         return e;
       }
     }
+  }
+
+  private fillZones(e: HTMLElement, b: Extract<Block, { t: 'zones' }>): void {
+    e.style.height = `${b.height}px`;
+    b.items.forEach((z, i) => {
+      const c = e.children[i] as HTMLElement | undefined;
+      if (!c) return;
+      c.style.flexGrow = String(z.grow);
+      c.classList.toggle('hot', b.hot === z.key && !z.off);
+      c.classList.toggle('off', Boolean(z.off));
+      const t = c.querySelector('.zt');
+      const s = c.querySelector('.zs');
+      if (t && t.textContent !== z.title) t.textContent = z.title;
+      if (s && s.textContent !== z.sub) s.textContent = z.sub;
+    });
   }
 
   private buildInput(b: Extract<Block, { t: 'input' }>): HTMLElement {

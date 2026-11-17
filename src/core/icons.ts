@@ -118,6 +118,7 @@ const P: Record<string, string> = {
   gamepad: '<path d="M7.5 8h9a4.5 4.5 0 014.4 5.4l-.7 3.5a2.4 2.4 0 01-4 1.3L13.6 16h-3.2l-2.6 2.2a2.4 2.4 0 01-4-1.3l-.7-3.5A4.5 4.5 0 017.5 8z"/><path d="M7.8 10.8v3.4M6.1 12.5h3.4"/><circle cx="15.6" cy="11.6" r=".7" fill="currentColor"/><circle cx="17.4" cy="13.4" r=".7" fill="currentColor"/>',
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor"/>',
   // Land: a file's arc coming down onto the ground.
+  shelf: '<path d="M3.5 13.5l2.6-7.4A1.5 1.5 0 017.5 5h9a1.5 1.5 0 011.4 1.1l2.6 7.4V18a1.5 1.5 0 01-1.5 1.5H5A1.5 1.5 0 013.5 18z"/><path d="M3.5 13.5h5l1.2 2h4.6l1.2-2h5"/>',
   land: '<path d="M3.5 20h17"/><path d="M4.5 4.5c6.2 0 10.6 4 11.9 10.6"/><path d="M13.3 13.1l3.1 2.4 2.3-3.2"/>',
   file: '<path d="M6.5 3h7.5l4.5 4.5V20a1 1 0 01-1 1h-11a1 1 0 01-1-1V4a1 1 0 011-1z"/><path d="M13.5 3v5h5"/>',
   home: '<path d="M4 11l8-6.5 8 6.5"/><path d="M6.5 9.5V19h11V9.5"/><path d="M10.5 19v-4.5h3V19"/>',

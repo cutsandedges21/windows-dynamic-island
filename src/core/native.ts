@@ -617,6 +617,9 @@ export interface Launched {
   note: string | null;
 }
 /** An app in Start's list: `target` is its program, or shell:AppsFolder\<id> for a Store app. */
+/** A taskbar icon's place in the taskbar window: x, y, w, h in CSS px. */
+export type DockIconRect = [number, number, number, number];
+
 export interface InstalledApp {
   name: string;
   target: string;
@@ -825,6 +828,12 @@ export const native = {
   dockPanel: (which: 'start' | 'quick' | 'notifications') => call<boolean>('dock_panel', { which }, false),
   /** Windows' taskbar hides itself (Automatically hide the taskbar); answers whether it does now. */
   dockAutohide: (on: boolean) => call<boolean>('dock_autohide', { on }, false),
+  /** A taskbar icon's window comes back out of the icon (`icon`: x, y, w, h CSS px in the taskbar), or just forward if it isn't minimized (src-tauri/src/dockfx.rs). */
+  dockRaise: (hwnd: number, icon: DockIconRect) => call<boolean>('dock_raise', { hwnd, icon }, false),
+  /** The window goes into its taskbar icon. */
+  dockMinimize: (hwnd: number, icon: DockIconRect) => call('dock_minimize', { hwnd, icon }, undefined),
+  /** The app's windows close, the first one into its taskbar icon. */
+  dockClose: (hwnds: number[], icon: DockIconRect) => call('dock_close', { hwnds, icon }, undefined),
   /** Desktop widgets (src-tauri/src/widgets.rs): the windows that should exist; x, y negative: not placed yet. */
   widgetsSync: (specs: Array<{ id: string; x: number; y: number; w: number; h: number }>) => call('widgets_sync', { specs }, undefined),
   /** This widget window fits its content (logical px). */

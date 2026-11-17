@@ -21,9 +21,12 @@ const mirror = windowLabel.startsWith('mirror-');
 // A desktop widget: one tile on the desktop, drawn from what the island sends it.
 const widget = windowLabel.startsWith('widget-');
 // The taskbar: drawn from what the island sends it.
-const dock = windowLabel === 'dock';
+// The browser preview of it: /?dock (src/dev/dock.ts).
+const dockPreview = native.demo && new URLSearchParams(location.search).has('dock');
+const dock = windowLabel === 'dock' || dockPreview;
 const island = mirror || widget || dock ? null : new Island(stage, createRegistry());
 if (dock) void runDock(stage).catch((err) => void native.log(`taskbar failed: ${String(err)}`));
+if (dockPreview) void import('./dev/dock').then((m) => m.dockPreview(emitLocal));
 if (widget) void runWidget(stage).catch((err) => void native.log(`widget failed: ${String(err)}`));
 if (mirror) void runMirror(stage).catch((err) => void native.log(`mirror failed: ${String(err)}`));
 // Workspaces restore from here: the island lives as long as Island runs.

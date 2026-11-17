@@ -171,7 +171,7 @@ export interface Answers {
  * finished download, low battery, files sent from a computer nearby, a workspace opening,
  * Caps Lock, the brightness) but only get a tile when picked.
  */
-export const HELPERS = ['system-controls', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'phone', 'workspaces'];
+export const HELPERS = ['system-controls', 'downloads', 'screenshots', 'devices', 'external', 'battery', 'land', 'shelf', 'phone', 'workspaces'];
 
 /** Grid order: what you act on first, then what you glance at, then occasional helpers. */
 const GRID_ORDER = ['claude', 'codex', 'cursor', 'antigravity', 'music', 'calendar', 'weather', 'timer', 'reminders', 'game', 'calls', 'system', 'network', 'servers', 'battery', 'system-controls', 'downloads', 'land', 'screenshots', 'clipboard'];

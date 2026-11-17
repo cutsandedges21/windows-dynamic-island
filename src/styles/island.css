@@ -2000,7 +2000,8 @@ html[data-pill='glass'] .hub-menu .hm-lock { background: rgba(22, 24, 30, 0.8); 
 .dock {
   position: absolute;
   left: 12px;
-  top: 4px;
+  /* 4px, plus room above the bar for icons rising under the pointer (HEADROOM in dock.ts). */
+  top: 18px;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2040,18 +2041,50 @@ html[data-pill='glass'] .dock { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45
 .dock .dk-start svg { width: 20px; height: 20px; }
 .dock .dk-apps { display: flex; align-items: center; gap: 2px; }
 .dock .dk-app { position: relative; width: 40px; padding: 0; }
-.dock .dk-ico { display: grid; place-items: center; width: 26px; height: 26px; }
+.dock .dk-app:hover, .dock .dk-app:active { background: transparent; }
+/* Rises and grows from its bottom edge as the pointer passes (dock.ts riseAt). */
+.dock .dk-ico { display: grid; place-items: center; width: 26px; height: 26px; transform-origin: 50% 100%; will-change: transform; }
+/* Dragging one along the row: the others slide aside for it. */
+.dock.reordering .dk-app:not(.moving) { transition: transform 0.18s ease; }
+.dock .dk-app.moving { z-index: 2; }
+/* Launching: it bounces until the app has a window. */
+.dock .dk-app.launching .dk-ico > * { animation: dk-bounce 0.62s ease-in-out infinite; }
+@keyframes dk-bounce {
+  0%, 100% { transform: translateY(0); }
+  45% { transform: translateY(-9px); }
+}
 .dock .dk-ico img { width: 26px; height: 26px; }
 .dock .dk-ico svg { width: 22px; height: 22px; }
 .dock .dk-dot { position: absolute; bottom: 2px; left: 50%; width: 5px; height: 3px; margin-left: -2.5px; border-radius: 2px; background: rgba(var(--ink), 0.55); opacity: 0; transition: width 0.18s ease, margin 0.18s ease, opacity 0.18s ease; }
 .dock .dk-app.open .dk-dot { opacity: 1; }
 .dock .dk-app.front .dk-dot { width: 16px; margin-left: -8px; background: var(--accent); }
 .dock .dk-sep { width: 1px; height: 26px; margin: 0 6px; background: rgba(var(--ink), 0.18); }
-.dock .dk-music { padding: 0 6px 0 4px; }
-.dock .dk-music img { width: 30px; height: 30px; border-radius: 8px; object-fit: cover; }
-.dock .dk-music img[hidden] { display: none; }
+.dock [hidden] { display: none !important; }
+/* what is playing: cover, then the title over the artist at the clock's sizes */
+.dock .dk-music { gap: 8px; padding: 0 10px 0 5px; max-width: 200px; }
+.dock .dk-cover { position: relative; flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; overflow: hidden; background: rgba(var(--ink), 0.1); color: var(--muted); }
+.dock .dk-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.dock .dk-cover .dk-note svg { width: 15px; height: 15px; }
+.dock .dk-cover .dk-pp { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); color: #fff; opacity: 0; transition: opacity 0.14s ease; }
+.dock .dk-cover .dk-pp svg { width: 15px; height: 15px; }
+.dock .dk-music:hover .dk-pp, .dock .dk-music.paused .dk-pp { opacity: 1; }
+.dock .dk-mtext { display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; }
+.dock .dk-mtext b { font: 650 14px/1 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock .dk-mtext span { font: 500 11px/1 var(--font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the battery: small, a body filled to its charge with the percent beside it */
+.dock .dk-batt { gap: 5px; padding: 0 6px; }
+.dock .dk-batt > span { font: 600 11px/1 var(--font); color: var(--muted); font-variant-numeric: tabular-nums; }
+.dock .dk-bbody { position: relative; display: block; width: 19px; height: 10px; border-radius: 3px; box-shadow: inset 0 0 0 1.4px rgba(var(--ink), 0.5); padding: 2px; box-sizing: border-box; }
+.dock .dk-bbody::after { content: ''; position: absolute; right: -3px; top: 3px; width: 2px; height: 4px; border-radius: 0 1px 1px 0; background: rgba(var(--ink), 0.5); }
+.dock .dk-bfill { display: block; height: 100%; max-width: 100%; border-radius: 1.5px; background: var(--fg); }
+.dock .dk-bbolt { position: absolute; inset: 0; display: none; place-items: center; }
+.dock .dk-bbolt svg { width: 9px; height: 9px; fill: var(--fg); filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.6)); }
+.dock .dk-batt[data-tone='charging'] .dk-bfill { background: #34c759; }
+.dock .dk-batt[data-tone='charging'] .dk-bbolt { display: grid; }
+.dock .dk-batt[data-tone='low'] .dk-bfill { background: #ff453a; }
+.dock .dk-batt[data-tone='low'] > span { color: #ff453a; }
+.dock .dk-wifi, .dock .dk-sound { width: 34px; padding: 0; }
 .dock .dk-timer span { font: 600 15px/1 var(--font); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
-.dock .dk-quick { gap: 10px; padding: 0 10px; }
 .dock .dk-clock { flex-direction: column; gap: 2px; padding: 0 10px; text-align: center; }
 .dock .dk-clock b { font: 650 14px/1 var(--font); }
 .dock .dk-clock span { font: 500 11px/1 var(--font); color: var(--muted); }
@@ -2083,3 +2116,84 @@ html[data-pill='glass'] .dock { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45
    edge and showed as a faint hard box on the wallpaper: a widget has none. */
 html.widget-window .sheet, html.widget-window .sheet-shadow { box-shadow: none !important; }
 .tile.k-list .lsub { flex: none; line-height: 1.35; margin: calc(-2px * var(--k, 1)) 0 calc(4px * var(--k, 1)) calc(26px * var(--k, 1)); }
+
+/* The drop card (files dragged over the island): the Shelf and Land side by side, the one under the
+   pointer lit in the accent. Each is a dashed well with its icon in a ring, its name and a line under. */
+.sb-zones { display: flex; gap: 8px; }
+.sb-zones .zone {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px;
+  border-radius: 16px;
+  border: 1.5px dashed rgba(var(--ink), 0.22);
+  background: rgba(var(--ink), 0.04);
+  text-align: center;
+  transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.22s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.sb-zones .zr { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 2px; border-radius: 50%; background: rgba(var(--ink), 0.08); color: var(--muted); transition: background-color 0.16s ease, color 0.16s ease, transform 0.22s cubic-bezier(0.3, 1.4, 0.5, 1); }
+.sb-zones .zi { width: 18px; height: 18px; }
+.sb-zones .zt { font: 650 13px/1.2 var(--font); }
+.sb-zones .zs { font: 500 11px/1.25 var(--font); color: var(--muted); max-width: 240px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-zones .zone.hot { border-style: solid; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); transform: scale(1.015); }
+.sb-zones .zone.hot .zr { background: var(--accent); color: #fff; transform: scale(1.08); }
+.sb-zones .zone.off { opacity: 0.45; }
+
+/* ------------------------------------------------------------------ the Shelf's circle
+   The bot's twin on the other side of the pill: the newest file's picture in a circle, a count at its
+   corner. Pointed at, it grows into a small panel of the files (away from the pill and the edge). */
+.shelfb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: auto;
+  border-radius: calc(var(--d, 36px) / 2);
+  transition: left 0.32s cubic-bezier(0.32, 1.2, 0.5, 1), top 0.32s cubic-bezier(0.32, 1.2, 0.5, 1), width 0.32s cubic-bezier(0.32, 1.2, 0.5, 1), height 0.32s cubic-bezier(0.32, 1.2, 0.5, 1), border-radius 0.32s ease, opacity 0.2s ease, transform 0.25s cubic-bezier(0.3, 1.5, 0.5, 1);
+  color: var(--fg);
+  font-family: var(--font);
+}
+.shelfb.gone { opacity: 0; transform: scale(0.4); pointer-events: none; }
+.shelfb::before { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: 0 14px 34px -10px rgba(0, 0, 0, 0.62), 0 3px 10px rgba(0, 0, 0, 0.32); }
+.shelfb-bg { position: absolute; inset: 0; border-radius: inherit; background: var(--pill); box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.075), inset 0 1px 0 rgba(var(--ink), 0.07); }
+.shelfb-face { position: absolute; left: 0; top: 0; width: var(--d, 36px); height: var(--d, 36px); display: grid; place-items: center; border-radius: 50%; overflow: hidden; cursor: pointer; transition: opacity 0.16s ease; }
+.shelfb-face img { width: 100%; height: 100%; object-fit: cover; }
+.shelfb-face svg { width: 52%; height: 52%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; color: var(--muted); }
+.shelfb-badge { position: absolute; left: calc(var(--d, 36px) - 13px); top: -4px; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box; border-radius: 8px; background: var(--accent); color: #fff; font: 700 10px/16px var(--font); text-align: center; box-shadow: 0 0 0 2px var(--pill-solid, #000); transition: opacity 0.16s ease; }
+.shelfb-badge[hidden] { display: none; }
+.shelfb.drop { transform: scale(1.18); }
+.shelfb.drop .shelfb-bg { box-shadow: inset 0 0 0 2px var(--accent); }
+.shelfb.bump { animation: shelfb-bump 0.42s cubic-bezier(0.3, 1.6, 0.5, 1); }
+@keyframes shelfb-bump { 40% { transform: scale(1.22); } 100% { transform: scale(1); } }
+
+.shelfb-panel { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 10px 10px; box-sizing: border-box; opacity: 0; pointer-events: none; transition: opacity 0.14s ease; }
+.shelfb.open { border-radius: 20px; }
+.shelfb.open .shelfb-face, .shelfb.open .shelfb-badge { opacity: 0; pointer-events: none; }
+.shelfb.open .shelfb-panel { opacity: 1; pointer-events: auto; transition-delay: 0.1s; }
+.sbp-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sbp-grip { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); cursor: grab; }
+.sbp-grip svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.sbp-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 7px; }
+.sbp-title b { font: 650 13.5px/1 var(--font); }
+.sbp-title span { font: 500 11.5px/1 var(--font); color: var(--muted); }
+.sbp-x { all: unset; flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: var(--muted); cursor: pointer; }
+.sbp-x:hover { background: rgba(var(--ink), 0.12); color: var(--fg); }
+.sbp-x svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+.sbp-list { flex: 1; min-height: 0; display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; align-items: stretch; }
+.sbp-list::-webkit-scrollbar { display: none; }
+.sbp-file { flex: none; width: 64px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 4px 2px; border-radius: 10px; cursor: grab; }
+.sbp-file:hover { background: rgba(var(--ink), 0.08); }
+.sbp-file:active { cursor: grabbing; }
+.sbp-file.missing { opacity: 0.4; cursor: default; }
+.sbp-pic { width: 46px; height: 46px; border-radius: 9px; overflow: hidden; display: grid; place-items: center; background: rgba(var(--ink), 0.07); color: var(--muted); }
+.sbp-pic img { width: 100%; height: 100%; object-fit: cover; }
+.sbp-pic svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.sbp-name { width: 100%; font: 500 10.5px/1.2 var(--font); text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sbp-undo { all: unset; margin: auto; padding: 7px 18px; border-radius: 14px; background: var(--accent); color: #fff; font: 650 12.5px/1 var(--font); cursor: pointer; }
+
+/* the browser preview of the taskbar (/?dock): at the bottom middle, over a wallpaper-ish backdrop */
+html.dock-preview, html.dock-preview body { background: radial-gradient(ellipse at 20% 90%, #6b4a3a, transparent 55%), linear-gradient(#1d2129, #2a2f3a); }
+html.dock-preview .dock { left: 50%; top: auto; bottom: 18px; transform: translateX(-50%); }

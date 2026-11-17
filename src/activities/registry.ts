@@ -5,6 +5,7 @@ import type { Activity } from '../core/activity';
 import { BatteryActivity } from './battery';
 import { SportsActivity } from './sports';
 import { LandActivity } from './land';
+import { ShelfActivity } from './shelf';
 import { CalendarActivity } from './calendar';
 import { CallsActivity } from './calls';
 import { ClaudeActivity } from './claude';
@@ -46,6 +47,7 @@ export function createRegistry(): Map<string, () => Activity> {
     ['reminders', () => new RemindersActivity()],
     ['downloads', () => new DownloadsActivity()],
     ['land', () => new LandActivity()],
+    ['shelf', () => new ShelfActivity()],
     ['battery', () => new BatteryActivity()],
     ['system-controls', () => new SystemControlsActivity()],
     ['screenshots', () => new ScreenshotsActivity()],

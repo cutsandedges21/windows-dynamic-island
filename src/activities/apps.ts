@@ -71,6 +71,16 @@ export class AppsActivity extends BaseActivity {
     this.ctx.update();
   }
 
+  /** `set`: the list replaced (the taskbar pinned, unpinned or moved an app). */
+  command(cmd: string, arg: unknown): unknown {
+    if (cmd !== 'set' || !Array.isArray(arg)) return false;
+    this.apps = cleanApps(arg);
+    this.save();
+    void this.loadIcons();
+    this.ctx.update();
+    return true;
+  }
+
   private save(): void {
     this.ctx.setOptions?.({ apps: this.apps });
   }

@@ -31,7 +31,7 @@ describe('planActivities', () => {
     const plan = planActivities(answers({ uses: ['gaming'], glance: ['system', 'network', 'system-controls'], ai: true }), desktop);
     expect(plan.picked).toEqual(['game', 'system', 'network', 'system-controls']);
     // The bot's brain is on with the AI step, but has no tile: the bot is the way in.
-    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'phone', 'workspaces', 'local']);
+    expect(plan.hidden).toEqual(['downloads', 'screenshots', 'devices', 'external', 'land', 'shelf', 'phone', 'workspaces', 'local']);
     expect(plan.enabled).toEqual([...plan.picked, ...plan.hidden]);
   });
 

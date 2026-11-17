@@ -78,6 +78,7 @@ mod term;
 mod updater;
 mod web;
 mod dock;
+mod dockfx;
 #[cfg_attr(target_os = "macos", path = "mac/widgets.rs")]
 mod widgets;
 mod workspaces;
@@ -309,6 +310,9 @@ pub fn run() {
             dock::dock_at,
             dock::dock_panel,
             dock::dock_autohide,
+            dockfx::dock_raise,
+            dockfx::dock_minimize,
+            dockfx::dock_close,
             widgets::widget_size,
             widgets::widget_moved,
             shell::game_bar,

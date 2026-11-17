@@ -317,6 +317,19 @@ export const CATALOG: ActivityMeta[] = [
     options: [{ key: 'folder', type: 'text', label: 'Folder', default: '', placeholder: 'Downloads (default)' }],
   },
   {
+    id: 'shelf',
+    name: 'Shelf',
+    description:
+      "A place to park files for a moment. Drag files over the island and drop them on the Shelf side: they wait there, and the island stays open until you click the pill or the x. Close it and the Shelf rests as a small circle beside the pill; point at it to drag files back out. Your files are never moved or copied, the Shelf only remembers where they are.",
+    icon: 'shelf',
+    category: 'productivity',
+    enabled: true,
+    builtIn: true,
+    priority: 'low',
+    behavior: B(false, false, true, false),
+    options: [],
+  },
+  {
     id: 'land',
     name: 'Land',
     description:
