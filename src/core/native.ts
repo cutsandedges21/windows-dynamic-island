@@ -1070,7 +1070,8 @@ export const native = {
   /** Lets Island through on every network (one UAC prompt); the new verdict. */
   landFirewallFix: () => tryCall<LandFirewall>('land_firewall_fix', {}),
   /** Starts sending; the transfer's id, or why it cannot. */
-  landSend: (peer: string, paths: string[]) => tryCall<string>('land_send', { peer, paths }),
+  /** Files, and `text`: a note that goes with them in the same offer (land.rs send_with). */
+  landSend: (peer: string, paths: string[], text: string | null = null) => tryCall<string>('land_send', { peer, paths, text }),
   landSendText: (peer: string, text: string) => tryCall<string>('land_send_text', { peer, text }),
   landShareStart: (paths: string[], text: string | null) => tryCall<ShareInfo>('land_share_start', { paths, text }),
   landShareStop: () => call<undefined>('land_share_stop', {}, undefined),

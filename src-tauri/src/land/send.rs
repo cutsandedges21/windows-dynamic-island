@@ -9,6 +9,16 @@ impl Running {
     /// Starts sending `paths` to a computer nearby or to a friend on another network (by id);
     /// progress arrives as land-transfer events.
     pub async fn send(self: &Arc<Self>, peer_id: &str, paths: Vec<PathBuf>) -> Result<String, String> {
+        self.send_with(peer_id, paths, None).await
+    }
+
+    /// Files and, with them in the same offer, a note (Justin: a picture and its text as one
+    /// message). The receiver gets both or neither, with one answer.
+    pub async fn send_with(self: &Arc<Self>, peer_id: &str, paths: Vec<PathBuf>, text: Option<&str>) -> Result<String, String> {
+        let text = match text {
+            Some(t) => Some(clean_text(t).ok_or_else(|| format!("The note is blank or more than {MAX_TEXT} characters."))?),
+            None => None,
+        };
         // A computer nearby by its id, or by its friend key: a friend who is nearby goes the fast way.
         let peer = {
             let peers = self.peers.lock().unwrap();
@@ -26,7 +36,7 @@ impl Running {
             return Err("Nothing to send: the folders are empty.".into());
         }
         let id = self.next_id("out");
-        self.start_send(id.clone(), info, peer, friend, items, shown, now_ms(), None);
+        self.start_send(id.clone(), info, peer, friend, items, shown, now_ms(), text);
         Ok(id)
     }
 
@@ -196,8 +206,8 @@ impl Running {
             let run = self.clone();
             tokio::spawn(async move {
                 let paths: Vec<PathBuf> = w.paths.iter().map(PathBuf::from).collect();
-                // Text waits as it is; files are read from the disk again.
-                let items = if w.text.is_some() { Some(Vec::new()) } else { tokio::task::spawn_blocking(move || collect(&paths)).await.ok().and_then(|r| r.ok()).filter(|i| !i.is_empty()) };
+                // Text alone waits as it is; files (a note with them too) are read from the disk again.
+                let items = if w.text.is_some() && w.paths.is_empty() { Some(Vec::new()) } else { tokio::task::spawn_blocking(move || collect(&paths)).await.ok().and_then(|r| r.ok()).filter(|i| !i.is_empty()) };
                 let info = friend_info(&friend);
                 match items {
                     Some(items) => run.start_send(w.tid, info, None, Some(friend), items, w.paths, w.since, w.text),

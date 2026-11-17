@@ -36,7 +36,7 @@ export interface Live extends LandTransfer {
 }
 
 /** What a send from here carried: the text, or the files as they were staged. */
-type Resend = { text: string } | { staged: LandStaged[] };
+type Resend = { text: string } | { staged: LandStaged[]; text?: string };
 /** Sends remembered for Send again (the card shows far fewer rows: KEEP_MAX). */
 const SENT_MAX = 40;
 
@@ -65,6 +65,8 @@ const ACTIVE: ReadonlySet<string> = new Set(['waiting', 'asking', 'sending', 're
 /** Phones paired in Settings › Your phone go by `phone:<their id>` here, apart from computers and friends. */
 export const PHONE = 'phone:';
 const isPhone = (id: string) => id.startsWith(PHONE);
+/** A picture the clipboard can take, by its name. */
+const isImageName = (name: string) => /\.(png|jpe?g|gif|bmp|webp|heic|tiff?)$/i.test(name);
 
 /** "Moss's MacBook Air" → "MM", "DESKTOP-K2L3M4" → "DK", "studio" → "ST". */
 export function initials(name: string): string {
@@ -140,6 +142,8 @@ export class LandActivity extends BaseActivity {
    * away, the card goes but the note waits on the pill, and pointing at it brings the card back.
    */
   private readonly kept = new Map<string, { peer: LandPeer; text: string; at: number }>();
+  /** Copy image was pressed before the picture arrived: it goes on the clipboard when it lands. */
+  private readonly copyImageWhenDone = new Set<string>();
   private lastScan = 0;
   /** Windows Firewall's word on this network, checked when the card opens (at most every 30 s). */
   private firewall: LandFirewall | null = null;
@@ -296,6 +300,13 @@ export class LandActivity extends BaseActivity {
       const declined = t.state === 'declined' && t.error === 'Declined.';
       if (declined || t.state === 'cancelled') this.kept.delete(t.id);
       else if (!this.kept.has(t.id) && (t.state === 'asking' || (t.state === 'done' && isPhone(t.peer.id)))) this.kept.set(t.id, { peer: t.peer, text: t.text, at: now });
+    }
+    if (t.state === 'done' && this.copyImageWhenDone.delete(t.id)) {
+      const image = t.saved.find((p) => isImageName(p));
+      if (image) void native.clipboardCopyImage(image).then((ok) => {
+        this.note = ok ? { text: 'Image copied', at: Date.now(), good: true } : { text: "Couldn't copy that picture.", at: Date.now() };
+        this.ctx.update();
+      });
     }
     if (t.state === 'asking' && prev?.state !== 'asking') this.asked(live);
     if (live.ended === now) this.finished(live);
@@ -768,6 +779,40 @@ export class LandActivity extends BaseActivity {
     };
   }
 
+  /**
+   * A note that came with files (a picture and its text, as one message): the note, the files, and
+   * a Copy for each (Justin). Copying either takes the message: the files land in Downloads, and
+   * Copy image puts the picture on the clipboard once it is there.
+   */
+  private comboCard(t: Live, text: string, env: SheetEnv): SheetView {
+    if (env.interactive && this.replying === t.id) return this.replyCard(t.id, t.peer, text);
+    const blocks: Block[] = [
+      { t: 'head', key: 'head', icon: 'land', tone: 'accent', title: `${t.peer.name} sent you a note and ${t.count === 1 ? t.items[0]?.name ?? 'a file' : plural(t.count, 'file')}`, sub: `${bytes(t.total)}${osLabel(t.peer.os) ? ` · ${osLabel(t.peer.os)}` : ''}` },
+      { t: 'text', key: 'text', text, bubble: true, lines: 6 },
+    ];
+    if (t.count > 1) blocks.push({ t: 'rows', key: 'files', items: t.items.slice(0, FILE_ROWS).map((it, i) => ({ key: `f${i}`, icon: it.dir ? 'folder' : 'file', title: it.name, detail: bytes(it.size) })) });
+    if (t.expires) blocks.push({ t: 'countdown', key: 'left', until: t.expires, total: ASK_MS, tone: 'accent' });
+    if (env.interactive) {
+      const image = t.count === 1 && isImageName(t.items[0]?.name ?? '');
+      blocks.push({
+        t: 'buttons',
+        key: 'answer',
+        align: 'fill',
+        items: [
+          { key: 'no', label: 'Decline', icon: 'x', action: 'decline', arg: t.id, style: 'secondary' },
+          { key: 'reply', label: 'Reply', icon: 'chat', action: 'reply', arg: t.id, style: 'secondary' },
+          { key: 'copy-text', label: 'Copy text', icon: 'copy', action: 'combo-text', arg: t.id, style: image ? 'secondary' : 'primary' },
+          image
+            ? { key: 'copy-image', label: 'Copy image', icon: 'image', action: 'combo-image', arg: t.id, style: 'primary' }
+            : { key: 'save', label: 'Save files', icon: 'download', action: 'accept', arg: t.id, style: 'secondary' },
+        ],
+      });
+    }
+    if (this.note && env.now - this.note.at < REPLY_NOTE_MS) blocks.push({ t: 'text', key: 'note', text: this.note.text, tone: this.note.good ? 'good' : 'bad', size: 'sm' });
+    blocks.push({ t: 'text', key: 'where', text: 'Sent encrypted. Copying either one saves the files to Downloads.', tone: 'dim', size: 'sm' });
+    return { key: `ask/${t.id}`, blocks };
+  }
+
   /** The newest note kept on the island (asks still waiting show their own card first). */
   private keptNote(): { id: string; peer: LandPeer; text: string; at: number } | null {
     let best: { id: string; peer: LandPeer; text: string; at: number } | null = null;
@@ -783,13 +828,18 @@ export class LandActivity extends BaseActivity {
       { t: 'head', key: 'head', icon: phone ? 'phone' : 'land', tone: 'accent', title: `${n.peer.name} sent you a note`, sub: (phone ? 'Copied to the clipboard when it came' : osLabel(n.peer.os)) || undefined },
       { t: 'text', key: 'text', text: n.text, bubble: true, lines: 8 },
     ];
+    const saved = this.transfers.get(n.id)?.saved ?? [];
+    const image = saved.find((p) => isImageName(p));
+    if (saved.length) blocks.push({ t: 'rows', key: 'saved', items: saved.slice(0, FILE_ROWS).map((p) => ({ key: p, icon: isImageName(p) ? 'image' : 'file', title: baseName(p), action: 'open', arg: p, tip: 'Open' })) });
     if (env.interactive) {
       const items: SheetButton[] = [
         { key: 'done', label: 'Done', icon: 'check', action: 'note-done', arg: n.id, style: 'secondary' },
         { key: 'reply', label: 'Reply', icon: 'chat', action: 'reply', arg: n.id, style: 'secondary' },
       ];
       if (isLink(n.text)) items.push({ key: 'open', label: 'Open', icon: 'external', action: 'note-open', arg: n.id, style: 'secondary' });
-      items.push({ key: 'yes', label: 'Copy', icon: 'copy', action: 'note-copy', arg: n.id, style: 'primary' });
+      items.push({ key: 'yes', label: image ? 'Copy text' : 'Copy', icon: 'copy', action: 'note-copy', arg: n.id, style: image ? 'secondary' : 'primary' });
+      if (image) items.push({ key: 'image', label: 'Copy image', icon: 'image', action: 'note-image', arg: image, style: 'primary' });
+      else if (saved.length) items.push({ key: 'show', label: 'Show in folder', icon: 'folder', action: 'show', arg: saved[0], style: 'secondary' });
       blocks.push({ t: 'buttons', key: 'answer', align: 'fill', items });
     }
     if (this.note && env.now - this.note.at < REPLY_NOTE_MS) blocks.push({ t: 'text', key: 'note', text: this.note.text, tone: this.note.good ? 'good' : 'bad', size: 'sm' });
@@ -799,6 +849,7 @@ export class LandActivity extends BaseActivity {
 
   /** Someone wants to send files here: who, what, and Accept or Decline. */
   private askCard(t: Live, env: SheetEnv): SheetView {
+    if (t.text && t.count > 0) return this.comboCard(t, t.text, env);
     if (t.text) return this.textCard(t, t.text, env);
     const blocks: Block[] = [{ t: 'head', key: 'head', icon: 'land', tone: 'accent', title: `${t.peer.name} wants to send you`, sub: `${what(t)} · ${bytes(t.total)}` }];
     const rows: SheetRow[] = t.items.slice(0, FILE_ROWS).map((it, i) => ({
@@ -956,6 +1007,8 @@ export class LandActivity extends BaseActivity {
         remove: { key: 'rm', icon: 'x', action: 'unstage', arg: s.path, style: 'ghost', tip: 'Take it off the shelf' },
       }));
       blocks.push({ t: 'files', key: 'files', items, drag: env.interactive ? 'drag-out' : undefined });
+      // A note to go with them, in the same message (the receiver gets a Copy for each).
+      if (!this.stagedText && env.interactive) blocks.push({ t: 'input', key: 'text', placeholder: 'Add a note to send with them, then Enter', action: 'stage-text' });
     } else if (!this.stagedText) {
       blocks.push({ t: 'text', key: 'hint', text: 'Drag files or folders onto the island, or paste a link or a note below, then pick who gets it.', tone: 'muted', size: 'sm' });
       blocks.push({ t: 'input', key: 'text', placeholder: 'Paste a link or type a note, then Enter', action: 'stage-text', pasteFiles: 'paste' });
@@ -1101,8 +1154,7 @@ export class LandActivity extends BaseActivity {
 
   drop(paths: string[]): boolean {
     if (!this.me && !native.demo) return false;
-    // One thing at a time: dropped files take the place of text waiting to go, and of a share.
-    this.stagedText = null;
+    // Dropped files go with a note waiting to go (one message: Justin); they take the place of a share.
     if (this.share) {
       this.share = null;
       void native.landShareStop();
@@ -1236,7 +1288,8 @@ export class LandActivity extends BaseActivity {
         break;
       case 'accept':
       case 'decline':
-        this.kept.delete(id);
+        // Saving a note's files keeps the note to copy; declining lets it go.
+        if (name === 'decline' || !this.transfers.get(id)?.text) this.kept.delete(id);
         if (native.demo) this.demoAnswer(id, name === 'accept');
         else await native.landAnswer(id, name === 'accept');
         break;
@@ -1245,7 +1298,8 @@ export class LandActivity extends BaseActivity {
         // Text: taking it is copying (or opening) it.
         const text = this.transfers.get(id)?.text;
         if (!text) break;
-        this.kept.delete(id);
+        // A note with files stays for its files' Copy; a note alone is done with.
+        if (!this.transfers.get(id)?.count) this.kept.delete(id);
         if (!native.demo) await native.landAnswer(id, true);
         if (name === 'accept-open' && isLink(text)) void native.openUrl(text.trim());
         else void native.clipboardSetText(text);
@@ -1263,7 +1317,29 @@ export class LandActivity extends BaseActivity {
         if (this.transfers.get(id)?.state === 'asking' && !native.demo) await native.landAnswer(id, true);
         if (name === 'note-open' && isLink(n.text)) void native.openUrl(n.text.trim());
         else void native.clipboardSetText(n.text);
-        this.kept.delete(id);
+        // A note with files stays for its other Copy; Done lets it go.
+        if (!this.transfers.get(id)?.count) this.kept.delete(id);
+        else this.note = { text: 'Text copied', at: Date.now(), good: true };
+        break;
+      }
+      case 'note-image':
+        // arg: the picture's path in Downloads.
+        if (!id) break;
+        this.note = (await native.clipboardCopyImage(id)) ? { text: 'Image copied', at: Date.now(), good: true } : { text: "Couldn't copy that picture.", at: Date.now() };
+        break;
+      case 'combo-text':
+      case 'combo-image': {
+        // A note with files: either Copy takes the message (the files land in Downloads).
+        const t = this.transfers.get(id);
+        if (!t?.text) break;
+        if (t.state === 'asking') {
+          if (native.demo) this.demoAnswer(id, true);
+          else await native.landAnswer(id, true);
+        }
+        if (name === 'combo-text') {
+          void native.clipboardSetText(t.text);
+          this.note = { text: 'Text copied', at: Date.now(), good: true };
+        } else this.copyImageWhenDone.add(id);
         break;
       }
       case 'note-done':
@@ -1348,8 +1424,9 @@ export class LandActivity extends BaseActivity {
   /** Every picked computer gets the ticked files (all of them when none is ticked), or the text. */
   private async send(): Promise<void> {
     const to = this.targets();
-    if (this.stagedText) return this.sendText(to, this.stagedText);
     const staged = this.chosen();
+    const note = this.stagedText;
+    if (note && !staged.length) return this.sendText(to, note);
     if (!to.length || !staged.length) return;
     if (native.demo) {
       for (const p of to) this.remember(this.demoSend(p, staged), { staged });
@@ -1358,24 +1435,29 @@ export class LandActivity extends BaseActivity {
     }
     const failures: string[] = [];
     for (const p of to) {
-      const r = await this.sendFiles(p, staged);
+      const r = await this.sendFiles(p, staged, note);
       if (!r.ok) failures.push(to.length > 1 ? `${p.name}: ${r.error}` : r.error);
     }
     if (!this.alive) return;
     if (failures.length) this.note = { text: failures.join(' '), at: Date.now() };
-    // Sent files stay on the shelf (they are only parked there); the ticks have done their job.
-    if (failures.length < to.length) this.ticked.clear();
+    // Sent files stay on the shelf (they are only parked there); the ticks have done their job, and the note went.
+    if (failures.length < to.length) {
+      this.ticked.clear();
+      this.stagedText = null;
+    }
   }
 
   /** Files to one computer or phone; each send it starts remembers them for Send again. */
-  private async sendFiles(p: LandPeer, staged: LandStaged[]): Promise<Tried<null>> {
-    if (isPhone(p.id)) return this.sendToPhone(p, staged);
-    const r = await native.landSend(
-      p.id,
-      staged.map((s) => s.path),
-    );
+  private async sendFiles(p: LandPeer, staged: LandStaged[], note: string | null = null): Promise<Tried<null>> {
+    if (isPhone(p.id)) {
+      // A phone takes them one by one: the files, then the note.
+      const r = await this.sendToPhone(p, staged);
+      return r.ok && note ? this.textToPhone(p, note) : r;
+    }
+    const paths = staged.map((s) => s.path);
+    const r = note ? await native.landSend(p.id, paths, note) : await native.landSend(p.id, paths);
     if (!r.ok) return r;
-    this.remember(r.value, { staged });
+    this.remember(r.value, note ? { staged, text: note } : { staged });
     return { ok: true, value: null };
   }
 
@@ -1406,7 +1488,7 @@ export class LandActivity extends BaseActivity {
       if ('staged' in what) this.remember(this.demoSend(t.peer, what.staged), what);
       return;
     }
-    const r = 'text' in what ? await this.textTo(t.peer, what.text) : await this.sendFiles(t.peer, what.staged);
+    const r = 'staged' in what ? await this.sendFiles(t.peer, what.staged, what.text ?? null) : await this.textTo(t.peer, what.text);
     if (!this.alive) return;
     if (!r.ok) this.note = { text: r.error, at: Date.now() };
   }

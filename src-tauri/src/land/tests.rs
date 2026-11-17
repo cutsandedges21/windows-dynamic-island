@@ -820,6 +820,24 @@ async fn files_and_folders_arrive_whole_after_consent() {
 }
 
 #[tokio::test]
+async fn a_picture_and_a_note_go_as_one_offer() {
+    let p = pair("combo").await;
+    std::fs::write(p.source.join("photo.png"), b"\x89PNG fake").unwrap();
+    let id = p.a.send_with(&p.b.me.id, vec![p.source.join("photo.png")], Some("  here it is  ")).await.unwrap();
+    let ask = wait_for(&p.b_events, "in", "asking").await;
+    assert_eq!(ask["text"], "here it is");
+    assert_eq!(ask["count"], 1);
+    assert!(p.b.answer(ask["id"].as_str().unwrap(), true));
+    let got = wait_for(&p.b_events, "in", "done").await;
+    assert_eq!(got["text"], "here it is");
+    assert_eq!(std::fs::read(p.downloads.join("photo.png")).unwrap(), b"\x89PNG fake");
+    wait_id(&p.a_events, &id, "done").await;
+    assert!(p.a.send_with(&p.b.me.id, vec![p.source.join("photo.png")], Some("  ")).await.is_err(), "a blank note");
+    p.a.shutdown().await;
+    p.b.shutdown().await;
+}
+
+#[tokio::test]
 async fn text_reaches_a_computer_nearby_after_consent() {
     let p = pair("text").await;
     let id = p.a.send_text(&p.b.me.id, "https://example.com/recipe").await.unwrap();

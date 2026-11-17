@@ -620,9 +620,10 @@ pub async fn land_place(state: tauri::State<'_, LandState>) -> Result<Vec<PeerIn
 }
 
 #[tauri::command]
-pub async fn land_send(state: tauri::State<'_, LandState>, peer: String, paths: Vec<String>) -> Result<String, String> {
+/// Files to a computer nearby or a friend; `text`, a note that goes with them in the same offer.
+pub async fn land_send(state: tauri::State<'_, LandState>, peer: String, paths: Vec<String>, text: Option<String>) -> Result<String, String> {
     let run = running(&state).await?;
-    run.send(&peer, paths.into_iter().map(PathBuf::from).collect()).await
+    run.send_with(&peer, paths.into_iter().map(PathBuf::from).collect(), text.as_deref()).await
 }
 
 /// Sends text (a link, a note) to a computer nearby or a friend.

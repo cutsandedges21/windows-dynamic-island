@@ -58,6 +58,7 @@ function resetNative() {
     clipboardPaste: vi.fn(async () => ({ files: [], text: 'https://example.com/a' })),
     openUrl: vi.fn(async () => true),
     clipboardSetText: vi.fn(async () => true),
+    clipboardCopyImage: vi.fn(async () => true),
     landAnswer: vi.fn(async () => true),
     landCancel: vi.fn(async () => true),
     landStage: vi.fn(async (paths: string[]) => paths.map((p) => ({ path: p, name: p.split('\\').pop(), size: 1000, dir: !p.includes('.'), files: p.includes('.') ? 1 : 12, error: null }))),
@@ -783,14 +784,14 @@ describe('text and links', () => {
     expect(block(act.sheet(sheetEnv('open'))!, 'input', 'text')).toBeDefined();
   });
 
-  it('dropped files take the place of text waiting to go', async () => {
+  it('dropped files go with the text waiting to go, as one message', async () => {
     const { act } = await boot();
     emit('land-peers', [MAC]);
     await act.action('stage-text', 'a note');
     act.drop(['C:\\x\\photo.jpg']);
     await tick(0);
     await act.action('send');
-    expect(h.native.landSend).toHaveBeenCalledWith(MAC.id, ['C:\\x\\photo.jpg']);
+    expect(h.native.landSend).toHaveBeenCalledWith(MAC.id, ['C:\\x\\photo.jpg'], 'a note');
     expect(h.native.landSendText).not.toHaveBeenCalled();
   });
 
@@ -862,6 +863,42 @@ describe('text and links', () => {
     await act.action('decline', 'in-d');
     emit('land-transfer', transfer({ id: 'in-d', dir: 'in', state: 'declined', error: 'Declined.', count: 0, total: 0, items: [], text: 'no thanks' }));
     expect(act.status().urgent ?? null).toBeNull();
+  });
+
+  it('a picture with a note: one card, a Copy for each, the picture copied once it lands', async () => {
+    const { act } = await boot();
+    const combo = (over: Partial<LandTransfer>) => transfer({ id: 'in-c', dir: 'in', count: 1, total: 2048, items: [{ name: 'photo.png', size: 2048, files: 1, dir: false }], text: 'here it is', ...over });
+    emit('land-transfer', combo({ state: 'asking', expires: T0 + 120_000 }));
+    let card = act.sheet(sheetEnv('urgent'))!;
+    expect(block(card, 'head', 'head')!.title).toBe("Moss's MacBook Air sent you a note and photo.png");
+    expect(block(card, 'text', 'text')!.text).toBe('here it is');
+    expect(block(card, 'buttons', 'answer')!.items.map((b) => b.label)).toEqual(['Decline', 'Reply', 'Copy text', 'Copy image']);
+    // Copy image takes the message; the picture goes on the clipboard when it is in Downloads.
+    await act.action('combo-image', 'in-c');
+    expect(h.native.landAnswer).toHaveBeenCalledWith('in-c', true);
+    emit('land-transfer', combo({ state: 'receiving' }));
+    emit('land-transfer', combo({ state: 'done', done: 2048, saved: ['C:\\Users\\me\\Downloads\\photo.png'] }));
+    await tick(0);
+    expect(h.native.clipboardCopyImage).toHaveBeenCalledWith('C:\\Users\\me\\Downloads\\photo.png');
+    // The note stays, with both Copies, till Done.
+    card = act.sheet(sheetEnv('urgent'))!;
+    expect(block(card, 'buttons', 'answer')!.items.map((b) => b.label)).toEqual(['Done', 'Reply', 'Copy text', 'Copy image']);
+    await act.action('note-copy', 'in-c');
+    expect(h.native.clipboardSetText).toHaveBeenCalledWith('here it is');
+    expect(act.status().urgent).toMatchObject({ key: 'note:in-c' });
+    await act.action('note-done', 'in-c');
+    expect(act.status().urgent ?? null).toBeNull();
+  });
+
+  it('a note added to files on the shelf goes with them', async () => {
+    const { act } = await boot();
+    emit('land-peers', [MAC]);
+    act.drop(['C:\\x\\photo.jpg']);
+    await tick(0);
+    expect(block(act.sheet(sheetEnv('open'))!, 'input', 'text')).toMatchObject({ placeholder: 'Add a note to send with them, then Enter' });
+    await act.action('stage-text', 'for you');
+    await act.action('send');
+    expect(h.native.landSend).toHaveBeenCalledWith(MAC.id, ['C:\\x\\photo.jpg'], 'for you');
   });
 
   it('a link that arrives can be opened instead', async () => {
