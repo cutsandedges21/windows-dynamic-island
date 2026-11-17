@@ -58,13 +58,113 @@ fn style(win: &WebviewWindow) {
 #[cfg(not(windows))]
 fn style(_win: &WebviewWindow) {}
 
-/// Sizes the dock to `w` x `h` logical px and puts it where it belongs.
+/// Sizes the dock to `w` x `h` logical px and puts it where it belongs: in a strip it reserves
+/// along the bottom of the screen, as Windows' own taskbar does, so maximized windows end above
+/// it instead of under it (above Windows' taskbar too, while that one shows).
 fn put(win: &WebviewWindow, w: f64, h: f64) {
     let Some(m) = monitors::primary() else { return };
     let _ = win.set_size(LogicalSize::new(w.ceil(), h.ceil()));
     let centre = *CENTRE.lock().unwrap();
-    let (x, y) = place(m.work.x, m.work.width, m.work.y + m.work.height, m.scale, w, h, centre);
+    let ph = ((h + GAP) * m.scale).round() as i32;
+    let bottom = reserve(win, (m.bounds.x, m.bounds.y, m.bounds.width, m.bounds.height), ph).unwrap_or(m.work.y + m.work.height);
+    let (x, y) = place(m.bounds.x, m.bounds.width, bottom, m.scale, w, h, centre);
     let _ = win.set_position(PhysicalPosition::new(x, y));
+}
+
+/// The dock's window registered as an app bar (once).
+static APPBAR: AtomicBool = AtomicBool::new(false);
+
+/// Reserves a strip `height` px tall along the bottom of the screen `(x, y, w, h)` for the dock;
+/// answers the strip's bottom edge (above Windows' taskbar when that one shows).
+#[cfg(windows)]
+fn reserve(win: &WebviewWindow, screen: (i32, i32, i32, i32), height: i32) -> Option<i32> {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::Shell::{SHAppBarMessage, ABE_BOTTOM, ABM_NEW, ABM_QUERYPOS, ABM_SETPOS, APPBARDATA};
+    let hwnd = HWND(win.hwnd().ok()?.0);
+    let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: hwnd, uCallbackMessage: 0x8000 + 77, uEdge: ABE_BOTTOM, ..Default::default() };
+    unsafe {
+        if !APPBAR.swap(true, Ordering::SeqCst) {
+            SHAppBarMessage(ABM_NEW, &mut d);
+        }
+        let (x, y, w, h) = screen;
+        d.rc = RECT { left: x, top: y + h - height, right: x + w, bottom: y + h };
+        SHAppBarMessage(ABM_QUERYPOS, &mut d);
+        // Windows may have moved the strip up (its own taskbar is there): keep our height.
+        d.rc.top = d.rc.bottom - height;
+        SHAppBarMessage(ABM_SETPOS, &mut d);
+        Some(d.rc.bottom)
+    }
+}
+
+#[cfg(not(windows))]
+fn reserve(_win: &WebviewWindow, _screen: (i32, i32, i32, i32), _height: i32) -> Option<i32> {
+    None
+}
+
+/// The dock's strip goes back to the windows (the dock closed, or Island quits).
+#[cfg(windows)]
+fn release(win: &WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_REMOVE, APPBARDATA};
+    if !APPBAR.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    let Ok(h) = win.hwnd() else { return };
+    let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: HWND(h.0), ..Default::default() };
+    unsafe {
+        SHAppBarMessage(ABM_REMOVE, &mut d);
+    }
+}
+
+#[cfg(not(windows))]
+fn release(_win: &WebviewWindow) {}
+
+/// The foreground window covers its whole screen (a game, a video, F11): the dock steps aside,
+/// as Windows' taskbar does.
+#[cfg(windows)]
+fn fullscreen_in_front(own: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    let fg = crate::procs::foreground();
+    if fg == 0 || fg == own {
+        return false;
+    }
+    let class = crate::procs::class_name(fg);
+    if matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "Windows.UI.Core.CoreWindow") {
+        return false;
+    }
+    let (Some(r), Some(m)) = (crate::procs::window_rect(fg), monitors::of_window(HWND(fg as *mut _))) else { return false };
+    let b = &m.bounds;
+    r.left <= b.x && r.top <= b.y && r.right >= b.x + b.width && r.bottom >= b.y + b.height
+}
+
+static WATCHER: AtomicBool = AtomicBool::new(false);
+
+/// While the dock exists: hidden over a full-screen app, back after.
+fn watch_fullscreen(app: AppHandle) {
+    if WATCHER.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let mut hidden = false;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            let Some(win) = app.get_webview_window(LABEL) else {
+                WATCHER.store(false, Ordering::SeqCst);
+                return;
+            };
+            #[cfg(windows)]
+            {
+                let own = win.hwnd().map(|h| h.0 as isize).unwrap_or(0);
+                let full = fullscreen_in_front(own);
+                if full != hidden {
+                    hidden = full;
+                    let _ = if full { win.hide() } else { win.show() };
+                }
+            }
+            #[cfg(not(windows))]
+            let _ = (&win, &mut hidden);
+        }
+    });
 }
 
 /// Shows the dock at `w` x `h` logical px with its centre at `centre` (0..1 across the screen,
@@ -76,6 +176,7 @@ pub fn dock_show(app: AppHandle, on: bool, w: f64, h: f64, centre: f64) {
     std::thread::spawn(move || {
         if !on {
             if let Some(win) = app.get_webview_window(LABEL) {
+                release(&win);
                 let _ = win.destroy();
             }
             return;
@@ -106,6 +207,7 @@ pub fn dock_show(app: AppHandle, on: bool, w: f64, h: f64, centre: f64) {
                 put(&win, w, h);
                 let _ = win.show();
                 style(&win);
+                watch_fullscreen(app.clone());
             }
             Err(e) => crate::log::line(format!("dock failed: {e}")),
         }
@@ -214,8 +316,12 @@ pub fn dock_autohide(_on: bool) -> bool {
     false
 }
 
-/// Island is quitting: Windows' taskbar comes back if Island hid it.
-pub fn quit() {
+/// Island is quitting: the dock's strip goes back to the windows, and Windows' taskbar comes back
+/// if Island hid it.
+pub fn quit(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window(LABEL) {
+        release(&win);
+    }
     #[cfg(windows)]
     if HID_WINDOWS_BAR.swap(false, Ordering::SeqCst) {
         set_autohide(false);

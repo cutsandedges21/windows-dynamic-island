@@ -1843,7 +1843,7 @@ export class ClaudeActivity extends BaseActivity {
       span: 2,
       rows: 2,
       tone: this.mark(),
-      body: { k: 'list', icon: 'claude', label: limits ? `Claude sessions · ${limits}` : 'Claude sessions', rows, empty: 'All quiet' },
+      body: { k: 'list', icon: 'claude', label: 'Claude sessions', ...(limits ? { sub: limits } : {}), rows, empty: 'All quiet' },
     };
   }
 

@@ -624,7 +624,7 @@ describe('notifications and the hover card', () => {
     act.rows = [row({}), row({ id: 'S2', label: 'Docs', state: 'done', word: 'done' })];
     const tile = act.tile!(senv('open'))!;
     expect(tile).toMatchObject({ key: 'claude', span: 2, rows: 2 });
-    expect(tile.body.k === 'list' && tile.body.label).toBe('Claude sessions · S 12% · W 60%');
+    expect(tile.body.k === 'list' && [tile.body.label, tile.body.sub]).toEqual(['Claude sessions', 'S 12% · W 60%']);
     expect(tile.body.k === 'list' && tile.body.rows.map((r) => r.title)).toEqual(['Fix the parser', 'Docs']);
     (act as unknown as { ctx: { options: () => unknown } }).ctx.options = () => ({ showLimits: false });
     expect(act.tile!(senv('open'))!.body).toMatchObject({ label: 'Claude sessions' });

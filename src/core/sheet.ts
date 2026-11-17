@@ -210,7 +210,7 @@ export type TileBody =
    * type), with `start` beside them; `buttons` then sit small at the heading's end.
    */
   | { k: 'actions'; icon?: string; label: string; sub?: string; buttons: SheetButton[]; dial?: Dial }
-  | { k: 'list'; icon: string; label: string; rows: SheetRow[]; empty?: string }
+  | { k: 'list'; icon: string; label: string; sub?: string; rows: SheetRow[]; empty?: string }
   /**
    * iPhone-style controls in one tile: wide pills that switch something (Wi-Fi, Bluetooth), tall
    * sliders whose fill rises from the bottom (brightness, volume), and round `buttons`.
@@ -492,6 +492,8 @@ export class SheetRenderer {
   private readonly nodes = new Map<string, BlockNode>();
   private readonly tileSigs = new WeakMap<HTMLElement, string>();
   private viewKey: string | null = null;
+  /** Where the lyrics list was scrolled to: a new list (every update builds one) starts there and glides on. */
+  private lyricScroll = { sig: '', top: 0 };
   /** A long-press just opened edit mode: the click that ends it must not run the tile's action. */
   private swallowClick = false;
   /** Every hub pill's hold menu as last drawn, by `tile/pill`. */
@@ -635,7 +637,12 @@ export class SheetRenderer {
         this.onAction(row.dataset.context!, contextArgs.get(row), row);
         return;
       }
-      if (!this.morph) return;
+      // Text fields keep the browser's own menu (copy, paste); on anything else it never shows.
+      const t = e.target as HTMLElement;
+      if (!this.morph) {
+        if (!t.closest('input, textarea, [contenteditable]')) e.preventDefault();
+        return;
+      }
       e.preventDefault();
       this.onAction('island:menu', null, this.el);
     });
@@ -3191,10 +3198,19 @@ export class SheetRenderer {
         if (!b.lines.length) body.append(make('div', 'ln note', b.note ?? 'No lyrics for this one'));
         b.lines.forEach((line, i) => body.append(make('div', `ln${i === b.at ? ' now' : i < b.at ? ' past' : ''}`, line || '♪')));
         e.append(top, body);
-        // The line being sung stays in view, a third of the way down.
+        // The line being sung stays in view, a third of the way down. Each update builds a new list, so
+        // it starts where the last one was and glides to the new line (a new song starts in place).
+        const sig = `${b.title}|${b.artist}|${b.lines.length}`;
+        body.addEventListener('scroll', () => (this.lyricScroll = { sig, top: body.scrollTop }), { passive: true });
         requestAnimationFrame(() => {
           const now = body.querySelector<HTMLElement>('.ln.now');
-          if (now) body.scrollTop = Math.max(0, now.offsetTop - body.clientHeight / 3);
+          if (!now) return;
+          const to = Math.max(0, now.offsetTop - body.clientHeight / 3);
+          const was = this.lyricScroll;
+          if (was.sig === sig && !reducedMotion() && Math.abs(was.top - to) > 1) {
+            body.scrollTo({ top: was.top, behavior: 'instant' });
+            body.scrollTo({ top: to, behavior: 'smooth' });
+          } else body.scrollTo({ top: to, behavior: 'instant' });
         });
         break;
       }
@@ -3286,6 +3302,8 @@ export class SheetRenderer {
         const head = make('div', 'ah');
         head.append(iconEl(b.icon, 'ti'), make('div', 'tl strong', b.label));
         e.append(head);
+        // A line under the title (Claude's limits), never squeezed into the title's own row.
+        if (b.sub) e.append(make('div', 'tl lsub', b.sub));
         const rows = make('div', 'sb-rows');
         for (const r of b.rows) rows.append(this.row(r));
         if (!b.rows.length && b.empty) rows.append(make('div', 'ts', b.empty));

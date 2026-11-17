@@ -727,7 +727,8 @@ describe('text and links', () => {
       [MAC.id, ['C:\\x\\photo.jpg']],
       [MAC.id, ['C:\\x\\photo.jpg']],
     ]);
-    expect(block(act.sheet(sheetEnv('open')), 'rows', 'files')!.items.map((r) => r.title)).toEqual(['other.pdf']);
+    // Sent files stay on the shelf (they are only parked there), with what was dropped since.
+    expect(block(act.sheet(sheetEnv('open')), 'files', 'files')!.items.map((f) => f.name)).toEqual(['photo.jpg', 'other.pdf']);
   });
 
   it('a failed send has Send again too; text goes again as text', async () => {

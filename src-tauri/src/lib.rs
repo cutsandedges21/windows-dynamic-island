@@ -431,7 +431,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 term::quit(app);
                 // Windows' taskbar comes back if Island's taskbar had it hide.
-                dock::quit();
+                dock::quit(app);
             }
         });
 }
