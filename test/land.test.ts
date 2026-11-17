@@ -802,14 +802,15 @@ describe('text and links', () => {
     const card = act.sheet(sheetEnv('urgent'))!;
     expect(block(card, 'text', 'text')!.text).toBe('dinner at 7?');
     const buttons = block(card, 'buttons', 'answer')!.items.map((b) => b.action);
-    expect(buttons).toEqual(['decline', 'reply', 'accept-copy']);
+    // Done takes it without copying; a note has no Decline (it is already here).
+    expect(buttons).toEqual(['note-accept', 'reply', 'accept-copy']);
     smoke(act, 'text offer');
     await act.action('accept-copy', 'in-t');
     expect(h.native.landAnswer).toHaveBeenCalledWith('in-t', true);
     expect(h.native.clipboardSetText).toHaveBeenCalledWith('dinner at 7?');
   });
 
-  it('a note can be answered: Reply opens a box, Enter sends it back, and their note stays to copy', async () => {
+  it('a note can be answered: Reply opens a box, Enter sends it back; their note is taken and shows your reply under it', async () => {
     const { act } = await boot();
     emit('land-transfer', transfer({ id: 'in-r', dir: 'in', state: 'asking', count: 0, total: 0, items: [], text: 'yo my stuff is done, try it out', expires: T0 + 120_000 }));
     expect(act.render(env('expanded')).some((x) => x.key === 'reply')).toBe(true);
@@ -823,10 +824,26 @@ describe('text and links', () => {
     await act.action('reply', 'in-r');
     await act.action('reply-send', '  on it  ');
     expect(h.native.landSendText).toHaveBeenCalledWith(MAC.id, 'on it');
-    expect(h.native.landAnswer).not.toHaveBeenCalled();
+    // Answered: taken (no Decline, no countdown), then their note with your reply under it till Done.
+    expect(h.native.landAnswer).toHaveBeenCalledWith('in-r', true);
+    emit('land-transfer', transfer({ id: 'in-r', dir: 'in', state: 'done', count: 0, total: 0, items: [], text: 'yo my stuff is done, try it out' }));
     card = act.sheet(sheetEnv('urgent'))!;
-    expect(block(card, 'buttons', 'answer')).toBeDefined();
+    expect(block(card, 'text', 'mine')).toMatchObject({ text: 'on it' });
+    expect(block(card, 'buttons', 'answer')!.items.map((b) => b.label)).toEqual(['Done', 'Reply', 'Copy']);
     expect(block(card, 'text', 'note')).toMatchObject({ text: "Reply sent to Moss's MacBook Air", tone: 'good' });
+    await act.action('note-done', 'in-r');
+    expect(act.status().urgent ?? null).toBeNull();
+  });
+
+  it('Done on a note takes it without copying and closes it', async () => {
+    const { act } = await boot();
+    emit('land-transfer', transfer({ id: 'in-o', dir: 'in', state: 'asking', count: 0, total: 0, items: [], text: 'fyi', expires: T0 + 120_000 }));
+    expect(act.render(env('expanded')).find((x) => x.key === 'done')).toMatchObject({ action: 'note-accept', label: 'Done' });
+    await act.action('note-accept', 'in-o');
+    expect(h.native.landAnswer).toHaveBeenCalledWith('in-o', true);
+    expect(h.native.clipboardSetText).not.toHaveBeenCalled();
+    emit('land-transfer', transfer({ id: 'in-o', dir: 'in', state: 'done', count: 0, total: 0, items: [], text: 'fyi' }));
+    expect(act.status().urgent ?? null).toBeNull();
   });
 
   it('a note stays on the island after its ask runs out, through a tap away, until Done', async () => {
@@ -919,7 +936,7 @@ describe('text and links', () => {
     const { act } = await boot();
     emit('land-transfer', transfer({ id: 'in-l', dir: 'in', state: 'asking', count: 0, total: 0, items: [], text: 'https://example.com/recipe', expires: T0 + 120_000 }));
     const buttons = block(act.sheet(sheetEnv('urgent'))!, 'buttons', 'answer')!.items.map((b) => b.action);
-    expect(buttons).toEqual(['decline', 'accept-open', 'reply', 'accept-copy']);
+    expect(buttons).toEqual(['note-accept', 'accept-open', 'reply', 'accept-copy']);
     await act.action('accept-open', 'in-l');
     expect(h.native.landAnswer).toHaveBeenCalledWith('in-l', true);
     expect(h.native.openUrl).toHaveBeenCalledWith('https://example.com/recipe');

@@ -142,6 +142,8 @@ export class LandActivity extends BaseActivity {
    * away, the card goes but the note waits on the pill, and pointing at it brings the card back.
    */
   private readonly kept = new Map<string, { peer: LandPeer; text: string; at: number }>();
+  /** What you replied to a note (its transfer id): shown under their note on its card. */
+  private readonly replied = new Map<string, string>();
   /** Copy image was pressed before the picture arrived: it goes on the clipboard when it lands. */
   private readonly copyImageWhenDone = new Set<string>();
   private lastScan = 0;
@@ -598,7 +600,12 @@ export class LandActivity extends BaseActivity {
       ];
       if (compact) return segs;
       if (!env.vertical) segs.push({ t: 'text', key: 'what', text: ask.text ? `sent you ${what(ask)}` : `wants to send ${what(ask)}`, tone: 'muted', prio: 4, min: 60 });
-      segs.push({ t: 'button', key: 'no', icon: 'x', label: env.vertical ? undefined : 'Decline', action: 'decline', arg: ask.id, style: 'secondary', side: 'end', prio: 2, tip: 'Decline' });
+      const note = ask.text && !ask.count;
+      segs.push(
+        note
+          ? { t: 'button', key: 'done', icon: 'check', label: env.vertical ? undefined : 'Done', action: 'note-accept', arg: ask.id, style: 'secondary', side: 'end', prio: 2, tip: 'Done: take it without copying' }
+          : { t: 'button', key: 'no', icon: 'x', label: env.vertical ? undefined : 'Decline', action: 'decline', arg: ask.id, style: 'secondary', side: 'end', prio: 2, tip: 'Decline' },
+      );
       if (ask.text) segs.push({ t: 'button', key: 'reply', icon: 'chat', action: 'reply', arg: ask.id, style: 'secondary', side: 'end', prio: 3, tip: 'Reply' });
       if (ask.text) segs.push({ t: 'button', key: 'yes', icon: 'copy', label: env.vertical ? undefined : 'Copy', action: 'accept-copy', arg: ask.id, style: 'primary', side: 'end', prio: 1, tip: 'Copy it' });
       else segs.push({ t: 'button', key: 'yes', icon: 'check', label: env.vertical ? undefined : 'Accept', action: 'accept', arg: ask.id, style: 'primary', side: 'end', prio: 1, tip: 'Accept: save to Downloads' });
@@ -753,7 +760,9 @@ export class LandActivity extends BaseActivity {
     ];
     if (t.expires) blocks.push({ t: 'countdown', key: 'left', until: t.expires, total: ASK_MS, tone: 'accent' });
     if (env.interactive) {
-      const items: SheetButton[] = [{ key: 'no', label: 'Decline', icon: 'x', action: 'decline', arg: t.id, style: 'secondary' }];
+      // Done takes it without copying and closes the card (Justin: no plain accept; Decline is no use
+      // for a note that is already here: it only told the sender no).
+      const items: SheetButton[] = [{ key: 'done', label: 'Done', icon: 'check', action: 'note-accept', arg: t.id, style: 'secondary' }];
       if (link) items.push({ key: 'open', label: 'Open', icon: 'external', action: 'accept-open', arg: t.id, style: 'secondary' });
       // A note back, without taking this one (Justin).
       items.push({ key: 'reply', label: 'Reply', icon: 'chat', action: 'reply', arg: t.id, style: 'secondary' });
@@ -830,6 +839,8 @@ export class LandActivity extends BaseActivity {
       { t: 'head', key: 'head', icon: phone ? 'phone' : 'land', tone: 'accent', title: `${n.peer.name} sent you a note`, sub: (phone ? 'Copied to the clipboard when it came' : osLabel(n.peer.os)) || undefined },
       { t: 'text', key: 'text', text: n.text, bubble: true, lines: 8 },
     ];
+    const mine = this.replied.get(n.id);
+    if (mine) blocks.push({ t: 'text', key: 'mine-label', text: 'You replied', tone: 'dim', size: 'sm' }, { t: 'text', key: 'mine', text: mine, bubble: true, lines: 4, tone: 'accent' });
     const saved = this.transfers.get(n.id)?.saved ?? [];
     const image = saved.find((p) => isImageName(p));
     const thumb = this.transfers.get(n.id)?.thumb;
@@ -847,7 +858,7 @@ export class LandActivity extends BaseActivity {
       blocks.push({ t: 'buttons', key: 'answer', align: 'fill', items });
     }
     if (this.note && env.now - this.note.at < REPLY_NOTE_MS) blocks.push({ t: 'text', key: 'note', text: this.note.text, tone: this.note.good ? 'good' : 'bad', size: 'sm' });
-    blocks.push({ t: 'text', key: 'where', text: 'It waits on the island until you copy it, reply or press Done.', tone: 'dim', size: 'sm' });
+    blocks.push({ t: 'text', key: 'where', text: mine ? 'Answered. Done clears it.' : 'It waits on the island until you copy it, reply or press Done.', tone: 'dim', size: 'sm' });
     return { key: `note/${n.id}`, blocks };
   }
 
@@ -1359,6 +1370,7 @@ export class LandActivity extends BaseActivity {
       }
       case 'note-done':
         this.kept.delete(id);
+        this.replied.delete(id);
         if (this.replying === id) this.replying = null;
         break;
       case 'reply-cancel':
@@ -1372,10 +1384,33 @@ export class LandActivity extends BaseActivity {
           this.note = { text: `That is more than ${MAX_TEXT.toLocaleString('en-US')} characters. Send it as a file instead.`, at: Date.now() };
           break;
         }
+        const id0 = this.replying!;
         this.replying = null;
         const r = native.demo ? ({ ok: true, value: null } as const) : await this.textTo(t.peer, text);
         if (!this.alive) return;
-        this.note = r.ok ? { text: `Reply sent to ${t.peer.name}`, at: Date.now(), good: true } : { text: r.error, at: Date.now() };
+        if (!r.ok) {
+          this.note = { text: r.error, at: Date.now() };
+          break;
+        }
+        // Answered: their note is taken (no Decline or countdown left), and stays with your reply under
+        // it till Done (Justin: what should be there after a reply).
+        this.replied.set(id0, text);
+        if (!this.kept.has(id0) && 'text' in t && t.text) this.kept.set(id0, { peer: t.peer, text: t.text, at: Date.now() });
+        if (this.transfers.get(id0)?.state === 'asking') {
+          if (native.demo) this.demoAnswer(id0, true);
+          else await native.landAnswer(id0, true);
+        }
+        this.note = { text: `Reply sent to ${t.peer.name}`, at: Date.now(), good: true };
+        break;
+      }
+      case 'note-accept': {
+        // Done on a note still asking: taken without copying, and the card goes.
+        if (this.transfers.get(id)?.state === 'asking') {
+          if (native.demo) this.demoAnswer(id, true);
+          else await native.landAnswer(id, true);
+        }
+        this.kept.delete(id);
+        this.replied.delete(id);
         break;
       }
       case 'copy-text':
