@@ -316,6 +316,8 @@ export class MusicActivity extends BaseActivity {
       position: pos,
       duration: m.duration && m.duration > 0 ? m.duration : null,
       color: this.barTint() ?? null,
+      // The card on the art's colour, like the lyrics card from Control Center (Justin).
+      cardTint: this.barTint() ?? null,
       // No sung line under the artist (Justin): the lyrics button opens the whole song instead.
       lyric: null,
       lyrics: open ? { ...this.panel(pos, 'lyrics'), split: 'lyrics-split', width: this.lyricsSplit() } : null,

@@ -832,6 +832,10 @@ export class SheetRenderer {
       return;
     }
     this.width = Math.round(geo.width);
+    // A player on the art's colour (Music's hover card): the card's glass takes it, fading in.
+    const tint = view.blocks.find((b): b is Extract<Block, { t: 'player' }> => b.t === 'player')?.cardTint ?? null;
+    if (tint) this.el.style.setProperty('--card-tint', tint);
+    this.el.classList.toggle('tinted', tint !== null);
 
     // Out of a card grown from the pill (the island opening from it): the same card carries on.
     // Into one (the island closing with the pointer on the pill): it carries on back the same way.
@@ -1073,6 +1077,8 @@ export class SheetRenderer {
 
   private hide(immediate: boolean): void {
     if (!this.shown) return;
+    // Back into the pill, which has no tint: it fades as the card goes.
+    this.el.classList.remove('tinted');
     // Gone mid-grow: the grow stops here (the close starts from where it got to). Gone mid-carry:
     // it fades where it stands (its shape and content stay as drawn), and the pill is whole again.
     this.stopGrow();

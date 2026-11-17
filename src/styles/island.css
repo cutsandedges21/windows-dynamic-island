@@ -1022,6 +1022,19 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
   z-index: -1;
 }
 
+/* A card on a colour (Music's hover player on the art's): over the glass, fading in and out with it. */
+.sheet-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(150deg, color-mix(in srgb, var(--card-tint, transparent) 46%, transparent), color-mix(in srgb, var(--card-tint, transparent) 12%, transparent) 70%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+.sheet.tinted .sheet-bg::after { opacity: 1; }
+
 .sheet-inner {
   position: absolute;
   left: 0;

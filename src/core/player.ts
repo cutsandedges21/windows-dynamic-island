@@ -36,6 +36,8 @@ export interface PlayerBlock {
   lyricsButton?: { action: string; on: boolean } | null;
   /** Control Center's media card: the art big over the track, the lyrics beside, on the art's colour (`tint`). */
   stage?: { tint: string | null } | null;
+  /** The whole card the player is on takes this colour (the art's), as the lyrics card does (Justin). */
+  cardTint?: string | null;
 }
 
 type Bind = (e: HTMLElement, action: string | undefined, arg: unknown) => void;
