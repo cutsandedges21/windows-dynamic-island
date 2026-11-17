@@ -16,11 +16,18 @@ fn pins_dir() -> Option<PathBuf> {
     Some(PathBuf::from(std::env::var_os("APPDATA")?).join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"))
 }
 
-/// The program a shortcut opens, when it is one that exists.
+/// The program a shortcut opens, when it is one that exists and the shortcut adds nothing to it.
+/// A shortcut with arguments (a Chrome or Edge web app: chrome_proxy.exe --app-id=…) stays the
+/// shortcut, so it opens that app and shows its own icon, not the browser's.
 unsafe fn link_target(lnk: &std::path::Path) -> Option<String> {
     unsafe {
         let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
         link.cast::<IPersistFile>().ok()?.Load(&HSTRING::from(lnk.as_os_str()), STGM_READ).ok()?;
+        let mut args = [0u16; 1024];
+        link.GetArguments(&mut args).ok()?;
+        if args.iter().take_while(|c| **c != 0).any(|c| !char::from_u32(*c as u32).is_some_and(char::is_whitespace)) {
+            return None;
+        }
         let mut buf = [0u16; 1024];
         link.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
         let len = buf.iter().position(|c| *c == 0).unwrap_or(0);

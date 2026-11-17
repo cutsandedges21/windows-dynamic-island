@@ -85,6 +85,12 @@ fn clean_title(title: &str) -> String {
     if t.trim().is_empty() { "Island".into() } else { t }
 }
 
+/// A Chrome or Edge web app's id in Start (Chrome._crx_…, MSEdge._crx_…): it opens through
+/// shell:AppsFolder like a Store app.
+pub fn is_web_app(id: &str) -> bool {
+    !id.contains(['\\', '/', ':']) && id.contains("._crx_")
+}
+
 fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
@@ -487,8 +493,8 @@ mod win {
                 }
                 let Some(item) = one[0].take() else { break };
                 let (Some(name), Some(id)) = (display(&item, SIGDN_NORMALDISPLAY), display(&item, SIGDN_PARENTRELATIVEPARSING)) else { continue };
-                let target = if id.contains('!') {
-                    // A Store app's id (Package!App).
+                let target = if id.contains('!') || super::is_web_app(&id) {
+                    // A Store app's id (Package!App), or a Chrome or Edge web app's (Chrome._crx_…).
                     format!("shell:AppsFolder\\{id}")
                 } else {
                     let path = if id.starts_with('{') { known_folder_path(&id) } else { Some(PathBuf::from(&id)) };
