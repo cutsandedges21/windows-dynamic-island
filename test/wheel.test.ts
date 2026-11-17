@@ -33,6 +33,11 @@ describe('scrolling the pill', () => {
     expect(run(new WheelGesture(), twoFlicks)).toEqual([-1, -1]);
   });
 
+  it('a new flick in the same direction while the last one still coasts switches again', () => {
+    // The coast only slows down; a sudden push is the finger flicking again (Justin's quick swipes).
+    expect(run(new WheelGesture(), '0:-40 16:-40 16:0 1:-60 16:-50 16:-40 16:-30 16:-20 16:-12 16:-8 16:-30 16:-60 16:-50 16:-40')).toEqual([-1, -1]);
+  });
+
   it('turning back switches back at once', () => {
     expect(run(new WheelGesture(), '0:-40 16:-40 16:0 1:-60 16:-50 16:30 16:40')).toEqual([-1, 1]);
   });

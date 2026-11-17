@@ -726,9 +726,9 @@ export class SheetRenderer {
       'wheel',
       (e) => {
         if (!this.morph || !this.shown) return;
-        // A long card (many chats) scrolls its list instead, up and down; a sideways swipe still switches.
-        const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY);
-        if (!sideways && this.inner.scrollHeight > this.inner.clientHeight + 1) return;
+        // Every swipe switches, up, down or sideways (Justin): a long card's list no longer takes it,
+        // nor does a card still growing to its new height (its content overflowed it for a moment,
+        // and the swipes made then were lost, so switching felt laggy).
         // Scrolling picks another activity: the card follows it, not the segment last pointed at.
         this.onAction('island:hover-key', null, this.el);
         // In pixels, like the pill's: one flick on a touchpad switches once (wheel.ts).
