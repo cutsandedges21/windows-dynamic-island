@@ -1031,10 +1031,12 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
   border-radius: inherit;
   background: linear-gradient(150deg, color-mix(in srgb, var(--card-tint, transparent) 46%, transparent), color-mix(in srgb, var(--card-tint, transparent) 12%, transparent) 70%);
   opacity: 0;
-  transition: opacity 0.3s ease;
+  /* Going back into the pill it keeps the colour through the first half of the shrink (GROW_MS, 340 ms)
+     and fades through the second, ending with it (Justin: it lost its colour before closing). */
+  transition: opacity 0.17s ease-in 0.17s;
   pointer-events: none;
 }
-.sheet.tinted .sheet-bg::before { opacity: 1; }
+.sheet.tinted .sheet-bg::before { opacity: 1; transition: opacity 0.3s ease; }
 
 .sheet-inner {
   position: absolute;
