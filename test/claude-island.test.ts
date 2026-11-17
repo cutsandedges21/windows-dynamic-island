@@ -963,6 +963,27 @@ describe("status colours (Justin's Claude Status)", () => {
     expect(act.status().beam).toEqual({ tone: 'bad', motion: 'still' });
   });
 
+  it('a finish not opened yet (the red dot) keeps the green glow for a minute, or until it is opened', async () => {
+    let updates = 0;
+    const { act } = await boot({}, () => {}, { update: () => void updates++ });
+    const done = (unread: boolean) => row({ id: 'app1', where: 'Claude app', state: 'done', word: 'done', since: Date.now() / 1000, unread });
+    act.onRows([row({ id: 'app1', where: 'Claude app' })]);
+    act.onRows([done(true)]);
+    await tick(4100);
+    // Past the finish's moment: still green while it waits to be read.
+    expect(act.status().beam).toEqual({ tone: 'good', motion: 'still' });
+    // Opened: the glow goes with the red dot.
+    act.onRows([done(false)]);
+    expect(act.status().beam ?? null).toBeNull();
+    // Never opened: it goes a minute after the finish, and the island is told to redraw then.
+    act.onRows([{ ...done(true), since: Date.now() / 1000 - 50 }]);
+    expect(act.status().beam).toEqual({ tone: 'good', motion: 'still' });
+    const before = updates;
+    await tick(10_100);
+    expect(updates).toBeGreaterThan(before);
+    expect(act.status().beam ?? null).toBeNull();
+  });
+
   it('a question and a notification that needs you flash amber, their cards and pill rows too', async () => {
     const { act, calls } = await boot();
     stubTracker(act, [session({})], { 100: [50] });

@@ -92,6 +92,8 @@ export function chatTone(tone: string): Tone {
 }
 
 /** Claude's card on a phone: chats in its list (live and closed together), folders to start a new one in, messages of one chat. */
+/** A finished chat not opened yet glows green this long after it finished (Justin: a minute, or until opened). */
+const UNREAD_GLOW_MS = 60_000;
 const PHONE_CHATS = 8;
 const PHONE_FOLDERS = 4;
 const CHAT_MESSAGES = 12;
@@ -159,6 +161,8 @@ export class ClaudeActivity extends BaseActivity {
   private lastState = new Map<string, StatusState>();
   /** A session just finished (green), failed or was stopped (red): the island glows that colour for a moment. */
   private glowing: { tone: Tone; until: number } | null = null;
+  /** When the unread finish's green glow is next due to end: one redraw is booked for then. */
+  private unreadGlowEnd = 0;
   /** Auto model (src-tauri/src/auto_model.rs): installed from Activities, paused from the card's button. */
   private auto = { installed: false, on: true };
   /** Each moment pops the island once, however many ways it is reported. */
@@ -437,6 +441,22 @@ export class ClaudeActivity extends BaseActivity {
     if (!this.alive || (s.installed === this.auto.installed && s.on === this.auto.on)) return;
     this.auto = { installed: s.installed, on: s.on };
     this.ctx.update();
+  }
+
+  /**
+   * A chat that finished and has not been opened yet (the red dot on its green one) keeps the still
+   * green glow for a minute after it finished, or until it is opened (Justin). One redraw is booked
+   * for when that minute runs out.
+   */
+  private unreadGlow(rows: StatusRow[], now: number): boolean {
+    const ends = rows.filter((r) => r.unread && r.state === 'done').map((r) => r.since * 1000 + UNREAD_GLOW_MS).filter((t) => t > now);
+    if (!ends.length) return false;
+    const end = Math.max(...ends);
+    if (end !== this.unreadGlowEnd) {
+      this.unreadGlowEnd = end;
+      this.later(end - now + 50, () => this.ctx.update());
+    }
+    return true;
   }
 
   /** The island glows this colour all round for a moment (Claude Status's still glow). */
@@ -1329,6 +1349,7 @@ export class ClaudeActivity extends BaseActivity {
     const weight = urgent || running || shell || waiting || red ? 'foreground' : 'background';
     const barRow = this.rows.find((r) => r.progress);
     const flash = this.glowNow(now);
+    const unreadDone = this.unreadGlow(rows, now);
     // Border light: an amber pulse when something needs you, a still green glow while a finished
     // chat holds for your reply, a finish's or failure's still glow for a moment, a progress bar,
     // a blue comet while Claude works.
@@ -1341,7 +1362,9 @@ export class ClaudeActivity extends BaseActivity {
             ? { tone: flash, motion: 'still' }
             : waiting
               ? { tone: 'warn', motion: 'pulse' }
-              : barRow?.progress
+              : unreadDone
+                ? { tone: 'good', motion: 'still' }
+                : barRow?.progress
                 ? { tone: barRow.state === 'shell' ? 'purple' : 'info', motion: 'progress', value: barRow.progress.value }
                 : running
                   ? { tone: 'info', motion: 'orbit' }
