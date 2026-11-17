@@ -2142,9 +2142,14 @@ export class SheetRenderer {
           img.draggable = false;
           pic.append(img);
         } else pic.append(iconEl(f.icon, 'fi'));
-        const tick = make('span', 'ftick');
-        tick.append(iconEl('check', 'fc'));
-        el.append(pic, tick, make('span', 'fname', f.name));
+        el.append(pic);
+        // The tick circle only on tiles that can be ticked (the shelf's files), not on Apps (Justin).
+        if (f.ticked !== undefined) {
+          const tick = make('span', 'ftick');
+          tick.append(iconEl('check', 'fc'));
+          el.append(tick);
+        }
+        el.append(make('span', 'fname', f.name));
         if (f.sub) el.append(make('span', 'fsub', f.sub));
         if (f.tip) el.title = f.tip;
         this.bind(el, f.action, f.arg);
