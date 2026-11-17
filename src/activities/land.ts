@@ -134,6 +134,12 @@ export class LandActivity extends BaseActivity {
   private note: { text: string; at: number; good?: boolean } | null = null;
   /** The note being answered (its transfer id): its card holds a box to write the reply in. */
   private replying: string | null = null;
+  /**
+   * Notes that came (from a computer or a phone), kept on the island until answered: copied, replied
+   * to, declined or Done (Justin: moving the pointer off, or the ask running out, lost them). Tapped
+   * away, the card goes but the note waits on the pill, and pointing at it brings the card back.
+   */
+  private readonly kept = new Map<string, { peer: LandPeer; text: string; at: number }>();
   private lastScan = 0;
   /** Windows Firewall's word on this network, checked when the card opens (at most every 30 s). */
   private firewall: LandFirewall | null = null;
@@ -286,6 +292,11 @@ export class LandActivity extends BaseActivity {
     }
     if (!ACTIVE.has(t.state) && live.ended === null) live.ended = now;
     this.transfers.set(t.id, live);
+    if (t.dir === 'in' && t.text) {
+      const declined = t.state === 'declined' && t.error === 'Declined.';
+      if (declined || t.state === 'cancelled') this.kept.delete(t.id);
+      else if (!this.kept.has(t.id) && (t.state === 'asking' || (t.state === 'done' && isPhone(t.peer.id)))) this.kept.set(t.id, { peer: t.peer, text: t.text, at: now });
+    }
     if (t.state === 'asking' && prev?.state !== 'asking') this.asked(live);
     if (live.ended === now) this.finished(live);
     this.prune(now);
@@ -337,6 +348,7 @@ export class LandActivity extends BaseActivity {
   private finished(t: Live): void {
     // Declining one yourself needs no announcement.
     if (t.dir === 'in' && t.state === 'declined' && t.error === 'Declined.') return;
+    if (this.kept.has(t.id)) return;
     this.ctx.surface({ key: `end:${t.id}`, ms: ENDED_MS, level: 'expanded' });
     if (t.state === 'done') this.saw(t.dir === 'out' ? 'land-sent' : 'land-received', `land:${t.id}`);
     else if (t.state === 'failed') this.saw('bad-news', `land:${t.id}`);
@@ -524,6 +536,15 @@ export class LandActivity extends BaseActivity {
         beam: { tone: 'accent', motion: 'pulse', urgent: true },
       };
     }
+    const kept = this.keptNote();
+    if (kept) {
+      return {
+        active: true,
+        weight: 'foreground',
+        urgent: { key: `note:${kept.id}`, level: 'expanded' },
+        summary: `${kept.peer.name} sent you a note`,
+      };
+    }
     const lead = this.lead();
     if (lead) {
       const f = this.frac(lead);
@@ -570,6 +591,21 @@ export class LandActivity extends BaseActivity {
       if (ask.text) segs.push({ t: 'button', key: 'reply', icon: 'chat', action: 'reply', arg: ask.id, style: 'secondary', side: 'end', prio: 3, tip: 'Reply' });
       if (ask.text) segs.push({ t: 'button', key: 'yes', icon: 'copy', label: env.vertical ? undefined : 'Copy', action: 'accept-copy', arg: ask.id, style: 'primary', side: 'end', prio: 1, tip: 'Copy it' });
       else segs.push({ t: 'button', key: 'yes', icon: 'check', label: env.vertical ? undefined : 'Accept', action: 'accept', arg: ask.id, style: 'primary', side: 'end', prio: 1, tip: 'Accept: save to Downloads' });
+      return segs;
+    }
+
+    const kept = !this.friendAsking() ? this.keptNote() : null;
+    if (kept) {
+      const segs: Seg[] = [
+        { t: 'icon', key: 'icon', icon: isPhone(kept.peer.id) ? 'phone' : 'land', tone: 'accent', prio: 0 },
+        { t: 'text', key: 'who', text: kept.peer.name, weight: 'semibold', prio: 1, min: 50 },
+      ];
+      if (compact) return segs;
+      if (!env.vertical) segs.push({ t: 'text', key: 'what', text: 'sent you a note', tone: 'muted', prio: 4, min: 60 });
+      segs.push(
+        { t: 'button', key: 'reply', icon: 'chat', action: 'reply', arg: kept.id, style: 'secondary', side: 'end', prio: 3, tip: 'Reply' },
+        { t: 'button', key: 'yes', icon: 'copy', label: env.vertical ? undefined : 'Copy', action: 'note-copy', arg: kept.id, style: 'primary', side: 'end', prio: 1, tip: 'Copy it' },
+      );
       return segs;
     }
 
@@ -682,16 +718,23 @@ export class LandActivity extends BaseActivity {
       const ask = this.asking();
       if (ask) return this.askCard(ask, env);
       const fr = this.friendAsking();
-      return fr ? this.friendCard(fr, env) : null;
+      if (fr) return this.friendCard(fr, env);
+      const kept = this.keptNote();
+      return kept ? this.keptCard(kept, env) : null;
     }
     if (env.reason === 'open') return this.card(env);
+    // Tapped away, a kept note waits on the pill: pointing at it brings its card back.
+    if (env.reason === 'hover') {
+      const kept = this.keptNote();
+      if (kept) return this.keptCard(kept, env);
+    }
     if (env.reason === 'surfaced') return env.surfaced === 'intro' && this.introducing(env.now) ? this.introCard() : this.endCard(env.now);
     return null;
   }
 
   /** Someone sent text: what it says, and Copy, Open (a link), Reply or Decline. */
   private textCard(t: Live, text: string, env: SheetEnv): SheetView {
-    if (env.interactive && this.replying === t.id) return this.replyCard(t, text);
+    if (env.interactive && this.replying === t.id) return this.replyCard(t.id, t.peer, text);
     const link = isLink(text);
     const blocks: Block[] = [
       { t: 'head', key: 'head', icon: 'land', tone: 'accent', title: `${t.peer.name} sent you ${what(t)}`, sub: osLabel(t.peer.os) || undefined },
@@ -713,16 +756,45 @@ export class LandActivity extends BaseActivity {
   }
 
   /** Writing a note back: what they sent, a box (Enter sends it to them), and Back to their note. */
-  private replyCard(t: Live, text: string): SheetView {
+  private replyCard(id: string, peer: LandPeer, text: string): SheetView {
     return {
-      key: `reply/${t.id}`,
+      key: `reply/${id}`,
       blocks: [
-        { t: 'head', key: 'head', icon: 'land', tone: 'accent', title: `Reply to ${t.peer.name}`, sub: osLabel(t.peer.os) || undefined, back: { key: 'back', icon: 'chevron-left', action: 'reply-cancel', arg: t.id, style: 'ghost', tip: 'Back to their note' } },
+        { t: 'head', key: 'head', icon: 'land', tone: 'accent', title: `Reply to ${peer.name}`, sub: osLabel(peer.os) || undefined, back: { key: 'back', icon: 'chevron-left', action: 'reply-cancel', arg: id, style: 'ghost', tip: 'Back to their note' } },
         { t: 'text', key: 'text', text, bubble: true, lines: 3, tone: 'muted' },
-        { t: 'input', key: 'reply', placeholder: `A note to ${t.peer.name}, then Enter`, action: 'reply-send' },
+        { t: 'input', key: 'reply', placeholder: `A note to ${peer.name}, then Enter`, action: 'reply-send' },
         { t: 'text', key: 'where', text: 'Sent encrypted, like theirs. Their note stays here to copy.', tone: 'dim', size: 'sm' },
       ],
     };
+  }
+
+  /** The newest note kept on the island (asks still waiting show their own card first). */
+  private keptNote(): { id: string; peer: LandPeer; text: string; at: number } | null {
+    let best: { id: string; peer: LandPeer; text: string; at: number } | null = null;
+    for (const [id, n] of this.kept) if (!best || n.at > best.at) best = { id, ...n };
+    return best;
+  }
+
+  /** A note kept after its ask ended (or a phone's): what it says, Reply, Copy (or Open) and Done. */
+  private keptCard(n: { id: string; peer: LandPeer; text: string; at: number }, env: SheetEnv): SheetView {
+    if (env.interactive && this.replying === n.id) return this.replyCard(n.id, n.peer, n.text);
+    const phone = isPhone(n.peer.id);
+    const blocks: Block[] = [
+      { t: 'head', key: 'head', icon: phone ? 'phone' : 'land', tone: 'accent', title: `${n.peer.name} sent you a note`, sub: (phone ? 'Copied to the clipboard when it came' : osLabel(n.peer.os)) || undefined },
+      { t: 'text', key: 'text', text: n.text, bubble: true, lines: 8 },
+    ];
+    if (env.interactive) {
+      const items: SheetButton[] = [
+        { key: 'done', label: 'Done', icon: 'check', action: 'note-done', arg: n.id, style: 'secondary' },
+        { key: 'reply', label: 'Reply', icon: 'chat', action: 'reply', arg: n.id, style: 'secondary' },
+      ];
+      if (isLink(n.text)) items.push({ key: 'open', label: 'Open', icon: 'external', action: 'note-open', arg: n.id, style: 'secondary' });
+      items.push({ key: 'yes', label: 'Copy', icon: 'copy', action: 'note-copy', arg: n.id, style: 'primary' });
+      blocks.push({ t: 'buttons', key: 'answer', align: 'fill', items });
+    }
+    if (this.note && env.now - this.note.at < REPLY_NOTE_MS) blocks.push({ t: 'text', key: 'note', text: this.note.text, tone: this.note.good ? 'good' : 'bad', size: 'sm' });
+    blocks.push({ t: 'text', key: 'where', text: 'It waits on the island until you copy it, reply or press Done.', tone: 'dim', size: 'sm' });
+    return { key: `note/${n.id}`, blocks };
   }
 
   /** Someone wants to send files here: who, what, and Accept or Decline. */
@@ -1164,6 +1236,7 @@ export class LandActivity extends BaseActivity {
         break;
       case 'accept':
       case 'decline':
+        this.kept.delete(id);
         if (native.demo) this.demoAnswer(id, name === 'accept');
         else await native.landAnswer(id, name === 'accept');
         break;
@@ -1172,21 +1245,37 @@ export class LandActivity extends BaseActivity {
         // Text: taking it is copying (or opening) it.
         const text = this.transfers.get(id)?.text;
         if (!text) break;
+        this.kept.delete(id);
         if (!native.demo) await native.landAnswer(id, true);
         if (name === 'accept-open' && isLink(text)) void native.openUrl(text.trim());
         else void native.clipboardSetText(text);
         break;
       }
       case 'reply':
-        if (!this.transfers.get(id)?.text) break;
+        if (!this.transfers.get(id)?.text && !this.kept.has(id)) break;
         this.replying = id;
+        break;
+      case 'note-copy':
+      case 'note-open': {
+        const n = this.kept.get(id);
+        if (!n) break;
+        // Still asking: taking it is answering it.
+        if (this.transfers.get(id)?.state === 'asking' && !native.demo) await native.landAnswer(id, true);
+        if (name === 'note-open' && isLink(n.text)) void native.openUrl(n.text.trim());
+        else void native.clipboardSetText(n.text);
+        this.kept.delete(id);
+        break;
+      }
+      case 'note-done':
+        this.kept.delete(id);
+        if (this.replying === id) this.replying = null;
         break;
       case 'reply-cancel':
         this.replying = null;
         break;
       case 'reply-send': {
         const text = typeof arg === 'string' ? arg.trim() : '';
-        const t = this.replying ? this.transfers.get(this.replying) : undefined;
+        const t = this.replying ? (this.transfers.get(this.replying) ?? this.kept.get(this.replying)) : undefined;
         if (!text || !t) break;
         if (text.length > MAX_TEXT) {
           this.note = { text: `That is more than ${MAX_TEXT.toLocaleString('en-US')} characters. Send it as a file instead.`, at: Date.now() };

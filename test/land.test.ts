@@ -828,6 +828,42 @@ describe('text and links', () => {
     expect(block(card, 'text', 'note')).toMatchObject({ text: "Reply sent to Moss's MacBook Air", tone: 'good' });
   });
 
+  it('a note stays on the island after its ask runs out, through a tap away, until Done', async () => {
+    const { act } = await boot();
+    const note = (over: Partial<LandTransfer>) => transfer({ id: 'in-k', dir: 'in', count: 0, total: 0, items: [], text: 'yo my stuff is done', ...over });
+    emit('land-transfer', note({ state: 'asking', expires: T0 + 120_000 }));
+    expect(act.status().urgent).toMatchObject({ key: 'ask:in-k' });
+    // Not answered in time: the note is kept, as a card of its own that holds the island.
+    emit('land-transfer', note({ state: 'declined', error: 'Not answered in time.' }));
+    expect(act.status()).toMatchObject({ urgent: { key: 'note:in-k', level: 'expanded' }, summary: "Moss's MacBook Air sent you a note" });
+    let card = act.sheet(sheetEnv('urgent'))!;
+    expect(block(card, 'text', 'text')!.text).toBe('yo my stuff is done');
+    expect(block(card, 'buttons', 'answer')!.items.map((b) => b.action)).toEqual(['note-done', 'reply', 'note-copy']);
+    // Tapped away the island lowers it, but pointing at the pill brings the same card back.
+    expect(act.sheet(sheetEnv('hover'))!.key).toBe('note/in-k');
+    // Copy takes it (no ask left to answer) and it goes.
+    await act.action('note-copy', 'in-k');
+    expect(h.native.clipboardSetText).toHaveBeenCalledWith('yo my stuff is done');
+    expect(h.native.landAnswer).not.toHaveBeenCalled();
+    expect(act.status().urgent ?? null).toBeNull();
+    expect(act.sheet(sheetEnv('hover'))).toBeNull();
+  });
+
+  it("a phone's note is kept too, and Done or declining lets it go", async () => {
+    const { act } = await boot();
+    const phone = { id: 'phone:abc', name: 'iPhone', os: 'ios' } as LandPeer;
+    emit('land-transfer', transfer({ id: 'in-p', dir: 'in', peer: phone, state: 'done', count: 0, total: 0, items: [], text: 'from my phone' }));
+    expect(act.status().urgent).toMatchObject({ key: 'note:in-p' });
+    expect(block(act.sheet(sheetEnv('urgent'))!, 'head', 'head')!.title).toBe('iPhone sent you a note');
+    await act.action('note-done', 'in-p');
+    expect(act.status().urgent ?? null).toBeNull();
+    // Declined here: not kept.
+    emit('land-transfer', transfer({ id: 'in-d', dir: 'in', state: 'asking', count: 0, total: 0, items: [], text: 'no thanks', expires: T0 + 120_000 }));
+    await act.action('decline', 'in-d');
+    emit('land-transfer', transfer({ id: 'in-d', dir: 'in', state: 'declined', error: 'Declined.', count: 0, total: 0, items: [], text: 'no thanks' }));
+    expect(act.status().urgent ?? null).toBeNull();
+  });
+
   it('a link that arrives can be opened instead', async () => {
     const { act } = await boot();
     emit('land-transfer', transfer({ id: 'in-l', dir: 'in', state: 'asking', count: 0, total: 0, items: [], text: 'https://example.com/recipe', expires: T0 + 120_000 }));
