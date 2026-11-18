@@ -455,6 +455,20 @@ export interface LandFriend {
   /** When it was added (ms). */
   added: number;
 }
+/** One line of a chat with a friend (src-tauri/src/land/history.rs): the last 20 are kept. */
+export interface LandChatMsg {
+  dir: 'in' | 'out';
+  text: string;
+  /** When it was sent or taken (ms). */
+  at: number;
+  /** Files that went with the note (they are in Downloads). */
+  files?: number;
+}
+export interface LandChat {
+  /** Whether chats are kept on disk across restarts (off: they live until Island closes). */
+  remember: boolean;
+  messages: LandChatMsg[];
+}
 /** This Island's key and the code a friend pastes to add it. */
 export interface LandMe {
   id: string;
@@ -638,6 +652,8 @@ export interface LiveWindow {
   state: 'normal' | 'maximized' | 'minimized';
   monitor: string;
   dpi: number;
+  /** A Chrome or Edge web app's own id (Chrome._crx_…); '' for any other window. */
+  appId: string;
 }
 export interface WinPlaced {
   hwnd: number;
@@ -825,7 +841,14 @@ export const native = {
   /** The taskbar (src-tauri/src/dock.rs): shown at w x h logical px, or closed. */
   dockShow: (on: boolean, w: number, h: number, centre = -1) => call('dock_show', { on, w, h, centre }, undefined),
   /** The taskbar page measured its content (logical px): its window takes that size, in its place. */
-  dockFit: (w: number, h: number) => call('dock_fit', { w, h }, undefined),
+  dockFit: (w: number, h: number, bar: number) => call('dock_fit', { w, h, bar }, undefined),
+  /** Where the page draws something (the bar, a card over it): CSS px rects [x, y, w, h] in the window.
+   *  Everywhere else a click goes through to what is under the taskbar's window. */
+  dockSolid: (rects: number[][]) => call('dock_solid', { rects }, undefined),
+  /** The taskbar sits on the screen's bottom edge (over Windows' taskbar) instead of floating above it. */
+  dockEdge: (on: boolean) => call('dock_edge', { on }, undefined),
+  /** The Apps card is open over the taskbar: it may take the keyboard (its search field) until closed. */
+  dockTyping: (on: boolean) => call('dock_typing', { on }, undefined),
   /** Dragging the taskbar: its left edge to `x` physical px; `done` keeps the place (x negative with done: back to the middle). */
   dockAt: (x: number, done: boolean) => call('dock_at', { x, done }, undefined),
   /** Windows' own panels: Start, Quick Settings (Wi-Fi, sound), notifications. */
@@ -1062,6 +1085,13 @@ export const native = {
   landFriendAnswer: (id: string, reply: 'add' | 'no' | 'block') => call<boolean>('land_friend_answer', { id, reply }, false),
   /** Removes a friend (they are not told), or blocks them too. */
   landFriendRemove: (id: string, block: boolean) => tryCall<null>('land_friend_remove', { id, block }),
+  /** A friend's chat: the last 20 notes each way. */
+  landChat: (friend: string) => call<LandChat>('land_chat', { friend }, { remember: false, messages: [] }),
+  landChatClear: (friend: string) => call<undefined>('land_chat_clear', { friend }, undefined),
+  /** Whether chats are kept across restarts (works with Land off). */
+  landChatRemember: () => call<boolean>('land_chat_remember', {}, false),
+  /** Turns keeping chats on disk on or off; off wipes what was saved. */
+  landChatSetRemember: (on: boolean) => call<undefined>('land_chat_set_remember', { on }, undefined),
   landStop: () => call('land_stop', {}, undefined),
   /** Asks every device nearby to say who it is; the list as it stands. */
   landScan: () => call<LandPeer[]>('land_scan', {}, []),

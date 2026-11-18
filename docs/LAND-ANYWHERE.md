@@ -115,6 +115,19 @@ Only friends (and computers on the same network, as today) can send offers. A co
 
 Total: about 5 to 7 days of sessions for slices 1–5 (usable between friends from slice 3 on), then slice 6 before telling other people to use it.
 
+## Chats with friends (2026-11-17, Justin's idea, Moss's limits)
+
+A friend's name on the Land card opens a small chat: the last 20 notes each way. It is the existing note (a text offer) plus a record, nothing new on the wire.
+
+- **Text only.** Pictures and files go the normal Land way into Downloads; a note that came with files shows "+ N files in Downloads". Nothing here stores or previews a picture.
+- **Last 20 per friend** (`KEEP` in `src-tauri/src/land/history.rs`); older ones drop off. A kept note is cut at 4,000 characters.
+- **Memory by default, disk only when asked.** Chats live in memory until Island closes. Activities › Land › "Remember chats" keeps them in `<data dir>/land-chats.json`; turning it off wipes the saved ones. Clearing a chat (bin in its card) or removing or blocking a friend wipes it too.
+- **Only friends, only taken notes.** `Running::record_chat` runs from `publish` when a text transfer is `done`, and only for a key the friend book knows (a friend nearby counts by their announced key). A declined or timed-out note was never read, so it leaves no line.
+- **Same consent as a note.** A note still asks first, except while that friend's chat is open on the card: then the island takes it at once (no card, no shake, no notification). Notes with files still ask.
+- **Nothing runs at idle.** No connection per friend, no polling: a send dials the friend, as before. A send to a friend who is offline waits and goes when they are online (the chat shows "sends when Alex is online").
+- **Commands:** `land_chat`, `land_chat_clear`, `land_chat_remember`, `land_chat_set_remember`. **Tests:** 4 in `land/tests.rs`, 6 in `test/land.test.ts`. Browser preview: `/?land=chat`.
+- **Not built:** unread badges, read receipts, typing indicators, chats with computers that are not friends.
+
 ## Watch out for
 
 - **School or work Wi-Fi** often blocks the UDP that direct paths need. iroh then goes through the relay over HTTPS, so it still works, just slower.

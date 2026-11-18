@@ -1,6 +1,6 @@
 // Browser preview only: Land's card after a drop (/?land), files being dragged over the pill
 // (/?land=drag, the Shelf side lit: /?land=drag-shelf), dropped on the Shelf (/?land=shelf), the Shelf's circle
-// (/?land=circle), an offer from a computer nearby (/?land=ask), or a send going (/?land=send).
+// (/?land=circle), an offer from a computer nearby (/?land=ask), a send going (/?land=send), or a chat with a friend (/?land=chat).
 
 import type { Activity } from '../core/activity';
 import type { Island } from '../core/island';
@@ -14,9 +14,15 @@ export async function landPreview(island: Island, native: typeof Native, mode: s
     landStage: async (paths: string[]) => paths.map((p, i) => ({ path: p, name: p, size: sizes[i % 3], dir: i === 0, files: i === 0 ? 37 : 1, error: null })),
   });
   await sleep(700);
-  const inner = island as unknown as { onFileDrop(e: FileDrop): void; running: Map<string, Activity & { demoOffer?(): void; action?(n: string, a?: unknown): unknown }> };
+  const inner = island as unknown as { onFileDrop(e: FileDrop): void; running: Map<string, Activity & { demoOffer?(): void; demoChat?(): void; action?(n: string, a?: unknown): unknown }> };
   const land = inner.running.get('land');
   if (!land) return;
+  if (mode === 'chat') {
+    land.demoChat?.();
+    await land.action?.('card');
+    island.schedule();
+    return;
+  }
   if (mode === 'ask') {
     land.demoOffer?.();
     island.schedule();

@@ -17,18 +17,20 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview
 #[cfg(windows)]
 use windows::core::{w, Interface, BOOL};
 #[cfg(windows)]
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 #[cfg(windows)]
 use windows::Win32::System::Ole::{IDropTarget, RegisterDragDrop};
 #[cfg(windows)]
 use windows::Win32::System::Threading::GetCurrentProcessId;
+#[cfg(windows)]
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_LBUTTON, VK_RBUTTON};
 #[cfg(windows)]
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, GetCursorPos, GetParent, GetPropW, GetWindowLongPtrW, GetWindowThreadProcessId, SetWindowLongPtrW,
+    EnumChildWindows, GetCursorPos, GetParent, GetPropW, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, SetWindowLongPtrW,
     SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, STYLESTRUCT, SWP_NOACTIVATE, SWP_ASYNCWINDOWPOS, SWP_NOMOVE, SWP_NOSIZE,
     WM_STYLECHANGING, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
@@ -337,6 +339,46 @@ fn cursor() -> Option<(f64, f64)> {
     Some((p.x as f64, p.y as f64))
 }
 
+/// Whether (x, y), CSS px in the island window, is on one of `rects` (give or take HIT_MARGIN),
+/// and how far it is from them (as far as the first one it is on).
+fn hit(rects: &[HitRect], x: f64, y: f64) -> (bool, f64) {
+    let mut gap = f64::MAX;
+    let on = rects.iter().any(|r| {
+        if r.w <= 0.0 {
+            return false;
+        }
+        let dx = (r.x - x).max(x - (r.x + r.w)).max(0.0);
+        let dy = (r.y - y).max(y - (r.y + r.h)).max(0.0);
+        gap = gap.min(dx.max(dy));
+        x >= r.x - HIT_MARGIN && x <= r.x + r.w + HIT_MARGIN && y >= r.y - HIT_MARGIN && y <= r.y + r.h + HIT_MARGIN
+    });
+    (on, gap)
+}
+
+/// A drag out of the island (shelf.rs) runs Windows' drag loop on the main thread, and the poll
+/// loop's click-through switch waits for that thread till the drop: the island, a window over the
+/// whole screen, stayed under the pointer everywhere and took every drop itself (Moss: files
+/// dragged off the Shelf went nowhere). The drag calls this on every move instead. Main thread
+/// only, where the switch takes effect at once.
+#[cfg(windows)]
+pub fn follow_drag(app: &AppHandle, hwnd: HWND) {
+    let (Some(state), Some(win)) = (app.try_state::<Arc<Overlay>>(), window(app)) else { return };
+    let Some((cx, cy)) = cursor() else { return };
+    let mut r = RECT::default();
+    if unsafe { GetWindowRect(hwnd, &mut r) }.is_err() {
+        return;
+    }
+    let scale = match unsafe { GetDpiForWindow(hwnd) } {
+        0 => 1.0,
+        dpi => dpi as f64 / 96.0,
+    };
+    let (on, _) = hit(&state.rects.lock().unwrap(), (cx - r.left as f64) / scale, (cy - r.top as f64) / scale);
+    if state.ignoring.load(Ordering::Relaxed) == on {
+        state.ignoring.store(!on, Ordering::Relaxed);
+        let _ = win.set_ignore_cursor_events(!on);
+    }
+}
+
 /// (held now, pressed at any point since the last call). The second half is what
 /// catches a click that began and ended between two polls; Windows keeps that bit
 /// per caller, and this loop is the only one asking about the mouse buttons.
@@ -569,16 +611,7 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
             let y = (cy - origin.1) / scale;
 
             // How far the pointer is from the island, and whether it is on it.
-            let mut gap = f64::MAX;
-            let on_island = state.rects.lock().unwrap().iter().any(|r| {
-                if r.w <= 0.0 {
-                    return false;
-                }
-                let dx = (r.x - x).max(x - (r.x + r.w)).max(0.0);
-                let dy = (r.y - y).max(y - (r.y + r.h)).max(0.0);
-                gap = gap.min(dx.max(dy));
-                x >= r.x - HIT_MARGIN && x <= r.x + r.w + HIT_MARGIN && y >= r.y - HIT_MARGIN && y <= r.y + r.h + HIT_MARGIN
-            });
+            let (on_island, gap) = hit(&state.rects.lock().unwrap(), x, y);
             period = Duration::from_millis(if gap <= NEAR_PX { NEAR_POLL_MS } else { FAR_POLL_MS });
 
             // Near the island the bot watches the pointer; once it leaves, one null says so.
@@ -837,6 +870,18 @@ pub fn island_set_focusable(app: AppHandle, state: tauri::State<'_, Arc<Overlay>
 mod tests {
     use super::*;
     use windows::Win32::UI::WindowsAndMessaging::{WS_EX_LAYERED, WS_EX_TOPMOST, WS_EX_TRANSPARENT};
+
+    #[test]
+    fn the_island_takes_the_mouse_only_on_what_it_draws() {
+        // The Shelf's card, under a pill at the top of a 1920-wide screen.
+        let rects = [HitRect { x: 860.0, y: 0.0, w: 200.0, h: 40.0 }, HitRect { x: 735.0, y: 90.0, w: 450.0, h: 230.0 }, HitRect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }];
+        assert!(hit(&rects, 812.0, 215.0).0, "a tile on the card");
+        assert!(hit(&rects, 733.0, 200.0).0, "just past the card's edge, within the margin");
+        let (on, gap) = hit(&rects, 1580.0, 720.0);
+        assert!(!on, "a folder far below: the drop must reach it");
+        assert!(gap > 300.0);
+        assert!(!hit(&[], 10.0, 10.0).0);
+    }
 
     #[test]
     fn fade_holds_the_peek_until_let_go() {

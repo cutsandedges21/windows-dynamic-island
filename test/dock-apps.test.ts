@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
-import { clickPlan, dockApps, movePins, openOrder, pinToggle, riseAt, type DockApp } from '../src/core/dock';
+import { clickPlan, dockApps, movePins, openOrder, pinToggle, resetLine, riseAt, type DockApp } from '../src/core/dock';
 
 const app = (key: string, pinned: boolean, windows: number[] = [], front = false): DockApp => ({ key, name: key.toUpperCase(), icon: null, windows, front, pinned });
 const pin = (key: string) => ({ name: key.toUpperCase(), target: key });
@@ -47,7 +47,7 @@ describe('taskbar apps', () => {
   });
 
   it('keeps open apps where they are when another comes to the front', () => {
-    const win = (hwnd: number, exe: string) => ({ hwnd, pid: hwnd, exe, title: exe, className: 'X', rect: { x: 0, y: 0, width: 10, height: 10 }, state: 'normal' as const, monitor: 'm', dpi: 96 });
+    const win = (hwnd: number, exe: string) => ({ hwnd, pid: hwnd, exe, title: exe, className: 'X', rect: { x: 0, y: 0, width: 10, height: 10 }, state: 'normal' as const, monitor: 'm', dpi: 96, appId: '' });
     // Opened in this order: chrome, then code.
     let seen = openOrder([], [win(1, 'C:\\chrome.exe')]);
     seen = openOrder(seen, [win(2, 'C:\\code.exe'), win(1, 'C:\\chrome.exe')]);
@@ -63,11 +63,32 @@ describe('taskbar apps', () => {
     expect(seen).toEqual(['c:\\code.exe', 'c:\\chrome.exe']);
   });
 
+  it('groups a web app\'s window under its own icon, not the browser\'s', () => {
+    const base = { pid: 1, className: 'Chrome_WidgetWin_1', rect: { x: 0, y: 0, width: 10, height: 10 }, state: 'normal' as const, monitor: 'm', dpi: 96 };
+    const chrome = { ...base, hwnd: 1, exe: 'C:\\chrome.exe', title: 'Google', appId: '' };
+    const music = { ...base, hwnd: 2, exe: 'C:\\chrome.exe', title: 'YouTube Music', appId: 'Chrome._crx_abc' };
+    const pins = [{ name: 'YouTube Music', target: 'shell:AppsFolder\\Chrome._crx_abc' }];
+    const apps = dockApps(pins, [music, chrome], 2, new Map());
+    expect(apps.map((a) => [a.name, a.windows])).toEqual([['YouTube Music', [2]], ['chrome', [1]]]);
+    expect(apps[0].front).toBe(true);
+    // Not pinned: still its own icon, named by its window.
+    expect(dockApps([], [music, chrome], 1, new Map()).map((a) => a.name)).toEqual(['YouTube Music', 'chrome']);
+  });
+
   it('rises most under the pointer and not at all two icons away', () => {
     expect(riseAt(0)).toBe(1);
     expect(riseAt(-48)).toBeCloseTo(0.5, 5);
     expect(riseAt(48)).toBeCloseTo(0.5, 5);
     expect(riseAt(96)).toBe(0);
     expect(riseAt(200)).toBe(0);
+  });
+
+  it('says when a limit resets: the session in so long and at what time, the week on what day', () => {
+    const now = new Date(2026, 10, 17, 14, 0).getTime();
+    expect(resetLine(now + (2 * 60 + 10) * 60000, now, false)).toBe('in 2h 10m · 4:10 PM');
+    expect(resetLine(new Date(2026, 10, 17, 21, 0).getTime(), now, true)).toBe('Today 9:00 PM · in 7h');
+    expect(resetLine(new Date(2026, 10, 19, 4, 0).getTime(), now, true)).toBe('Thu 4:00 AM · in 1d 14h');
+    expect(resetLine(now - 1, now, false)).toBe('Resetting now');
+    expect(resetLine(null, now, false)).toBe('Starts with your next message');
   });
 });

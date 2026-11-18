@@ -4,6 +4,7 @@
 // from Start's list.
 
 import type { ActivityStatus, SheetEnv } from '../core/activity';
+import type { DockCard } from '../core/dock';
 import { native, type InstalledApp } from '../core/native';
 import type { Seg } from '../core/segments';
 import type { Block, FileTile, SheetRow, SheetView, Tile } from '../core/sheet';
@@ -93,6 +94,22 @@ export class AppsActivity extends BaseActivity {
     if (!this.alive) return;
     want.forEach((t, i) => this.icons.set(t, got[i] ?? null));
     this.ctx.update();
+  }
+
+  /** The same card for the taskbar's arrow (src/core/dock.ts): its actions are this card's. */
+  dockCard(now = Date.now()): DockCard {
+    const note = this.note && now < this.note.until ? this.note : null;
+    const have = new Set(this.apps.map((a) => a.target.toLowerCase()));
+    const found = this.editing ? findApps(this.installed ?? [], this.query, have).map((a) => ({ name: a.name, target: a.target })) : [];
+    return {
+      apps: this.apps.map((a) => ({ name: a.name, target: a.target, icon: this.icons.get(a.target) ?? null })),
+      editing: this.editing,
+      query: this.query,
+      found,
+      note: note?.text ?? null,
+      bad: note?.bad ?? false,
+      reading: this.editing && !this.installed,
+    };
   }
 
   status(): ActivityStatus {

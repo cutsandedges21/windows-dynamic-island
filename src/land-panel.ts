@@ -2,7 +2,7 @@
 // friends (Remove, Block), and Islands here to add without a code. In Activities › Land and the
 // first-run setup.
 
-import { row, stacked } from './controls';
+import { row, stacked, toggle } from './controls';
 import { native, type LandFriend } from './core/native';
 import { h } from './dom';
 
@@ -62,6 +62,13 @@ export function landPanel(): HTMLElement {
   })();
   void fill();
 
+  // Chats with friends: the last 20 notes each way are always kept while Island runs; this keeps
+  // them on this computer after it closes. Off by default, and turning it off wipes the saved ones.
+  const remember = h('div', { class: 'hide-choices' });
+  void native.landChatRemember().then((on) => {
+    remember.replaceChildren(toggle(on, (v) => { void native.landChatSetRemember(v); }, 'Remember chats'));
+  });
+
   return h('div', { class: 'local-panel' }, [
     h('h3', { text: 'Friends on other networks' }),
     stacked(row('Your Land code', 'Send it to friends you trust. They paste it into their Island to ask to be friends, and you answer on your island.', code)),
@@ -69,5 +76,6 @@ export function landPanel(): HTMLElement {
     status,
     list,
     nearby,
+    stacked(row('Remember chats', 'Friends can message each other from the Land card (text only; pictures and files go the normal way). The last 20 notes with each friend are kept until Island closes. Turn this on to keep them on this computer. Turning it off deletes the saved ones.', remember)),
   ]);
 }

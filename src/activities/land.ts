@@ -9,7 +9,7 @@
 
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { baseName, bytes, clip, clock, percent, rate } from '../core/format';
-import { native, type LandFriend, type LandFirewall, type LandFriendAsk, type LandPeer, type LandStaged, type LandTransfer, type RemoteFileSent, type RemotePhone, type ShareInfo, type Tried } from '../core/native';
+import { native, type LandChatMsg, type LandFriend, type LandFirewall, type LandFriendAsk, type LandPeer, type LandStaged, type LandTransfer, type RemoteFileSent, type RemotePhone, type ShareInfo, type Tried } from '../core/native';
 import type { PhoneDelivery } from '../remote/hub';
 import { holdForPhone, type HeldEnd } from '../remote/outbox';
 import type { PetSignal } from '../core/pet';
@@ -52,6 +52,17 @@ const FIREWALL_MS = 30_000;
 const ONLINE_MS = 20000;
 /** How long the other side has to accept (land.rs ASK_FOR). */
 const ASK_MS = 120000;
+/** Friends listed on the card with a chat to open; the last notes each way are kept (land/history.rs KEEP). */
+const CHAT_ROWS = 6;
+const CHAT_KEEP = 20;
+
+/** When a chat line was sent: the time today, else the day and the time. */
+export function chatTime(at: number, now: number): string {
+  const d = new Date(at);
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return new Date(now).toDateString() === d.toDateString() ? time : `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`;
+}
+
 /** "Reply sent" stays on their note this long after the reply went. */
 const REPLY_NOTE_MS = 6000;
 /** How long a phone share works (land/share.rs SHARE_FOR). */
@@ -136,6 +147,10 @@ export class LandActivity extends BaseActivity {
   private note: { text: string; at: number; good?: boolean } | null = null;
   /** The note being answered (its transfer id): its card holds a box to write the reply in. */
   private replying: string | null = null;
+  /** The friend whose chat the card shows (their id), the last notes each way, and whether Rust keeps them across restarts. */
+  private chatWith: string | null = null;
+  private chatLog: LandChatMsg[] = [];
+  private chatRemember = false;
   /**
    * Notes that came (from a computer or a phone), kept on the island until answered: copied, replied
    * to, declined or Done (Justin: moving the pointer off, or the ask running out, lost them). Tapped
@@ -241,6 +256,11 @@ export class LandActivity extends BaseActivity {
 
   private onFriends(list: LandFriend[]): void {
     this.friends = [...list];
+    // A friend who was removed takes their chat with them.
+    if (this.chatWith && !this.friends.some((f) => f.id === this.chatWith)) {
+      this.chatWith = null;
+      this.chatLog = [];
+    }
     this.unpickGone();
     this.ctx.update();
   }
@@ -275,6 +295,28 @@ export class LandActivity extends BaseActivity {
     return this.friends.some((f) => f.id === key);
   }
 
+  /** The friend a computer is: its own key, or the friend key a computer nearby announced. */
+  private friendOf(p: LandPeer): LandFriend | null {
+    const key = p.anywhere ?? p.id;
+    return this.friends.find((f) => f.id === key) ?? null;
+  }
+
+  /** A plain note (no files) to or from the friend whose chat is open: it belongs to the chat, so it makes no card or noise. */
+  private inChat(t: Pick<LandTransfer, 'peer' | 'text' | 'count'>): boolean {
+    return !!this.chatWith && !!t.text && !t.count && this.friendOf(t.peer)?.id === this.chatWith;
+  }
+
+  /** The open chat as Rust keeps it (it writes a note into the chat before it tells the island it arrived). */
+  private async loadChat(): Promise<void> {
+    const id = this.chatWith;
+    if (!id || native.demo) return;
+    const c = await native.landChat(id);
+    if (!this.alive || this.chatWith !== id) return;
+    this.chatLog = c.messages;
+    this.chatRemember = c.remember;
+    this.ctx.update();
+  }
+
   /** Dials each friend (3 s each, in Rust) to see who is online; at most every ONLINE_MS while the card is open. */
   private async checkOnline(): Promise<void> {
     if (native.demo || !this.friends.length) return;
@@ -287,6 +329,11 @@ export class LandActivity extends BaseActivity {
 
   private onTransfer(t: LandTransfer): void {
     const now = Date.now();
+    // A friend's note while their chat is open is read as it comes: taken at once, no card, no shake.
+    if (t.dir === 'in' && t.state === 'asking' && this.inChat(t)) {
+      void native.landAnswer(t.id, true);
+      return;
+    }
     const prev = this.transfers.get(t.id);
     const live: Live = { ...t, since: prev?.since ?? now, at: now, speed: prev?.speed ?? 0, ended: prev?.ended ?? null };
     if (prev && t.done > prev.done) {
@@ -311,7 +358,10 @@ export class LandActivity extends BaseActivity {
       });
     }
     if (t.state === 'asking' && prev?.state !== 'asking') this.asked(live);
-    if (live.ended === now) this.finished(live);
+    // Notes between friends are in their chat (Rust wrote it before saying so): show it.
+    if (t.text && t.state === 'done' && this.friendOf(t.peer)?.id === this.chatWith) void this.loadChat();
+    if (this.inChat(t) && t.dir === 'out' && (t.state === 'declined' || t.state === 'failed' || t.state === 'cancelled')) this.note = { text: t.error ?? `${t.peer.name} did not get that.`, at: now };
+    if (live.ended === now && !this.inChat(t)) this.finished(live);
     this.prune(now);
     this.ctx.update();
   }
@@ -982,6 +1032,8 @@ export class LandActivity extends BaseActivity {
   /** The Land card in the open island: the files, who is nearby, Send, and the transfers. */
   private card(env: SheetEnv): SheetView {
     if (this.share && this.share.expires > env.now) return this.shareCard(this.share, env);
+    const chatFriend = this.chatWith ? this.friends.find((f) => f.id === this.chatWith) : undefined;
+    if (chatFriend) return this.chatCard(chatFriend, env);
     const files = this.stagedFiles();
     const size = this.stagedBytes();
     const n = this.peers.length;
@@ -1042,6 +1094,15 @@ export class LandActivity extends BaseActivity {
       ? `Land is off: ${this.error}`
       : 'Looking for computers nearby. The other one needs Island open, on the same network. Friends on other networks show here too once you add them (Activities › Land).';
     blocks.push({ t: 'people', key: 'peers', items: people, empty });
+    // Friends can be messaged: the last notes each way are kept for a glance (land/history.rs).
+    if (this.friends.length && env.interactive) {
+      blocks.push({ t: 'text', key: 'chats-label', text: 'Message a friend', tone: 'dim', size: 'sm' });
+      blocks.push({
+        t: 'rows',
+        key: 'chats',
+        items: this.friends.slice(0, CHAT_ROWS).map((f) => ({ key: `chat/${f.id}`, icon: 'chat', title: f.name, detail: this.friendStatus(f.id), action: 'chat-open', arg: f.id, tip: `Open your chat with ${f.name}` })),
+      });
+    }
     blocks.push(...this.firewallBlocks(env));
 
     if (this.staged.length || this.stagedText) {
@@ -1063,6 +1124,40 @@ export class LandActivity extends BaseActivity {
       blocks.push({ t: 'text', key: 'me', text: this.me.visible ? me : `${me} It doesn't take files (Activities › Land).`, tone: 'dim', size: 'sm' });
     }
     return { key: 'card', wide: true, blocks };
+  }
+
+  /** A chat with a friend: the last notes each way, the ones still going, and a box to write the next. */
+  private chatCard(f: LandFriend, env: SheetEnv): SheetView {
+    const blocks: Block[] = [
+      {
+        t: 'head',
+        key: 'head',
+        icon: 'chat',
+        tone: 'accent',
+        title: f.name,
+        sub: this.friendStatus(f.id),
+        back: { key: 'back', icon: 'chevron-left', action: 'chat-close', style: 'ghost', tip: 'Back to Land' },
+        buttons: this.chatLog.length ? [{ key: 'clear', icon: 'trash', action: 'chat-clear', arg: f.id, style: 'ghost', tip: `Clear this chat (${f.name} keeps theirs)` }] : [],
+      },
+    ];
+    let last: string | null = null;
+    this.chatLog.forEach((m, i) => {
+      if (m.dir !== last) {
+        blocks.push({ t: 'text', key: `w${i}`, text: `${m.dir === 'out' ? 'You' : f.name} · ${chatTime(m.at, env.now)}`, tone: 'dim', size: 'sm' });
+        last = m.dir;
+      }
+      blocks.push({ t: 'text', key: `m${i}`, text: m.files ? `${m.text}\n+ ${plural(m.files, 'file')} in Downloads` : m.text, bubble: true, lines: 4, tone: m.dir === 'out' ? 'accent' : undefined });
+    });
+    // Sends still going: waiting for them to be online, or on their way.
+    for (const t of this.transfers.values()) {
+      if (t.dir !== 'out' || !t.text || t.count || !ACTIVE.has(t.state) || this.friendOf(t.peer)?.id !== f.id) continue;
+      blocks.push({ t: 'text', key: `p${t.id}`, text: t.state === 'queued' ? `${clip(t.text, 80)} · sends when ${f.name} is online` : `${clip(t.text, 80)} · sending…`, tone: 'dim', size: 'sm' });
+    }
+    if (!this.chatLog.length) blocks.push({ t: 'text', key: 'empty', text: `No messages with ${f.name} yet. Write one below: ${f.name} gets it on their island, from anywhere.`, tone: 'muted', size: 'sm' });
+    if (env.interactive) blocks.push({ t: 'input', key: 'chat', placeholder: `Message ${f.name}, then Enter`, action: 'chat-send' });
+    if (this.note && env.now - this.note.at < 8000) blocks.push({ t: 'text', key: 'note', text: this.note.text, tone: this.note.good ? 'good' : 'bad', size: 'sm' });
+    blocks.push({ t: 'text', key: 'where', text: `Sent encrypted, text only. The last ${CHAT_KEEP} notes are kept ${this.chatRemember ? 'on this computer' : 'until Island closes'} (Activities › Land).`, tone: 'dim', size: 'sm' });
+    return { key: `chat/${f.id}`, blocks };
   }
 
   /** Windows Firewall keeping this network out: why, and the one-click fix. */
@@ -1183,6 +1278,9 @@ export class LandActivity extends BaseActivity {
   }
 
   private async stage(paths: string[]): Promise<void> {
+    // Files dropped on the island are for the shelf, not for a chat.
+    this.chatWith = null;
+    this.chatLog = [];
     const fresh = paths.filter((p) => !this.staged.some((s) => s.path === p));
     if (!fresh.length) return;
     const got = await native.landStage(fresh);
@@ -1312,6 +1410,41 @@ export class LandActivity extends BaseActivity {
       case 'send':
         await this.send();
         break;
+      case 'chat-open':
+        if (!this.friends.some((f) => f.id === id)) break;
+        this.chatWith = id;
+        this.chatLog = [];
+        this.note = null;
+        await this.loadChat();
+        void this.checkOnline();
+        break;
+      case 'chat-close':
+        this.chatWith = null;
+        this.chatLog = [];
+        this.note = null;
+        break;
+      case 'chat-clear':
+        if (id) await native.landChatClear(id);
+        this.chatLog = [];
+        break;
+      case 'chat-send': {
+        const f = this.friends.find((x) => x.id === this.chatWith);
+        const text = typeof arg === 'string' ? arg.trim() : '';
+        if (!f || !text) break;
+        if (text.length > MAX_TEXT) {
+          this.note = { text: `That is more than ${MAX_TEXT.toLocaleString('en-US')} characters. Send it as a file instead.`, at: Date.now() };
+          break;
+        }
+        if (native.demo) {
+          this.chatLog = [...this.chatLog, { dir: 'out' as const, text, at: Date.now() }].slice(-CHAT_KEEP);
+          this.note = null;
+          break;
+        }
+        const r = await this.textTo({ id: f.id, name: f.name, os: '' }, text);
+        if (!this.alive) return;
+        this.note = r.ok ? null : { text: r.error, at: Date.now() };
+        break;
+      }
       case 'accept':
       case 'decline':
         // Saving a note's files keeps the note to copy; declining lets it go.
@@ -1694,6 +1827,21 @@ export class LandActivity extends BaseActivity {
     if (!t) return;
     this.onTransfer({ ...t, state: accept ? 'receiving' : 'declined', error: accept ? null : 'Declined.', expires: null });
     if (accept) this.demoTimers.push(setTimeout(() => this.alive && this.onTransfer({ ...t, state: 'done', done: t.total, saved: ['C:\\Users\\you\\Downloads\\Trip'], expires: null }), 2500));
+  }
+
+  /** The preview's chat (src/dev/land.ts, /?land=chat): a friend with a few notes, the chat open. */
+  demoChat(): void {
+    const now = Date.now();
+    this.friends = [{ id: 'f1ab2c3d4e5f6071', name: 'Justin', added: now - 86_400_000 }];
+    this.online = new Set(['f1ab2c3d4e5f6071']);
+    this.chatWith = 'f1ab2c3d4e5f6071';
+    this.chatLog = [
+      { dir: 'out', text: 'did you see the taskbar fix?', at: now - 3_600_000 },
+      { dir: 'in', text: 'yes, it works on my screen now', at: now - 3_500_000 },
+      { dir: 'in', text: 'sending you the logo next', at: now - 3_490_000, files: 1 },
+      { dir: 'out', text: 'perfect, thanks', at: now - 60_000 },
+    ];
+    this.ctx.update();
   }
 
   /** The preview's incoming offer (src/dev/fill.ts). */

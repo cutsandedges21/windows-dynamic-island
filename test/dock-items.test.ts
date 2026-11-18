@@ -18,7 +18,7 @@ describe('taskbar items', () => {
   it('toggles an item off and back on', () => {
     const off = toggleDockItem([], 'wifi');
     expect(off).toEqual(['wifi']);
-    expect(toggleDockItem(['start', ...off], 'wifi')).toEqual(['start']);
+    expect(toggleDockItem(['arrow', ...off], 'wifi')).toEqual(['arrow']);
   });
 
   it('names every item', () => {

@@ -2363,7 +2363,7 @@ export class ClaudeActivity extends BaseActivity {
       // The taskbar's S: xx% | W: xx%.
       case 'limits': {
         const d = this.limitsNow();
-        return d ? { session: d.fiveHour?.pct ?? null, week: d.sevenDay?.pct ?? null } : null;
+        return d ? { session: d.fiveHour?.pct ?? null, week: d.sevenDay?.pct ?? null, sessionReset: d.fiveHour?.resetsAt ?? null, weekReset: d.sevenDay?.resetsAt ?? null } : null;
       }
       case 'snapshot':
         return {

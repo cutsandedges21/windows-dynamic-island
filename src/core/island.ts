@@ -24,7 +24,7 @@ import { cardChips, choosePrimary, type Candidate, type Choice as Picked, type S
 import type { MirrorFrame } from './mirror';
 import { Strip, type StripView } from './strip';
 import { lookOf, WidgetHost } from './widgets';
-import { DockHost, type DockFrame } from './dock';
+import { DockHost, type DockCard, type DockFrame } from './dock';
 import { PillRenderer } from './renderer';
 import { menuMain, menuSegments } from './menu';
 import { fadeSegments, fadeSheet } from './fade-menu';
@@ -403,6 +403,11 @@ export class Island {
         music: () => this.dockMusic(),
         timer: () => this.dockTimer(),
         claude: () => this.dockClaude,
+        appsCard: () => {
+          const act = this.running.get('apps') as unknown as { dockCard?: () => DockCard } | undefined;
+          return act?.dockCard?.() ?? { apps: [], editing: false, query: '', found: [], note: null, bad: false, reading: false, off: true };
+        },
+        appsAct: (name, arg) => this.running.get('apps')?.action?.(name, arg),
         battery: () => this.dockBattery,
         muted: () => this.dockMuted,
         wifi: () => this.dockWifi,
@@ -421,6 +426,16 @@ export class Island {
         size: () => this.settings.island.taskbar.size,
         setSize: (size) => {
           this.settings.island.taskbar.size = size;
+          this.saveSettings();
+        },
+        style: () => this.settings.island.taskbar.style,
+        setStyle: (style) => {
+          this.settings.island.taskbar.style = style;
+          this.saveSettings();
+        },
+        edge: () => this.settings.island.taskbar.edge,
+        setEdge: (on) => {
+          this.settings.island.taskbar.edge = on;
           this.saveSettings();
         },
         open: (id) => {
@@ -2371,7 +2386,7 @@ export class Island {
   private async syncDockClaude(): Promise<void> {
     const act = this.running.get('claude');
     try {
-      const l = act?.command ? ((await act.command('limits', null)) as { session: number | null; week: number | null } | null) : null;
+      const l = act?.command ? ((await act.command('limits', null)) as DockFrame['claude']) : null;
       this.dockClaude = l && (l.session != null || l.week != null) ? l : null;
     } catch {
       this.dockClaude = null;

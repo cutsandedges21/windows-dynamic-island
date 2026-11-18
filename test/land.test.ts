@@ -1116,3 +1116,116 @@ describe('the shelf', () => {
     expect(saved.at(-1)).toEqual({ shelf: ['C:\\b.txt'] });
   });
 });
+
+describe('chats with friends', () => {
+  const ALEX_PEER = { id: FRIEND.id, name: 'Alex', os: '' };
+  const note = (over: Partial<LandTransfer> = {}) => transfer({ id: 'in-n', dir: 'in', peer: ALEX_PEER, state: 'asking', count: 0, total: 0, items: [], text: 'lunch?', expires: T0 + 120_000, ...over });
+  const chatOf = (messages: Array<{ dir: 'in' | 'out'; text: string; at: number; files?: number }>, remember = false) => {
+    h.native.landChat = vi.fn(async () => ({ remember, messages }));
+    h.native.landChatClear = vi.fn(async () => undefined);
+  };
+
+  it('lists friends on the card, and opening one shows the last notes each way with a box to write the next', async () => {
+    withFriends([FRIEND, SAM]);
+    chatOf([
+      { dir: 'out', text: 'hello', at: T0 - 60_000 },
+      { dir: 'in', text: 'hi!', at: T0 - 30_000 },
+      { dir: 'in', text: 'logo is coming', at: T0 - 20_000, files: 1 },
+    ]);
+    const { act } = await boot();
+    const rows = block(act.sheet(sheetEnv('open'))!, 'rows', 'chats')!;
+    expect(rows.items.map((r) => [r.title, r.action, r.arg])).toEqual([['Alex', 'chat-open', FRIEND.id], ['Sam', 'chat-open', SAM.id]]);
+    await act.action('chat-open', FRIEND.id);
+    const card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'head', 'head')).toMatchObject({ title: 'Alex', back: { action: 'chat-close' } });
+    const bubbles = card.blocks.filter((b) => b.t === 'text' && b.bubble) as Array<Extract<Block, { t: 'text' }>>;
+    expect(bubbles.map((b) => [b.text, b.tone])).toEqual([['hello', 'accent'], ['hi!', undefined], ['logo is coming\n+ 1 file in Downloads', undefined]]);
+    // "You" and "Alex" label each run of notes once.
+    const labels = card.blocks.filter((b) => b.t === 'text' && /^(You|Alex) · /.test(b.text)).map((b) => (b as { text: string }).text.split(' · ')[0]);
+    expect(labels).toEqual(['You', 'Alex']);
+    expect(block(card, 'input', 'chat')).toMatchObject({ action: 'chat-send' });
+    expect(block(card, 'head', 'head')!.buttons!.map((b) => b.action)).toEqual(['chat-clear']);
+    await act.action('chat-close');
+    expect(block(act.sheet(sheetEnv('open'))!, 'rows', 'chats')).toBeDefined();
+  });
+
+  it('Enter sends the note to the friend; an empty or failed send says why and sends nothing more', async () => {
+    withFriends([FRIEND]);
+    chatOf([]);
+    const { act } = await boot();
+    await act.action('chat-open', FRIEND.id);
+    await act.action('chat-send', '   ');
+    expect(h.native.landSendText).not.toHaveBeenCalled();
+    await act.action('chat-send', ' on my way ');
+    expect(h.native.landSendText).toHaveBeenCalledWith(FRIEND.id, 'on my way');
+    h.native.landSendText = vi.fn(async () => ({ ok: false, error: 'Alex is away.' }));
+    await act.action('chat-send', 'again');
+    expect(block(act.sheet(sheetEnv('open'))!, 'text', 'note')).toMatchObject({ text: 'Alex is away.', tone: 'bad' });
+  });
+
+  it('a send that is still going shows under the notes, and a finished one reloads the chat', async () => {
+    withFriends([FRIEND]);
+    chatOf([]);
+    const { act } = await boot();
+    await act.action('chat-open', FRIEND.id);
+    emit('land-transfer', transfer({ id: 'out-q', dir: 'out', peer: ALEX_PEER, state: 'queued', count: 0, total: 0, items: [], text: 'ping' }));
+    expect(block(act.sheet(sheetEnv('open'))!, 'text', 'pout-q')!.text).toContain('sends when Alex is online');
+    chatOf([{ dir: 'out', text: 'ping', at: T0 }]);
+    emit('land-transfer', transfer({ id: 'out-q', dir: 'out', peer: ALEX_PEER, state: 'done', count: 0, total: 0, items: [], text: 'ping' }));
+    await tick(0);
+    expect(h.native.landChat).toHaveBeenCalledWith(FRIEND.id);
+    const card = act.sheet(sheetEnv('open'))!;
+    expect(block(card, 'text', 'pout-q')).toBeUndefined();
+    expect(block(card, 'text', 'm0')!.text).toBe('ping');
+  });
+
+  it('a friend\'s note while their chat is open is taken at once: no card, no shake, no notification', async () => {
+    withFriends([FRIEND]);
+    chatOf([]);
+    const { act, calls } = await boot();
+    await act.action('chat-open', FRIEND.id);
+    emit('land-transfer', note());
+    expect(h.native.landAnswer).toHaveBeenCalledWith('in-n', true);
+    expect(calls.alert).toEqual([]);
+    expect(calls.notify).toEqual([]);
+    expect(act.sheet(sheetEnv('urgent'))).toBeNull();
+    // It comes through as done, and the chat is read again.
+    chatOf([{ dir: 'in', text: 'lunch?', at: T0 }]);
+    emit('land-transfer', note({ state: 'done' }));
+    await tick(0);
+    expect(block(act.sheet(sheetEnv('open'))!, 'text', 'm0')!.text).toBe('lunch?');
+    expect(calls.surface).toEqual([]);
+  });
+
+  it('the same note with no chat open, from someone else, or with files still asks as before', async () => {
+    withFriends([FRIEND, SAM]);
+    chatOf([]);
+    const { act, calls } = await boot();
+    emit('land-transfer', note({ id: 'in-1' }));
+    expect(h.native.landAnswer).not.toHaveBeenCalled();
+    expect(calls.alert.length).toBe(1);
+    await act.action('note-done', 'in-1');
+    // Alex's chat is open: Sam's note and Alex's note with a picture still ask.
+    await act.action('chat-open', FRIEND.id);
+    emit('land-transfer', note({ id: 'in-2', peer: { id: SAM.id, name: 'Sam', os: '' } }));
+    emit('land-transfer', note({ id: 'in-3', count: 1, total: 900, items: [{ name: 'logo.png', size: 900, files: 1, dir: false }] }));
+    expect(h.native.landAnswer).not.toHaveBeenCalled();
+    expect(calls.alert.length).toBe(3);
+  });
+
+  it('Clear wipes the chat in Rust, and a removed friend closes it; dropping files brings the shelf back', async () => {
+    withFriends([FRIEND]);
+    chatOf([{ dir: 'in', text: 'hey', at: T0 }]);
+    const { act } = await boot();
+    await act.action('chat-open', FRIEND.id);
+    await act.action('chat-clear', FRIEND.id);
+    expect(h.native.landChatClear).toHaveBeenCalledWith(FRIEND.id);
+    expect(block(act.sheet(sheetEnv('open'))!, 'text', 'm0')).toBeUndefined();
+    act.drop(['C:\a.txt']);
+    await tick(0);
+    expect(block(act.sheet(sheetEnv('open'))!, 'files', 'files')).toBeDefined();
+    await act.action('chat-open', FRIEND.id);
+    emit('land-friends', []);
+    expect(block(act.sheet(sheetEnv('open'))!, 'head', 'head')!.title).toBe('Land');
+  });
+});

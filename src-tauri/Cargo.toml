@@ -131,6 +131,8 @@ features = [
   "Win32_System_Services",
   "Win32_System_Shutdown",
   "Win32_System_SystemInformation",
+  # The Shelf's drag out has its own drop source (src/shelf.rs): which mouse buttons are down.
+  "Win32_System_SystemServices",
   "Win32_System_Threading",
   "Win32_System_Time",
   "Win32_System_Variant",

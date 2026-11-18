@@ -1124,3 +1124,104 @@ async fn islands_find_each_other_through_ntfy() {
     assert_eq!(a.place_peers()[0].name, "B");
     assert_eq!(b.place_peers()[0].name, "A");
 }
+
+// ------------------------------------------------------------------ chats (history.rs)
+
+fn note(dir: &str, text: &str) -> history::Msg {
+    history::Msg { dir: dir.into(), text: text.into(), at: 1, files: 0 }
+}
+
+#[test]
+fn a_chat_keeps_the_last_twenty_messages_and_cuts_long_ones() {
+    let h = history::History::memory();
+    for i in 0..25 {
+        h.push("f", note(if i % 2 == 0 { "out" } else { "in" }, &format!("m{i}")));
+    }
+    let list = h.list("f");
+    assert_eq!(list.len(), history::KEEP);
+    assert_eq!(list.first().unwrap().text, "m5");
+    assert_eq!(list.last().unwrap().text, "m24");
+    assert!(h.list("someone else").is_empty());
+    h.push("g", note("in", &"x".repeat(9000)));
+    let cut = &h.list("g")[0].text;
+    assert!(cut.chars().count() <= 4001 && cut.ends_with('\u{2026}'));
+    h.clear("f");
+    assert!(h.list("f").is_empty() && !h.list("g").is_empty());
+}
+
+#[test]
+fn chats_reach_the_disk_only_while_remember_is_on() {
+    let file = temp_dir("chats-disk").join("land-chats.json");
+    let h = history::History::open(file.clone());
+    assert!(!h.remember());
+    h.push("f", note("out", "hello"));
+    // Off: nothing of the chat is on disk, and a new start begins empty.
+    let on_disk = std::fs::read_to_string(&file).unwrap_or_default();
+    assert!(!on_disk.contains("hello"), "{on_disk}");
+    assert!(history::History::open(file.clone()).list("f").is_empty());
+    // On: the chat so far and what comes next are kept across a restart.
+    h.set_remember(true);
+    h.push("f", note("in", "hi back"));
+    let again = history::History::open(file.clone());
+    assert!(again.remember());
+    assert_eq!(again.list("f").iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), vec!["hello", "hi back"]);
+    // Off again wipes the file.
+    h.set_remember(false);
+    assert!(!std::fs::read_to_string(&file).unwrap().contains("hi back"));
+    assert!(history::History::open(file).list("f").is_empty());
+}
+
+#[tokio::test]
+async fn a_note_between_friends_lands_in_both_chats_and_a_declined_one_does_not() {
+    let p = far_pair("chat-friends").await;
+    let (fa, fb) = (p.a.far().unwrap().id().to_string(), p.b.far().unwrap().id().to_string());
+    p.a.send_text(&fb, "lunch at 12?").await.unwrap();
+    let ask = wait_for(&p.b_events, "in", "asking").await;
+    assert!(p.b.answer(ask["id"].as_str().unwrap(), true));
+    wait_for(&p.b_events, "in", "done").await;
+    // The sender's "done" can follow a moment later than the receiver's.
+    for _ in 0..200 {
+        if !p.a.chats.list(&fb).is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let mine = p.a.chats.list(&fb);
+    let theirs = p.b.chats.list(&fa);
+    assert_eq!((mine.len(), mine[0].dir.as_str(), mine[0].text.as_str()), (1, "out", "lunch at 12?"));
+    assert_eq!((theirs.len(), theirs[0].dir.as_str(), theirs[0].text.as_str()), (1, "in", "lunch at 12?"));
+    // Their answer goes the other way, and the chat reads in order.
+    p.b.send_text(&fa, "sure").await.unwrap();
+    let ask = wait_for(&p.a_events, "in", "asking").await;
+    assert!(p.a.answer(ask["id"].as_str().unwrap(), true));
+    for _ in 0..200 {
+        if p.a.chats.list(&fb).len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(p.a.chats.list(&fb).iter().map(|m| (m.dir.as_str(), m.text.as_str())).collect::<Vec<_>>(), vec![("out", "lunch at 12?"), ("in", "sure")]);
+    // A note that is declined was never read: no line for it.
+    p.a.send_text(&fb, "psst").await.unwrap();
+    let ask = wait_for(&p.b_events, "in", "asking").await;
+    p.b.answer(ask["id"].as_str().unwrap(), false);
+    wait_for(&p.b_events, "in", "declined").await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(p.b.chats.list(&fa).len(), 2);
+    assert_eq!(p.a.chats.list(&fb).len(), 2);
+    p.a.shutdown().await;
+    p.b.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_computer_nearby_that_is_not_a_friend_gets_no_chat() {
+    let p = pair("chat-stranger").await;
+    p.a.send_text(&p.b.me.id, "hello").await.unwrap();
+    let ask = wait_for(&p.b_events, "in", "asking").await;
+    assert!(p.b.answer(ask["id"].as_str().unwrap(), true));
+    wait_for(&p.b_events, "in", "done").await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(p.a.chats.list(&p.b.me.id).is_empty() && p.b.chats.list(&p.a.me.id).is_empty());
+    p.a.shutdown().await;
+    p.b.shutdown().await;
+}

@@ -75,12 +75,18 @@ export interface ItemLook {
 }
 
 /** What the taskbar can show, in its order (Settings › Widgets › Show on the taskbar, or its right-click menu). */
-export const DOCK_ITEMS = ['start', 'apps', 'music', 'timer', 'claude', 'battery', 'wifi', 'sound', 'clock', 'notifications'] as const;
+export const DOCK_ITEMS = ['arrow', 'apps', 'music', 'timer', 'claude', 'battery', 'wifi', 'sound', 'clock', 'notifications'] as const;
 export type DockItem = (typeof DOCK_ITEMS)[number];
 
 /** The taskbar's size (right-click, or Settings › Widgets); Medium is the size it was first built at. */
 export const DOCK_SIZES = ['small', 'medium', 'large'] as const;
 export type DockSize = (typeof DOCK_SIZES)[number];
+
+/** How the taskbar shows what you point at and what is in front (Settings › Widgets, or its right-click
+ *  menu): Rise (icons grow under the pointer), Spotlight (a light shines down on the app in front),
+ *  Glide (a highlight and the name slide along to what you point at). */
+export const DOCK_STYLES = ['rise', 'spotlight', 'glide'] as const;
+export type DockStyle = (typeof DOCK_STYLES)[number];
 
 export const ITEM_COLORS: ReadonlyArray<ItemLook['color']> = ['island', 'black', 'white', 'matte-black', 'matte-white', 'glass'];
 
@@ -161,9 +167,10 @@ export interface Settings {
     widgets: { on: boolean; items: DesktopWidget[]; look: ItemLook };
     /**
      * The taskbar at the bottom (src/core/dock.ts); `hideWindows`: Windows' own taskbar hides itself
-     * meanwhile; `centre`: where it was dragged to, 0..1 across the screen (-1: the middle).
+     * meanwhile; `centre`: where it was dragged to, 0..1 across the screen (-1: the middle); `edge`: it
+     * sits on the screen's bottom edge, over Windows' taskbar, instead of floating above it.
      */
-    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; locked: boolean; hidden: DockItem[]; size: DockSize };
+    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; locked: boolean; hidden: DockItem[]; size: DockSize; style: DockStyle; edge: boolean };
     /** The island is off the screen until this time (epoch ms); 0: shown. HIDE_UNTIL_SHOWN: until the user brings it back. */
     hiddenUntil: number;
     /** Faded from the right-click menu's Fade: see-through and click-through until Show (kept across restarts). */
@@ -288,7 +295,7 @@ export function defaultSettings(): Settings {
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       widgets: { on: false, items: [], look: { color: 'island', glass: GLASS_DEFAULT } },
-      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, locked: false, hidden: [], size: 'medium' },
+      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, locked: false, hidden: [], size: 'medium', style: 'rise', edge: false },
       hiddenUntil: 0,
       faded: false,
       smartFade: false,
@@ -442,7 +449,7 @@ export function migrate(saved: unknown): Settings {
   const savedBar = isObj(saved.island) && isObj(saved.island.taskbar) ? saved.island.taskbar : {};
   const centre = typeof savedBar.centre === 'number' && savedBar.centre >= 0 && savedBar.centre <= 1 ? savedBar.centre : -1;
   const barHidden = Array.isArray(savedBar.hidden) ? DOCK_ITEMS.filter((k) => (savedBar.hidden as unknown[]).includes(k)) : [];
-  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), locked: savedBar.locked === true, hidden: barHidden, size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium' };
+  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), locked: savedBar.locked === true, hidden: barHidden, size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium', style: (DOCK_STYLES as readonly unknown[]).includes(savedBar.style) ? (savedBar.style as DockStyle) : 'rise', edge: savedBar.edge === true };
   out.island.displayIds = strings(isObj(saved.island) ? saved.island.displayIds : null);
   if (!Number.isFinite(out.island.hiddenUntil) || out.island.hiddenUntil < 0) out.island.hiddenUntil = 0;
   out.island.hiddenUntil = Math.min(out.island.hiddenUntil, HIDE_UNTIL_SHOWN);

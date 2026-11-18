@@ -32,6 +32,9 @@ pub struct LiveWindow {
     /// The monitor it's on (GDI device name, like monitors_list's id).
     pub monitor: String,
     pub dpi: u32,
+    /// The window's own app id (a Chrome or Edge web app's is `Chrome._crx_<id>`): what the
+    /// taskbar groups it under instead of its program. Empty when it has none.
+    pub app_id: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -126,6 +129,20 @@ mod win {
         crate::monitors::info_for(hmon).map(|m| m.id).unwrap_or_default()
     }
 
+    /// A browser window's app id, when it is a web app's (Chrome, Edge: class Chrome_WidgetWin_1).
+    fn web_app_id(hwnd: HWND, class_name: &str) -> String {
+        use windows::core::GUID;
+        use windows::Win32::Foundation::PROPERTYKEY;
+        use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow};
+        if class_name != "Chrome_WidgetWin_1" {
+            return String::new();
+        }
+        // System.AppUserModel.ID
+        let key = PROPERTYKEY { fmtid: GUID::from_u128(0x9F4C2855_9F79_4B39_A8D0_E1D42DE1D5F3), pid: 5 };
+        let id = unsafe { SHGetPropertyStoreForWindow::<IPropertyStore>(hwnd).and_then(|s| s.GetValue(&key)).map(|v| v.to_string()).unwrap_or_default() };
+        if super::super::launch::is_web_app(&id) { id } else { String::new() }
+    }
+
     unsafe extern "system" fn collect(hwnd: HWND, data: LPARAM) -> BOOL {
         let list = unsafe { &mut *(data.0 as *mut Vec<LiveWindow>) };
         if let Some(w) = describe(hwnd) {
@@ -186,6 +203,7 @@ mod win {
             } else {
                 MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
             };
+            let app_id = web_app_id(hwnd, &class_name);
             Some(LiveWindow {
                 hwnd: hwnd.0 as isize,
                 pid,
@@ -196,6 +214,7 @@ mod win {
                 state,
                 monitor: monitor_id(hmon),
                 dpi: GetDpiForWindow(hwnd),
+                app_id,
             })
         }
     }

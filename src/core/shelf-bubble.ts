@@ -1,7 +1,7 @@
 // The Shelf's circle (Moss's idea): while files wait on the Shelf and its card is closed, a circle
 // the bot's size rests on the other side of the pill, showing the newest file's picture and how
 // many there are. Pointing at it opens it into a small panel of the files, each dragged straight
-// out into a folder or an app (or onto Land); its x clears the Shelf, with Undo for a moment, and
+// out into a folder or an app; its x clears the Shelf, with Undo for a moment, and
 // the circle goes until files are dropped on the Shelf again. Files dropped on the circle itself
 // go on the Shelf without opening the island. The island places it (layout.ts shelfRect).
 

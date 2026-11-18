@@ -3,18 +3,19 @@
 //
 // Both go through the shell, the way Explorer does it: IShellItemImageFactory for the picture,
 // and for the drag the shell's own data object for the files with SHDoDragDrop, which brings its
-// own drop source and drag image. Only a copy is offered, so a drop never moves the original
-// away from where the shelf remembers it.
+// own drag image. Only a copy is offered, so a drop never moves the original away from where the
+// shelf remembers it.
 
 use std::path::Path;
 
 use base64::Engine;
 use tauri::{AppHandle, Manager};
-use windows::core::HSTRING;
-use windows::Win32::Foundation::{HWND, SIZE};
+use windows::core::{implement, BOOL, HRESULT, HSTRING};
+use windows::Win32::Foundation::{DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, HWND, SIZE, S_OK};
 use windows::Win32::Graphics::Gdi::{DeleteObject, GetDC, GetDIBits, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, IDataObject, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
-use windows::Win32::System::Ole::DROPEFFECT_COPY;
+use windows::Win32::System::Ole::{IDropSource, IDropSource_Impl, DROPEFFECT, DROPEFFECT_COPY};
+use windows::Win32::System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
     BHID_DataObject, ILCreateFromPathW, ILFree, IShellItemImageFactory, SHCreateItemFromParsingName, SHCreateShellItemArrayFromIDLists, SHDoDragDrop, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
@@ -121,16 +122,44 @@ pub async fn shelf_thumb(path: String, px: u32) -> Option<String> {
     .flatten()
 }
 
-unsafe fn drag(hwnd: HWND, paths: &[String]) -> Result<bool, String> {
+/// The drag's source: the drop comes when the left button is let go (Esc cancels it), and on every
+/// move the island takes the mouse only where it is drawn, so a drop anywhere else reaches the
+/// folder or app under the pointer (overlay::follow_drag).
+#[implement(IDropSource)]
+struct Source {
+    app: AppHandle,
+    hwnd: isize,
+}
+
+impl IDropSource_Impl for Source_Impl {
+    fn QueryContinueDrag(&self, escape: BOOL, keys: MODIFIERKEYS_FLAGS) -> HRESULT {
+        if escape.as_bool() {
+            return DRAGDROP_S_CANCEL;
+        }
+        if keys.0 & MK_LBUTTON.0 == 0 {
+            return DRAGDROP_S_DROP;
+        }
+        crate::overlay::follow_drag(&self.app, HWND(self.hwnd as *mut _));
+        S_OK
+    }
+
+    fn GiveFeedback(&self, _effect: DROPEFFECT) -> HRESULT {
+        crate::overlay::follow_drag(&self.app, HWND(self.hwnd as *mut _));
+        DRAGDROP_S_USEDEFAULTCURSORS
+    }
+}
+
+unsafe fn drag(app: AppHandle, hwnd: HWND, paths: &[String]) -> Result<bool, String> {
     unsafe {
         let pidls: Vec<*mut ITEMIDLIST> = paths.iter().map(|p| ILCreateFromPathW(&HSTRING::from(p.as_str()))).filter(|p| !p.is_null()).collect();
         if pidls.is_empty() {
             return Err("Those files aren't there any more.".into());
         }
         let consts: Vec<*const ITEMIDLIST> = pidls.iter().map(|p| *p as *const _).collect();
+        let source: IDropSource = Source { app, hwnd: hwnd.0 as isize }.into();
         let dropped = SHCreateShellItemArrayFromIDLists(&consts)
             .and_then(|items| items.BindToHandler::<_, IDataObject>(None, &BHID_DataObject))
-            .and_then(|data| SHDoDragDrop(Some(hwnd), &data, None, DROPEFFECT_COPY))
+            .and_then(|data| SHDoDragDrop(Some(hwnd), &data, &source, DROPEFFECT_COPY))
             .map(|effect| effect.0 != 0)
             .map_err(|e| e.message().to_string());
         for p in pidls {
@@ -151,8 +180,9 @@ pub async fn shelf_drag(app: AppHandle, paths: Vec<String>) -> Result<bool, Stri
     }
     let hwnd = app.get_webview_window(crate::overlay::LABEL).and_then(|w| w.hwnd().ok()).map(|h| h.0 as isize).ok_or("The island has no window")?;
     let (tx, rx) = tokio::sync::oneshot::channel();
+    let main = app.clone();
     app.run_on_main_thread(move || {
-        let _ = tx.send(unsafe { drag(HWND(hwnd as *mut _), &paths) });
+        let _ = tx.send(unsafe { drag(main, HWND(hwnd as *mut _), &paths) });
     })
     .map_err(|e| e.to_string())?;
     let r = rx.await.map_err(|_| "The drag ended early".to_string())?;

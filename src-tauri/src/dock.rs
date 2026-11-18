@@ -59,7 +59,7 @@ fn style(win: &WebviewWindow) {
 fn style(_win: &WebviewWindow) {}
 
 /// The bar's margin under it inside the dock window, logical px (src/core/dock.ts: the window is the
-/// bar plus 16 px and the headroom for risen icons; the bar sits 18 px from its top).
+/// bar plus 16 px and the headroom for risen icons, taller while a card is up; the bar sits 12 px above its bottom).
 const BAR_BELOW: f64 = 12.0;
 /// How long the dock takes to glide down to the screen's edge, or back up, ms.
 const GLIDE_MS: f64 = 240.0;
@@ -68,6 +68,14 @@ const LEAVE_MS: u128 = 350;
 
 /// The size the page last asked for (logical px), to place the dock again when its mode changes.
 static SIZE: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
+/// The bar's part at the window's bottom (logical px): the bar, its margins and the room its icons
+/// rise into. The rest of the window is room for a card over the bar.
+static BAR_AREA: Mutex<f64> = Mutex::new(0.0);
+/// Where the page draws something that takes clicks (logical px rects x, y, w, h in the window): the
+/// bar, the Apps card while it is up. Everywhere else a click goes through to what is under it.
+static SOLID: Mutex<Vec<[f64; 4]>> = Mutex::new(Vec::new());
+/// The dock sits on the screen's bottom edge, over Windows' taskbar (Settings › Blend into the bottom).
+static EDGE: AtomicBool = AtomicBool::new(false);
 /// A full-screen app is in front: the dock waits at the screen's bottom edge, faint ...
 static FULL: AtomicBool = AtomicBool::new(false);
 /// ... and while the pointer is on it (or on its way up), it is raised to its usual place.
@@ -85,7 +93,14 @@ fn spot(w: f64, h: f64) -> Option<(i32, i32, i32, i32)> {
     let centre = *CENTRE.lock().unwrap();
     let (x, y) = place(m.work.x, m.work.width, m.work.y + m.work.height, m.scale, w, h, centre);
     let (pw, ph) = ((w.ceil() * m.scale).round() as i32, (h.ceil() * m.scale).round() as i32);
-    let y = if FULL.load(Ordering::SeqCst) && !UP.load(Ordering::SeqCst) { tucked_y(m.bounds.y + m.bounds.height, ph, m.scale).max(y) } else { y };
+    let tucked = tucked_y(m.bounds.y + m.bounds.height, ph, m.scale);
+    let y = if EDGE.load(Ordering::SeqCst) {
+        tucked
+    } else if FULL.load(Ordering::SeqCst) && !UP.load(Ordering::SeqCst) {
+        tucked.max(y)
+    } else {
+        y
+    };
     Some((x, y, pw, ph))
 }
 
@@ -261,6 +276,9 @@ fn pointer_near() -> bool {
     let Some(m) = monitors::primary() else { return false };
     let centre = *CENTRE.lock().unwrap();
     let (x, y) = place(m.work.x, m.work.width, m.work.y + m.work.height, m.scale, w, h, centre);
+    // The bar's part only, not the room for a card over it.
+    let bar = *BAR_AREA.lock().unwrap();
+    let y = if bar > 0.0 && bar < h { y + ((h - bar) * m.scale).round() as i32 } else { y };
     let pw = (w.ceil() * m.scale).round() as i32;
     let mut p = POINT::default();
     if unsafe { GetCursorPos(&mut p) }.is_err() {
@@ -364,20 +382,140 @@ pub fn dock_show(app: AppHandle, on: bool, w: f64, h: f64, centre: f64) {
                 let _ = win.show();
                 style(&win);
                 watch_fullscreen(app.clone());
+                watch_pointer(app.clone());
             }
             Err(e) => crate::log::line(format!("dock failed: {e}")),
         }
     });
 }
 
-/// The dock page measured its content: the window takes that size and stays in its place.
+/// The dock page measured its content: the window takes that size and stays in its place. `bar`: the
+/// bar's part at the bottom (the rest is room for a card over it).
 #[tauri::command]
-pub fn dock_fit(window: WebviewWindow, w: f64, h: f64) {
+pub fn dock_fit(window: WebviewWindow, w: f64, h: f64, bar: Option<f64>) {
     if window.label() != LABEL || !w.is_finite() || !h.is_finite() {
         return;
     }
-    put(&window, w.clamp(120.0, 1800.0), h.clamp(32.0, 120.0));
+    if let Some(b) = bar.filter(|b| b.is_finite() && *b > 0.0) {
+        *BAR_AREA.lock().unwrap() = b;
+    }
+    // Taller while a card is up over the bar (the Apps card, when S/W reset).
+    put(&window, w.clamp(120.0, 1800.0), h.clamp(32.0, 720.0));
 }
+
+/// The Apps card is open over the bar (`on`): the taskbar takes the keyboard (for its search field,
+/// Esc, and so a click anywhere else closes the card). Closed: it never takes it again.
+#[cfg(windows)]
+#[tauri::command]
+pub fn dock_typing(window: WebviewWindow, on: bool) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE};
+    if window.label() != LABEL {
+        return;
+    }
+    if !on {
+        style(&window);
+        return;
+    }
+    let Ok(h) = window.hwnd() else { return };
+    unsafe {
+        let hwnd = HWND(h.0);
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        if ex & WS_EX_NOACTIVATE.0 != 0 {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (ex & !WS_EX_NOACTIVATE.0) as isize);
+        }
+        // The arrow was just clicked, so Windows lets this window come to the front.
+        let _ = windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd);
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn dock_typing(_window: WebviewWindow, _on: bool) {}
+
+/// Where the page draws something that takes clicks (logical px rects [x, y, w, h] in the window).
+#[tauri::command]
+pub fn dock_solid(rects: Vec<Vec<f64>>) {
+    let clean: Vec<[f64; 4]> = rects.iter().filter(|r| r.len() == 4 && r.iter().all(|n| n.is_finite())).map(|r| [r[0], r[1], r[2], r[3]]).take(8).collect();
+    *SOLID.lock().unwrap() = clean;
+}
+
+/// On the screen's bottom edge (over Windows' taskbar), or floating above it as usual.
+#[tauri::command]
+pub fn dock_edge(app: AppHandle, on: bool) {
+    if EDGE.swap(on, Ordering::SeqCst) == on {
+        return;
+    }
+    if let Some(win) = app.get_webview_window(LABEL) {
+        let (w, h) = *SIZE.lock().unwrap();
+        if w > 0.0 && h > 0.0 {
+            put(&win, w, h);
+        }
+    }
+}
+
+/// `(x, y)` (logical px in the window) is on something the page drew that takes clicks.
+pub fn solid_at(rects: &[[f64; 4]], x: f64, y: f64) -> bool {
+    rects.iter().any(|r| x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3])
+}
+
+static POINTER_WATCH: AtomicBool = AtomicBool::new(false);
+
+/// While the dock exists: the window takes clicks only on what the page drew there (the bar, a card),
+/// so the room over the bar for a card never blocks the windows under it. Not while a button is held
+/// (a drag keeps going wherever the pointer goes). On the bottom edge, it also stays over Windows'
+/// taskbar, which puts itself on top when it slides up.
+#[cfg(windows)]
+fn watch_pointer(app: AppHandle) {
+    use windows::Win32::Foundation::{HWND, POINT, RECT};
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE};
+    if POINTER_WATCH.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let mut taking: Option<bool> = None;
+        let mut tick = 0u32;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let Some(win) = app.get_webview_window(LABEL) else {
+                POINTER_WATCH.store(false, Ordering::SeqCst);
+                return;
+            };
+            let Ok(h) = win.hwnd() else { continue };
+            let hwnd = HWND(h.0);
+            tick = tick.wrapping_add(1);
+            if EDGE.load(Ordering::SeqCst) && !FULL.load(Ordering::SeqCst) && tick % 15 == 0 {
+                unsafe {
+                    let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                }
+            }
+            let held = unsafe { (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RBUTTON.0 as i32) as u16 & 0x8000 != 0) };
+            if held && taking == Some(true) {
+                continue;
+            }
+            let mut p = POINT::default();
+            let mut r = RECT::default();
+            if unsafe { GetCursorPos(&mut p) }.is_err() || unsafe { GetWindowRect(hwnd, &mut r) }.is_err() {
+                continue;
+            }
+            let scale = match unsafe { GetDpiForWindow(hwnd) } {
+                0 => 1.0,
+                dpi => dpi as f64 / 96.0,
+            };
+            let (x, y) = ((p.x - r.left) as f64 / scale, (p.y - r.top) as f64 / scale);
+            let on = solid_at(&SOLID.lock().unwrap(), x, y);
+            if taking != Some(on) {
+                taking = Some(on);
+                let _ = win.set_ignore_cursor_events(!on);
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn watch_pointer(_app: AppHandle) {}
 
 /// Dragging the dock: its left edge to `x` (physical px), along the bottom only. `done`: the drag
 /// ended, so its place is kept and the island told (`dock-moved`). `x` negative with `done`:
@@ -504,6 +642,15 @@ mod tests {
     }
 
     use super::{centre_of, place};
+
+    #[test]
+    fn clicks_land_only_on_what_the_page_drew() {
+        let rects = [[10.0, 480.0, 600.0, 82.0], [12.0, 100.0, 380.0, 370.0]];
+        assert!(super::solid_at(&rects, 300.0, 520.0), "on the bar");
+        assert!(super::solid_at(&rects, 100.0, 200.0), "on the card");
+        assert!(!super::solid_at(&rects, 500.0, 200.0), "beside the card: through to the window under it");
+        assert!(!super::solid_at(&[], 300.0, 520.0), "nothing drawn yet");
+    }
 
     #[test]
     fn the_dock_sits_centred_just_above_the_bottom_of_the_work_area() {

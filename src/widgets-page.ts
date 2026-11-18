@@ -5,8 +5,8 @@
 import { section, row, segmented, toggle } from './controls';
 import { icon, type IconName } from './core/icons';
 import { sendTo } from './core/native';
-import { DOCK_LABELS, DOCK_SIZE_LABELS, toggleDockItem } from './core/dock';
-import { DOCK_ITEMS, DOCK_SIZES, type DockSize, type ItemLook, type Settings } from './core/settings';
+import { DOCK_LABELS, DOCK_SIZE_LABELS, DOCK_STYLE_LABELS, toggleDockItem } from './core/dock';
+import { DOCK_ITEMS, DOCK_SIZES, DOCK_STYLES, type DockSize, type DockStyle, type ItemLook, type Settings } from './core/settings';
 import { MAX_WIDGETS, newWidgetId, WIDGET_KINDS } from './core/widgets';
 import { h } from './dom';
 
@@ -175,6 +175,23 @@ export function widgetsPage(host: WidgetsPageHost): HTMLElement {
               t.size = v;
               host.save(true);
               host.render();
+            }),
+          ),
+          row(
+            'Style',
+            'Rise: icons grow under the pointer. Spotlight: a light shines down on the app in front. Glide: a highlight and the name slide along to what you point at.',
+            segmented(t.style, DOCK_STYLES.map((k) => [k, DOCK_STYLE_LABELS[k]] as [DockStyle, string]), (v) => {
+              t.style = v;
+              host.save(true);
+              host.render();
+            }),
+          ),
+          row(
+            'Blend into the bottom',
+            "Sits on the screen's bottom edge, over Windows' taskbar and the icons in its middle, instead of floating above it.",
+            toggle(t.edge, (v) => {
+              t.edge = v;
+              host.save(true);
             }),
           ),
           ...lookPicker(t.look, host),

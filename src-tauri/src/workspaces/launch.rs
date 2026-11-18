@@ -617,7 +617,7 @@ pub fn launch_now(item: Launch, base: &str) -> Result<Launched, String> {
 pub fn running_now(path: &str, base: &str) -> Option<Running> {
     native::running(path, base)
 }
-#[cfg(test)]
+/// Start's list of apps, read now (blocking).
 pub fn ws_apps_now() -> Vec<InstalledApp> {
     native::installed()
 }

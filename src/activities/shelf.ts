@@ -159,7 +159,7 @@ export class ShelfActivity extends BaseActivity {
         tone: s.error ? 'bad' : undefined,
         action: s.error || !env.interactive ? undefined : 'tick',
         arg: s.path,
-        tip: s.error ? `${s.name}: ${s.error}` : `${s.name} · click to tick, drag it out into a folder, an app, or onto Land`,
+        tip: s.error ? `${s.name}: ${s.error}` : `${s.name} · click to tick, drag it out into a folder or an app`,
         remove: { key: 'rm', icon: 'x', action: 'unstage', arg: s.path, style: 'ghost', tip: 'Take it off the Shelf' },
       }));
       blocks.push({ t: 'files', key: 'files', items, drag: env.interactive ? 'drag-out' : undefined });

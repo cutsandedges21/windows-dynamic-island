@@ -2103,8 +2103,10 @@ html[data-pill='glass'] .sb-tiles.editing ~ .sb-buttons {
 .dock {
   position: absolute;
   left: 12px;
-  /* 4px, plus room above the bar for icons rising under the pointer (HEADROOM in dock.ts). */
-  top: 18px;
+  /* 12px over the window's bottom (BAR_BELOW in dock.rs). The window is 4px plus room for icons
+     rising under the pointer (HEADROOM in dock.ts) taller than that, more while a card is up. */
+  bottom: 12px;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2145,7 +2147,164 @@ html[data-pill='glass'] .dock { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45
 .dock svg { width: 18px; height: 18px; fill: currentColor; }
 .dock svg.line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .dock svg.line .dot { fill: currentColor; stroke: none; }
-.dock .dk-start svg { width: 20px; height: 20px; }
+.dock .dk-start svg { width: 20px; height: 20px; stroke-width: 2.4; transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1); }
+.dock .dk-start.on svg { transform: rotate(180deg); }
+
+/* Over the bar, coming up from behind it (dock.ts showPop): the Apps card from the arrow, and when
+   S/W reset from pointing at them. */
+.dk-above { position: absolute; left: 0; right: 0; height: 0; z-index: 0; }
+.dk-pop {
+  position: absolute;
+  bottom: 0;
+  box-sizing: border-box;
+  border-radius: 18px;
+  background: var(--pill);
+  color: var(--fg);
+  font-family: var(--font);
+  box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.1), 0 10px 30px -12px rgba(0, 0, 0, 0.6);
+  pointer-events: auto;
+  user-select: none;
+  opacity: 0;
+  transform: translateY(calc(100% + 8px)) scale(0.96);
+  transform-origin: 50% 100%;
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease;
+}
+.dk-pop[hidden] { display: none; }
+.dk-pop.up { opacity: 1; transform: none; }
+.dk-pop button { all: unset; cursor: default; }
+
+.dk-card { left: 12px; display: flex; flex-direction: column; gap: 10px; padding: 14px; max-height: 460px; }
+.dk-card-head { display: flex; align-items: center; gap: 10px; }
+.dk-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.dk-card-text b { font: 650 15px/1.1 var(--font); }
+.dk-card-sub { font: 500 12px/1.3 var(--font); opacity: 0.62; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-card-sub.bad { color: #ff7a6b; opacity: 1; }
+.dk-pop .dk-card-edit { padding: 6px 12px; border-radius: 999px; font: 600 12px/1 var(--font); background: rgba(var(--ink), 0.1); }
+.dk-pop .dk-card-edit:hover { background: rgba(var(--ink), 0.16); }
+.dk-pop .dk-card-edit.primary { background: var(--accent); color: #1a0c06; }
+.dk-pop .dk-card-edit.primary:hover { background: var(--accent); filter: brightness(1.08); }
+.dk-pop .dk-card-edit[hidden] { display: none; }
+.dk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 4px; overflow-y: auto; min-height: 0; }
+.dk-grid:empty { display: none; }
+.dk-pop .dk-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 4px 7px; border-radius: 12px; }
+.dk-pop button.dk-tile:hover { background: rgba(var(--ink), 0.1); }
+.dk-pop button.dk-tile:active { background: rgba(var(--ink), 0.16); }
+.dk-tile-ico { display: grid; place-items: center; width: 34px; height: 34px; }
+.dk-tile-ico img { width: 34px; height: 34px; object-fit: contain; }
+.dk-tile-ico svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 2; opacity: 0.6; }
+.dk-tile-name { max-width: 100%; font: 500 11px/1.2 var(--font); text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-pop .dk-tile-rm { position: absolute; top: 2px; right: 6px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: rgba(var(--ink), 0.2); }
+.dk-pop .dk-tile-rm:hover { background: #e5484d; color: #fff; }
+.dk-tile-rm svg, .dk-row svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+.dk-card-empty { font: 500 12px/1.4 var(--font); opacity: 0.6; }
+.dk-card-empty[hidden] { display: none; }
+.dk-find {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: rgba(var(--ink), 0.08);
+  box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.1);
+  font: 500 13px/1.2 var(--font);
+  user-select: text;
+}
+.dk-find:focus { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.dk-find::placeholder { color: currentColor; opacity: 0.45; }
+.dk-find[hidden] { display: none; }
+.dk-found { display: flex; flex-direction: column; gap: 2px; }
+.dk-found:empty { display: none; }
+.dk-pop .dk-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 10px; font: 500 13px/1.2 var(--font); }
+.dk-pop .dk-row:hover { background: rgba(var(--ink), 0.1); }
+.dk-row svg { width: 14px; height: 14px; opacity: 0.7; }
+
+/* Styles (Settings › Widgets › Style). Spotlight: a line on the bar's top edge over the app in front,
+   its light shining down on the icon; it slides along when another app comes to the front. */
+.dock .dk-spot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 46px;
+  height: 100%;
+  margin-left: -23px;
+  pointer-events: none;
+  opacity: 0;
+  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease;
+}
+.dock .dk-spot::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: rgb(var(--ink));
+  box-shadow: 0 0 10px 1px rgba(var(--ink), 0.55);
+}
+.dock .dk-spot::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 0;
+  right: 0;
+  bottom: 5px;
+  background: linear-gradient(to bottom, rgba(var(--ink), 0.24), rgba(var(--ink), 0.05) 70%, rgba(var(--ink), 0));
+  clip-path: polygon(20% 0, 80% 0, 100% 100%, 0 100%);
+}
+html[data-dstyle='spotlight'] .dock .dk-spot.on { opacity: 1; }
+/* The light marks the app in front, so its dot is a plain one. */
+html[data-dstyle='spotlight'] .dock .dk-app.front .dk-dot { width: 4px; margin-left: -2px; background: currentColor; }
+
+/* Glide: a soft highlight slides behind what the pointer is on, and its name rides along over the bar. */
+.dock .dk-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: 12px;
+  background: rgba(var(--ink), 0.12);
+  pointer-events: none;
+  opacity: 0;
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1), height 0.32s ease, opacity 0.18s ease;
+}
+html[data-dstyle='glide'] .dock .dk-glow.on { opacity: 1; }
+html[data-dstyle='glide'] .dock button:hover, html[data-dstyle='glide'] .dock button:active { background: transparent; }
+.dk-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  box-sizing: border-box;
+  height: 30px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--pill);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.1), 0 8px 20px -10px rgba(0, 0, 0, 0.6);
+  font: 600 12.5px/1 var(--font);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  translate: 0 6px;
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease, translate 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+html[data-dstyle='glide'] .dk-label.on { opacity: 1; translate: 0 0; }
+.dk-label span { padding: 0 12px; }
+.dk-label span.in-r { animation: dk-in-r 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
+.dk-label span.in-l { animation: dk-in-l 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes dk-in-r { from { transform: translateX(14px); opacity: 0; } }
+@keyframes dk-in-l { from { transform: translateX(-14px); opacity: 0; } }
+
+/* Blend into the bottom: the bar sits on the screen's bottom edge (dock.rs puts the window there), over
+   Windows' taskbar, flat along the edge. */
+html.dock-edge .dock { border-radius: 18px 18px 0 0; box-shadow: 0 -10px 28px -16px rgba(0, 0, 0, 0.6); }
+
+.dk-tip { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px 11px; white-space: nowrap; pointer-events: none; }
+.dk-tip-head { font: 600 10px/1 var(--font); letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.5; }
+.dk-tip-row { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; }
+.dk-tip-row b { font: 650 13px/1.2 var(--font); font-variant-numeric: tabular-nums; }
+.dk-tip-row span { font: 500 12px/1.2 var(--font); opacity: 0.72; font-variant-numeric: tabular-nums; }
 .dock .dk-apps { display: flex; align-items: center; gap: 2px; }
 .dock .dk-app { position: relative; width: 40px; padding: 0; }
 .dock .dk-app:hover, .dock .dk-app:active { background: transparent; }

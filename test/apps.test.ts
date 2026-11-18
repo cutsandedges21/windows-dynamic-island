@@ -129,4 +129,26 @@ describe('apps', () => {
     await act.action('move', { key: PAINT.target, to: 0 });
     expect(saved.length).toBe(n);
   });
+
+  it('gives the taskbar the same card: apps with icons, Edit, and what Start has that matches', async () => {
+    const { act } = await boot();
+    expect(act.dockCard()).toEqual({
+      apps: [
+        { ...PAINT, icon: 'data:image/png;base64,AA' },
+        { ...PHOTOS, icon: null },
+      ],
+      editing: false,
+      query: '',
+      found: [],
+      note: null,
+      bad: false,
+      reading: false,
+    });
+    await act.action('edit');
+    await new Promise((r) => setTimeout(r, 0));
+    await act.action('find', 'note');
+    expect(act.dockCard()).toMatchObject({ editing: true, query: 'note', found: [NOTEPAD], reading: false });
+    await act.action('open', PAINT.target);
+    expect(act.dockCard().note).toBe('Opening Paint');
+  });
 });

@@ -26,6 +26,7 @@ const win = (hwnd: number, exe: string, title: string, rect = { x: 100, y: 100, 
   state: 'normal',
   monitor: 'A',
   dpi: 96,
+  appId: '',
   ...extra,
 });
 

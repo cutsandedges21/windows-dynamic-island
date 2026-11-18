@@ -37,6 +37,7 @@ use tokio::time::timeout;
 
 mod discovery;
 mod files;
+pub(crate) mod history;
 mod place;
 mod receive;
 mod send;
@@ -199,6 +200,9 @@ pub struct Running {
     place_topic: Mutex<Option<String>>,
     place_asked: Mutex<Option<Instant>>,
     place_answered: Mutex<Option<Instant>>,
+    /// Chats with friends (history.rs), and the transfers already written into one.
+    chats: history::History,
+    chatted: Mutex<std::collections::HashSet<String>>,
     /// Tests: the next send loses its connection after this many bytes (0: never).
     #[cfg(test)]
     cut: AtomicU64,
@@ -226,6 +230,10 @@ pub async fn start(me: Identity, opts: Options, emit: Emit) -> Result<Arc<Runnin
     let anywhere = opts.anywhere.is_some();
     // Sends that waited for friends when Land last stopped, kept next to the friends.
     let queue_file = opts.anywhere.as_ref().map(|s| s.book.with_file_name("land-queue.json"));
+    let chats = match &opts.anywhere {
+        Some(s) => history::History::open(s.book.with_file_name("land-chats.json")),
+        None => history::History::memory(),
+    };
     let waiting: Vec<Waiting> = queue_file.as_ref().and_then(|f| std::fs::read(f).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
     let far = match opts.anywhere {
         Some(s) => match crate::anywhere::Far::start(s.key, s.relays, s.book, &opts.name, emit.clone(), ASK_FOR).await {
@@ -268,6 +276,8 @@ pub async fn start(me: Identity, opts: Options, emit: Emit) -> Result<Arc<Runnin
         place_topic: Mutex::new(None),
         place_asked: Mutex::new(None),
         place_answered: Mutex::new(None),
+        chats,
+        chatted: Mutex::new(std::collections::HashSet::new()),
         #[cfg(test)]
         cut: AtomicU64::new(0),
     });
@@ -352,6 +362,7 @@ impl Running {
     }
 
     fn publish(&self, t: &Transfer) {
+        self.record_chat(t);
         if let Ok(v) = serde_json::to_value(t) {
             (self.emit)("land-transfer", v);
         }
@@ -582,6 +593,9 @@ pub async fn land_friend_remove(state: tauri::State<'_, LandState>, id: String, 
         } else {
             f.remove(&id);
         }
+        if let Some(run) = state.run.lock().await.clone() {
+            run.chats.clear(&id);
+        }
         return Ok(());
     }
     let file = crate::anywhere::book_file();
@@ -591,6 +605,7 @@ pub async fn land_friend_remove(state: tauri::State<'_, LandState>, id: String, 
     } else {
         book.remove(&id);
     }
+    history::History::open(history::chats_file()).clear(&id);
     book.save(&file).map_err(|e| format!("cannot save friends: {e}"))
 }
 

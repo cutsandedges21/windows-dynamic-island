@@ -1,5 +1,5 @@
 // Browser preview only: the taskbar (/?dock), drawn from a made-up frame as the island would send it.
-// /?dock=charging and /?dock=low show the battery's other looks; &hide=clock,start takes items off;
+// /?dock=charging and /?dock=low show the battery's other looks; &hide=clock,arrow takes items off;
 // &look=white (or matte-black, matte-white, glass) picks its colour.
 
 import type { DockFrame } from '../core/dock';
