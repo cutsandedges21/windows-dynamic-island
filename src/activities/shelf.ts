@@ -18,6 +18,8 @@ export const SHELF_FILES_MAX = 60;
 const THUMB_PX = 96;
 /** The Shelf's card: narrower than Land's (Moss: "the card for the file shelf smaller than Land's"). */
 export const SHELF_CARD_W = 360;
+/** Files its Control Center tile lists, newest first. */
+const TILE_FILES = 3;
 /** After Clear, Undo brings the files back for this long. */
 export const UNDO_MS = 6000;
 
@@ -97,21 +99,31 @@ export class ShelfActivity extends BaseActivity {
 
   // ---------------------------------------------------------------- Control Center
 
-  /** Its own tile (Justin): how many files wait and how big they are; a tap opens the Shelf's card. */
+  /**
+   * Its own tile (Justin), where what waits on the Shelf shows (there is no circle beside the pill):
+   * the newest files, how many and how big. A tap opens the Shelf's card to drag them out.
+   */
   tile(env: SheetEnv): Tile {
     const ok = this.items.filter((s) => !s.error);
     const size = ok.reduce((a, s) => a + s.size, 0);
+    const rows = [...this.items]
+      .reverse()
+      .slice(0, TILE_FILES)
+      .map((s) => ({ key: s.path, icon: s.dir ? 'folder' : 'file', title: s.name, detail: s.error ?? (s.dir ? plural(s.files, 'file') : bytes(s.size)), tone: s.error ? ('bad' as const) : undefined }));
     return {
       key: 'shelf',
+      span: 2,
+      rows: rows.length > 1 ? 2 : 1,
       tone: this.items.length ? 'accent' : undefined,
       action: env.interactive ? 'card' : undefined,
       tip: 'Open the Shelf',
       body: {
-        k: 'stat',
+        k: 'list',
         icon: 'shelf',
         label: 'Shelf',
-        value: this.items.length ? plural(this.items.length, 'file') : 'Empty',
-        sub: this.items.length ? (size > 0 ? bytes(size) : undefined) : 'Drop on the island',
+        sub: this.items.length ? (size > 0 ? `${plural(this.items.length, 'file')} · ${bytes(size)}` : plural(this.items.length, 'file')) : undefined,
+        rows,
+        empty: 'Drop files on the island to keep them here',
       },
     };
   }

@@ -52,10 +52,11 @@ describe("the Shelf's tile", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (act as any).ctx = { options: () => ({}), settings: () => settings, update: () => {}, setOptions: () => {}, openCard: () => void cards++ };
     const env = { reason: 'open' as const, now: Date.now(), width: 400, vertical: false, interactive: true, surfaced: null };
-    expect(act.tile(env)).toMatchObject({ key: 'shelf', action: 'card', body: { k: 'stat', label: 'Shelf', value: 'Empty', sub: 'Drop on the island' } });
+    expect(act.tile(env)).toMatchObject({ key: 'shelf', action: 'card', body: { k: 'list', label: 'Shelf', rows: [], empty: expect.stringMatching(/^Drop files/) } });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (act as any).items = [{ path: 'C:/a.png', name: 'a.png', size: 2048, dir: false, files: 1, error: null }, { path: 'C:/b', name: 'b', size: 0, dir: false, files: 1, error: 'gone' }];
-    expect(act.tile(env)).toMatchObject({ tone: 'accent', body: { value: '2 files', sub: '2.0 KB' } });
+    // The newest first, each with its size (or what went wrong).
+    expect(act.tile(env)).toMatchObject({ tone: 'accent', rows: 2, body: { sub: '2 files · 2.0 KB', rows: [{ title: 'b', detail: 'gone', tone: 'bad' }, { title: 'a.png', icon: 'file', detail: '2.0 KB' }] } });
     await act.action('card');
     expect(cards).toBe(1);
   });

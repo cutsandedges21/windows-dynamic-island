@@ -1066,9 +1066,10 @@ export class Island {
     const morph = picked?.view.morph ? this.morphRect(restPill, this.sheetWidth(picked.view, orient, w)) : null;
     const botRect = bubbleRect(morph ? union(restPill, morph) : restPill, anchor, botD);
     this.bubble.place(botShown ? botRect : null, { immediate });
-    // The Shelf's circle, opposite the bot, while files wait on it and its card is closed.
+    // The Shelf's circle beside the pill is off (Justin: "no extra icon"): what waits on the Shelf
+    // shows on its Control Center tile instead.
     const shelf = this.shelf();
-    const shelfShown = shelf !== null && !this.moving && !(fsHide && this.fullscreenOn !== null) && !(this.open && this.cardFor === 'shelf');
+    const shelfShown = false;
     if (shelf) this.shelfBubble.show(shelf.files(), shelf.canUndo(now));
     this.shelfBubble.place(shelfShown ? shelfRect(union(restPill, target), anchor, botD) : null, anchor, this.area);
     // The bot's chat: Local AI answers, in the bar under the bot; the island itself stays as it is.
