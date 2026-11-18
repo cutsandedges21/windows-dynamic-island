@@ -746,7 +746,8 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 .seg-chip.passive:hover { background: rgba(var(--ink), 0.085); }
 .seg-chip.selected { background: rgba(var(--ink), 0.2); }
 .seg-chip .ico { width: 14px; height: 14px; flex: none; opacity: 0.9; }
-.seg-chip .cl { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 auto; text-align: left; }
+/* Digits tabular, as segments.ts measures them: a "+4" was a hair wider than measured and cut to "+…". */
+.seg-chip .cl { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 auto; text-align: left; font-variant-numeric: tabular-nums; }
 .seg-chip .cd { position: relative; width: 7px; height: 7px; flex: none; }
 .seg-chip .cd .core, .seg-chip .cd .ring { inset: 0; }
 .seg-chip .cb {
@@ -1054,6 +1055,15 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
   scrollbar-color: rgba(var(--ink), 0.18) transparent;
 }
 .sheet[data-anchor='bottom'] .sheet-inner { top: auto; bottom: 0; }
+
+/* The Size setting scales every card like the pill (island.ts sets data-island-size, layout.ts
+   SIZE_SCALE): text, buttons, rows and the card's padding. Each block is zoomed on its own, so it
+   still fills the card's width. Control Center's tiles already scale with their cell; Music's
+   player is sized for its card already and its lyrics split works in screen pixels (player.ts). */
+:root[data-island-size='small'] { --isz: 0.88; }
+:root[data-island-size='large'] { --isz: 1.14; }
+.sheet-inner > :not(.sb-tiles, .sb-player) { zoom: var(--isz, 1); }
+.sheet-inner { padding: calc(14px * var(--isz, 1)); gap: calc(10px * var(--isz, 1)); }
 
 /* header */
 .sb-head { display: flex; align-items: center; gap: 10px; min-height: 28px; }

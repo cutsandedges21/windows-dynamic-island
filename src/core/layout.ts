@@ -52,15 +52,24 @@ export function normalizeWidths(w: Partial<Widths> | null | undefined): Widths {
   return { compact, expanded: Math.min(expanded, WIDTH_LIMITS.max), maximum: Math.min(maximum, WIDTH_LIMITS.max) };
 }
 
-/** Width of the pill at a level, in CSS px, for this display's usable area. */
+/** How much the Size setting scales the island and everything grown out of it (medium = 1). */
+export function sizeScale(size: IslandSize): number {
+  return SIZE_SCALE[size] ?? 1;
+}
+
+/**
+ * Width of the pill at a level, in CSS px, for this display's usable area. The Size setting scales
+ * every level, open ones too: a Small pill opens to a Small width, not to Medium's (Moss, 11-18).
+ */
 export function levelWidth(area: Area, widths: Widths, level: Level, edge: number, size: IslandSize = 'medium'): number {
   const usable = Math.max(80, area.width - edge * 2);
+  const s = sizeScale(size);
   if (level === 'idle') {
     const compact = Math.min(usable, Math.max(MIN_WIDTHS.compact, area.width * widths.compact));
-    return Math.round(Math.min(compact, Math.max(MIN_WIDTHS.idle, compact * 0.42)) * SIZE_SCALE[size]);
+    return Math.round(Math.min(compact, Math.max(MIN_WIDTHS.idle, compact * 0.42)) * s);
   }
   const want = area.width * widths[level];
-  return Math.round(Math.min(usable, Math.max(MIN_WIDTHS[level] * SIZE_SCALE[size], want)));
+  return Math.round(Math.min(usable, Math.max(MIN_WIDTHS[level], want) * s));
 }
 
 /** Which way the pill grows from its fixed point. */
@@ -261,7 +270,7 @@ export function pillSize(area: Area, widths: Widths, level: Level, edge: number,
     const compact = Math.min(usable, Math.max(V_MIN_LENGTH.compact, area.height * widths.compact));
     main = Math.round(Math.min(compact, Math.max(V_MIN_LENGTH.idle, compact * 0.42)) * s);
   } else {
-    main = Math.round(Math.min(usable, Math.max(V_MIN_LENGTH[level] * s, area.height * widths[level])));
+    main = Math.round(Math.min(usable, Math.max(V_MIN_LENGTH[level], area.height * widths[level]) * s));
   }
   return { w: cross, h: main, main, cross };
 }

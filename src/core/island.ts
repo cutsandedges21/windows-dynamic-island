@@ -1041,6 +1041,8 @@ export class Island {
     const reshaped = this.lastOrientation !== null && this.lastOrientation !== orient;
     this.renderer.setOrientation(orient);
     this.renderer.setAnchor(anchor);
+    // Cards' content follows the Size setting (island.css :root[data-island-size]).
+    if (document.documentElement.dataset.islandSize !== s.size) document.documentElement.dataset.islandSize = s.size;
     // Opening and closing (the menu too) change the pill most: no overshoot for the whole motion,
     // or a few pixels of it visibly settle back. A spring takes the config of every retarget,
     // so it is kept for as long as that motion runs.
@@ -1510,7 +1512,8 @@ export class Island {
    */
   private gridGeometry(pillW: number): { cols: number; rows: number; cell: number; width: number } {
     const scale = SIZE_SCALE[this.settings.island.size] ?? 1;
-    const want = Math.max(460, Math.min(pillW, 760)) * scale;
+    // pillW is already scaled by the size (layout.ts levelWidth); the bounds are scaled here.
+    const want = Math.max(460 * scale, Math.min(pillW, 760 * scale));
     const width = Math.round(Math.min(this.area.width - 32, Math.max(GRID_MIN_W, want)));
     return { cols: GRID_COLS, rows: GRID_ROWS, cell: gridCell(width, CELL_PX[this.settings.island.size] ?? CELL_PX.medium), width };
   }
@@ -1726,14 +1729,20 @@ export class Island {
     this.saveSettings();
   }
 
+  /**
+   * A card's width. Every card follows the Size setting like the pill does (pillW already carries
+   * it): Small cards are Small, not Medium's (Moss, 11-18). Their content scales with it too
+   * (island.css, :root[data-island-size]).
+   */
   private sheetWidth(view: SheetView | null, orient: Orientation, pillW: number): number {
     const W = this.area.width;
+    const k = SIZE_SCALE[this.settings.island.size] ?? 1;
     if (view?.width) return Math.min(view.width, W - 24);
     // Music's player: as wide as an iPhone's against the island's size, and never narrower than the pill it covers.
-    if (view?.morph) return Math.min(W - 24, Math.max(pillW, Math.round(MORPH_W * (SIZE_SCALE[this.settings.island.size] ?? 1))));
-    if (orient === 'vertical') return Math.min(W - 120, view?.wide ? 440 : 380);
-    const want = view?.wide ? Math.max(460, Math.min(pillW, 760)) : Math.max(340, Math.min(pillW, 560));
-    return Math.min(want, W - 32);
+    if (view?.morph) return Math.min(W - 24, Math.max(pillW, Math.round(MORPH_W * k)));
+    if (orient === 'vertical') return Math.min(W - 120, Math.round((view?.wide ? 440 : 380) * k));
+    const want = view?.wide ? Math.max(460 * k, Math.min(pillW, 760 * k)) : Math.max(340 * k, Math.min(pillW, 560 * k));
+    return Math.round(Math.min(want, W - 32));
   }
 
   /**
