@@ -1,0 +1,771 @@
+// The screen border (Settings › Widgets › Screen border): with the taskbar and the island both on
+// their edges, a thin line in the taskbar's look runs round the whole screen and joins them. Out of
+// it come the notches, upright on the left or right side near a corner, in the taskbar's look and
+// melting into the line as its ends do: Websites (your pinned sites; a click opens one) and the
+// Shelf (its files, dragged straight out; files dropped on it go on it). Each sits tucked into the
+// line, slim, until the pointer (or a file being dragged) comes to it, then widens out of it.
+// When chosen, an activity's light runs round the whole border instead of the island alone,
+// round the taskbar, the island and the notches on its way.
+//
+// The island owns it, as it owns the taskbar: FrameHost sends the frame window (src-tauri/src/
+// frame.rs) what to show, and what is clicked there comes back as `frame-act`. The taskbar and the
+// island tell the window where they are (frame-dock, frame-island), for the light's path.
+
+import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
+import { meltMasks } from './dock';
+import { applyGlass } from './glass';
+import { GLOW_PACE, type GlowSpec, type GlowSpeed } from './glow';
+import { icon } from './icons';
+import { isTauri, native, on, onFileDrop, sendTo } from './native';
+import type { DockSide, NotchConfig, NotchCorner, NotchSize, PillColor, PinnedSite } from './settings';
+import type { ShelfFile } from '../activities/shelf';
+
+/** Each notch size's scale; Medium is the taskbar's Small, Large its Medium. */
+export const NOTCH_ZOOM: Record<NotchSize, number> = { small: 0.7, medium: 0.84, large: 1 };
+/** A notch's thickness, as the taskbar's, CSS px before its scale. */
+const NOTCH_T = 52;
+/** Its ends melt into the border over this much (CSS px before its scale), as the taskbar's do. */
+export const NOTCH_MELT = { out: 44, up: 30 };
+/** Tucked, a notch is the same notch, as long, only this thick from the screen's edge (CSS px): it
+ *  widens out of the border as one shape when pointed at (Moss: not a bump of its own). */
+export const TAB = { thick: 13 };
+/** The light's path is drawn again this long after the last shape moved, ms. */
+const GLOW_SETTLE_MS = 60;
+/** The light round an expanded notch: its ring's width and the halo's, CSS px; the room for it past
+ *  the notch's inner edge. */
+const NOTCH_RING = { core: 1.6, halo: 5, room: 10 };
+/** From the screen's corner to a notch's foot, CSS px. */
+const CORNER_GAP = 28;
+/** Between two notches in the same place, CSS px. */
+const STACK_GAP = 14;
+/** The border's inner corners. */
+const INNER_R = 14;
+/** The island's colour on the border fades out over this far past its melted ends, CSS px, from this strong (%). */
+const TINT_FADE = 120;
+const TINT_STRENGTH = 26;
+/** A notch tucks back this long after the pointer leaves it, ms. */
+const TUCK_MS = 380;
+/** Shelf files shown in its notch at most; the rest are counted. */
+export const SHELF_SHOWN = 6;
+
+export interface FrameFrame {
+  /** The border's width, CSS px. */
+  width: number;
+  color: PillColor;
+  glass?: number;
+  accent: string;
+  reduce: boolean;
+  sites: NotchConfig & { list: PinnedSite[] };
+  shelf: NotchConfig & { files: ShelfFile[]; undo: boolean };
+  /** The light round the whole border (Glow › Whole screen), else null. */
+  glow: { spec: GlowSpec | null; speed: Exclude<GlowSpeed, 'off'> } | null;
+}
+
+/** Where the taskbar or the island is, from its own window: a rect in screen CSS px, its side (the
+ *  edge it sits on), its scale, and its melted ends' size (0: none). */
+export interface FramePart {
+  rect: [number, number, number, number];
+  side: DockSide;
+  zoom: number;
+  melt: { out: number; up: number } | null;
+  /** The bar's thickness and corner radius before its scale. */
+  thick: number;
+  radius: number;
+  /** Its colour where it meets the edge (Music's player, from the art): the border takes a little of
+   *  it on either side, fading out. */
+  tint?: string | null;
+  /** Drawn this much as thick (a tucked notch: the notch, slimmed toward the edge). */
+  squash?: number;
+}
+
+export type FrameAct =
+  | { kind: 'site-remove'; url: string }
+  | { kind: 'site-move'; url: string; to: number }
+  | { kind: 'sites-settings' }
+  | { kind: 'shelf'; name: string; arg?: unknown }
+  | { kind: 'shelf-drop'; paths: string[] }
+  | { kind: 'shelf-open' };
+
+/** Where notch `kind` sits along its side, CSS px from the screen's top, given what is above it
+ *  in the same place: `len` its length (feet included), `before` the lengths stacked nearer the corner. */
+export function notchTop(corner: NotchCorner, screenH: number, len: number, before: number): number {
+  return corner.startsWith('top') ? CORNER_GAP + before : screenH - CORNER_GAP - before - len;
+}
+
+/** The side a corner's notch comes out of. */
+export const sideOf = (corner: NotchCorner): 'left' | 'right' => (corner.endsWith('left') ? 'left' : 'right');
+
+/** A site's picture: its icon as Google keeps it for any site (what Chrome shows too). */
+export function faviconOf(url: string): string {
+  try {
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(new URL(url).hostname)}&sz=64`;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The outline of a bar on the screen's edge as an SVG path, drawn as if along the bottom: `len` long
+ * and `h` thick, its inner corners rounded by `r`, its ends melting into the edge over `out` and `up`
+ * (none: straight down), each foot flattening onto the border `b` up from the edge.
+ */
+export function barOutline(len: number, h: number, r: number, melt: { out: number; up: number } | null, b: number): string {
+  if (!melt) return `M0 ${h}L0 ${r}A${r} ${r} 0 0 1 ${r} 0L${len - r} 0A${r} ${r} 0 0 1 ${len} ${r}L${len} ${h}Z`;
+  const u = Math.min(melt.up, h - r);
+  const o = melt.out;
+  const bb = Math.max(0, Math.min(b, u - 2));
+  return (
+    `M${-o} ${h - bb}A${o} ${u - bb} 0 0 0 0 ${h - u}L0 ${r}A${r} ${r} 0 0 1 ${r} 0L${len - r} 0A${r} ${r} 0 0 1 ${len} ${r}` +
+    `L${len} ${h - u}A${o} ${u - bb} 0 0 0 ${len + o} ${h - bb}L${len + o} ${h}L${-o} ${h}Z`
+  );
+}
+
+/** The matrix that takes a bar drawn along the bottom (barOutline) to its place: `rect` its box on
+ *  the screen (feet left out), on side `side`, at scale `z`. */
+export function barMatrix(side: DockSide, rect: [number, number, number, number], z: number, h: number, squash = 1): DOMMatrix {
+  const [x, y, w, hh] = rect;
+  // Across the bar (toward the screen's edge) it may be drawn slimmer: `squash` of its thickness.
+  const t = z * squash;
+  switch (side) {
+    case 'top':
+      return new DOMMatrix([z, 0, 0, -t, x, y + h * t]);
+    case 'left':
+      return new DOMMatrix([0, z, -t, 0, x + h * t, y]);
+    case 'right':
+      return new DOMMatrix([0, z, t, 0, x + w - h * t, y]);
+    default:
+      return new DOMMatrix([z, 0, 0, t, x, y + hh - h * t]);
+  }
+}
+
+/**
+ * The CSS mask of a ring just outside an upright notch on side `side` (its light, when it is out):
+ * `len` its body's length, `h` its thickness, `r` its corners, `melt` its ends, `b` the border, all
+ * in CSS px; the box is `room` wider than the notch, toward the screen. `w` the ring's width.
+ */
+export function notchRing(side: 'left' | 'right', len: number, h: number, r: number, melt: { out: number; up: number }, b: number, room: number, w: number): string {
+  const o = melt.out;
+  const u = Math.min(melt.up, h - r);
+  const bb = Math.max(0, Math.min(b, u - 2));
+  // Along the bottom (barOutline's frame), then turned upright: open along the edge, and closed.
+  const open = `M${-o} ${h - bb}A${o} ${u - bb} 0 0 0 0 ${h - u}L0 ${r}A${r} ${r} 0 0 1 ${r} 0L${len - r} 0A${r} ${r} 0 0 1 ${len} ${r}L${len} ${h - u}A${o} ${u - bb} 0 0 0 ${len + o} ${h - bb}`;
+  const closed = `${open}L${len + o} ${h}L${-o} ${h}Z`;
+  const W = h + room;
+  const H = len + 2 * o;
+  const turn = side === 'left' ? `matrix(0 1 -1 0 ${h} ${o})` : `matrix(0 1 1 0 ${room} ${o})`;
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${W}' height='${H}' viewBox='0 0 ${W} ${H}'>` +
+    `<defs><mask id='m' maskUnits='userSpaceOnUse' x='0' y='0' width='${W}' height='${H}'><rect width='${W}' height='${H}' fill='white'/>` +
+    `<g transform='${turn}'><path d='${closed}' fill='black'/></g></mask></defs>` +
+    `<g mask='url(#m)'><g transform='${turn}'><path d='${open}' fill='none' stroke='#000' stroke-width='${w * 2}'/></g></g></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
+// ------------------------------------------------------------------ the island's side
+
+export interface FrameHooks {
+  /** The border is on (and can be). */
+  enabled(): boolean;
+  frame(): FrameFrame;
+  act(a: FrameAct): void;
+  /** The window just loaded: say again where the island is. */
+  ready?(): void;
+}
+
+export class FrameHost {
+  private shown = false;
+  private sent = '';
+  private offs: Array<() => void> = [];
+
+  constructor(private readonly hooks: FrameHooks) {}
+
+  async start(): Promise<void> {
+    this.offs.push(
+      await on<FrameAct>('frame-act', (a) => {
+        if (a && typeof a === 'object' && typeof a.kind === 'string') this.hooks.act(a);
+        this.tick();
+      }),
+      await on<null>('frame-ready', () => {
+        this.sent = '';
+        this.tick();
+        this.hooks.ready?.();
+      }),
+    );
+  }
+
+  stop(): void {
+    for (const off of this.offs.splice(0)) off();
+    if (this.shown) void native.frameShow(false);
+    this.shown = false;
+  }
+
+  /** The window open or closed as Settings says, and its frame when it changed. Cheap: called often. */
+  tick(): void {
+    if (!this.hooks.enabled()) {
+      if (this.shown) void native.frameShow(false);
+      this.shown = false;
+      return;
+    }
+    if (!this.shown) {
+      this.shown = true;
+      this.sent = '';
+      void native.frameShow(true);
+    }
+    const f = this.hooks.frame();
+    const json = JSON.stringify(f);
+    if (json === this.sent) return;
+    this.sent = json;
+    void sendTo('frame', 'frame-frame', f);
+  }
+}
+
+// ------------------------------------------------------------------ the frame window
+
+function el(tag: string, cls: string, html?: string): HTMLElement {
+  const e = document.createElement(tag);
+  e.className = cls;
+  if (html) e.innerHTML = html;
+  return e;
+}
+
+/** An SVG mask as a CSS url. */
+const svgUrl = (w: number, h: number, body: string) =>
+  `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}' viewBox='0 0 ${w} ${h}'>${body}</svg>`)}")`;
+
+interface Notch {
+  kind: 'sites' | 'shelf';
+  el: HTMLElement;
+  /** Its own light, round it while it is out (frame.ts notchRing). */
+  ring: HTMLElement;
+  inner: HTMLElement;
+  bg: HTMLElement;
+  items: HTMLElement;
+  out: boolean;
+  tuck: number;
+  /** Where it is (CSS px): its side, top, length with feet, thickness. */
+  side: 'left' | 'right';
+  top: number;
+  len: number;
+  thick: number;
+  zoom: number;
+  sig: string;
+}
+
+/**
+ * This window is the border: it draws what the island sends, slides the notches out and back, and
+ * tells Rust where it takes clicks (only on the notches).
+ */
+export async function runFrame(stage: HTMLElement): Promise<void> {
+  const root = document.documentElement;
+  root.classList.add('frame-window');
+  let frame: FrameFrame | null = null;
+  let screen = { width: window.innerWidth, height: window.innerHeight };
+  /** The window's corner on the screen, CSS px, to place what the taskbar and island report. */
+  const origin = () => ({ x: window.screenX, y: window.screenY });
+  let dock: FramePart | null = null;
+  let island: FramePart[] = [];
+  const send = (a: FrameAct) => void sendTo('island', 'frame-act', a);
+
+  const border = el('div', 'fr-border');
+  // The island's colour (Music's player) on the line either side of it, fading out.
+  const tintEl = el('div', 'fr-tint');
+  stage.append(border, tintEl);
+  const label = el('div', 'fr-label');
+  stage.append(label);
+
+  // The light round the whole border: a turning cone seen through a ring cut to the outline.
+  const glow = el('div', 'fr-glow');
+  const halo = el('div', 'fr-ring halo');
+  const core = el('div', 'fr-ring core');
+  halo.append(el('i', ''));
+  core.append(el('i', ''));
+  glow.append(halo, core);
+  stage.append(glow);
+
+  const makeNotch = (kind: Notch['kind']): Notch => {
+    const n = el('div', `notch n-${kind}`);
+    const inner = el('div', 'notch-in');
+    const bg = el('i', 'notch-bg');
+    const items = el('div', 'nt-items');
+    inner.append(bg, items);
+    // Its light while it is out: the same turning cone as the border's, seen through a ring round it.
+    const ring = el('div', 'nt-ring');
+    for (const k of ['halo', 'core']) {
+      const r = el('div', `nt-ring-${k}`);
+      r.append(el('i', 'nt-cone'));
+      ring.append(r);
+    }
+    n.append(ring, inner);
+    stage.append(n);
+    const notch: Notch = { kind, el: n, ring, inner, bg, items, out: false, tuck: 0, side: 'left', top: 0, len: 0, thick: 0, zoom: 1, sig: '' };
+    n.addEventListener('pointerenter', () => slide(notch, true));
+    n.addEventListener('pointerleave', () => slide(notch, false));
+    return notch;
+  };
+  const sites = makeNotch('sites');
+  const shelf = makeNotch('shelf');
+  const notches = [sites, shelf];
+
+  /** Out (pointed at, or a file dragged over it), or tucked back a moment after the pointer leaves. */
+  const slide = (n: Notch, out: boolean) => {
+    window.clearTimeout(n.tuck);
+    // The border's light keeps running round the slim notch; out, the notch carries its own (CSS).
+    if (out) {
+      if (n.out) return;
+      n.out = true;
+      n.el.classList.add('out');
+      solid();
+      return;
+    }
+    n.tuck = window.setTimeout(() => {
+      n.out = false;
+      n.el.classList.remove('out');
+      hideLabel();
+      solid();
+    }, TUCK_MS);
+  };
+
+  // A site's or a file's name, beside the notch, level with what the pointer is on.
+  const showLabel = (n: Notch, item: HTMLElement, text: string) => {
+    if (!text) return hideLabel();
+    label.textContent = text;
+    const r = item.getBoundingClientRect();
+    const nr = n.el.getBoundingClientRect();
+    const y = Math.round(r.top + r.height / 2 - 15);
+    label.style.top = `${y}px`;
+    if (n.side === 'left') {
+      label.style.left = `${Math.round(nr.right + 8)}px`;
+      label.style.right = '';
+    } else {
+      label.style.right = `${Math.round(screen.width - nr.left + 8)}px`;
+      label.style.left = '';
+    }
+    label.classList.add('on');
+  };
+  const hideLabel = () => label.classList.remove('on');
+
+  const drawSites = (f: FrameFrame) => {
+    const list = f.sites.list;
+    const sig = JSON.stringify(list);
+    if (sig === sites.sig) return;
+    sites.sig = sig;
+    const kids: HTMLElement[] = list.map((s) => {
+      const b = el('button', 'nt-item nt-site');
+      b.setAttribute('aria-label', s.title);
+      const pic = el('span', 'nt-pic');
+      const img = document.createElement('img');
+      img.alt = '';
+      img.draggable = false;
+      img.src = faviconOf(s.url);
+      // No picture: the site's first letter.
+      img.addEventListener('error', () => {
+        pic.textContent = (s.title || s.url).replace(/^https?:\/\/(www\.)?/, '').charAt(0).toUpperCase();
+        pic.classList.add('letter');
+      });
+      pic.append(img);
+      b.append(pic);
+      b.addEventListener('click', () => void native.openUrl(s.url));
+      b.addEventListener('pointerenter', () => showLabel(sites, b, s.title));
+      b.addEventListener('pointerleave', hideLabel);
+      b.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void siteMenu(s);
+      });
+      return b;
+    });
+    const add = el('button', 'nt-item nt-add', icon('plus'));
+    add.setAttribute('aria-label', 'Add a website');
+    add.addEventListener('click', () => send({ kind: 'sites-settings' }));
+    add.addEventListener('pointerenter', () => showLabel(sites, add, list.length ? 'Add a website' : 'Pin a website here'));
+    add.addEventListener('pointerleave', hideLabel);
+    sites.items.replaceChildren(...kids, add);
+  };
+
+  const siteMenu = async (s: PinnedSite) => {
+    if (!isTauri) return;
+    const menu = await Menu.new({
+      items: [
+        await MenuItem.new({ text: s.title, enabled: false }),
+        await PredefinedMenuItem.new({ item: 'Separator' }),
+        await MenuItem.new({ text: 'Open', action: () => void native.openUrl(s.url) }),
+        await MenuItem.new({ text: 'Remove from Websites', action: () => send({ kind: 'site-remove', url: s.url }) }),
+        await PredefinedMenuItem.new({ item: 'Separator' }),
+        await MenuItem.new({ text: 'Websites settings…', action: () => send({ kind: 'sites-settings' }) }),
+      ],
+    });
+    await menu.popup();
+  };
+
+  // A file pressed and moved this far is dragged out (a shorter press opens the Shelf).
+  const DRAG_PX = 4;
+  const drawShelf = (f: FrameFrame) => {
+    const files = f.shelf.files;
+    const sig = JSON.stringify([files.map((x) => [x.path, x.thumb, x.missing]), f.shelf.undo]);
+    if (sig === shelf.sig) return;
+    shelf.sig = sig;
+    const head = el('button', 'nt-item nt-head', icon('shelf'));
+    head.setAttribute('aria-label', 'Shelf');
+    head.addEventListener('click', () => send({ kind: 'shelf-open' }));
+    head.addEventListener('pointerenter', () => showLabel(shelf, head, files.length ? `Shelf · ${files.length} file${files.length === 1 ? '' : 's'}` : 'Shelf · drop files here'));
+    head.addEventListener('pointerleave', hideLabel);
+    if (files.length) head.append(Object.assign(el('b', 'nt-count'), { textContent: String(files.length) }));
+    const shown = files.slice(0, SHELF_SHOWN).map((file) => {
+      const b = el('button', `nt-item nt-file${file.missing ? ' missing' : ''}`);
+      const pic = el('span', 'nt-pic', file.thumb ? undefined : icon(file.dir ? 'folder' : 'file'));
+      if (file.thumb) {
+        const img = document.createElement('img');
+        img.src = file.thumb;
+        img.alt = '';
+        img.draggable = false;
+        pic.append(img);
+      }
+      b.append(pic);
+      b.addEventListener('pointerenter', () => showLabel(shelf, b, file.name));
+      b.addEventListener('pointerleave', hideLabel);
+      let press: { x: number; y: number } | null = null;
+      b.addEventListener('pointerdown', (e) => {
+        if (e.button === 0 && !file.missing) press = { x: e.clientX, y: e.clientY };
+      });
+      b.addEventListener('pointermove', (e) => {
+        if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_PX) return;
+        press = null;
+        hideLabel();
+        send({ kind: 'shelf', name: 'drag-out', arg: file.path });
+      });
+      b.addEventListener('pointerup', () => {
+        if (press) send({ kind: 'shelf-open' });
+        press = null;
+      });
+      return b;
+    });
+    const more = files.length > SHELF_SHOWN ? [Object.assign(el('span', 'nt-more'), { textContent: `+${files.length - SHELF_SHOWN}` })] : [];
+    shelf.items.replaceChildren(head, ...shown, ...more);
+  };
+
+  // The Shelf notch's right-click: open it, clear it.
+  shelf.el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (!isTauri) return;
+    void (async () => {
+      const menu = await Menu.new({
+        items: [
+          await MenuItem.new({ text: 'Open the Shelf', action: () => send({ kind: 'shelf-open' }) }),
+          await MenuItem.new({ text: 'Clear the Shelf', enabled: (frame?.shelf.files.length ?? 0) > 0, action: () => send({ kind: 'shelf', name: 'clear-all' }) }),
+        ],
+      });
+      await menu.popup();
+    })();
+  });
+  sites.el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (!isTauri) return;
+    void (async () => {
+      const menu = await Menu.new({ items: [await MenuItem.new({ text: 'Websites settings…', action: () => send({ kind: 'sites-settings' }) })] });
+      await menu.popup();
+    })();
+  });
+
+  /** The border: the screen less a rounded hole, and its rim along the hole's edge. */
+  let borderSig = '';
+  const drawBorder = () => {
+    const w = frame?.width ?? 3;
+    const { width: W, height: H } = screen;
+    const sig = `${W}x${H}x${w}`;
+    if (sig === borderSig) return;
+    borderSig = sig;
+    // Notches only (no border): nothing drawn round the screen.
+    border.hidden = w <= 0;
+    if (w <= 0) return;
+    const hole = `M${w + INNER_R} ${w}H${W - w - INNER_R}A${INNER_R} ${INNER_R} 0 0 1 ${W - w} ${w + INNER_R}V${H - w - INNER_R}A${INNER_R} ${INNER_R} 0 0 1 ${W - w - INNER_R} ${H - w}H${w + INNER_R}A${INNER_R} ${INNER_R} 0 0 1 ${w} ${H - w - INNER_R}V${w + INNER_R}A${INNER_R} ${INNER_R} 0 0 1 ${w + INNER_R} ${w}Z`;
+    border.style.setProperty('--fr-fill', svgUrl(W, H, `<path fill-rule='evenodd' d='M0 0H${W}V${H}H0Z${hole}'/>`));
+    // The rim: 2px on the hole's edge, its inner half cut away by the fill above, as the taskbar's.
+    border.style.setProperty('--fr-rim', svgUrl(W, H, `<path d='${hole}' fill='none' stroke='#000' stroke-width='2'/>`));
+  };
+
+  /** Each notch's size, place and look for its settings. */
+  const placeNotches = () => {
+    const f = frame;
+    if (!f) return;
+    const w = f.width;
+    const cfg = { sites: f.sites, shelf: f.shelf };
+    // Stacked from each corner outward, in the order Websites, Shelf.
+    const stacked: Record<string, number> = {};
+    for (const n of notches) {
+      const c = cfg[n.kind];
+      n.el.hidden = !c.on;
+      if (!c.on) continue;
+      const z = NOTCH_ZOOM[c.size] ?? NOTCH_ZOOM.small;
+      const side = sideOf(c.corner);
+      n.zoom = z;
+      n.side = side;
+      n.el.dataset.side = side;
+      n.inner.style.zoom = String(z);
+      const m = meltMasks(side, NOTCH_MELT.out, NOTCH_MELT.up, w / z);
+      n.inner.style.setProperty('--nt-fill', m.fill);
+      n.inner.style.setProperty('--nt-rim', m.rim);
+      n.inner.style.setProperty('--nt-end', `${m.end}px`);
+      const body = n.inner.offsetHeight * z;
+      n.thick = NOTCH_T * z;
+      n.len = body + 2 * NOTCH_MELT.out * z;
+      const before = stacked[c.corner] ?? 0;
+      stacked[c.corner] = before + n.len + STACK_GAP;
+      n.top = notchTop(c.corner, screen.height, n.len, before);
+      // Its body's top (the feet reach above and below it).
+      n.el.style.top = `${Math.round(n.top + NOTCH_MELT.out * z)}px`;
+      // Tucked: the same notch, as long, only TAB.thick of it out of the edge.
+      n.el.style.setProperty('--nk', String(Math.min(1, TAB.thick / n.thick)));
+      // Its light: a ring round it as it is out, the cone turning about the screen's middle.
+      const ringMasks = [NOTCH_RING.halo, NOTCH_RING.core].map((rw) => notchRing(side, body, n.thick, 18 * z, { out: NOTCH_MELT.out * z, up: NOTCH_MELT.up * z }, w, NOTCH_RING.room, rw));
+      const boxW = n.thick + NOTCH_RING.room;
+      Object.assign(n.ring.style, { top: `${-NOTCH_MELT.out * z}px`, width: `${boxW}px`, height: `${n.len}px` });
+      n.ring.style.setProperty('--m-halo', ringMasks[0]);
+      n.ring.style.setProperty('--m-core', ringMasks[1]);
+      const boxLeft = side === 'left' ? 0 : screen.width - boxW;
+      n.ring.style.setProperty('--cx', `${screen.width / 2 - boxLeft}px`);
+      n.ring.style.setProperty('--cy', `${screen.height / 2 - n.top}px`);
+    }
+  };
+
+  /** Where the window takes clicks: each notch (tucked, its tab and the edge beside it). */
+  let solidSent = '';
+  const solid = () => {
+    const rects: number[][] = [];
+    const w = frame?.width ?? 3;
+    for (const n of notches) {
+      if (n.el.hidden) continue;
+      const top = n.top;
+      if (n.out) {
+        const x = n.side === 'left' ? 0 : screen.width - n.thick - 10;
+        rects.push([x, top, n.thick + 10, n.len]);
+      } else {
+        // The slim notch, and a little beyond it, so the pointer finds it on its way to the edge.
+        const reach = Math.max(w, TAB.thick) + 8;
+        const foot = NOTCH_MELT.out * n.zoom;
+        rects.push([n.side === 'left' ? 0 : screen.width - reach, top + foot / 2, reach, n.len - foot]);
+      }
+    }
+    const json = JSON.stringify(rects.map((q) => q.map((v) => Math.round(v))));
+    if (json === solidSent) return;
+    solidSent = json;
+    void native.frameSolid(JSON.parse(json) as number[][]);
+  };
+
+  /** The island's colour on the line beside it: strongest at its melted ends, gone TINT_FADE px on. */
+  const drawTint = () => {
+    const p = island.find((q) => q.tint);
+    // Only a colour, nothing that could break out of the style.
+    const tint = p?.tint && /^[#\w\s(),.%-]+$/.test(p.tint) ? p.tint : null;
+    if (!p || !tint || !frame) {
+      tintEl.classList.remove('on');
+      return;
+    }
+    const o = origin();
+    const [x, y, w, h] = p.rect;
+    const lx = x - o.x;
+    const ly = y - o.y;
+    const reach = (p.melt?.out ?? 0) * p.zoom + TINT_FADE;
+    const bw = frame.width;
+    const c = `color-mix(in srgb, ${tint} ${TINT_STRENGTH}%, transparent)`;
+    const across = p.side === 'top' || p.side === 'bottom';
+    const st = tintEl.style;
+    if (across) {
+      Object.assign(st, { left: `${lx - reach}px`, width: `${w + 2 * reach}px`, top: p.side === 'top' ? '0px' : `${screen.height - bw}px`, height: `${bw}px` });
+    } else {
+      Object.assign(st, { top: `${ly - reach}px`, height: `${h + 2 * reach}px`, left: p.side === 'left' ? '0px' : `${screen.width - bw}px`, width: `${bw}px` });
+    }
+    st.background = `linear-gradient(${across ? 'to right' : 'to bottom'}, transparent, ${c} ${reach}px, ${c} calc(100% - ${reach}px), transparent)`;
+    tintEl.classList.add('on');
+  };
+
+  // ---------------------------------------------------------------- the light round everything
+
+  /** Every shape on the border as one path in this window's CSS px: the taskbar, the island, the notches. */
+  const shapes = (): Path2D => {
+    const all = new Path2D();
+    const w = frame?.width ?? 3;
+    const o = origin();
+    const part = (p: FramePart | null) => {
+      if (!p) return;
+      const [x, y, rw, rh] = p.rect;
+      const rect: [number, number, number, number] = [x - o.x, y - o.y, rw, rh];
+      const along = p.side === 'left' || p.side === 'right' ? rh : rw;
+      // A slimmed notch is the notch stretched, its feet's flattening onto the border with it (as drawn).
+      const path = new Path2D(barOutline(along / p.zoom, p.thick, p.radius, p.melt, w / p.zoom));
+      all.addPath(path, barMatrix(p.side, rect, p.zoom, p.thick, p.squash ?? 1));
+    };
+    part(dock);
+    for (const p of island) part(p);
+    // The notches as they are tucked, always: out, each draws its own light round itself (and covers
+    // this ring's part round it), so a notch coming out never makes this path change.
+    for (const n of notches) {
+      if (n.el.hidden) continue;
+      const k = Math.min(1, TAB.thick / n.thick);
+      const x = n.side === 'left' ? 0 : screen.width - TAB.thick;
+      part({ rect: [x + o.x, n.top + NOTCH_MELT.out * n.zoom + o.y, TAB.thick, n.len - 2 * NOTCH_MELT.out * n.zoom], side: n.side, zoom: n.zoom, melt: NOTCH_MELT, thick: NOTCH_T, radius: 18, squash: k });
+    }
+    return all;
+  };
+
+  /** The hole the light runs round: the screen less every shape, as a path (even-odd with the border's). */
+  const holePath = (): Path2D => {
+    const w = frame?.width ?? 3;
+    const { width: W, height: H } = screen;
+    const p = new Path2D();
+    p.addPath(new Path2D(`M${w + INNER_R} ${w}H${W - w - INNER_R}A${INNER_R} ${INNER_R} 0 0 1 ${W - w} ${w + INNER_R}V${H - w - INNER_R}A${INNER_R} ${INNER_R} 0 0 1 ${W - w - INNER_R} ${H - w}H${w + INNER_R}A${INNER_R} ${INNER_R} 0 0 1 ${w} ${H - w - INNER_R}V${w + INNER_R}A${INNER_R} ${INNER_R} 0 0 1 ${w + INNER_R} ${w}Z`));
+    return p;
+  };
+
+  /** One ring `width` wide just inside the hole's edge (round every shape), soft by `blur`, as a CSS mask. */
+  const ringMask = (width: number, blur: number): string => {
+    const { width: W, height: H } = screen;
+    const k = Math.min(2, window.devicePixelRatio || 1);
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(W * k);
+    c.height = Math.ceil(H * k);
+    const g = c.getContext('2d');
+    if (!g) return 'none';
+    g.scale(k, k);
+    if (blur) g.filter = `blur(${blur}px)`;
+    // The border's inner edge and every shape's outline, thick, inside the hole only; then the shapes
+    // themselves cut out: what's left runs just inside the border and just outside each shape.
+    const s = shapes();
+    const hole = holePath();
+    g.strokeStyle = '#000';
+    g.lineWidth = width * 2;
+    g.lineJoin = 'round';
+    g.save();
+    g.clip(hole);
+    g.stroke(hole);
+    g.stroke(s);
+    g.restore();
+    g.globalCompositeOperation = 'destination-out';
+    g.filter = 'none';
+    g.fill(s);
+    return `url(${c.toDataURL('image/png')})`;
+  };
+
+  let glowSig = '';
+  let glowWait = 0;
+  /**
+   * The light's path again, soon after a shape moved (the taskbar, the island, the screen). The
+   * notches never change it (see shapes), and the island says where it is every second, so the path
+   * never stays round a card that closed.
+   */
+  const drawGlow = (wait = GLOW_SETTLE_MS) => {
+    window.clearTimeout(glowWait);
+    const g = frame?.glow;
+    if (!g || !g.spec) return;
+    glowWait = window.setTimeout(() => {
+      const sig = JSON.stringify([screen, frame?.width, dock, island, notches.map((n) => [n.el.hidden, n.top, n.len, n.side, n.thick])]);
+      if (sig === glowSig) return;
+      glowSig = sig;
+      core.style.setProperty('--m', ringMask(1.6, 0));
+      halo.style.setProperty('--m', ringMask(5, 1.5));
+    }, wait);
+  };
+
+  const tone = (t: string) => (t === 'default' ? 'var(--fg)' : `var(--${t})`);
+  let glowKey = '';
+  const syncGlow = (f: FrameFrame) => {
+    const g = f.glow;
+    const spec = g?.spec ?? null;
+    const key = spec ? JSON.stringify([spec.tone, spec.motion, spec.fast, g?.speed]) : '';
+    if (spec?.motion === 'progress') root.style.setProperty('--p', `${Math.max(0, Math.min(1, spec.value ?? 0)) * 360}deg`);
+    if (key === glowKey) return;
+    glowKey = key;
+    if (!spec || !g) {
+      glow.classList.remove('on');
+      root.classList.remove('fr-lit');
+      return;
+    }
+    const pace = GLOW_PACE[g.speed] ?? GLOW_PACE.medium;
+    const brisk = spec.fast ? 0.65 : 1;
+    root.style.setProperty('--lap', `${pace.lap * brisk}s`);
+    root.style.setProperty('--breath', `${pace.breath * brisk}s`);
+    const c = tone(spec.tone);
+    root.style.setProperty('--c', c);
+    root.style.setProperty('--hot', `color-mix(in srgb, ${c} 45%, white)`);
+    // On the page, so the notches' own lights turn with the border's, from the same moment.
+    root.dataset.frMotion = glow.dataset.motion = f.reduce && spec.motion !== 'progress' ? 'still' : spec.motion;
+    root.classList.add('fr-lit');
+    glowSig = '';
+    drawGlow();
+    glow.classList.add('on');
+  };
+
+  const draw = () => {
+    const f = frame;
+    if (!f) return;
+    root.dataset.pill = f.color;
+    root.style.setProperty('--accent', f.accent);
+    root.style.setProperty('--fr-w', `${f.width}px`);
+    root.classList.toggle('reduce', f.reduce);
+    applyGlass(root, f.glass);
+    drawBorder();
+    drawSites(f);
+    drawShelf(f);
+    placeNotches();
+    solid();
+    syncGlow(f);
+    drawGlow();
+  };
+
+  // Files dragged over the Shelf's notch bring it out; dropped there, they go on the Shelf.
+  const overShelf = (x: number, y: number) => {
+    if (shelf.el.hidden) return false;
+    const r = shelf.el.getBoundingClientRect();
+    const reach = Math.max(frame?.width ?? 3, TAB.thick) + 12;
+    const left = shelf.side === 'left' ? 0 : Math.min(r.left, screen.width - reach);
+    const right = shelf.side === 'left' ? Math.max(r.right, reach) : screen.width;
+    return x >= left && x <= right && y >= r.top && y <= r.bottom;
+  };
+  await onFileDrop((e) => {
+    if (e.type === 'leave') {
+      shelf.el.classList.remove('drop');
+      slide(shelf, false);
+      return;
+    }
+    const hit = overShelf(e.x, e.y);
+    shelf.el.classList.toggle('drop', hit);
+    if (hit) slide(shelf, true);
+    if (e.type === 'drop') {
+      shelf.el.classList.remove('drop');
+      if (hit && e.paths?.length) send({ kind: 'shelf-drop', paths: e.paths });
+      slide(shelf, false);
+    }
+  });
+
+  await on<{ width: number; height: number }>('frame-screen', (s) => {
+    if (!s || !Number.isFinite(s.width) || !Number.isFinite(s.height)) return;
+    screen = { width: s.width, height: s.height };
+    borderSig = '';
+    draw();
+  });
+  await on<FrameFrame>('frame-frame', (f) => {
+    frame = f;
+    draw();
+  });
+  await on<FramePart | null>('frame-dock', (p) => {
+    dock = p;
+    drawGlow();
+  });
+  await on<FramePart[] | null>('frame-island', (p) => {
+    island = Array.isArray(p) ? p : [];
+    drawTint();
+    drawGlow();
+  });
+  // Under a full-screen game or video the border goes, as the taskbar does.
+  await on<boolean>('frame-full', (full) => root.classList.toggle('fr-full', full === true));
+  window.addEventListener('resize', () => {
+    if (!isTauri) {
+      screen = { width: window.innerWidth, height: window.innerHeight };
+      borderSig = '';
+      draw();
+    }
+  });
+  void native.frameHello();
+  void sendTo('island', 'frame-ready', null);
+  // The taskbar may have said where it is before this window was there.
+  void sendTo('dock', 'frame-hello', null);
+}

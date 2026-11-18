@@ -100,6 +100,62 @@ export function pillRect(area: Area, anchor: Anchor, w: number, h: number, edge:
   }
 }
 
+/**
+ * CSS corner radii (top left, top right, bottom right, bottom left) for a shape on the `anchor`
+ * edge: `edgeR` for the two corners on that edge, `r` for the other two. Blend into the edge
+ * (Settings › Appearance) squares the pill's corners on its edge this way, and a card grown out of it.
+ */
+export function edgeCorners(anchor: Anchor, r: number, edgeR = 0): string {
+  const o = `${r}px`;
+  const e = `${edgeR}px`;
+  switch (anchor) {
+    case 'top':
+      return `${e} ${e} ${o} ${o}`;
+    case 'bottom':
+      return `${o} ${o} ${e} ${e}`;
+    case 'left':
+      return `${e} ${o} ${o} ${e}`;
+    case 'right':
+      return `${o} ${e} ${e} ${o}`;
+  }
+}
+
+/** The side across from `side`. */
+export function opposite(side: Anchor): Anchor {
+  return ({ top: 'bottom', bottom: 'top', left: 'right', right: 'left' } as const)[side];
+}
+
+/**
+ * CSS corner radii (as edgeCorners) for a shape joined flush on its `seam` side to `other`: the
+ * pill and the card hanging from it when the pill blends into its edge, read as one shape. A seam
+ * corner `other` runs past is square (`k` of the way, 0 = still `r`), one it does not reach stays
+ * `r` round; the two far corners are `far`.
+ */
+export function seamCorners(seam: Anchor, self: Rect, other: Rect, r: number, far: number, k = 1): string {
+  const inR = r * (1 - Math.max(0, Math.min(1, k)));
+  const across = seam === 'top' || seam === 'bottom';
+  // The seam's two corners: the start (left or top) and the end (right or bottom) of that side.
+  const a = (across ? other.x <= self.x + 0.5 : other.y <= self.y + 0.5) ? inR : r;
+  const b = (across ? other.x + other.w >= self.x + self.w - 0.5 : other.y + other.h >= self.y + self.h - 0.5) ? inR : r;
+  const [tl, tr, br, bl] = {
+    top: [a, b, far, far],
+    bottom: [far, far, b, a],
+    left: [a, far, far, b],
+    right: [far, a, b, far],
+  }[seam];
+  return `${tl}px ${tr}px ${br}px ${bl}px`;
+}
+
+/** The pill's gap to its screen edge: none when it blends into the edge, else the Distance setting. */
+export function pillGap(edge: number, blend: boolean): number {
+  return blend ? 0 : edge;
+}
+
+/** What Settings calls Blend into the edge for the pill on `anchor`. */
+export function blendLabel(anchor: Anchor): string {
+  return anchor === 'top' || anchor === 'bottom' ? `Blend into the ${anchor}` : `Blend into the ${anchor} edge`;
+}
+
 /** Where the pill rests when hidden: tucked against its edge, a sliver wide. */
 export function tuckedRect(area: Area, anchor: Anchor, w: number, h: number): Rect {
   const r = pillRect(area, anchor, w, h, 0);

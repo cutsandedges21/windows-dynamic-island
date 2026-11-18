@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
-import { clickPlan, dockApps, movePins, openOrder, pinToggle, resetLine, riseAt, type DockApp } from '../src/core/dock';
+import { clickPlan, dockApps, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
+import { barStyles } from '../src/core/settings';
 
 const app = (key: string, pinned: boolean, windows: number[] = [], front = false): DockApp => ({ key, name: key.toUpperCase(), icon: null, windows, front, pinned });
 const pin = (key: string) => ({ name: key.toUpperCase(), target: key });
@@ -90,5 +91,43 @@ describe('taskbar apps', () => {
     expect(resetLine(new Date(2026, 10, 19, 4, 0).getTime(), now, true)).toBe('Thu 4:00 AM · in 1d 14h');
     expect(resetLine(now - 1, now, false)).toBe('Resetting now');
     expect(resetLine(null, now, false)).toBe('Starts with your next message');
+  });
+
+  it('keeps the spotlight on the app it was on until another app is in front (Alt+Tab, the desktop)', () => {
+    const a = { key: 'a', front: false, windows: [1] };
+    const b = { key: 'b', front: false, windows: [2] };
+    expect(spotlightOn([{ ...a, front: true }, b], null)).toBe('a');
+    // Nothing in front (Alt+Tab): still on a.
+    expect(spotlightOn([a, b], 'a')).toBe('a');
+    // b comes to the front: it moves.
+    expect(spotlightOn([a, { ...b, front: true }], 'a')).toBe('b');
+    // a closed: nowhere.
+    expect(spotlightOn([{ ...a, windows: [] }, b], 'a')).toBeNull();
+  });
+
+  it('turns styles on and off together, in their order', () => {
+    expect(toggleStyle(['rise'], 'glide')).toEqual(['rise', 'glide']);
+    expect(toggleStyle(['glide', 'rise'], 'spotlight')).toEqual(['rise', 'spotlight', 'glide']);
+    expect(toggleStyle(['rise'], 'rise')).toEqual([]);
+  });
+
+  it('reads the styles saved, or the one style saved before they mixed', () => {
+    expect(barStyles({ styles: ['glide', 'nope', 'spotlight'] })).toEqual(['spotlight', 'glide']);
+    expect(barStyles({ style: 'spotlight' })).toEqual(['spotlight']);
+    expect(barStyles({})).toEqual(['rise']);
+    expect(barStyles({ styles: [] })).toEqual([]);
+  });
+
+  it('melts each end from the top corner down to the edge, its rim along the same outline', () => {
+    const { left, right } = meltEnds(72, 34);
+    const svg = (url: string) => decodeURIComponent(url.slice('url("data:image/svg+xml,'.length, -2));
+    // The foot (72px out along the edge, flat there), up the bar's side, round its 18px corner.
+    expect(left.width).toBe(90);
+    expect(svg(left.fill)).toContain("d='M0 52A72 34 0 0 0 72 18L72 18A18 18 0 0 1 90 0L90 52Z'");
+    expect(svg(right.fill)).toContain("d='M90 52A72 34 0 0 1 18 18L18 18A18 18 0 0 0 0 0L0 52Z'");
+    // The rim: the same outline, open and stroked.
+    expect(svg(left.rim)).toContain("d='M0 52A72 34 0 0 0 72 18L72 18A18 18 0 0 1 90 0' fill='none' stroke='#000' stroke-width='2'");
+    // Never higher than where the top corner starts.
+    expect(svg(meltEnds(40, 50).left.fill)).toContain('A40 34 0 0 0 40 18');
   });
 });

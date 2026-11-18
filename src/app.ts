@@ -4,16 +4,16 @@
 
 import './styles/app.css';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { widgetsPage } from './widgets-page';
-import { activityMatches, CATALOG_BY_ID, type ActivityMeta, type Band, type OptionSpec } from './activities/catalog';
-import { SpringSet } from './core/animator';
+import { desktopWidgetsPage, taskbarPage } from './widgets-page';
+import { activityMatches, CATALOG_BY_ID, type ActivityMeta, type Category, type OptionSpec } from './activities/catalog';
+import { activityPreview, alertPreview, islandPreview } from './previews';
 import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from './core/format';
 import { icon, type IconName } from './core/icons';
-import { innerPadding, levelWidth, normalizeWidths, pillSize, type Anchor, type Level } from './core/layout';
+import { blendLabel, innerPadding, levelWidth, normalizeWidths, pillSize, type Anchor, type Level } from './core/layout';
 import { MENU_ITEMS, menuMain, menuSegments, normalizeMenuOrder, type MenuItemId } from './core/menu';
 import { fitSegments } from './core/segments';
 import { isTauri, native, on, sendTo, type AutoModelState, type MonitorInfo } from './core/native';
-import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
+import { ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
 import { playSound, styleChoices, type ChimeKind } from './core/sounds';
 import { ACCENTS, backAt, cloneSettings, growsChoices, growsOf, GROWS_BELOW, HIDE_CHOICES, hideUntil, migrate, newPhoneTopic, type ActivityConfig, type Grows, type Settings } from './core/settings';
@@ -32,15 +32,17 @@ import { confirmBox } from './workspaces/ui';
 import { workspacesPage, type WorkspacesPage } from './workspaces/page';
 
 /** 'welcome' is the first-run setup: the whole window, no sidebar. */
-type Page = 'activities' | 'workspaces' | 'widgets' | 'settings' | 'controls' | 'welcome';
-const PAGES: Page[] = ['activities', 'workspaces', 'widgets', 'settings', 'controls', 'welcome'];
+type Page = 'island' | 'activities' | 'taskbar' | 'widgets' | 'workspaces' | 'behavior' | 'alerts' | 'phone' | 'controls' | 'general' | 'welcome';
+const PAGES: Page[] = ['island', 'activities', 'taskbar', 'widgets', 'workspaces', 'behavior', 'alerts', 'phone', 'controls', 'general', 'welcome'];
+/** Names other windows still open pages by (the island's menu opens 'settings'). */
+const ALIAS: Record<string, Page> = { settings: 'island' };
+const pageOf = (name: string): Page | null => (PAGES.includes(name as Page) ? (name as Page) : (ALIAS[name] ?? null));
 
 let settings: Settings = migrate(null);
 // Rust passes the page to open in an init script (a # in the window URL is not reliable).
 const requested = (window as unknown as { __ISLAND_PAGE__?: string }).__ISLAND_PAGE__ || location.hash.slice(1);
-let page: Page = PAGES.includes(requested as Page) ? (requested as Page) : 'activities';
+let page: Page = pageOf(requested) ?? 'activities';
 let dragging = false;
-const openCards = new Set<string>();
 let monitors: MonitorInfo[] = [];
 let hotkeyFailures: string[] = [];
 /** Why the last sound picked could not be used ('' when it could). */
@@ -78,22 +80,57 @@ function cfg(id: string): ActivityConfig {
 
 const root = document.getElementById('app')!;
 
+/** The sidebar's pages: name, icon, and what is in each, in a few words. */
+const NAV: Array<[Exclude<Page, 'welcome'>, string, IconName, string]> = [
+  ['island', 'Island', 'spark', 'Look, size, glow'],
+  ['activities', 'Activities', 'pulse', 'What it shows'],
+  ['taskbar', 'Taskbar & border', 'window', 'Taskbar, border, notches'],
+  ['widgets', 'Widgets', 'widgets', 'Tiles on your desktop'],
+  ['workspaces', 'Workspaces', 'spaces', 'Your setups'],
+  ['behavior', 'Behavior', 'sliders', 'How it acts'],
+  ['alerts', 'Alerts', 'bell', 'Notifications, sounds'],
+  ['phone', 'Phone', 'phone', 'Island on your phone'],
+  ['controls', 'Keys', 'keyboard', 'Shortcuts, gestures'],
+  ['general', 'General', 'settings', 'Startup, privacy, about'],
+];
+
+/** What the sidebar's search is looking for ('' : not searching). */
+let searchQuery = '';
+
 // The window uses Windows' own title bar (close, minimize, snap), so the page
-// only needs the sidebar.
+// only needs the sidebar: the island's own little pill, a search for any setting, and the pages.
 function nav(): HTMLElement {
-  const item = (p: Page, label: string, ic: string) =>
-    h('button', { class: `nav-item${page === p ? ' active' : ''}`, html: `${icon(ic)}<span>${label}</span>`, onclick: () => go(p) });
+  const item = ([p, label, ic, sub]: (typeof NAV)[number]) =>
+    h('button', { class: `nav-item${page === p && !searchQuery ? ' active' : ''}`, onclick: () => go(p) }, [h('span', { class: 'nav-ico', html: icon(ic) }), h('span', { class: 'nav-text' }, [h('b', { text: label }), h('small', { text: sub })])]);
+  const input = h('input', { type: 'search', placeholder: 'Search settings', value: searchQuery, spellcheck: 'false', 'aria-label': 'Search settings', 'data-focus': 'nav-search' }) as HTMLInputElement;
+  input.addEventListener('input', () => {
+    searchQuery = input.value;
+    render();
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && input.value) {
+      e.preventDefault();
+      searchQuery = '';
+      render();
+    }
+    // Enter: the first result.
+    if (e.key === 'Enter') root.querySelector<HTMLElement>('.search-hit')?.click();
+  });
   return h('nav', { class: 'nav' }, [
     h('div', { class: 'brand' }, [h('span', { class: 'brand-pill' }, [h('i')]), h('span', { text: 'Island' })]),
-    item('activities', 'Activities', 'pulse'),
-    item('workspaces', 'Workspaces', 'grid'),
-    item('widgets', 'Widgets', 'widgets'),
-    item('settings', 'Settings', 'settings'),
-    item('controls', 'Controls', 'keyboard'),
+    h('label', { class: 'nav-search' }, [h('span', { class: 'ico', html: icon('search') }), input]),
+    h('div', { class: 'nav-list' }, NAV.map(item)),
   ]);
 }
 
 function go(p: Page): void {
+  if (searchQuery) {
+    searchQuery = '';
+    page = p;
+    location.hash = p;
+    render();
+    return;
+  }
   if (p === page) {
     // Workspaces again, from inside one of its own views: back to the cards.
     if (p === 'workspaces') workspaces?.home();
@@ -126,15 +163,123 @@ function render(): void {
     root.replaceChildren(welcomePage(welcomeHost));
     return;
   }
+  // The window takes the island's colour (Settings follows the pill, Moss).
+  document.documentElement.dataset.pill = settings.island.color;
   const scroll = root.querySelector('.content')?.scrollTop ?? 0;
-  const searching = (document.activeElement as HTMLElement | null)?.dataset?.focus === 'act-search';
-  const body =
-    page === 'activities' ? activitiesPage() : page === 'workspaces' ? workspacesView().el : page === 'widgets' ? widgetsPage({ settings: () => settings, save, render, mac: platform === 'macos' }) : page === 'controls' ? controlsPage() : settingsPage();
+  const panelScroll = root.querySelector('.act-panel')?.scrollTop ?? 0;
+  const active = document.activeElement as HTMLInputElement | null;
+  const focusKey = active?.dataset?.focus;
+  const caret = active && 'selectionStart' in active ? active.selectionStart : null;
+  const body = searchQuery.trim() ? searchPage() : pageBody(page);
   root.replaceChildren(h('div', { class: 'body' }, [nav(), h('main', { class: 'content' }, [body])]));
   const content = root.querySelector('.content');
   if (content) content.scrollTop = scroll;
-  if (searching) root.querySelector<HTMLInputElement>('[data-focus="act-search"]')?.focus();
-  if (page === 'workspaces') workspacesView().shown();
+  const panel = root.querySelector('.act-panel');
+  if (panel) panel.scrollTop = panelScroll;
+  if (focusKey) {
+    const again = root.querySelector<HTMLInputElement>(`[data-focus="${focusKey}"]`);
+    again?.focus();
+    if (again && caret !== null) again.setSelectionRange(caret, caret);
+  }
+  if (page === 'workspaces' && !searchQuery) workspacesView().shown();
+  revealRow();
+}
+
+const widgetsHost = () => ({ settings: () => settings, save, render, mac: platform === 'macos' });
+
+/** Page `p`'s content. */
+function pageBody(p: Page): HTMLElement {
+  switch (p) {
+    case 'activities':
+      return activitiesPage();
+    case 'workspaces':
+      return workspacesView().el;
+    case 'taskbar':
+      return taskbarPage(widgetsHost());
+    case 'widgets':
+      return desktopWidgetsPage(widgetsHost());
+    case 'controls':
+      return controlsPage();
+    case 'behavior':
+      return behaviorPage();
+    case 'alerts':
+      return alertsPage();
+    case 'phone':
+      return phonePage();
+    case 'general':
+      return generalPage();
+    default:
+      return islandPage();
+  }
+}
+
+// ------------------------------------------------------------------ search
+
+/** The pages searched by their rows (Workspaces and Phone keep state of their own and are left out). */
+const SEARCHED: Page[] = ['island', 'taskbar', 'widgets', 'behavior', 'alerts', 'controls', 'general'];
+/** A row to bring into view once its page is drawn (a search result picked). */
+let reveal: string | null = null;
+
+/** Every setting whose name or description has the words in it, and every activity: each opens where it is. */
+function searchPage(): HTMLElement {
+  const q = searchQuery.trim().toLowerCase();
+  const words = q.split(/\s+/).filter(Boolean);
+  const hit = (text: string) => words.every((w) => text.toLowerCase().includes(w));
+  const results: HTMLElement[] = [];
+  const result = (p: Page, where: string, title: string, help: string, open: () => void, ic?: string) =>
+    h('button', { class: 'search-hit', onclick: open }, [
+      h('span', { class: 'hit-ico', html: icon(ic ?? NAV.find((n) => n[0] === p)?.[2] ?? 'settings') }),
+      h('span', { class: 'hit-text' }, [h('small', { text: where }), h('b', { text: title }), help ? h('span', { text: help }) : null]),
+      h('span', { class: 'hit-go', html: icon('chevron-right') }),
+    ]);
+  for (const meta of CATALOG_BY_ID.values()) {
+    if (!activityMatches(meta, q)) continue;
+    results.push(
+      result('activities', 'Activities', meta.name, firstSentence(meta.description), () => {
+        actOpen = meta.id;
+        go('activities');
+      }, meta.icon),
+    );
+  }
+  const seen = new Set<string>();
+  for (const p of SEARCHED) {
+    const label = NAV.find((n) => n[0] === p)?.[1] ?? p;
+    for (const r of Array.from(pageBody(p).querySelectorAll<HTMLElement>('.row'))) {
+      const title = r.querySelector('.row-title')?.textContent?.trim() ?? '';
+      const help = r.querySelector('.row-help')?.textContent?.trim() ?? '';
+      const sect = r.closest('section')?.querySelector('h2')?.textContent?.trim() ?? '';
+      if (!title || !hit(`${title} ${help} ${sect}`) || seen.has(`${p}|${title}`)) continue;
+      seen.add(`${p}|${title}`);
+      results.push(
+        result(p, sect && sect !== title ? `${label} › ${sect}` : label, title, help, () => {
+          reveal = title;
+          go(p);
+        }),
+      );
+    }
+  }
+  return h('div', { class: 'page' }, [
+    h('div', { class: 'page-head' }, [h('h1', { text: 'Search' }), h('p', { text: results.length ? `${results.length} found for “${searchQuery.trim()}”. Pick one to go there.` : `Nothing found for “${searchQuery.trim()}”. Try another word.` })]),
+    h('div', { class: 'search-list' }, results.slice(0, 60)),
+  ]);
+}
+
+/** After a page is drawn: the row a search picked comes into view, lit for a moment. */
+function revealRow(): void {
+  if (!reveal) return;
+  const title = reveal;
+  reveal = null;
+  const r = Array.from(root.querySelectorAll<HTMLElement>('.row')).find((x) => x.querySelector('.row-title')?.textContent?.trim() === title);
+  if (!r) return;
+  r.scrollIntoView({ block: 'center' });
+  r.classList.add('flash');
+  setTimeout(() => r.classList.remove('flash'), 1600);
+}
+
+/** The first sentence of a description, for a one-line summary. */
+function firstSentence(text: string): string {
+  const m = /^(.+?[.!?])(\s|$)/.exec(text);
+  return m ? m[1] : text;
 }
 
 // ------------------------------------------------------------------ workspaces page
@@ -162,78 +307,129 @@ function workspacesView(): WorkspacesPage {
 
 // ------------------------------------------------------------------ activities page
 
-const BANDS: Array<{ id: Band | 'available'; label: string; help: string }> = [
-  { id: 'high', label: 'High', help: 'Take the island first' },
-  { id: 'medium', label: 'Medium', help: 'Shown when nothing high is happening' },
-  { id: 'low', label: 'Low', help: 'Background details' },
-  { id: 'available', label: 'Available', help: 'Off. Drag one up, or flip its switch, to turn it on' },
+/** The categories, as chips over the tiles: all, the ones on, then each kind. */
+const CATEGORIES: Array<[Category | 'all' | 'on', string]> = [
+  ['all', 'All'],
+  ['on', 'On'],
+  ['developer', 'AI & coding'],
+  ['media', 'Music & media'],
+  ['productivity', 'Productivity'],
+  ['system', 'System'],
+  ['communication', 'Messages & calls'],
+  ['network', 'Network'],
 ];
+const PRIORITY_LABEL: Record<string, string> = { high: 'High priority', medium: 'Medium priority', low: 'Low priority' };
 
-function orderedIds(): Array<{ kind: 'band'; band: Band | 'available' } | { kind: 'card'; id: string }> {
-  const out: Array<{ kind: 'band'; band: Band | 'available' } | { kind: 'card'; id: string }> = [];
-  for (const b of BANDS) {
-    out.push({ kind: 'band', band: b.id });
-    for (const id of settings.activities.order) {
-      const c = cfg(id);
-      if (!c || !CATALOG_BY_ID.has(id)) continue;
-      const band = c.enabled && availableHere(id) ? c.priority : 'available';
-      if (band === b.id) out.push({ kind: 'card', id });
-    }
-  }
-  return out;
-}
-
-/** Activities' search: kept across re-renders so a toggle doesn't clear it. */
+/** Activities' search and category: kept across redraws, so a switch doesn't clear them. */
 let actQuery = '';
+let actCat: (typeof CATEGORIES)[number][0] = 'all';
+/** The activity whose panel is open, or null. */
+let actOpen: string | null = null;
 
-/** Shows only the cards that match; the bands hide while searching, as they only make sense in the full list. */
-function filterActivities(list: HTMLElement, empty: HTMLElement): void {
-  const q = actQuery.trim();
-  let shown = 0;
-  for (const el of Array.from(list.children) as HTMLElement[]) {
-    if (el.classList.contains('band')) el.hidden = Boolean(q);
-    else {
-      const meta = CATALOG_BY_ID.get(el.dataset.id ?? '');
-      const ok = !meta || activityMatches(meta, q);
-      el.hidden = !ok;
-      if (ok) shown++;
-    }
-  }
-  list.classList.toggle('searching', Boolean(q));
-  empty.hidden = !q || shown > 0;
-  empty.textContent = `Nothing matches “${q}”.`;
-}
-
+/**
+ * Activities: every one as a tile with its switch, by category, with a search. A tile opens its
+ * panel: how it looks on the island, what it does, and everything it can change.
+ */
 function activitiesPage(): HTMLElement {
-  const list = h('div', { class: 'act-list' });
-  for (const item of orderedIds()) {
-    if (item.kind === 'band') {
-      const b = BANDS.find((x) => x.id === item.band)!;
-      list.append(h('div', { class: 'band', 'data-band': b.id }, [h('span', { class: 'band-name', text: b.label }), h('span', { class: 'band-help', text: b.help })]));
-    } else list.append(activityCard(CATALOG_BY_ID.get(item.id)!));
-  }
-  const empty = h('p', { class: 'muted act-empty' });
-  const input = h('input', { type: 'search', placeholder: 'Search activities', value: actQuery, spellcheck: 'false', 'aria-label': 'Search activities', 'data-focus': 'act-search' }) as HTMLInputElement;
+  const q = actQuery.trim();
+  const shown = settings.activities.order
+    .map((id) => CATALOG_BY_ID.get(id))
+    .filter((m): m is ActivityMeta => Boolean(m && cfg(m.id)))
+    .filter((m) => (actCat === 'all' ? true : actCat === 'on' ? cfg(m.id).enabled || Boolean(m.builtIn) : m.category === actCat))
+    .filter((m) => !q || activityMatches(m, q));
+  const on = settings.activities.order.filter((id) => cfg(id)?.enabled && CATALOG_BY_ID.has(id)).length;
+  const input = h('input', { type: 'search', placeholder: 'Find an activity: music, Claude, battery…', value: actQuery, spellcheck: 'false', 'aria-label': 'Find an activity', 'data-focus': 'act-search' }) as HTMLInputElement;
   input.addEventListener('input', () => {
     actQuery = input.value;
-    filterActivities(list, empty);
+    render();
   });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && input.value) {
-      e.stopPropagation();
-      input.value = actQuery = '';
-      filterActivities(list, empty);
+      e.preventDefault();
+      actQuery = '';
+      render();
     }
   });
-  const search = h('label', { class: 'act-search' }, [h('span', { class: 'ico', html: icon('search') }), input]);
-  filterActivities(list, empty);
+  const chips = h(
+    'div',
+    { class: 'chips' },
+    CATEGORIES.map(([k, label]) => h('button', { class: `chip${actCat === k ? ' on' : ''}`, text: label, onclick: () => { actCat = k; render(); } })),
+  );
+  const grid = h('div', { class: 'act-grid' }, shown.map(activityTile));
   return h('div', { class: 'page' }, [
-    h('div', { class: 'page-head' }, [h('h1', { text: 'Activities' }), h('p', { text: 'What the island shows, how much each thing matters, and how it behaves. Drag to reorder.' })]),
-    sizeCard(),
-    search,
-    list,
-    empty,
+    h('div', { class: 'page-head' }, [h('h1', { text: 'Activities' }), h('p', { text: `Everything the island can show. ${on} on. Flip one on, or open it to see how it looks and change how it behaves.` })]),
+    h('label', { class: 'act-search' }, [h('span', { class: 'ico', html: icon('search') }), input]),
+    chips,
+    shown.length ? grid : h('p', { class: 'muted act-empty', text: q ? `Nothing matches “${q}”.` : 'Nothing here yet.' }),
+    actOpen && CATALOG_BY_ID.has(actOpen) ? activityPanel(CATALOG_BY_ID.get(actOpen)!) : null,
   ]);
+}
+
+/** One activity's tile: its icon, name, what it does in a line, how much it matters, and its switch. */
+function activityTile(meta: ActivityMeta): HTMLElement {
+  const c = cfg(meta.id);
+  const reason = unavailableReason(meta.id);
+  const enabled = (c.enabled || Boolean(meta.builtIn)) && !reason;
+  const control = reason
+    ? h('span', { class: 'act-soon', text: reason })
+    : meta.builtIn
+      ? h('span', { class: 'act-soon', text: 'Built in' })
+      : toggle(c.enabled, (v) => {
+          c.enabled = v;
+          save(true);
+          render();
+        }, `Turn ${meta.name} ${c.enabled ? 'off' : 'on'}`);
+  const tile = h('div', { class: `act-tile${enabled ? ' on' : ''}${reason ? ' unavailable' : ''}`, role: 'button', tabindex: '0', 'data-id': meta.id, title: `Open ${meta.name}` }, [
+    h('div', { class: 'tile-top' }, [h('span', { class: `act-icon i-${meta.id}`, html: icon(meta.icon) }), control]),
+    h('b', { class: 'tile-name', text: meta.name }),
+    h('span', { class: 'tile-desc', text: firstSentence(meta.description), title: meta.description }),
+    h('span', { class: 'tile-foot' }, [enabled ? h('span', { class: `prio p-${c.priority}`, text: PRIORITY_LABEL[c.priority] ?? '' }) : h('span', { class: 'prio off', text: reason ? 'Not on this computer' : 'Off' }), h('span', { class: 'tile-open', html: icon('chevron-right') })]),
+  ]);
+  const open = () => {
+    actOpen = meta.id;
+    render();
+  };
+  tile.addEventListener('click', open);
+  tile.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      open();
+    }
+  });
+  return tile;
+}
+
+/** An activity's panel over the tiles: its preview, what it does, its switch, and all its options. */
+function activityPanel(meta: ActivityMeta): HTMLElement {
+  const c = cfg(meta.id);
+  const reason = unavailableReason(meta.id);
+  const close = () => {
+    actOpen = null;
+    render();
+  };
+  const head = h('div', { class: 'panel-head' }, [
+    h('span', { class: `act-icon big i-${meta.id}`, html: icon(meta.icon) }),
+    h('div', { class: 'panel-title' }, [h('h2', { text: meta.name }), h('span', { class: 'muted', text: reason ?? (meta.builtIn ? 'Built in: always on' : c.enabled ? 'On' : 'Off') })]),
+    reason || meta.builtIn
+      ? null
+      : toggle(c.enabled, (v) => {
+          c.enabled = v;
+          save(true);
+          render();
+        }, `Turn ${meta.name} ${c.enabled ? 'off' : 'on'}`),
+    h('button', { class: 'panel-x', html: icon('x'), title: 'Close (Esc)', onclick: close }),
+  ]);
+  const panel = h('aside', { class: 'act-panel', role: 'dialog', 'aria-label': meta.name }, [
+    head,
+    activityPreview(meta, c, settings),
+    h('p', { class: 'panel-desc', text: meta.description }),
+    h('section', { class: 'card section' }, [h('h2', { text: 'Settings' }), cardBody(meta)]),
+  ]);
+  const wrap = h('div', { class: 'act-panel-wrap' }, [panel]);
+  wrap.addEventListener('click', (e) => {
+    if (e.target === wrap) close();
+  });
+  return wrap;
 }
 
 /** What Priority means, under its switch on every activity. */
@@ -253,33 +449,6 @@ const BEHAVIORS: Array<[keyof Pick<ActivityConfig, 'autoShow' | 'persistent' | '
   ['interactive', 'Interactive', 'Its buttons work right on the island: pause, Accept, Open. Off: the island only shows it.'],
   ['interrupt', 'Interrupt', 'Lets it take over the island for urgent moments, like a permission request or a timer going off, even over something with a higher priority. Off: those moments wait their turn.'],
 ];
-
-function activityCard(meta: ActivityMeta): HTMLElement {
-  const c = cfg(meta.id);
-  const open = openCards.has(meta.id);
-  // On a Mac, what it cannot run yet says so instead of offering a switch.
-  const reason = unavailableReason(meta.id);
-  const card = h('div', { class: `act-card${c.enabled && !reason ? '' : ' off'}${reason ? ' unavailable' : ''}${open ? ' open' : ''}`, 'data-id': meta.id });
-  const head = h('div', { class: 'act-head' }, [
-    h('span', { class: 'grip', html: icon('more'), title: 'Drag to reorder' }),
-    h('span', { class: 'act-icon', html: icon(meta.icon) }),
-    h('div', { class: 'act-text' }, [h('div', { class: 'act-name', text: meta.name }), h('div', { class: 'act-desc', text: meta.description, title: open ? '' : meta.description })]),
-    reason
-      ? h('span', { class: 'act-soon', text: reason })
-      : meta.builtIn
-        ? h('span', { class: 'act-soon', text: 'Built in', title: `${meta.name} is part of Island and always on` })
-        : toggle(c.enabled, (v) => {
-            c.enabled = v;
-            save(true);
-            flipRender();
-          }, `Enable ${meta.name}`),
-    h('button', { class: 'chev', html: icon('chevron-down'), title: open ? 'Collapse' : 'Options', onclick: (e: Event) => { e.stopPropagation(); toggleCard(meta.id); } }),
-  ]);
-  head.addEventListener('pointerdown', (e) => startDrag(e as PointerEvent, card));
-  card.append(head);
-  if (open) card.append(cardBody(meta));
-  return card;
-}
 
 function cardBody(meta: ActivityMeta): HTMLElement {
   const c = cfg(meta.id);
@@ -499,174 +668,9 @@ function dragStat(e: PointerEvent, line: HTMLElement, list: HTMLElement, done: (
   grip.addEventListener('pointercancel', up);
 }
 
-function toggleCard(id: string): void {
-  const card = root.querySelector<HTMLElement>(`.act-card[data-id="${id}"]`);
-  if (openCards.has(id)) openCards.delete(id);
-  else openCards.add(id);
-  if (!card) return render();
-  const before = card.getBoundingClientRect().height;
-  const others = captureRects();
-  card.classList.toggle('open', openCards.has(id));
-  card.querySelector('.act-body')?.remove();
-  if (openCards.has(id)) card.append(cardBody(CATALOG_BY_ID.get(id)!));
-  const after = card.getBoundingClientRect().height;
-  springAnimate(card, [{ height: `${before}px` }, { height: `${after}px` }], springs.content);
-  playFlip(others);
-}
-
-// ------------------------------------------------------------------ fluid reordering (FLIP + springs)
-
-function captureRects(): Map<string, DOMRect> {
-  const m = new Map<string, DOMRect>();
-  root.querySelectorAll<HTMLElement>('.act-card, .band').forEach((el) => m.set(el.dataset.id ?? `band-${el.dataset.band}`, el.getBoundingClientRect()));
-  return m;
-}
-
-function playFlip(before: Map<string, DOMRect>): void {
-  root.querySelectorAll<HTMLElement>('.act-card, .band').forEach((el) => {
-    const key = el.dataset.id ?? `band-${el.dataset.band}`;
-    const was = before.get(key);
-    if (!was) {
-      springAnimate(el, [{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'none' }], springs.content);
-      return;
-    }
-    const now = el.getBoundingClientRect();
-    const dy = was.top - now.top;
-    if (Math.abs(dy) < 0.5) return;
-    springAnimate(el, [{ transform: `translateY(${dy}px)` }, { transform: 'none' }], springs.content);
-  });
-}
-
+/** Things that change an activity's state just draw the page again (the tiles animate in CSS). */
 function flipRender(): void {
-  const before = captureRects();
   render();
-  playFlip(before);
-}
-
-interface DragState {
-  card: HTMLElement;
-  id: string;
-  startY: number;
-  items: HTMLElement[];
-  tops: number[];
-  heights: number[];
-  from: number;
-  to: number;
-  gap: number;
-  self: SpringSet<'y' | 's'>;
-  others: Map<HTMLElement, SpringSet<'y'>>;
-  started: boolean;
-}
-let drag: DragState | null = null;
-
-function startDrag(e: PointerEvent, card: HTMLElement): void {
-  if (e.button !== 0 || (e.target as HTMLElement).closest('.switch, .chev, input, button:not(.grip)')) return;
-  const items = [...root.querySelectorAll<HTMLElement>('.act-list > *')];
-  const rects = items.map((el) => el.getBoundingClientRect());
-  const from = items.indexOf(card);
-  drag = {
-    card,
-    id: card.dataset.id!,
-    startY: e.clientY,
-    items,
-    tops: rects.map((r) => r.top),
-    heights: rects.map((r) => r.height),
-    from,
-    to: from,
-    gap: rects.length > 1 ? Math.max(0, rects[1].top - rects[0].bottom) : 8,
-    self: new SpringSet({ y: 0, s: 1 }, (v) => { card.style.transform = `translateY(${v.y}px) scale(${v.s})`; }, springs.drag),
-    others: new Map(),
-    started: false,
-  };
-  card.setPointerCapture(e.pointerId);
-  card.addEventListener('pointermove', onDragMove);
-  card.addEventListener('pointerup', onDragEnd, { once: true });
-  card.addEventListener('pointercancel', onDragEnd, { once: true });
-}
-
-function onDragMove(e: PointerEvent): void {
-  const d = drag;
-  if (!d) return;
-  const dy = e.clientY - d.startY;
-  if (!d.started) {
-    if (Math.abs(dy) < 5) return;
-    d.started = true;
-    dragging = true;
-    d.card.classList.add('dragging');
-    d.self.set({ s: 1.03 }, { config: springs.snappy });
-  }
-  d.self.set({ y: dy }, { config: springs.drag });
-  // Where would the card's centre land? Never above the first band header.
-  const centre = d.tops[d.from] + d.heights[d.from] / 2 + dy;
-  let to = d.from;
-  for (let i = 0; i < d.items.length; i++) {
-    if (i === d.from) continue;
-    const mid = d.tops[i] + d.heights[i] / 2;
-    if (i < d.from && centre < mid) to = Math.min(to, i);
-    if (i > d.from && centre > mid) to = Math.max(to, i);
-  }
-  to = Math.max(1, to);
-  if (to === d.to) return;
-  d.to = to;
-  const shift = d.heights[d.from] + d.gap;
-  d.items.forEach((el, i) => {
-    if (i === d.from) return;
-    let target = 0;
-    if (d.from < d.to && i > d.from && i <= d.to) target = -shift;
-    if (d.from > d.to && i >= d.to && i < d.from) target = shift;
-    let s = d.others.get(el);
-    if (!s) {
-      s = new SpringSet({ y: 0 }, (v) => { el.style.transform = v.y ? `translateY(${v.y}px)` : ''; }, springs.content);
-      d.others.set(el, s);
-    }
-    s.set({ y: target }, { config: springs.content });
-  });
-}
-
-function onDragEnd(): void {
-  const d = drag;
-  drag = null;
-  if (!d) return;
-  d.card.removeEventListener('pointermove', onDragMove);
-  if (!d.started) {
-    dragging = false;
-    return;
-  }
-  // Settle into the gap, then commit the new order and band.
-  const slotTop = d.to > d.from ? d.tops[d.to] + d.heights[d.to] - d.heights[d.from] : d.tops[d.to];
-  d.self.set({ y: slotTop - d.tops[d.from], s: 1 }, { config: springs.content });
-  d.self.onRest(() => {
-    const seq = d.items.map((el) => el.dataset.id ?? `band:${el.dataset.band}`);
-    const [moved] = seq.splice(d.from, 1);
-    seq.splice(d.to, 0, moved);
-    let band: string = 'high';
-    const order: string[] = [];
-    for (const key of seq) {
-      if (key.startsWith('band:')) {
-        band = key.slice(5);
-        continue;
-      }
-      order.push(key);
-      if (key === d.id) {
-        const c = cfg(key);
-        // A built-in one (Land) cannot be turned off: dropped on Available, it goes back to its band.
-        if (band === 'available') c.enabled = CATALOG_BY_ID.get(key)?.builtIn === true;
-        else {
-          c.enabled = true;
-          c.priority = band as Band;
-        }
-      }
-    }
-    for (const id of settings.activities.order) if (!order.includes(id)) order.push(id);
-    settings.activities.order = order;
-    save(true);
-    d.card.classList.remove('dragging');
-    dragging = false;
-    const before = new Map<string, DOMRect>();
-    d.items.forEach((el) => before.set(el.dataset.id ?? `band-${el.dataset.band}`, el.getBoundingClientRect()));
-    render();
-    playFlip(before);
-  });
 }
 
 // ------------------------------------------------------------------ size + position
@@ -1369,7 +1373,8 @@ function privacyNote(mac: boolean): string {
   return `Island only goes online for what you turn on: ${list}. With Update automatically on, it also asks GitHub for a newer Island every 6 hours. Questions the bot answers with Local never leave ${thisComputer()}.`;
 }
 
-function settingsPage(): HTMLElement {
+/** The old one-page Settings, split by `part` into the sidebar's pages (by section). */
+function settingsPage(part: 'island' | 'behavior' | 'alerts' | 'phone' | 'general'): HTMLElement {
   const s = settings;
   const i = s.island;
   const g = s.general;
@@ -1413,15 +1418,16 @@ function settingsPage(): HTMLElement {
     save();
   });
   const glassSlider = h('div', { class: 'glass-slider' }, [h('span', { class: 'muted', text: 'Clear' }), glass, h('span', { class: 'muted', text: 'Tinted' })]);
-  return h('div', { class: 'page' }, [
-    h('div', { class: 'page-head' }, [h('h1', { text: 'Settings' }), h('p', { text: 'How Island looks and behaves everywhere.' })]),
+  const secs: HTMLElement[] = [
     section('Appearance', [
       row('Pill colour', 'The whole island, card included.', segmented(i.color, [['black', 'Black'], ['white', 'White'], ['matte-white', 'Matte white'], ['matte-black', 'Matte black'], ['glass', 'Glass']], (v) => { i.color = v; save(true); render(); })),
       ...(i.color === 'glass' ? [row('Glass', 'Clear is more see-through; tinted lets less of what is behind show through.', glassSlider)] : []),
       row('Accent', null, accents),
       row('Bot', 'A little bot beside the pill, in your accent colour. It reacts to what happens; click it to talk to it.', toggle(i.bot, (v) => { i.bot = v; save(true); render(); })),
       row('Size', 'Pill height and text size.', segmented(i.size, [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], (v) => { i.size = v; save(true); render(); })),
-      row('Distance from the edge', 'Gap between the island and its screen edge.', edge),
+      // Like the taskbar's Blend into the bottom; floating stays the default.
+      row(blendLabel(i.anchor), `Sits on the screen's ${i.anchor} edge, flat along it, instead of floating ${i.anchor === 'top' ? 'below' : i.anchor === 'bottom' ? 'above' : 'beside'} it.`, toggle(i.blend, (v) => { i.blend = v; save(true); render(); })),
+      ...(i.blend ? [] : [row('Distance from the edge', 'Gap between the island and its screen edge.', edge)]),
       row('When nothing is happening', null, segmented(i.idle, [['pill', 'Small pill'], ['hidden', 'Tuck away']], (v) => { i.idle = v; save(true); render(); })),
       row('Reduce motion', 'Springs jump straight to their end.', segmented(i.reduceMotion, [['system', 'System'], ['on', 'On'], ['off', 'Off']], (v) => { i.reduceMotion = v; save(true); render(); })),
       row('When pointed at', 'How an activity grows when you point at it. Each one can override this in Activities.', segmented(i.defaultGrows, [['wide', 'Sideways'], ['card', 'Into a card']], (v) => { i.defaultGrows = v; save(true); render(); })),
@@ -1481,8 +1487,30 @@ function settingsPage(): HTMLElement {
         h('button', { class: 'btn danger', text: 'Quit Island', onclick: () => void native.quit() }),
       ]),
     ]),
+  ];
+  const titled = (el: HTMLElement) => el.querySelector('h2')?.textContent?.trim() ?? '';
+  const KNOWN = ['Appearance', 'Display', 'Behavior', 'Startup', 'Notifications', 'Privacy', 'About'];
+  const parts: Record<typeof part, { title: string; sub: string; keep: (t: string) => boolean; preview?: HTMLElement }> = {
+    island: { title: 'Island', sub: 'How the island looks, where it sits and how wide it gets.', keep: (t) => t === 'Appearance' || t === 'Display', preview: islandPreview(s) },
+    behavior: { title: 'Behavior', sub: 'How the island acts when you point at it, click it, or work full screen.', keep: (t) => t === 'Behavior' },
+    alerts: { title: 'Alerts', sub: 'Notifications and sounds when something finishes or needs you.', keep: (t) => t === 'Notifications', preview: alertPreview(s, (k) => void playSound(k, s.general.sound)) },
+    phone: { title: 'Phone', sub: 'Island on your phone.', keep: (t) => !KNOWN.includes(t) },
+    general: { title: 'General', sub: 'Startup, privacy and about.', keep: (t) => t === 'Startup' || t === 'Privacy' || t === 'About' },
+  };
+  const pp = parts[part];
+  return h('div', { class: 'page' }, [
+    h('div', { class: 'page-head' }, [h('h1', { text: pp.title }), h('p', { text: pp.sub })]),
+    pp.preview ? h('div', { class: 'preview-dock' }, [pp.preview]) : null,
+    ...secs.filter((el) => pp.keep(titled(el))),
+    part === 'island' ? sizeCard() : null,
   ]);
 }
+
+const islandPage = () => settingsPage('island');
+const behaviorPage = () => settingsPage('behavior');
+const alertsPage = () => settingsPage('alerts');
+const phonePage = () => settingsPage('phone');
+const generalPage = () => settingsPage('general');
 
 // ------------------------------------------------------------------ controls page
 
@@ -1862,6 +1890,17 @@ async function boot(): Promise<void> {
   render();
   window.addEventListener('keydown', (e) => {
     // A page that handles Escape itself (Workspaces: back, cancel) says so with preventDefault.
+    // Escape closes an activity's panel, then clears a search, and only then the window.
+    if (e.key === 'Escape' && !e.defaultPrevented && actOpen) {
+      actOpen = null;
+      render();
+      return;
+    }
+    if (e.key === 'Escape' && !e.defaultPrevented && searchQuery) {
+      searchQuery = '';
+      render();
+      return;
+    }
     if (e.key === 'Escape' && isTauri && !e.defaultPrevented) void getCurrentWindow().close();
   });
   void cloneSettings;

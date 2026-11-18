@@ -202,6 +202,13 @@ html.peek #stage {
   z-index: -1;
 }
 
+/* Blend into the edge (Settings › Appearance): the pill sits on its screen edge, its corners there
+   square (renderer.ts), and so does a card grown out of it (sheet.ts). The border glow's ring follows. */
+html[data-blend='top'] .glow:is(.of-pill, .of-grown) .ring { border-top-left-radius: 0; border-top-right-radius: 0; }
+html[data-blend='bottom'] .glow:is(.of-pill, .of-grown) .ring { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+html[data-blend='left'] .glow:is(.of-pill, .of-grown) .ring { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+html[data-blend='right'] .glow:is(.of-pill, .of-grown) .ring { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+
 /* ------------------------------------------------------------------ the bot's bubble */
 
 .bubble {
@@ -1476,12 +1483,19 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
 .sb-tiles .dot.on { background: var(--fg); transform: scale(1.15); }
 .sb-tiles .tray {
   display: flex;
-  flex-wrap: wrap;
+  /* one row that scrolls sideways (Moss: the wrapped tray took too much room) */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   gap: 8px;
   padding-top: 8px;
   border-top: 1px solid rgba(var(--ink), 0.1);
+  /* the row's ends fade, so tiles past them read as more to scroll to */
+  mask-image: linear-gradient(to right, transparent, #000 14px, #000 calc(100% - 14px), transparent);
 }
-.sb-tiles .tray .tile { width: var(--cell, 104px); height: var(--cell, 104px); }
+.sb-tiles .tray::-webkit-scrollbar { display: none; }
+.sb-tiles .tray .tile { flex: none; width: var(--cell, 104px); height: var(--cell, 104px); }
 .tile {
   position: relative;
   box-sizing: border-box;
@@ -2112,10 +2126,11 @@ html[data-pill='glass'] .sb-tiles.editing ~ .sb-buttons {
 .dock-window, .dock-window body { background: transparent; overflow: hidden; }
 .dock {
   position: absolute;
-  left: 12px;
+  /* The bar's zoom (its Size) would scale these too: --dk-z (dock.ts) divides it back out. */
+  left: calc(12px / var(--dk-z, 1));
   /* 12px over the window's bottom (BAR_BELOW in dock.rs). The window is 4px plus room for icons
      rising under the pointer (HEADROOM in dock.ts) taller than that, more while a card is up. */
-  bottom: 12px;
+  bottom: calc(12px / var(--dk-z, 1));
   z-index: 1;
   display: flex;
   align-items: center;
@@ -2239,7 +2254,8 @@ html[data-pill='glass'] .dock { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45
   margin-left: -23px;
   pointer-events: none;
   opacity: 0;
-  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease;
+  will-change: transform;
+  transition: transform 0.62s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.35s ease;
 }
 .dock .dk-spot::before {
   content: '';
@@ -2262,9 +2278,9 @@ html[data-pill='glass'] .dock { box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.45
   background: linear-gradient(to bottom, rgba(var(--ink), 0.24), rgba(var(--ink), 0.05) 70%, rgba(var(--ink), 0));
   clip-path: polygon(20% 0, 80% 0, 100% 100%, 0 100%);
 }
-html[data-dstyle='spotlight'] .dock .dk-spot.on { opacity: 1; }
+html.dk-spotlight .dock .dk-spot.on { opacity: 1; }
 /* The light marks the app in front, so its dot is a plain one. */
-html[data-dstyle='spotlight'] .dock .dk-app.front .dk-dot { width: 4px; margin-left: -2px; background: currentColor; }
+html.dk-spotlight .dock .dk-app.front .dk-dot { width: 4px; margin-left: -2px; background: currentColor; }
 
 /* Glide: a soft highlight slides behind what the pointer is on, and its name rides along over the bar. */
 .dock .dk-glow {
@@ -2277,8 +2293,8 @@ html[data-dstyle='spotlight'] .dock .dk-app.front .dk-dot { width: 4px; margin-l
   opacity: 0;
   transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1), height 0.32s ease, opacity 0.18s ease;
 }
-html[data-dstyle='glide'] .dock .dk-glow.on { opacity: 1; }
-html[data-dstyle='glide'] .dock button:hover, html[data-dstyle='glide'] .dock button:active { background: transparent; }
+html.dk-glide .dock .dk-glow.on { opacity: 1; }
+html.dk-glide .dock button:hover, html.dk-glide .dock button:active { background: transparent; }
 .dk-label {
   position: absolute;
   bottom: 0;
@@ -2299,7 +2315,7 @@ html[data-dstyle='glide'] .dock button:hover, html[data-dstyle='glide'] .dock bu
   translate: 0 6px;
   transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease, translate 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
-html[data-dstyle='glide'] .dk-label.on { opacity: 1; translate: 0 0; }
+html.dk-glide .dk-label.on { opacity: 1; translate: 0 0; }
 .dk-label span { padding: 0 12px; }
 .dk-label span.in-r { animation: dk-in-r 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
 .dk-label span.in-l { animation: dk-in-l 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
@@ -2309,6 +2325,51 @@ html[data-dstyle='glide'] .dk-label.on { opacity: 1; translate: 0 0; }
 /* Blend into the bottom: the bar sits on the screen's bottom edge (dock.rs puts the window there), over
    Windows' taskbar, flat along the edge. */
 html.dock-edge .dock { border-radius: 18px 18px 0 0; box-shadow: 0 -10px 28px -16px rgba(0, 0, 0, 0.6); }
+/* Melt the ends: each end of the bar curves out into the edge, from its top corner down (MELT in
+   dock.ts, which draws the ends' shapes as masks). The pill's background reaches under both feet, cut
+   to the shape, so its gradients run on without a seam. The rim follows the outline down each foot
+   to the edge; the bar's sides and bottom have none of their own. */
+html.dock-melt:not(.dk-upright) .dock { left: calc(12px / var(--dk-z, 1) + var(--dk-melt-out)); }
+html.dock-melt.dk-upright .dock { top: calc(12px / var(--dk-z, 1) + var(--dk-melt-out)); }
+/* The masks are made for the bar's side (dock.ts meltMasks): its feet run along that edge. */
+html.dock-melt .dock-bg {
+  border-radius: 0;
+  box-shadow: none;
+  -webkit-mask: var(--dk-mask-fill);
+  mask: var(--dk-mask-fill);
+}
+html.dock-melt:not(.dk-upright) .dock-bg { left: calc(-1 * var(--dk-melt-out)); right: calc(-1 * var(--dk-melt-out)); }
+html.dock-melt.dk-upright .dock-bg { top: calc(-1 * var(--dk-melt-out)); bottom: calc(-1 * var(--dk-melt-out)); }
+/* the light along the bar's top, round its corners as without the melt (along the bottom; on the other
+   sides the rim alone lines the inner edge) */
+html.dock-melt:not([data-side='bottom']) .dock-bg::before { display: none; }
+html.dock-melt .dock-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0 var(--dk-melt-out);
+  border-radius: 18px 18px 0 0;
+  /* a top border, not an inset shadow: that one leaves a hairline down the bar's sides */
+  border-top: 1px solid rgba(var(--ink), 0.08);
+}
+/* the rim: the outline's two ends, and the top between them */
+html.dock-melt .dock-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--dk-rim);
+  -webkit-mask: var(--dk-mask-rim);
+  mask: var(--dk-mask-rim);
+}
+/* each colour's rim and light, as on the bar without the melt */
+html.dock-melt { --dk-rim: rgba(var(--ink), 0.1); }
+html.dock-melt[data-pill='matte-white'] { --dk-rim: rgba(0, 0, 0, 0.16); }
+html.dock-melt[data-pill='matte-white'] .dock-bg::before { border-top: 2px solid rgba(255, 255, 255, 0.8); }
+html.dock-melt[data-pill='matte-black'] { --dk-rim: rgba(255, 255, 255, 0.2); }
+html.dock-melt[data-pill='matte-black'] .dock-bg::before { border-top-color: rgba(255, 255, 255, 0.32); }
+html.dock-melt[data-pill='glass'] { --dk-rim: rgba(255, 255, 255, 0.22); }
+html.dock-melt[data-pill='glass'] .dock-bg { box-shadow: inset 0 -10px 16px -12px rgba(255, 255, 255, 0.35); }
+/* glass: its glow along the bottom runs under the feet; the one round its sides stays on the top */
+html.dock-melt[data-pill='glass'] .dock-bg::before { border-top-color: transparent; box-shadow: inset 0 10px 14px -10px rgba(255, 255, 255, 0.1); }
 
 .dk-tip { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px 11px; white-space: nowrap; pointer-events: none; }
 .dk-tip-head { font: 600 10px/1 var(--font); letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.5; }
@@ -2480,4 +2541,223 @@ html.widget-window .sheet, html.widget-window .sheet-shadow { box-shadow: none !
 
 /* the browser preview of the taskbar (/?dock): at the bottom middle, over a wallpaper-ish backdrop */
 html.dock-preview, html.dock-preview body { background: radial-gradient(ellipse at 20% 90%, #6b4a3a, transparent 55%), linear-gradient(#1d2129, #2a2f3a); }
-html.dock-preview .dock { left: 50%; top: auto; bottom: 18px; transform: translateX(-50%); }
+html.dock-window.dock-preview .dock { left: 50%; top: auto; bottom: 18px; right: auto; transform: translateX(-50%); }
+html.dock-window.dock-preview.dock-edge .dock { bottom: 0; }
+html.dock-window.dock-preview[data-side='top'] .dock { top: 18px; bottom: auto; }
+html.dock-window.dock-preview.dock-edge[data-side='top'] .dock { top: 0; }
+html.dock-window.dock-preview.dk-upright .dock { left: 18px; top: 50%; bottom: auto; transform: translateY(-50%); }
+html.dock-window.dock-preview.dock-edge[data-side='left'] .dock { left: 0; }
+html.dock-window.dock-preview[data-side='right'] .dock { left: auto; right: 18px; }
+html.dock-window.dock-preview.dock-edge[data-side='right'] .dock { right: 0; }
+/* the screen border in the preview (the real one is the frame window, src/core/frame.ts) */
+.dock-preview-frame { position: fixed; inset: 0; pointer-events: none; border: var(--frame-w, 3px) solid var(--frame-c, #040405); border-radius: 0; z-index: 0; }
+
+/* ------------------------------------------------------------------ the taskbar on a side or the top
+   (Settings › Taskbar › Position). The bar keeps its look; upright on the left or right, its items
+   stack and the long ones (what is playing, the clock, Claude's limits) shorten to fit its width. */
+html[data-side='top'] .dock { bottom: auto; top: calc(12px / var(--dk-z, 1)); }
+html.dk-upright .dock { bottom: auto; top: calc(12px / var(--dk-z, 1)); flex-direction: column; width: 52px; height: auto; padding: 10px 0; }
+html[data-side='right'] .dock { left: auto; right: calc(12px / var(--dk-z, 1)); }
+html.dock-edge[data-side='top'] .dock { border-radius: 0 0 18px 18px; box-shadow: 0 10px 28px -16px rgba(0, 0, 0, 0.6); }
+html.dock-edge[data-side='left'] .dock { border-radius: 0 18px 18px 0; box-shadow: 10px 0 28px -16px rgba(0, 0, 0, 0.6); }
+html.dock-edge[data-side='right'] .dock { border-radius: 18px 0 0 18px; box-shadow: -10px 0 28px -16px rgba(0, 0, 0, 0.6); }
+/* the gap in the top bar's middle where the island sits */
+.dock .dk-gap { flex: none; align-self: stretch; }
+/* the arrow points the way its card opens */
+html[data-side='top'] .dock .dk-start svg { transform: rotate(180deg); }
+html[data-side='top'] .dock .dk-start.on svg { transform: rotate(0deg); }
+html[data-side='left'] .dock .dk-start svg { transform: rotate(90deg); }
+html[data-side='left'] .dock .dk-start.on svg { transform: rotate(270deg); }
+html[data-side='right'] .dock .dk-start svg { transform: rotate(-90deg); }
+html[data-side='right'] .dock .dk-start.on svg { transform: rotate(90deg); }
+/* upright: one column */
+html.dk-upright .dock .dk-apps { flex-direction: column; }
+html.dk-upright .dock button { width: 40px; height: auto; min-height: 40px; padding: 5px 0; box-sizing: border-box; }
+html.dk-upright .dock .dk-app { height: 40px; }
+html.dk-upright .dock .dk-sep { width: 26px; height: 1px; margin: 6px 0; }
+html.dk-upright .dock .dk-music { padding: 5px 0; max-width: none; }
+html.dk-upright .dock .dk-mtext { display: none; }
+html.dk-upright .dock .dk-timer { flex-direction: column; gap: 3px; }
+html.dk-upright .dock .dk-timer span { font-size: 11px; letter-spacing: 0; }
+html.dk-upright .dock .dk-claude span { white-space: pre-line; font-size: 10.5px; line-height: 1.3; text-align: center; }
+html.dk-upright .dock .dk-batt { flex-direction: column; gap: 4px; }
+html.dk-upright .dock .dk-batt > span { font-size: 10px; }
+html.dk-upright .dock .dk-clock { gap: 3px; }
+html.dk-upright .dock .dk-clock b { font-size: 12.5px; }
+html.dk-upright .dock .dk-clock span { font-size: 10px; }
+/* each icon rises away from the screen's edge */
+html[data-side='top'] .dock .dk-ico { transform-origin: 50% 0; }
+html[data-side='left'] .dock .dk-ico { transform-origin: 0 50%; }
+html[data-side='right'] .dock .dk-ico { transform-origin: 100% 50%; }
+/* the running dot on the edge side of the icon */
+html[data-side='top'] .dock .dk-dot { bottom: auto; top: 2px; }
+html.dk-upright .dock .dk-dot { bottom: auto; left: 2px; top: 50%; width: 3px; height: 5px; margin: -2.5px 0 0 0; transition: height 0.18s ease, margin 0.18s ease, opacity 0.18s ease; }
+html[data-side='right'] .dock .dk-dot { left: auto; right: 2px; }
+html.dk-upright .dock .dk-app.front .dk-dot { width: 3px; height: 16px; margin: -8px 0 0 0; }
+html.dk-spotlight.dk-upright .dock .dk-app.front .dk-dot { width: 3px; height: 4px; margin: -2px 0 0 0; }
+/* Spotlight: its line on the bar's inner edge, its light shining back toward the screen's edge */
+html[data-side='top'] .dock .dk-spot::before { top: auto; bottom: 0; border-radius: 3px 3px 0 0; }
+html[data-side='top'] .dock .dk-spot::after { top: 5px; bottom: 3px; background: linear-gradient(to top, rgba(var(--ink), 0.24), rgba(var(--ink), 0.05) 70%, rgba(var(--ink), 0)); clip-path: polygon(0 0, 100% 0, 80% 100%, 20% 100%); }
+html.dk-upright .dock .dk-spot { width: 100%; height: 46px; margin: -23px 0 0 0; }
+html.dk-upright .dock .dk-spot::before { top: 8px; bottom: 8px; left: auto; right: 0; width: 3px; height: auto; border-radius: 3px 0 0 3px; }
+html.dk-upright .dock .dk-spot::after { top: 0; bottom: 0; left: 5px; right: 3px; background: linear-gradient(to left, rgba(var(--ink), 0.24), rgba(var(--ink), 0.05) 70%, rgba(var(--ink), 0)); clip-path: polygon(0 0, 100% 20%, 100% 80%, 0 100%); }
+html[data-side='right'] .dock .dk-spot::before { right: auto; left: 0; border-radius: 0 3px 3px 0; }
+html[data-side='right'] .dock .dk-spot::after { left: 3px; right: 5px; background: linear-gradient(to right, rgba(var(--ink), 0.24), rgba(var(--ink), 0.05) 70%, rgba(var(--ink), 0)); clip-path: polygon(0 20%, 100% 0, 100% 100%, 0 80%); }
+/* the room for cards and the name: below a top bar, beside an upright one */
+html.dk-upright .dk-above { top: 0; bottom: 0; left: auto; right: auto; width: 0; height: auto; }
+html[data-side='top'] .dk-pop { bottom: auto; top: 0; transform: translateY(calc(-100% - 8px)) scale(0.96); transform-origin: 50% 0; }
+html[data-side='left'] .dk-pop { bottom: auto; top: 12px; left: 0; transform: translateX(calc(-100% - 8px)) scale(0.96); transform-origin: 0 50%; }
+html[data-side='right'] .dk-pop { bottom: auto; top: 12px; left: auto; right: 0; transform: translateX(calc(100% + 8px)) scale(0.96); transform-origin: 100% 50%; }
+html .dk-pop.up { opacity: 1; transform: none; }
+html[data-side='top'] .dk-label { bottom: auto; top: 0; translate: 0 -6px; }
+html.dk-upright .dk-label { bottom: auto; top: 0; translate: -6px 0; }
+html[data-side='right'] .dk-label { left: auto; right: 0; translate: 6px 0; }
+html.dk-glide .dk-label.on { translate: 0 0; }
+
+/* ------------------------------------------------------------------ the screen border (src/core/frame.ts)
+   A thin line round the screen in the taskbar's look, joining it and the island; the notches come out of
+   it as the taskbar's ends do. The window takes no clicks but on the notches. */
+html.frame-window, html.frame-window body { background: transparent; overflow: hidden; }
+html.frame-window #stage { position: fixed; inset: 0; pointer-events: none; }
+html.frame-window { --fr-rim: none; --fr-fill: none; --dk-rim: rgba(var(--ink), 0.1); }
+html.frame-window[data-pill='matte-white'] { --dk-rim: rgba(0, 0, 0, 0.16); }
+html.frame-window[data-pill='matte-black'] { --dk-rim: rgba(255, 255, 255, 0.2); }
+html.frame-window[data-pill='glass'] { --dk-rim: rgba(255, 255, 255, 0.22); }
+.fr-border { position: absolute; inset: 0; background: var(--fr-bg, var(--pill)); -webkit-mask: var(--fr-fill); mask: var(--fr-fill); transition: opacity 0.24s ease; }
+/* the rim along the line's inner edge, the taskbar's rim carried on round the screen */
+.fr-border::after { content: ''; position: absolute; inset: 0; background: var(--dk-rim); -webkit-mask: var(--fr-rim); mask: var(--fr-rim); }
+/* a gradient look over the whole screen would streak across the line: each keeps its own colour at its ends */
+html.frame-window[data-pill='matte-white'] { --fr-bg: linear-gradient(180deg, #eef0f2, #e4e6e9); }
+html.frame-window[data-pill='matte-black'] { --fr-bg: linear-gradient(180deg, #1a1b1e, #121315); }
+html.frame-window.fr-full :is(.fr-border, .notch, .fr-glow, .fr-label) { opacity: 0; }
+
+/* a notch: the taskbar's look, upright, its ends melting into the line (dock.ts meltMasks) */
+.notch { position: absolute; left: 0; pointer-events: auto; transition: opacity 0.24s ease; color: var(--fg); font-family: var(--font); user-select: none; --nk: 0.3; }
+.notch[data-side='right'] { left: auto; right: 0; }
+.notch[hidden] { display: none; }
+.notch-in { position: relative; display: flex; flex-direction: column; align-items: center; width: 52px; padding: 10px 0; box-sizing: border-box; isolation: isolate; }
+/* Tucked it is the same notch, as long, only --nk of its thickness out of the edge; pointed at, it widens
+   out of the border as one shape (its masks stretch with it), and its icons come in once it is out. */
+.notch-bg { position: absolute; left: 0; width: calc(100% * var(--nk)); top: calc(-1 * var(--nt-end) + 18px); bottom: calc(-1 * var(--nt-end) + 18px); background: var(--pill); z-index: -1; -webkit-mask: var(--nt-fill); mask: var(--nt-fill); transition: width 0.46s cubic-bezier(0.22, 1, 0.36, 1); }
+.notch[data-side='right'] .notch-bg { left: auto; right: 0; }
+.notch.out .notch-bg, .notch.drop .notch-bg { width: 100%; }
+.nt-items { opacity: 0; transform: translateX(-8px); transition: opacity 0.16s ease, transform 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
+.notch[data-side='right'] .nt-items { transform: translateX(8px); }
+.notch.out .nt-items, .notch.drop .nt-items { opacity: 1; transform: none; transition-delay: 0.14s; }
+/* its own light while it is out: the border's cone, turning about the screen's middle in step with it,
+   seen through a ring round the notch (frame.ts notchRing); it comes in as the notch finishes widening */
+.nt-ring { position: absolute; left: 0; pointer-events: none; opacity: 0; transition: opacity 0.18s ease; mix-blend-mode: screen; }
+.notch[data-side='right'] .nt-ring { left: auto; right: 0; }
+html.fr-lit .notch.out .nt-ring, html.fr-lit .notch.drop .nt-ring { opacity: 1; transition: opacity 0.3s ease 0.36s; }
+html[data-pill='white'] .nt-ring, html[data-pill='matte-white'] .nt-ring { mix-blend-mode: normal; }
+.nt-ring > div { position: absolute; inset: 0; overflow: hidden; }
+.nt-ring-halo { opacity: 0.45; -webkit-mask: var(--m-halo) 0 0 / 100% 100% no-repeat; mask: var(--m-halo) 0 0 / 100% 100% no-repeat; filter: blur(1.5px); }
+.nt-ring-core { -webkit-mask: var(--m-core) 0 0 / 100% 100% no-repeat; mask: var(--m-core) 0 0 / 100% 100% no-repeat; }
+.nt-cone { position: absolute; left: var(--cx); top: var(--cy); width: 300vmax; height: 300vmax; margin: -150vmax 0 0 -150vmax; background: conic-gradient(from 0deg, transparent 0 70%, var(--c) 90%, var(--hot) 96%, transparent 98%); will-change: transform; }
+html[data-fr-motion='orbit'] .nt-cone { animation: glow-spin var(--lap) linear infinite; }
+html[data-fr-motion='pulse'] .nt-cone { background: var(--c); animation: glow-breathe var(--breath) ease-in-out infinite; }
+html[data-fr-motion='progress'] .nt-cone { background: conic-gradient(from 180deg, var(--c) 0 var(--p), transparent var(--p)); }
+html[data-fr-motion='still'] .nt-cone { background: var(--c); opacity: 0.55; }
+.notch-bg::after { content: ''; position: absolute; inset: 0; background: var(--dk-rim); -webkit-mask: var(--nt-rim); mask: var(--nt-rim); }
+.nt-items { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.notch button { all: unset; position: relative; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; cursor: default; transition: background-color 0.14s ease; }
+.notch button:hover { background: rgba(var(--ink), 0.1); }
+.notch button:active { background: rgba(var(--ink), 0.16); }
+.notch svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.nt-pic { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; overflow: hidden; }
+.nt-pic img { width: 100%; height: 100%; object-fit: contain; }
+.nt-site .nt-pic { width: 24px; height: 24px; border-radius: 6px; }
+.nt-pic.letter { background: color-mix(in srgb, var(--accent) 30%, transparent); font: 700 13px/1 var(--font); }
+.nt-pic.letter img { display: none; }
+.nt-file .nt-pic { width: 30px; height: 30px; border-radius: 8px; background: rgba(var(--ink), 0.08); color: var(--muted); }
+.nt-file .nt-pic img { object-fit: cover; }
+.nt-file .nt-pic svg { width: 17px; height: 17px; }
+.nt-file.missing { opacity: 0.4; }
+.nt-add { color: var(--muted); }
+.nt-add svg { width: 17px; height: 17px; }
+.nt-head svg { width: 19px; height: 19px; }
+.nt-count { position: absolute; top: 3px; right: 2px; min-width: 15px; height: 15px; padding: 0 4px; box-sizing: border-box; border-radius: 8px; background: var(--accent); color: #fff; font: 700 9.5px/15px var(--font); text-align: center; }
+.nt-more { font: 600 10.5px/1 var(--font); color: var(--muted); padding: 6px 0 4px; }
+.notch.drop .notch-bg { filter: brightness(1.25); }
+.notch.drop .nt-head { background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--accent); }
+
+/* a site's or a file's name beside its notch */
+.fr-label { position: absolute; top: 0; height: 30px; padding: 0 12px; display: grid; place-items: center; border-radius: 999px; background: var(--pill); color: var(--fg); box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.1), 0 8px 20px -10px rgba(0, 0, 0, 0.6); font: 600 12.5px/1 var(--font); white-space: nowrap; pointer-events: none; opacity: 0; translate: 0 4px; transition: opacity 0.16s ease, translate 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
+.fr-label.on { opacity: 1; translate: 0 0; }
+
+/* the light round the whole border: a cone turning about the screen's middle, seen through a ring cut
+   just inside the line and round every shape on it (frame.ts ringMask). Nothing repaints while it turns. */
+.fr-glow { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.4s ease; mix-blend-mode: screen; }
+html.frame-window { --lap: 5s; --breath: 2.4s; --c: var(--accent); --hot: #fff; --p: 0deg; }
+html[data-pill='white'] .fr-glow, html[data-pill='matte-white'] .fr-glow { mix-blend-mode: normal; }
+.fr-glow.on { opacity: 1; }
+.fr-ring { position: absolute; inset: 0; overflow: hidden; -webkit-mask: var(--m) 0 0 / 100% 100% no-repeat; mask: var(--m) 0 0 / 100% 100% no-repeat; }
+.fr-ring.halo { opacity: 0.45; }
+.fr-ring i { position: absolute; left: 50%; top: 50%; width: 300vmax; height: 300vmax; margin: -150vmax 0 0 -150vmax; background: conic-gradient(from 0deg, transparent 0 70%, var(--c) 90%, var(--hot) 96%, transparent 98%); will-change: transform; }
+.fr-glow[data-motion='orbit'] .fr-ring i { animation: glow-spin var(--lap) linear infinite; }
+.fr-glow[data-motion='pulse'] .fr-ring i { background: var(--c); animation: glow-breathe var(--breath) ease-in-out infinite; }
+.fr-glow[data-motion='progress'] .fr-ring i { background: conic-gradient(from 180deg, var(--c) 0 var(--p), transparent var(--p)); }
+.fr-glow[data-motion='still'] .fr-ring i { background: var(--c); opacity: 0.55; }
+/* the browser preview of the border (/?frame): over a wallpaper-ish backdrop */
+html.frame-window.frame-preview, html.frame-window.frame-preview body { background: radial-gradient(ellipse at 20% 90%, #6b4a3a, transparent 55%), linear-gradient(#3a4252, #2a2f3a); }
+/* the island's melted ends with the screen border on (island.ts placeFeet): its own colour, cut to each
+   foot; next to a coloured card (Music's player) that colour too, fading out along the foot */
+.pill-foot { position: absolute; left: 0; top: 0; pointer-events: none; background: var(--pill); -webkit-mask: var(--foot); mask: var(--foot); transition: opacity 0.2s ease; }
+.pill-foot.tinted { background: linear-gradient(var(--foot-dir, to left), color-mix(in srgb, var(--foot-tint) 46%, transparent), color-mix(in srgb, var(--foot-tint) 26%, transparent)), var(--pill); }
+.pill-foot[hidden] { display: none; }
+/* its rim: the island's outline carried down the foot into the border's own line, as the taskbar's */
+.pill-foot::after { content: ''; position: absolute; inset: 0; background: rgba(var(--ink), 0.075); -webkit-mask: var(--foot-rim); mask: var(--foot-rim); }
+
+/* Melted into the border (.island-melt): the pill's rim and a card's run only along their own edge, not
+   along the screen's edge or where the two meet (the taskbar's does the same, Moss) */
+/* Melted into the border, the island and its cards draw no outline at all (Moss: "still see border") */
+html.island-melt[data-blend] :is(.pill > .pill-bg, .sheet > .sheet-bg),
+html.island-melt[data-blend] :is(.pill.joined > .pill-bg, .sheet.joined > .sheet-bg) { box-shadow: none; }
+html.island-melt[data-blend] :is(.pill > .pill-bg, .sheet > .sheet-bg)::after { display: none; }
+html.island-melt .pill-foot::after { display: none; }
+/* and a card's colour runs top to bottom, the same on both sides, so each melted end and the border
+   beside it carry on from it evenly (diagonal, the right side didn't match) */
+html.island-melt .sheet-bg::before,
+html.island-melt .pill.joined > .pill-bg::before {
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--card-tint, transparent) 46%, transparent), color-mix(in srgb, var(--card-tint, transparent) 12%, transparent) 70%);
+}
+
+/* Blended, the open island's card hangs from the pill as one shape (island.ts syncUnion): one background
+   sized to both runs behind both, so the glass and a card's colour carry on where they meet, and neither
+   draws a rim there. */
+.pill.joined > .pill-bg,
+.sheet.joined > .sheet-bg,
+.sheet.joined > .sheet-bg::before {
+  background-size: var(--u-w) var(--u-h);
+  background-position: var(--u-x) var(--u-y);
+  background-repeat: no-repeat;
+}
+.pill.joined > .pill-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(150deg, color-mix(in srgb, var(--card-tint, transparent) 46%, transparent), color-mix(in srgb, var(--card-tint, transparent) 12%, transparent) 70%);
+  background-size: var(--u-w) var(--u-h);
+  background-position: var(--u-x) var(--u-y);
+  background-repeat: no-repeat;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.pill.joined.tinted > .pill-bg::before { opacity: 1; }
+html[data-blend='top'] .pill.joined > .pill-bg { box-shadow: inset 1px 0 0 rgba(var(--ink), 0.075), inset -1px 0 0 rgba(var(--ink), 0.075); }
+html[data-blend='top'] .sheet.joined > .sheet-bg { box-shadow: inset 1px 0 0 rgba(var(--ink), 0.075), inset -1px 0 0 rgba(var(--ink), 0.075), inset 0 -1px 0 rgba(var(--ink), 0.075); }
+html[data-blend='bottom'] .pill.joined > .pill-bg { box-shadow: inset 1px 0 0 rgba(var(--ink), 0.075), inset -1px 0 0 rgba(var(--ink), 0.075); }
+html[data-blend='bottom'] .sheet.joined > .sheet-bg { box-shadow: inset 1px 0 0 rgba(var(--ink), 0.075), inset -1px 0 0 rgba(var(--ink), 0.075), inset 0 1px 0 rgba(var(--ink), 0.075); }
+html[data-blend='left'] .pill.joined > .pill-bg { box-shadow: inset 0 1px 0 rgba(var(--ink), 0.075), inset 0 -1px 0 rgba(var(--ink), 0.075); }
+html[data-blend='left'] .sheet.joined > .sheet-bg { box-shadow: inset 0 1px 0 rgba(var(--ink), 0.075), inset 0 -1px 0 rgba(var(--ink), 0.075), inset -1px 0 0 rgba(var(--ink), 0.075); }
+html[data-blend='right'] .pill.joined > .pill-bg { box-shadow: inset 0 1px 0 rgba(var(--ink), 0.075), inset 0 -1px 0 rgba(var(--ink), 0.075); }
+html[data-blend='right'] .sheet.joined > .sheet-bg { box-shadow: inset 0 1px 0 rgba(var(--ink), 0.075), inset 0 -1px 0 rgba(var(--ink), 0.075), inset 1px 0 0 rgba(var(--ink), 0.075); }
+/* glass draws its rim as a frame: not along the seam either */
+html[data-pill='glass'][data-blend] :is(.pill.joined > .pill-bg, .sheet.joined > .sheet-bg)::after { display: none; }
+
+/* the island's colour on the border beside it, fading out (frame.ts drawTint) */
+.fr-tint { position: absolute; pointer-events: none; opacity: 0; transition: opacity 0.3s ease; }
+.fr-tint.on { opacity: 1; }
+html.frame-window.fr-full .fr-tint { opacity: 0; }

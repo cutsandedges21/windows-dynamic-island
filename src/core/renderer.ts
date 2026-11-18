@@ -8,7 +8,7 @@
 
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
-import { contentOrigin, fixedPointX, innerPadding, type Anchor, type Orientation, type Rect } from './layout';
+import { contentOrigin, edgeCorners, fixedPointX, innerPadding, opposite, seamCorners, type Anchor, type Orientation, type Rect } from './layout';
 import { springBezier, springEasing, springs, type SpringConfig } from './spring';
 import type { Placed, Seg } from './segments';
 
@@ -94,6 +94,10 @@ export class PillRenderer {
   private readonly nodes = new Map<string, SegNode>();
   private anchor: Anchor = 'top';
   private orientation: Orientation = 'horizontal';
+  /** Blend into the edge: flat along its screen edge (its corners there square). */
+  private blend = false;
+  /** A card hanging flush from the blended pill (setJoin). */
+  private join: { card: Rect; k: number } | null = null;
   private onShellFrame: ((r: Rect) => void) | null = null;
   private focusInput: HTMLInputElement | null = null;
   /** Held still (see hold()): what the pill was last asked to be, drawn once it is let go. */
@@ -115,7 +119,7 @@ export class PillRenderer {
         p.transform = `translate3d(${v.x + v.dx}px, ${v.y + v.dy}px, 0) scale(${v.s})`;
         p.width = `${v.w}px`;
         p.height = `${v.h}px`;
-        p.borderRadius = `${v.h / 2}px`;
+        p.borderRadius = this.corners({ x: v.x, y: v.y, w: v.w, h: v.h });
         const o = contentOrigin(this.anchor, this.orientation, v.w, v.h);
         this.content.style.transform = `translate3d(${o.x}px, ${o.y}px, 0)`;
         this.onShellFrame?.({ x: v.x + v.dx, y: v.y + v.dy, w: v.w, h: v.h });
@@ -178,6 +182,51 @@ export class PillRenderer {
     for (const node of [...this.nodes.values()]) this.remove(node, true);
     this.orientation = orientation;
     this.content.classList.toggle('vertical', orientation === 'vertical');
+  }
+
+  /**
+   * Round all round, or (blended into its edge) square on the anchor's side, and on the far side too
+   * where a card hangs flush from it (setJoin), so the two read as one shape.
+   */
+  private corners(r: Rect): string {
+    if (!this.blend) return `${r.h / 2}px`;
+    const round = Math.min(r.w, r.h) / 2;
+    const j = this.join;
+    return j ? seamCorners(opposite(this.anchor), r, j.card, round, 0, j.k) : edgeCorners(this.anchor, round);
+  }
+
+  /** The corners the pill is drawn with now (CSS border-radius), for the border glow's ring. */
+  get shape(): string {
+    return this.pill.style.borderRadius;
+  }
+
+  /**
+   * A card hanging flush from the pill blended into its edge (`k` 0..1: how far it is in), or null.
+   * The corners it covers square off with it.
+   */
+  setJoin(join: { card: Rect; k: number } | null): void {
+    const was = this.join;
+    if (!join && !was) return;
+    if (join && was && Math.abs(join.k - was.k) < 0.002 && join.card.x === was.card.x && join.card.y === was.card.y && join.card.w === was.card.w && join.card.h === was.card.h) return;
+    this.join = join;
+    this.pill.style.borderRadius = this.corners({ x: this.shell.get('x'), y: this.shell.get('y'), w: this.shell.get('w'), h: this.shell.get('h') });
+  }
+
+  /**
+   * Blend into the edge on or off: its corners change at once (where it sits is the island's to say).
+   * Called after setAnchor: the page is told which edge it blends into, for what follows its shape
+   * (island.css: the border glow's ring).
+   */
+  setBlend(on: boolean): void {
+    const root = document.documentElement;
+    const edge = on ? this.anchor : '';
+    if ((root.dataset.blend ?? '') !== edge) {
+      if (edge) root.dataset.blend = edge;
+      else delete root.dataset.blend;
+    }
+    if (on === this.blend) return;
+    this.blend = on;
+    this.pill.style.borderRadius = this.corners({ x: this.shell.get('x'), y: this.shell.get('y'), w: this.shell.get('w'), h: this.shell.get('h') });
   }
 
   setAnchor(anchor: Anchor): void {

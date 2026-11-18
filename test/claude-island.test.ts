@@ -903,7 +903,8 @@ describe("status colours (Justin's Claude Status)", () => {
     expect(act.status().beam).toEqual({ tone: 'info', motion: 'orbit' });
     expect(act.status().beamBehind).toEqual({ tone: 'info', motion: 'orbit' });
     act.rows = [row({ progress: { value: 0.5, text: '~2 min left', method: 'history est.' } })];
-    expect(act.status().beam).toEqual({ tone: 'info', motion: 'progress', value: 0.5 });
+    // A progress estimate never turns the comet into a filling bar.
+    expect(act.status().beam).toEqual({ tone: 'info', motion: 'orbit' });
     stubTracker(act, [session({ status: 'awaiting_permission', needsYou: true })], { 100: [50] });
     act.rows = [row({ state: 'input', word: 'needs you' })];
     expect(act.status().beam).toEqual({ tone: 'warn', urgent: true });

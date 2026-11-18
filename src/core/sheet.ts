@@ -12,7 +12,7 @@
 
 import { SpringSet, reducedMotion } from './animator';
 import { icon } from './icons';
-import type { Anchor, Area, Rect } from './layout';
+import { edgeCorners, seamCorners, type Anchor, type Area, type Rect } from './layout';
 import { carryApart, carryCard, carryCurve, carryFades, carryShape, carrySplit, closeCurve, contentLeft, GROW_MS, GROW_SPRING, handOff, pillSlice, snapSpan, tweenShape, type Shape, type Side } from './grow';
 import { buildPlayer, patchPlayer, type PlayerBlock } from './player';
 import { springAnimate, wheelDelta, type PillCover } from './renderer';
@@ -514,7 +514,7 @@ const REFLOW_DWELL_MS = 150;
 /** A card grown out of the pill: its corners at full size (island.css .sheet.morph). */
 const MORPH_RADIUS = 34;
 /** An ordinary card's corners (island.css .sheet), for the hand-off from a grown card. */
-const CARD_RADIUS = 24;
+export const CARD_RADIUS = 24;
 
 const args = new WeakMap<HTMLElement, unknown>();
 /** A row's arg for its right-click action (SheetRow.context). */
@@ -593,6 +593,13 @@ export class SheetRenderer {
   private pill: Rect = { x: 0, y: 0, w: 0, h: 0 };
   /** Where the pill is springing to (island.ts sets it with the pill's target each compose). */
   pillTo: Rect | null = null;
+  /**
+   * The pill blends into its screen edge (Settings › Blend into the edge; island.ts sets it each
+   * compose): a card grown out of it sits on that edge too, its corners there square.
+   */
+  blend = false;
+  /** The corners the card's shape is drawn with now (CSS border-radius), for the border glow's ring. */
+  shape = '';
   private width = 380;
   private drawn: Rect | null = null;
   private engagedInput: HTMLInputElement | HTMLTextAreaElement | null = null;
@@ -777,6 +784,40 @@ export class SheetRenderer {
   /** Where the card is drawn right now (null while hidden). */
   get rect(): Rect | null {
     return this.drawn;
+  }
+
+  /** A grown card's shape as drawn now (placeGrown), else null. */
+  private grownRect: Rect | null = null;
+
+  /**
+   * The card's shape where it meets the edge the pill blends into, with its colour (Music's player on
+   * the art's), for the island's melted ends and the screen border: a card grown out of the pill, or
+   * one hanging flush from it (`k`: how far it is in). Null when there is none, or no blend.
+   */
+  get edgeShape(): { rect: Rect; k: number; tint: string | null } | null {
+    if (!this.blend || this.el.style.display === 'none') return null;
+    const tint = this.el.classList.contains('tinted') ? this.el.style.getPropertyValue('--card-tint').trim() || null : null;
+    if (this.morph && this.grownRect) return { rect: this.grownRect, k: 1, tint };
+    const j = this.joined;
+    return j ? { rect: j.card, k: j.k, tint } : null;
+  }
+
+  /**
+   * An ordinary card hanging flush from the pill blended into its edge (`k`: how far it is in), so
+   * the pill squares the corners it covers (renderer.ts setJoin); else null.
+   */
+  get joined(): { card: Rect; k: number } | null {
+    const d = this.drawn;
+    if (!this.blend || !d || this.morph) return null;
+    // Carried on into the open island's card or back: one shape with the bar all the way.
+    if (this.carry) return { card: d, k: 1 };
+    if (this.springs.get('m') > 0.001) return null;
+    return { card: d, k: clamp01(this.springs.get('o')) };
+  }
+
+  /** The gap between the pill and an ordinary card: none when the pill blends into its edge (one shape). */
+  private get gap(): number {
+    return this.blend ? 0 : GAP;
   }
 
   /** Where the card is drawn, plus the gap to the pill (so the cursor can cross it). */
@@ -1220,6 +1261,16 @@ export class SheetRenderer {
     inner.style.right = 'auto';
   }
 
+  /** Room a grown card keeps from a screen side: none on the edge the pill blends into. */
+  private margin(side: Anchor): number {
+    return this.blend && this.anchor === side ? 0 : EDGE;
+  }
+
+  /** A grown card's corners, `r` round, square on the edge the pill blends into. */
+  private round(r: number): string {
+    return this.blend ? edgeCorners(this.anchor, r) : `${r}px`;
+  }
+
   private place(v = this.springs.values()): void {
     // Nothing to place while hidden (a hit area for a card no one sees would take the mouse).
     if (!this.ready || this.el.style.display === 'none') return;
@@ -1242,21 +1293,22 @@ export class SheetRenderer {
     // Grown out of the pill: over it, from the edge it rests on; else beside it, across the gap.
     // In between while a grown card slides off the pill to become the open island's card.
     const m = clamp01(v.m);
+    const gap = this.gap;
     switch (this.anchor) {
       case 'top':
         x = clampX(p.x + p.w / 2 - w / 2);
-        y = mix(p.y + p.h + GAP, p.y, m);
+        y = mix(p.y + p.h + gap, p.y, m);
         break;
       case 'bottom':
         x = clampX(p.x + p.w / 2 - w / 2);
-        y = mix(p.y - GAP - h, p.y + p.h - h, m);
+        y = mix(p.y - gap - h, p.y + p.h - h, m);
         break;
       case 'left':
-        x = mix(p.x + p.w + GAP, p.x, m);
+        x = mix(p.x + p.w + gap, p.x, m);
         y = clampY(p.y + p.h / 2 - h / 2);
         break;
       case 'right':
-        x = mix(p.x - GAP - w, p.x + p.w - w, m);
+        x = mix(p.x - gap - w, p.x + p.w - w, m);
         y = clampY(p.y + p.h / 2 - h / 2);
         break;
     }
@@ -1264,13 +1316,16 @@ export class SheetRenderer {
       this.placeGrown(x, y, w, h, v.o);
       return;
     }
+    this.grownRect = null;
     if (m > 0) {
       // The pill's round ends while it is the pill's size, the grown card's corners once grown, and
       // an ordinary card's as it slides off the pill.
       const pillR = Math.min(p.w, p.h) / 2;
       const t = clamp01(Math.abs(h - p.h) / Math.max(1, Math.abs(this.morphH - p.h)));
-      this.el.style.borderRadius = `${mix(CARD_RADIUS, pillR + (MORPH_RADIUS - pillR) * t, m)}px`;
-    } else if (this.el.style.borderRadius) this.el.style.borderRadius = '';
+      const r = mix(CARD_RADIUS, pillR + (MORPH_RADIUS - pillR) * t, m);
+      // Blended: on the edge with the pill, square there all the way.
+      this.el.style.borderRadius = this.blend ? edgeCorners(this.anchor, r) : `${r}px`;
+    } else if (!this.blend && this.el.style.borderRadius) this.el.style.borderRadius = '';
     // On whole screen pixels: the card is its own layer, and once it stops resizing, moving it by a
     // fraction of a pixel (following the pill as it settles) stretches what was drawn and blurs it.
     // Each edge on its own pixel, and the content on one of its own about the card's true centre, so
@@ -1285,6 +1340,10 @@ export class SheetRenderer {
     w = span.w;
     y = snapPx(y);
     const st = this.el.style;
+    // Hanging flush from the blended pill: square where the pill runs past its corners on that side
+    // (one shape with it), round where it reaches out past the pill.
+    if (this.blend && m === 0) st.borderRadius = seamCorners(this.anchor, { x, y, w, h }, p, CARD_RADIUS, CARD_RADIUS);
+    this.shape = st.borderRadius || `${CARD_RADIUS}px`;
     st.transform = `translate3d(${x}px, ${y}px, 0) scale(${v.s})`;
     st.width = `${w}px`;
     st.height = `${h}px`;
@@ -1317,18 +1376,18 @@ export class SheetRenderer {
     switch (this.anchor) {
       case 'top':
         x = clampX(p.x + p.w / 2 - w / 2);
-        y = back ? p.y : p.y + p.h + GAP;
+        y = back ? p.y : p.y + p.h + this.gap;
         break;
       case 'bottom':
         x = clampX(p.x + p.w / 2 - w / 2);
-        y = back ? p.y + p.h - h : p.y - GAP - h;
+        y = back ? p.y + p.h - h : p.y - this.gap - h;
         break;
       case 'left':
-        x = back ? p.x : p.x + p.w + GAP;
+        x = back ? p.x : p.x + p.w + this.gap;
         y = clampY(p.y + p.h / 2 - h / 2);
         break;
       case 'right':
-        x = back ? p.x + p.w - w : p.x - GAP - w;
+        x = back ? p.x + p.w - w : p.x - this.gap - w;
         y = clampY(p.y + p.h / 2 - h / 2);
         break;
     }
@@ -1338,8 +1397,8 @@ export class SheetRenderer {
       // A grown card's box (placeGrown): its full size, on whole device pixels, its content at its corner.
       let fx = this.anchor === 'left' ? p.x : this.anchor === 'right' ? p.x + p.w - w : p.x + p.w / 2 - w / 2;
       let fy = this.anchor === 'top' ? p.y : this.anchor === 'bottom' ? p.y + p.h - h : p.y + p.h / 2 - h / 2;
-      fx = snapPx(Math.max(EDGE, Math.min(W - w - EDGE, fx)));
-      fy = snapPx(Math.max(EDGE, Math.min(H - h - EDGE, fy)));
+      fx = snapPx(Math.max(this.margin('left'), Math.min(W - w - this.margin('right'), fx)));
+      fy = snapPx(Math.max(this.margin('top'), Math.min(H - h - this.margin('bottom'), fy)));
       return { shape: { x, y, w, h }, radius: MORPH_RADIUS, box: { x: fx, y: fy }, inner: { x: fx, y: fy + hang } };
     }
     // An ordinary card's (place): each edge on its own device pixel, its content on one of its own.
@@ -1377,7 +1436,7 @@ export class SheetRenderer {
     this.carrySplitNow = k;
     const split = carrySplit(k);
     const p = this.pill;
-    const card = carryCard(p, body, side, GAP, k);
+    const card = carryCard(p, body, side, this.gap, k);
     const at = this.elAt;
     // The content it takes on: where it will stay.
     const ns = this.inner.style;
@@ -1412,8 +1471,9 @@ export class SheetRenderer {
       this.carryPillNow = shown;
       // Its own round ends take over from the shape's corners once the two are apart. (For the
       // pill the seam's corners are the far ones of a card's: the pill lies on the other side of it.)
-      const outerR = radius * (1 - clamp01((k - 0.7) / 0.3));
-      const pillCorners = corners(outerR, own * split.seam);
+      const outerR = this.blend ? 0 : radius * (1 - clamp01((k - 0.7) / 0.3));
+      // Blended, the bar and the card stay one shape: no seam corners to round.
+      const pillCorners = corners(outerR, this.blend ? 0 : own * split.seam);
       const root = document.documentElement.style;
       root.setProperty('--pill-in', shown.toFixed(3));
       root.setProperty('--pill-glass', split.glass.toFixed(3));
@@ -1428,10 +1488,12 @@ export class SheetRenderer {
     st.opacity = op;
     st.filter = v.b > 0.08 ? `blur(${v.b.toFixed(2)}px)` : '';
     const o = card.outer;
-    st.clipPath = `xywh(${(o.x - at.x).toFixed(2)}px ${(o.y - at.y).toFixed(2)}px ${o.w.toFixed(2)}px ${o.h.toFixed(2)}px round ${radius.toFixed(2)}px)`;
+    // The whole outline's side on the pill's outer edge: square there when the pill blends into its edge.
+    const edgeR = this.blend ? 0 : radius;
+    st.clipPath = `xywh(${(o.x - at.x).toFixed(2)}px ${(o.y - at.y).toFixed(2)}px ${o.w.toFixed(2)}px ${o.h.toFixed(2)}px round ${corners(edgeR, radius)})`;
     // Its glass: over the whole shape while the bar's takes over its part (see-through there by as
     // much as the bar's is in), then from across the seam, its corners there rounding as it opens.
-    st.borderRadius = corners(card.handed ? radius * split.seam : radius, radius);
+    st.borderRadius = corners(card.handed && !this.blend ? radius * split.seam : edgeR, radius);
     const g = card.glass;
     const bg = this.bg.style;
     bg.left = `${g.x - at.x}px`;
@@ -1446,8 +1508,9 @@ export class SheetRenderer {
     sh.transform = `translate3d(${o.x}px, ${o.y}px, 0)`;
     sh.width = `${o.w}px`;
     sh.height = `${o.h}px`;
-    sh.borderRadius = `${radius.toFixed(2)}px`;
+    sh.borderRadius = corners(edgeR, radius);
     sh.opacity = op;
+    this.shape = sh.borderRadius;
     this.drawn = { x: g.x, y: g.y, w: g.w, h: g.h };
     this.onMove();
   }
@@ -1484,8 +1547,8 @@ export class SheetRenderer {
         fy = p.y + p.h / 2 - fh / 2;
         break;
     }
-    fx = Math.max(EDGE, Math.min(W - fw - EDGE, fx));
-    fy = Math.max(EDGE, Math.min(H - fh - EDGE, fy));
+    fx = Math.max(this.margin('left'), Math.min(W - fw - this.margin('right'), fx));
+    fy = Math.max(this.margin('top'), Math.min(H - fh - this.margin('bottom'), fy));
     // Kept unless the spot really moves: spring noise must not flip the rounding.
     if (this.boxX === null || Math.abs(fx - this.boxX) > 0.6) this.boxX = snapPx(fx);
     if (this.boxY === null || Math.abs(fy - this.boxY) > 0.6) this.boxY = snapPx(fy);
@@ -1501,19 +1564,23 @@ export class SheetRenderer {
     st.height = `${fh}px`;
     st.opacity = op;
     st.filter = '';
-    st.borderRadius = '';
-    st.clipPath = `xywh(${lx.toFixed(2)}px ${ly.toFixed(2)}px ${vw.toFixed(2)}px ${vh.toFixed(2)}px round ${MORPH_RADIUS}px)`;
+    // Its background takes the box's corners (island.css .sheet-bg): square too on a blended edge.
+    st.borderRadius = this.blend ? this.round(MORPH_RADIUS) : '';
+    st.clipPath = `xywh(${lx.toFixed(2)}px ${ly.toFixed(2)}px ${vw.toFixed(2)}px ${vh.toFixed(2)}px round ${this.round(MORPH_RADIUS)})`;
     const bg = this.bg.style;
     bg.left = `${lx}px`;
     bg.top = `${ly}px`;
     bg.width = `${vw}px`;
     bg.height = `${vh}px`;
+    this.grownRect = { x: vx, y: vy, w: vw, h: vh };
     const sh = this.shadow.style;
     sh.display = '';
     sh.transform = `translate3d(${vx}px, ${vy}px, 0)`;
     sh.width = `${vw}px`;
     sh.height = `${vh}px`;
+    sh.borderRadius = this.blend ? this.round(MORPH_RADIUS) : '';
     sh.opacity = op;
+    this.shape = this.round(MORPH_RADIUS);
     this.inner.style.left = '0px';
     // While the shape is smaller than the card, the content scales with it from the pill's outer
     // edge, so it grows out of the pill and shrinks back into it (never a blank card). At full size
@@ -2400,6 +2467,19 @@ export class SheetRenderer {
     host.style.setProperty('--k', b.cell > 0 ? (b.cell / 92).toFixed(4) : '1');
     const pagesEl = host.querySelector<HTMLElement>('.pages')!;
     const trayEl = host.querySelector<HTMLElement>('.tray')!;
+    // One row that scrolls sideways: the wheel scrolls it too.
+    if (!trayEl.dataset.wheel) {
+      trayEl.dataset.wheel = '1';
+      trayEl.addEventListener(
+        'wheel',
+        (e) => {
+          if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+          trayEl.scrollLeft += e.deltaY;
+          e.preventDefault();
+        },
+        { passive: false },
+      );
+    }
     this.grid = { items: b.items, cols: b.cols, rows: b.rows };
 
     // A page made at the card's edge mid-drag stays until the drop, even while empty.

@@ -9,6 +9,7 @@ import { catchErrors } from './core/errors';
 import { emitLocal, native, windowLabel } from './core/native';
 import { runWidget } from './core/widgets';
 import { runDock } from './core/dock';
+import { runFrame } from './core/frame';
 import { workspaceEngine } from './workspaces/engine';
 
 catchErrors(windowLabel, (line) => void native.log(line));
@@ -24,7 +25,12 @@ const widget = windowLabel.startsWith('widget-');
 // The browser preview of it: /?dock (src/dev/dock.ts).
 const dockPreview = native.demo && new URLSearchParams(location.search).has('dock');
 const dock = windowLabel === 'dock' || dockPreview;
-const island = mirror || widget || dock ? null : new Island(stage, createRegistry());
+// The screen border and its notches; its browser preview: /?frame (src/dev/frame.ts), with &dock too.
+const framePreview = native.demo && new URLSearchParams(location.search).has('frame');
+const frameWin = windowLabel === 'frame' || framePreview;
+const island = mirror || widget || dock || frameWin ? null : new Island(stage, createRegistry());
+if (frameWin) void runFrame(stage).catch((err) => void native.log(`screen border failed: ${String(err)}`));
+if (framePreview) void import('./dev/frame').then((m) => m.framePreview(emitLocal));
 if (dock) void runDock(stage).catch((err) => void native.log(`taskbar failed: ${String(err)}`));
 if (dockPreview) void import('./dev/dock').then((m) => m.dockPreview(emitLocal));
 if (widget) void runWidget(stage).catch((err) => void native.log(`widget failed: ${String(err)}`));

@@ -841,12 +841,20 @@ export const native = {
   /** The taskbar (src-tauri/src/dock.rs): shown at w x h logical px, or closed. */
   dockShow: (on: boolean, w: number, h: number, centre = -1) => call('dock_show', { on, w, h, centre }, undefined),
   /** The taskbar page measured its content (logical px): its window takes that size, in its place. */
-  dockFit: (w: number, h: number, bar: number) => call('dock_fit', { w, h, bar }, undefined),
+  dockFit: (w: number, h: number, bar: number, pivot: number | null = null) => call('dock_fit', { w, h, bar, pivot }, undefined),
   /** Where the page draws something (the bar, a card over it): CSS px rects [x, y, w, h] in the window.
    *  Everywhere else a click goes through to what is under the taskbar's window. */
   dockSolid: (rects: number[][]) => call('dock_solid', { rects }, undefined),
   /** The taskbar sits on the screen's bottom edge (over Windows' taskbar) instead of floating above it. */
   dockEdge: (on: boolean) => call('dock_edge', { on }, undefined),
+  /** The screen border's window (src-tauri/src/frame.rs) over the main screen, or closed. */
+  frameShow: (on: boolean) => call('frame_show', { on }, undefined),
+  /** Where the border's page takes clicks (the notches): CSS px rects [x, y, w, h]. */
+  frameSolid: (rects: number[][]) => call('frame_solid', { rects }, undefined),
+  /** The border's page loaded: Rust tells it the screen's size again (frame-screen). */
+  frameHello: () => call('frame_hello', {}, undefined),
+  /** Which screen edge the taskbar sits along. */
+  dockSide: (side: 'bottom' | 'left' | 'right' | 'top') => call('dock_side', { side }, undefined),
   /** The Apps card is open over the taskbar: it may take the keyboard (its search field) until closed. */
   dockTyping: (on: boolean) => call('dock_typing', { on }, undefined),
   /** Dragging the taskbar: its left edge to `x` physical px; `done` keeps the place (x negative with done: back to the middle). */

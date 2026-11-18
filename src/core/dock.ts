@@ -12,7 +12,7 @@ import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tau
 import { duration } from './format';
 import { applyGlass } from './glass';
 import { isTauri, native, on, sendTo, type DockIconRect, type InstalledApp, type LiveWindow } from './native';
-import { DOCK_ITEMS, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSize, type DockStyle, type PillColor } from './settings';
+import { DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type PillColor } from './settings';
 
 /** One app on the dock. */
 export interface DockApp {
@@ -49,10 +49,20 @@ export interface DockFrame {
   /** Dragging it is off (right-click › Lock in place). */
   locked: boolean;
   size: DockSize;
-  /** Rise, Spotlight or Glide (Settings › Widgets › Style). */
-  style?: DockStyle;
-  /** On the screen's bottom edge, over Windows' taskbar. */
+  /** Rise, Spotlight, Glide: the ones on (Settings › Widgets › Style). */
+  styles?: DockStyle[];
+  /** On the screen's bottom edge, over Windows' taskbar ... */
   edge?: boolean;
+  /** ... its ends curving out into the edge. */
+  melt?: boolean;
+  /** The screen edge it sits along (bottom unless set). */
+  side?: DockSide;
+  /** The screen border's width (CSS px) while it is on (Settings › Widgets › Screen border): the bar's
+   *  melted feet flatten onto it. 0 or unset: no border. */
+  border?: number;
+  /** On the top edge with the island there: the island's width (CSS px), the gap the bar leaves in its
+   *  middle for it. Unset: no gap. */
+  gap?: number | null;
 }
 
 /** The Apps card over the taskbar: the same list as Control Center's Apps (Apps activity). */
@@ -79,8 +89,11 @@ export interface DockPref {
   /** Show or hide one of its items. */
   toggle?: DockItem;
   size?: DockSize;
+  /** Turns one style on or off. */
   style?: DockStyle;
   edge?: boolean;
+  melt?: boolean;
+  side?: DockSide;
 }
 
 /** Each item's name, for the right-click menu and Settings. */
@@ -243,10 +256,18 @@ export interface DockHooks {
   setLocked(on: boolean): void;
   size(): DockSize;
   setSize(size: DockSize): void;
-  style(): DockStyle;
-  setStyle(style: DockStyle): void;
+  styles(): DockStyle[];
+  setStyles(styles: DockStyle[]): void;
   edge(): boolean;
   setEdge(on: boolean): void;
+  melt(): boolean;
+  setMelt(on: boolean): void;
+  side(): DockSide;
+  setSide(side: DockSide): void;
+  /** The screen border's width while it is on, else 0. */
+  border(): number;
+  /** The gap for the island on the top edge (its pill's width), or null. */
+  gap(): number | null;
 }
 
 export class DockHost {
@@ -262,6 +283,8 @@ export class DockHost {
   private again = false;
   /** On the bottom edge, as last told to the dock's window. */
   private edgeSent: boolean | undefined;
+  /** The side last told to the dock's window. */
+  private sideSent: DockSide | undefined;
   private offs: Array<() => void> = [];
 
   constructor(
@@ -279,8 +302,10 @@ export class DockHost {
       await on<DockPref>('dock-pref', (p) => {
         if (typeof p?.locked === 'boolean') this.hooks.setLocked(p.locked);
         if (typeof p?.size === 'string' && (DOCK_SIZES as readonly string[]).includes(p.size)) this.hooks.setSize(p.size);
-        if (typeof p?.style === 'string' && (DOCK_STYLES as readonly string[]).includes(p.style)) this.hooks.setStyle(p.style);
+        if (typeof p?.style === 'string' && (DOCK_STYLES as readonly string[]).includes(p.style)) this.hooks.setStyles(toggleStyle(this.hooks.styles(), p.style));
         if (typeof p?.edge === 'boolean') this.hooks.setEdge(p.edge);
+        if (typeof p?.melt === 'boolean') this.hooks.setMelt(p.melt);
+        if (typeof p?.side === 'string' && (DOCK_SIDES as readonly string[]).includes(p.side)) this.hooks.setSide(p.side);
         if (typeof p?.toggle === 'string' && (DOCK_ITEMS as readonly string[]).includes(p.toggle)) this.hooks.setHidden(toggleDockItem(this.hooks.hidden(), p.toggle));
         if (p?.centre === true) void native.dockAt(-1, true);
         void this.tick();
@@ -314,6 +339,7 @@ export class DockHost {
       if (!this.shown) {
         this.shown = true;
         this.edgeSent = undefined;
+        this.sideSent = undefined;
         void native.dockShow(true, 640, 60, this.hooks.centre());
       }
       const [wins, front] = await Promise.all([native.wsWindows(), native.foreground()]);
@@ -340,9 +366,17 @@ export class DockHost {
         ...this.hooks.look(),
         locked: this.hooks.locked(),
         size: this.hooks.size(),
-        style: this.hooks.style(),
+        styles: this.hooks.styles(),
         edge: this.hooks.edge(),
+        melt: this.hooks.melt(),
+        side: this.hooks.side(),
+        border: this.hooks.border(),
+        gap: this.hooks.gap(),
       };
+      if (frame.side !== this.sideSent) {
+        this.sideSent = frame.side;
+        void native.dockSide(frame.side ?? 'bottom');
+      }
       if (frame.edge !== this.edgeSent) {
         this.edgeSent = frame.edge;
         void native.dockEdge(frame.edge === true);
@@ -443,19 +477,26 @@ async function dockMenu(f: DockFrame, pref: (p: DockPref) => void): Promise<void
   });
   const styles = await Submenu.new({
     text: 'Style',
-    items: await Promise.all(DOCK_STYLES.map((k) => CheckMenuItem.new({ text: DOCK_STYLE_LABELS[k], checked: (f.style ?? 'rise') === k, action: () => pref({ style: k }) }))),
+    items: await Promise.all(DOCK_STYLES.map((k) => CheckMenuItem.new({ text: DOCK_STYLE_LABELS[k], checked: (f.styles ?? ['rise']).includes(k), action: () => pref({ style: k }) }))),
   });
+  const sides = await Submenu.new({
+    text: 'Position',
+    items: await Promise.all(DOCK_SIDES.map((k) => CheckMenuItem.new({ text: k[0].toUpperCase() + k.slice(1), checked: (f.side ?? 'bottom') === k, action: () => pref({ side: k }) }))),
+  });
+  const side = f.side ?? 'bottom';
   const menu = await Menu.new({
     items: [
       show,
       sizes,
       styles,
-      await CheckMenuItem.new({ text: 'Blend into the bottom', checked: f.edge === true, action: () => pref({ edge: !f.edge }) }),
+      sides,
+      await CheckMenuItem.new({ text: side === 'bottom' ? 'Blend into the bottom' : `Blend into the ${side} edge`, checked: f.edge === true, action: () => pref({ edge: !f.edge }) }),
+      ...(f.edge ? [await CheckMenuItem.new({ text: 'Melt the ends', checked: f.melt === true, action: () => pref({ melt: !f.melt }) })] : []),
       await PredefinedMenuItem.new({ item: 'Separator' }),
       await CheckMenuItem.new({ text: 'Lock in place', checked: f.locked, action: () => pref({ locked: !f.locked }) }),
       await MenuItem.new({ text: 'Back to the middle', action: () => pref({ centre: true }) }),
       await PredefinedMenuItem.new({ item: 'Separator' }),
-      await MenuItem.new({ text: 'Taskbar settings…', action: () => void native.openApp('widgets') }),
+      await MenuItem.new({ text: 'Taskbar settings…', action: () => void native.openApp('taskbar') }),
     ],
   });
   await menu.popup();
@@ -484,6 +525,24 @@ const HEADROOM = 14;
 
 export const DOCK_SIZE_LABELS: Record<DockSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
 export const DOCK_STYLE_LABELS: Record<DockStyle, string> = { rise: 'Rise', spotlight: 'Spotlight', glide: 'Glide' };
+
+/** The taskbar's styles with `style` turned on, or off. */
+export function toggleStyle(on: readonly DockStyle[], style: DockStyle): DockStyle[] {
+  const set = new Set(on);
+  if (set.has(style)) set.delete(style);
+  else set.add(style);
+  return DOCK_STYLES.filter((k) => set.has(k));
+}
+
+/**
+ * Which app the spotlight is on: the app in front; while none is (Alt+Tab, the desktop, Island's own
+ * windows), still the one it was on, as long as that one is open.
+ */
+export function spotlightOn(apps: readonly Pick<DockApp, 'key' | 'front' | 'windows'>[], was: string | null): string | null {
+  const front = apps.find((a) => a.front);
+  if (front) return front.key;
+  return was && apps.some((a) => a.key === was && a.windows.length > 0) ? was : null;
+}
 
 /** Each size's scale; Medium is the size the taskbar was first built at. */
 export const DOCK_ZOOM: Record<DockSize, number> = { small: 0.84, medium: 1, large: 1.18 };
@@ -521,6 +580,75 @@ const CARD_W = 380;
 /** Room over the bar for a card (the Apps card at its tallest), CSS px. The window always has it, so
  *  nothing resizes (and flickers) when a card comes up; clicks there go through unless a card is up. */
 const ROOM = 480;
+/** Melt the ends (Blend into the bottom › Melt the ends): each end of the bar curves out into the
+ *  screen's edge this far beside the bar (`out`), from this far up its side (`up`), CSS px at the
+ *  medium size. `up` reaches the top corner (BAR_H - BAR_R), so each side is one S-curve. */
+export const MELT = { out: 72, up: 34 };
+/** The bar's height and its top corners along the edge, CSS px (.dock, html.dock-edge .dock). */
+const BAR_H = 52;
+const BAR_R = 18;
+
+/** One end of the melted bar as the CSS masks that cut it, `width` wide and the bar's height. */
+export interface MeltEnd {
+  width: number;
+  /** The shape: the foot, the bar's side and its top corner. */
+  fill: string;
+  /** Its outline, the bar's rim carried down the foot to the screen's edge. */
+  rim: string;
+}
+
+/**
+ * The melted ends (Melt the ends), left and right. Each foot is a quarter ellipse from the screen's
+ * edge (flat where it meets it) up to the bar's side (upright there), so it flows into the side and
+ * the top corner without a kink. The rim is stroked 2px on that outline; the shape keeps the inner
+ * 1px, like the bar's own rim. The right end is the left one mirrored.
+ */
+export function meltEnds(out: number, up: number, border = 0, side: DockSide = 'bottom', h = BAR_H, r = BAR_R): { left: MeltEnd; right: MeltEnd } {
+  const u = Math.min(up, h - r);
+  const w = out + r;
+  // With the screen border on, each foot flattens onto the border's inner edge (`b` up from the
+  // screen's edge) instead of the edge itself, so the foot and the border are one line.
+  const b = Math.max(0, Math.min(border, u - 2));
+  const left = `M0 ${h - b}A${out} ${u - b} 0 0 0 ${out} ${h - u}L${out} ${r}A${r} ${r} 0 0 1 ${w} 0`;
+  const right = `M${w} ${h - b}A${out} ${u - b} 0 0 1 ${r} ${h - u}L${r} ${r}A${r} ${r} 0 0 0 0 0`;
+  // Drawn as along the bottom, then turned to the bar's side: the edge is where the bottom was.
+  const across = side === 'bottom' || side === 'top';
+  const [vw, vh] = across ? [w, h] : [h, w];
+  const turn = { bottom: '', top: `matrix(1 0 0 -1 0 ${h})`, left: `matrix(0 1 -1 0 ${h} 0)`, right: 'matrix(0 1 1 0 0 0)' }[side];
+  const url = (path: string) =>
+    `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='${vw}' height='${vh}' viewBox='0 0 ${vw} ${vh}' preserveAspectRatio='none'>${turn ? `<g transform='${turn}'>${path}</g>` : path}</svg>`)}")`;
+  const end = (outline: string, close: string): MeltEnd => ({
+    width: w,
+    fill: url(`<path d='${outline}${close}Z'/>`),
+    rim: url(`<path d='${outline}' fill='none' stroke='#000' stroke-width='2'/>`),
+  });
+  // Under a foot that stops short of the edge, the border's own strip.
+  return { left: end(left, `L${w} ${h}${b ? `L0 ${h}` : ''}`), right: end(right, `L0 ${h}${b ? `L${w} ${h}` : ''}`) };
+}
+
+/**
+ * The CSS masks that cut the melted bar on side `side`: `fill` its shape (both feet and the middle),
+ * `rim` its outline (both feet's curves and the inner edge between them). `border`: the screen
+ * border's width in the bar's own px (0: none).
+ */
+export function meltMasks(side: DockSide, out: number, up: number, border = 0, h = BAR_H, r = BAR_R): { end: number; fill: string; rim: string } {
+  const e = meltEnds(out, up, border, side, h, r);
+  const end = e.left.width;
+  const across = side === 'bottom' || side === 'top';
+  // Where the bar's two ends are, and its inner edge (away from the screen's edge).
+  const [a, z] = across ? [`left ${side}`, `right ${side}`] : [`${side} top`, `${side} bottom`];
+  const size = across ? `${end}px 100%` : `100% ${end}px`;
+  const middle = across ? `calc(100% - ${2 * end - 4}px) calc(100% + 4px)` : `calc(100% + 4px) calc(100% - ${2 * end - 4}px)`;
+  const inner = { bottom: 'center top', top: 'center bottom', left: 'right center', right: 'left center' }[side];
+  const line = across ? `calc(100% - ${2 * end - 4}px) 1px` : `1px calc(100% - ${2 * end - 4}px)`;
+  return {
+    end,
+    fill: `${e.left.fill} ${a} / ${size} no-repeat, ${e.right.fill} ${z} / ${size} no-repeat, linear-gradient(#000 0 0) center / ${middle} no-repeat`,
+    rim: `${e.left.rim} ${a} / ${size} no-repeat, ${e.right.rim} ${z} / ${size} no-repeat, linear-gradient(#000 0 0) ${inner} / ${line} no-repeat`,
+  };
+}
+/** Room each side of the island in the top bar's gap, CSS px. */
+const GAP_PAD = 10;
 /** Between the bar and a card over it, CSS px. */
 const POP_GAP = 8;
 /** A card's slide down behind the bar, ms (as in the CSS). */
@@ -539,18 +667,36 @@ const DRAG_PX = 5;
  */
 export async function runDock(stage: HTMLElement): Promise<void> {
   document.documentElement.classList.add('dock-window');
+  document.documentElement.style.setProperty('--dk-melt-out', `${MELT.out}px`);
+  /** The melted ends' masks last written (side, border), so they're made again only when those change. */
+  let meltSig = '';
   const bar = el('div', 'dock');
   bar.append(el('i', 'dock-bg'));
   stage.append(bar);
   const send = (a: DockAct) => void sendTo('island', 'dock-act', a);
+  /** A style is on (Rise, Spotlight, Glide; any together). */
+  const has = (k: DockStyle) => (frame?.styles ?? ['rise']).includes(k);
   let frame: DockFrame | null = null;
   let lastSize = '';
+  /** The edge it sits along, and whether the bar stands upright (on the left or right). */
+  const side = (): DockSide => frame?.side ?? 'bottom';
+  const upright = () => side() === 'left' || side() === 'right';
+  /** Along the bar: x across the screen, y on a side. */
+  const along = (e: { clientX: number; clientY: number }) => (upright() ? e.clientY : e.clientX);
+  const alongOf = (r: DOMRect) => (upright() ? r.top + r.height / 2 : r.left + r.width / 2);
+  /** Away from the screen's edge by `px`, as a CSS translate. */
+  const outward = (px: number) => ({ bottom: `translateY(${-px}px)`, top: `translateY(${px}px)`, left: `translateX(${px}px)`, right: `translateX(${-px}px)` })[side()];
+  /** Along the bar by `px`, as a CSS translate. */
+  const slide = (px: number) => (upright() ? `translateY(${px}px)` : `translateX(${px}px)`);
 
   // The arrow at the start: the Apps card (Control Center's Apps) comes up over the bar.
   const start = el('button', 'dk-btn dk-start', SVG.up);
   start.title = 'Your apps';
   start.addEventListener('click', () => setCard(!cardOn));
   const appsBox = el('div', 'dk-apps');
+  // On the top edge with the island there: room in the bar's middle for it (the bar runs on behind).
+  const gapEl = el('i', 'dk-gap');
+  gapEl.hidden = true;
   const sepA = el('i', 'dk-sep');
   // What is playing: its cover (play/pause over it when pointed at or paused), the title over the
   // artist, the size of the clock's time over its date.
@@ -600,7 +746,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const bell = el('button', 'dk-btn dk-bell', SVG.bell);
   bell.title = 'Notifications';
   bell.addEventListener('click', () => send({ kind: 'notifications' }));
-  bar.append(start, appsBox, sepA, music, timer, claude, sepB, battery, wifi, sound, clock, bell);
+  bar.append(start, appsBox, gapEl, sepA, music, timer, claude, sepB, battery, wifi, sound, clock, bell);
 
   // Over the bar, coming up from behind it: the Apps card (the arrow) and when S/W reset (pointing at them).
   const above = el('div', 'dk-above');
@@ -777,8 +923,15 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     tip.replaceChildren(head, ...rows);
     tip.hidden = false;
     const b = claude.getBoundingClientRect();
-    const w = tip.offsetWidth;
-    tip.style.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, b.left + b.width / 2 - w / 2)))}px`;
+    if (upright()) {
+      const h = tip.offsetHeight;
+      tip.style.left = '';
+      tip.style.top = `${Math.round(Math.max(8, Math.min(window.innerHeight - h - 8, b.top + b.height / 2 - h / 2)))}px`;
+    } else {
+      const w = tip.offsetWidth;
+      tip.style.top = '';
+      tip.style.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, b.left + b.width / 2 - w / 2)))}px`;
+    }
     showPop(tip);
   };
   claude.addEventListener('pointerenter', () => {
@@ -820,16 +973,13 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     b.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       const kids = [...appsBox.children] as HTMLElement[];
-      const slots = kids.map((k) => {
-        const r = k.getBoundingClientRect();
-        return r.left + r.width / 2;
-      });
-      move = { b, id: e.pointerId, x0: e.clientX, moved: false, slots, from: kids.indexOf(b), to: kids.indexOf(b) };
+      const slots = kids.map((k) => alongOf(k.getBoundingClientRect()));
+      move = { b, id: e.pointerId, x0: along(e), moved: false, slots, from: kids.indexOf(b), to: kids.indexOf(b) };
     });
     b.addEventListener('pointermove', (e) => {
       const m = move;
       if (!m || m.b !== b || e.pointerId !== m.id) return;
-      const dx = e.clientX - m.x0;
+      const dx = along(e) - m.x0;
       if (!m.moved) {
         if (Math.abs(dx) < DRAG_PX) return;
         m.moved = true;
@@ -846,9 +996,9 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       const kids = [...appsBox.children] as HTMLElement[];
       const step = kids.length > 1 ? (m.slots[m.slots.length - 1] - m.slots[0]) / (kids.length - 1) : 0;
       kids.forEach((k, i) => {
-        if (k === b) k.style.transform = `translateX(${dx}px)`;
-        else if (m.from < to && i > m.from && i <= to) k.style.transform = `translateX(${-step}px)`;
-        else if (m.from > to && i >= to && i < m.from) k.style.transform = `translateX(${step}px)`;
+        if (k === b) k.style.transform = slide(dx);
+        else if (m.from < to && i > m.from && i <= to) k.style.transform = slide(-step);
+        else if (m.from > to && i >= to && i < m.from) k.style.transform = slide(step);
         else k.style.transform = '';
       });
     });
@@ -887,15 +1037,14 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       const ico = b.querySelector<HTMLElement>('.dk-ico');
       if (!ico) continue;
       let want = 0;
-      if (pointerX !== null && !move?.moved && (frame?.style ?? 'rise') === 'rise') {
-        const r = b.getBoundingClientRect();
-        want = riseAt(pointerX - (r.left + r.width / 2));
+      if (pointerX !== null && !move?.moved && has('rise')) {
+        want = riseAt(pointerX - alongOf(b.getBoundingClientRect()));
       }
       const was = rise.get(b) ?? 0;
       const now = Math.abs(want - was) < 0.002 ? want : was + (want - was) * k;
       if (now !== want) busy = true;
       rise.set(b, now);
-      ico.style.transform = now ? `translateY(${(-RISE_LIFT * now).toFixed(2)}px) scale(${(1 + RISE_GROW * now).toFixed(3)})` : '';
+      ico.style.transform = now ? `${outward(Number((RISE_LIFT * now).toFixed(2)))} scale(${(1 + RISE_GROW * now).toFixed(3)})` : '';
     }
     raf = busy ? requestAnimationFrame(animateRise) : 0;
     if (!raf) lastT = 0;
@@ -904,7 +1053,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (!raf) raf = requestAnimationFrame(animateRise);
   };
   appsBox.addEventListener('pointermove', (e) => {
-    pointerX = e.clientX;
+    pointerX = along(e);
     kickRise();
   });
   appsBox.addEventListener('pointerleave', () => {
@@ -916,21 +1065,23 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   // slides to the next app in front.
   const spot = el('i', 'dk-spot');
   bar.insertBefore(spot, start);
+  let spotKey: string | null = null;
   const placeSpot = () => {
-    const front = frame?.style === 'spotlight' ? [...appEls.values()].find((b) => b.classList.contains('front') && !b.hidden) : undefined;
-    if (!front) {
+    spotKey = frame && has('spotlight') ? spotlightOn(frame.apps, spotKey) : null;
+    const front = spotKey ? appEls.get(spotKey) : undefined;
+    if (!front || front.hidden) {
       spot.classList.remove('on');
       return;
     }
-    const x = front.offsetLeft + front.offsetWidth / 2;
+    const x = upright() ? front.offsetTop + front.offsetHeight / 2 : front.offsetLeft + front.offsetWidth / 2;
     if (!spot.classList.contains('on')) {
       // From nothing: it appears there, no slide in from the side.
       spot.style.transition = 'none';
-      spot.style.transform = `translateX(${x}px)`;
+      spot.style.transform = slide(x);
       void spot.offsetWidth;
       spot.style.transition = '';
       spot.classList.add('on');
-    } else spot.style.transform = `translateX(${x}px)`;
+    } else spot.style.transform = slide(x);
   };
 
   // Glide: a highlight slides behind what the pointer is on, and its name slides along over the bar.
@@ -941,7 +1092,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   let glideOn: HTMLElement | null = null;
   /** In Glide the names are the label over the bar, not Windows' tooltips. */
   const titles = () => {
-    const glide = frame?.style === 'glide';
+    const glide = has('glide');
     for (const b of bar.querySelectorAll<HTMLElement>('button')) {
       if (glide && b.title) {
         b.dataset.tip = b.title;
@@ -950,7 +1101,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     }
   };
   const glideTo = (b: HTMLElement | null) => {
-    if (frame?.style !== 'glide' || b === glideOn) return;
+    if (!has('glide') || b === glideOn) return;
     const from = glideOn;
     glideOn = b;
     if (!b) {
@@ -976,23 +1127,26 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       label.classList.remove('on');
       return;
     }
-    const leftward = Boolean(from && from.getBoundingClientRect().left > b.getBoundingClientRect().left);
+    const leftward = Boolean(from && alongOf(from.getBoundingClientRect()) > alongOf(b.getBoundingClientRect()));
     const text = el('span', label.classList.contains('on') ? (leftward ? 'in-l' : 'in-r') : '');
     text.textContent = name;
     label.replaceChildren(text);
     const w = text.offsetWidth + 24;
     const r = b.getBoundingClientRect();
-    const x = Math.round(Math.max(6, Math.min(window.innerWidth - w - 6, r.left + r.width / 2 - w / 2)));
+    // Over the bar, centred on the item; beside an upright bar, level with it.
+    const x = upright()
+      ? Math.round(Math.max(6, Math.min(window.innerHeight - 36, r.top + r.height / 2 - 15)))
+      : Math.round(Math.max(6, Math.min(window.innerWidth - w - 6, r.left + r.width / 2 - w / 2)));
     if (!label.classList.contains('on')) {
       label.style.transition = 'none';
       label.style.width = `${w}px`;
-      label.style.transform = `translateX(${x}px)`;
+      label.style.transform = slide(x);
       void label.offsetWidth;
       label.style.transition = '';
       label.classList.add('on');
     } else {
       label.style.width = `${w}px`;
-      label.style.transform = `translateX(${x}px)`;
+      label.style.transform = slide(x);
     }
   };
   bar.addEventListener('pointerover', (e) => {
@@ -1007,31 +1161,102 @@ export async function runDock(stage: HTMLElement): Promise<void> {
 
   const tickClock = () => {
     const now = new Date();
-    clockTime.textContent = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    clockDate.textContent = now.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+    // Upright there's only the bar's width: 4:32 over 11/18.
+    const short = upright();
+    clockTime.textContent = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).replace(short ? /\s?[AP]M$/ : /$^/, '');
+    clockDate.textContent = now.toLocaleDateString('en-US', short ? { month: 'numeric', day: 'numeric' } : { month: 'numeric', day: 'numeric', year: 'numeric' });
+  };
+
+  /** The gap in the bar's middle for the island (its width, CSS px; 0: none). */
+  let gapW = 0;
+  const setGap = (w: number) => {
+    const want = w > 0 ? Math.round(w) : 0;
+    if (want === gapW) return;
+    gapW = want;
+    gapEl.hidden = !want;
+    if (want) gapEl.style.width = `${(want + 2 * GAP_PAD) / (DOCK_ZOOM[frame?.size ?? 'medium'] ?? 1)}px`;
   };
 
   /** The window to the bar's width, with the room over it for a card. */
   const fit = async (): Promise<void> => {
     const r = bar.getBoundingClientRect();
-    const w = Math.ceil(r.width + 24);
-    const barArea = Math.ceil(r.height + 16 + HEADROOM);
-    card.style.width = `${Math.min(CARD_W, Math.floor(r.width))}px`;
-    above.style.bottom = `${Math.ceil(r.height) + 12 + POP_GAP}px`;
+    const up = upright();
+    // 12px at each end; the melted ends grow with the bar's size, as the bar does.
+    const zoom = frame ? (DOCK_ZOOM[frame.size] ?? 1) : 1;
+    const len = Math.ceil((up ? r.height : r.width) + 24 + (frame?.edge && frame.melt ? 2 * MELT.out * zoom : 0));
+    const thick = up ? r.width : r.height;
+    const barArea = Math.ceil(thick + 16 + HEADROOM);
+    // Beside an upright bar the card stands out sideways, as tall as the bar lets it.
+    card.style.width = `${up ? CARD_W : Math.min(CARD_W, Math.floor(r.width))}px`;
+    card.style.maxHeight = up ? `${Math.max(160, Math.floor(r.height) - 8)}px` : '';
+    // The room for a card starts this far in from the window's edge side.
+    for (const k of ['top', 'bottom', 'left', 'right']) above.style.removeProperty(k);
+    above.style.setProperty(side(), `${Math.ceil(thick) + 12 + POP_GAP}px`);
     solid();
-    const size = `${w}x${barArea + ROOM}`;
+    tellFrame(r, zoom);
+    const room = up ? CARD_W + 24 : ROOM;
+    const [w, h] = up ? [barArea + room, len] : [len, barArea + room];
+    // Split round the island: the gap's middle goes on the screen's middle.
+    let pivot: number | null = null;
+    if (!gapEl.hidden) {
+      const g = gapEl.getBoundingClientRect();
+      pivot = Math.round(g.left + g.width / 2);
+    }
+    const size = `${w}x${h}x${pivot}`;
     if (size === lastSize) return;
     lastSize = size;
-    await native.dockFit(w, barArea + ROOM, barArea);
+    await native.dockFit(w, h, barArea, pivot);
+  };
+  /** The screen border's window hears where the bar is (for its light's path round it), while the border is on. */
+  let frameSent = '';
+  const tellFrame = (r: DOMRect, zoom: number) => {
+    const part = frame?.border
+      ? { rect: [window.screenX + r.left, window.screenY + r.top, r.width, r.height], side: side(), zoom, melt: frame.edge && frame.melt ? MELT : null, thick: BAR_H, radius: BAR_R }
+      : null;
+    const json = JSON.stringify(part);
+    if (json === frameSent) return;
+    frameSent = json;
+    void sendTo('frame', 'frame-dock', part);
   };
   /** Tells the window where it takes clicks: the bar (and the room its icons rise into) and the card
    *  while it is up. Elsewhere a click goes through to what is under it. */
   let solidSent = '';
   const solid = () => {
     const r = bar.getBoundingClientRect();
-    const rects: number[][] = [[r.left - 4, r.top - HEADROOM, r.width + 8, r.height + HEADROOM + 4]];
-    const base = window.innerHeight - (parseFloat(above.style.bottom) || 0);
-    if (!card.hidden) rects.push([card.offsetLeft - 4, base - card.offsetHeight - 4, card.offsetWidth + 8, card.offsetHeight + POP_GAP + 8]);
+    const H = HEADROOM;
+    // The bar, and the room its icons rise into on its inner side.
+    const box = {
+      bottom: [r.left - 4, r.top - H, r.width + 8, r.height + H + 4],
+      top: [r.left - 4, r.top - 4, r.width + 8, r.height + H + 4],
+      left: [r.left - 4, r.top - 4, r.width + H + 4, r.height + 8],
+      right: [r.left - H, r.top - 4, r.width + H + 4, r.height + 8],
+    }[side()];
+    const rects: number[][] = [];
+    if (gapEl.hidden) rects.push(box);
+    else {
+      // Not the gap: a click there goes to the island under it.
+      const g = gapEl.getBoundingClientRect();
+      rects.push([box[0], box[1], g.left - box[0], box[3]], [g.right, box[1], box[0] + box[2] - g.right, box[3]]);
+    }
+    if (frame?.edge && frame.melt) {
+      // The thick part of each melted foot takes clicks too: what they cover can't be seen.
+      const z = DOCK_ZOOM[frame.size] ?? 1;
+      const fw = MELT.out * z * 0.3;
+      const fh = MELT.up * z * 0.6;
+      const feet = {
+        bottom: [[r.left - fw, r.bottom - fh, fw, fh], [r.right, r.bottom - fh, fw, fh]],
+        top: [[r.left - fw, r.top, fw, fh], [r.right, r.top, fw, fh]],
+        left: [[r.left, r.top - fw, fh, fw], [r.left, r.bottom, fh, fw]],
+        right: [[r.right - fh, r.top - fw, fh, fw], [r.right - fh, r.bottom, fh, fw]],
+      }[side()];
+      rects.push(...feet);
+    }
+    if (!card.hidden) {
+      // The card where it stands when up (its slide is a transform, which offsets leave out).
+      const a = above.getBoundingClientRect();
+      const m = POP_GAP + 4;
+      rects.push([a.left + card.offsetLeft - m, a.top + card.offsetTop - m, card.offsetWidth + 2 * m, card.offsetHeight + 2 * m]);
+    }
     const json = JSON.stringify(rects.map((q) => q.map((n) => Math.round(n))));
     if (json === solidSent) return;
     solidSent = json;
@@ -1044,10 +1269,28 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const root = document.documentElement;
     root.style.setProperty('--accent', f.accent);
     bar.style.zoom = String(DOCK_ZOOM[f.size] ?? 1);
+    // The zoom scales the bar's place in its window too; the CSS divides it back out of that.
+    root.style.setProperty('--dk-z', bar.style.zoom);
     root.dataset.pill = f.color;
+    root.dataset.side = side();
+    root.classList.toggle('dk-upright', upright());
+    // The melted ends' masks for this side, their feet on the border while it is on.
+    const z = DOCK_ZOOM[f.size] ?? 1;
+    const border = f.edge ? (f.border ?? 0) : 0;
+    const sig = `${side()}|${(border / z).toFixed(2)}`;
+    if (sig !== meltSig) {
+      meltSig = sig;
+      const m = meltMasks(side(), MELT.out, MELT.up, border / z);
+      root.style.setProperty('--dk-melt-end', `${m.end}px`);
+      root.style.setProperty('--dk-mask-fill', m.fill);
+      root.style.setProperty('--dk-mask-rim', m.rim);
+    }
+    root.classList.toggle('dk-border', border > 0);
+    setGap(side() === 'top' && f.gap ? f.gap : 0);
     applyGlass(root, f.glass);
-    root.dataset.dstyle = f.style ?? 'rise';
+    for (const k of DOCK_STYLES) root.classList.toggle(`dk-${k}`, (f.styles ?? ['rise']).includes(k));
     root.classList.toggle('dock-edge', f.edge === true);
+    root.classList.toggle('dock-melt', f.edge === true && f.melt === true);
     bar.classList.toggle('locked', f.locked);
     const off = new Set(f.hidden ?? []);
     // Apps, kept by key.
@@ -1111,7 +1354,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // Claude's limits: S: 42% | W: 18%.
     const c = off.has('claude') ? null : f.claude;
     claude.hidden = !c;
-    if (c) claudeText.textContent = claudeUsageText(c);
+    // Upright, S and W stack.
+    if (c) claudeText.textContent = upright() ? claudeUsageText(c).replace(' | ', '\n') : claudeUsageText(c);
     sepA.hidden = !m && !t && !c;
     // The battery: a small one filled to its charge, the percent beside it.
     const b = off.has('battery') ? null : f.battery;
@@ -1152,18 +1396,21 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     placeSpot();
   };
 
-  // Dragging along the bottom: by anything but a button.
+  // Dragging along its edge: by anything but a button. Not while it splits round the island.
   let drag: { id: number; grab: number; startX: number; moved: boolean } | null = null;
-  const leftPx = (e: PointerEvent) => (e.screenX - drag!.grab) * devicePixelRatio;
+  const screenAlong = (e: PointerEvent) => (upright() ? e.screenY : e.screenX);
+  // Never below 0: a negative x is "back to the middle" (a double-click), and dragging past the
+  // screen's left edge made one, so the taskbar bounced back to the middle (Moss).
+  const leftPx = (e: PointerEvent) => Math.max(0, (screenAlong(e) - drag!.grab) * devicePixelRatio);
   bar.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || (e.target as HTMLElement).closest('button') || frame?.locked) return;
-    drag = { id: e.pointerId, grab: e.screenX - window.screenX, startX: e.screenX, moved: false };
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button') || frame?.locked || !gapEl.hidden) return;
+    drag = { id: e.pointerId, grab: screenAlong(e) - (upright() ? window.screenY : window.screenX), startX: screenAlong(e), moved: false };
     bar.setPointerCapture(e.pointerId);
     bar.classList.add('grabbing');
   });
   bar.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.id) return;
-    if (!drag.moved && Math.abs(e.screenX - drag.startX) < DRAG_PX) return;
+    if (!drag.moved && Math.abs(screenAlong(e) - drag.startX) < DRAG_PX) return;
     drag.moved = true;
     void native.dockAt(leftPx(e), false);
   });
@@ -1180,6 +1427,17 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   });
 
   await on<{ full: boolean; up: boolean }>('dock-full', (st) => bar.classList.toggle('faint', Boolean(st?.full && !st.up)));
+  // The screen border's window just opened: it hears where the bar is.
+  await on<null>('frame-hello', () => {
+    frameSent = '';
+    void fit();
+  });
+  // The island's pill changed width, while the bar splits round it: the gap follows at once.
+  await on<number>('dock-gap', (w) => {
+    if (!frame || side() !== 'top' || !frame.gap || typeof w !== 'number' || !Number.isFinite(w)) return;
+    setGap(w);
+    void fit();
+  });
   await on<DockFrame>('dock-frame', (f) => {
     frame = f;
     draw();

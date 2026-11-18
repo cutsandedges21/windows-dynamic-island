@@ -18,22 +18,23 @@ import { PetBrain, type PetSignal } from './pet';
 import { beamSpec, BorderGlow, type GlowSpec } from './glow';
 import { loadShapes, restingTile, saveShapes, type TileShape } from './resting';
 import { cellsOf, CELLS, hiddenTest, moveTile, pageCount, rowsUsed, settle, sizeOf, unhide, withNew, type GridDims, type GridPages, type GridSlot } from './grid';
-import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillRect, pillSize, shelfRect, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
+import { bubbleRect, bubbleSize, chatBarRect, innerPadding, LEVELS, orientationFor, pillGap, pillRect, pillSize, shelfRect, tuckedRect, union, type Anchor, type Area, type Level, type Orientation, type Rect } from './layout';
 import { native, on, onFileDrop, onTermOpened, sendTo, type FileDrop, type MenuItem, type PowerState, type TermOpened } from './native';
 import { cardChips, choosePrimary, type Candidate, type Choice as Picked, type Surface } from './priority';
 import type { MirrorFrame } from './mirror';
 import { Strip, type StripView } from './strip';
 import { lookOf, WidgetHost } from './widgets';
-import { DockHost, type DockCard, type DockFrame } from './dock';
+import { DockHost, meltEnds, type DockCard, type DockFrame } from './dock';
+import { FrameHost, type FrameAct, type FrameFrame, type FramePart } from './frame';
 import { PillRenderer } from './renderer';
 import { menuMain, menuSegments } from './menu';
 import { fadeSegments, fadeSheet } from './fade-menu';
 import { quietMoon } from './quiet';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { applyGlass } from './glass';
-import { accentColor, backAt, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
+import { accentColor, backAt, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
-import { mapActions, SheetRenderer, type Block, type DropZone, type SheetButton, type SheetChip, type SheetView, type Tile } from './sheet';
+import { CARD_RADIUS, mapActions, SheetRenderer, type Block, type DropZone, type SheetButton, type SheetChip, type SheetView, type Tile } from './sheet';
 import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
 import { tileCard } from './tilecard';
 import { pillMotion } from './spring';
@@ -64,6 +65,10 @@ const WIDE_SIZES: TileSize[] = ['2x1', '2x2'];
 const LYRIC_SIZES: TileSize[] = [...ALL_TILE_SIZES, ...FULL_WIDTH_SIZES];
 /** Music's player: two columns or the whole width, one row or two. */
 const MEDIA_SIZES: TileSize[] = [...WIDE_SIZES, '4x1', '4x2'];
+/** The island's melted ends with the screen border on: how far they reach out along the edge, and the
+ *  pill's corner they curve up into, CSS px. */
+const ISLAND_MELT = { out: 30, radius: 18 };
+
 /** Island set Windows' taskbar to hide (kept across restarts and crashes, to put it back). */
 const HID_BAR_KEY = 'island.taskbar.hidWindows';
 function readFlag(key: string): boolean {
@@ -282,6 +287,14 @@ export class Island {
           this.cardGlow?.place(card);
           this.grownGlow?.place(card);
         }
+        // Blended into the edge: a card hanging from the pill makes one shape with it, and the rings
+        // follow both shapes' corners.
+        const blend = this.sheet?.blend === true;
+        this.renderer.setJoin(this.sheet?.joined ?? null);
+        this.syncUnion();
+        if (this.pillGlow) this.placePillGlow(this.renderer.rect);
+        this.cardGlow?.setCorners(blend ? this.sheet.shape : null);
+        this.grownGlow?.setCorners(blend ? this.sheet.shape : null);
         this.publishHit(this.renderer.rect, false);
       },
       (cover) => {
@@ -311,7 +324,7 @@ export class Island {
     this.grownGlow = new BorderGlow(stage, 34, 'of-grown');
     this.renderer.onFrame((r) => {
       this.sheet.follow(r);
-      this.pillGlow.place(r);
+      this.placePillGlow(r);
       this.publishHit(r, false);
     });
   }
@@ -428,9 +441,9 @@ export class Island {
           this.settings.island.taskbar.size = size;
           this.saveSettings();
         },
-        style: () => this.settings.island.taskbar.style,
-        setStyle: (style) => {
-          this.settings.island.taskbar.style = style;
+        styles: () => this.settings.island.taskbar.styles,
+        setStyles: (styles) => {
+          this.settings.island.taskbar.styles = styles;
           this.saveSettings();
         },
         edge: () => this.settings.island.taskbar.edge,
@@ -438,6 +451,20 @@ export class Island {
           this.settings.island.taskbar.edge = on;
           this.saveSettings();
         },
+        melt: () => this.settings.island.taskbar.melt,
+        setMelt: (on) => {
+          this.settings.island.taskbar.melt = on;
+          this.saveSettings();
+        },
+        side: () => this.settings.island.taskbar.side,
+        setSide: (side) => {
+          this.settings.island.taskbar.side = side;
+          // Its place along the old edge means nothing on the new one.
+          this.settings.island.taskbar.centre = -1;
+          this.saveSettings();
+        },
+        border: () => (frameOn(this.settings.island) ? FRAME_W : 0),
+        gap: () => (this.dockSplits() ? this.pillWidth : null),
         open: (id) => {
           this.view = 'main';
           if (id && this.running.has(id)) this.pick(id, Date.now());
@@ -467,9 +494,24 @@ export class Island {
       if (this.settings.island.taskbar.on) radios();
     }, 15000);
     this.dock.start().catch((err) => native.log(`taskbar failed to start: ${String(err)}`));
+    // The screen border and its notches (Settings › Widgets › Screen border).
+    this.frameHost = new FrameHost({
+      // The border, or only its notches (they work without it, melting into the screen's edge).
+      enabled: () => frameOn(this.settings.island) || notchesOn(this.settings.island),
+      frame: () => this.frameFrame(),
+      act: (a) => this.frameAct(a),
+      ready: () => {
+        this.frameIslandSent = '';
+        if (this.pillRect) this.reportPill(this.pillRect);
+      },
+    });
+    this.frameHost.start().catch((err) => native.log(`screen border failed to start: ${String(err)}`));
     setInterval(() => {
       if (this.settings.island.taskbar.on) void this.syncDockClaude();
       void this.dock?.tick();
+      this.frameHost?.tick();
+      // The border hears where the island is now, also after the last move was missed (a card that closed).
+      if (frameOn(this.settings.island)) this.reportPill(this.renderer.rect);
       this.syncWindowsBar();
     }, 1000);
     this.hub = new PhoneHub(this.phoneHooks(), phoneNative);
@@ -1036,13 +1078,17 @@ export class Island {
       placed = fit(segs);
     }
 
-    const target = hidden ? tuckedRect(this.area, anchor, w, h) : pillRect(this.area, anchor, w, h, s.edge);
+    // Blend into the edge: on its screen edge, no gap, its corners there square (and a grown card's).
+    const gap = pillGap(s.edge, s.blend);
+    const target = hidden ? tuckedRect(this.area, anchor, w, h) : pillRect(this.area, anchor, w, h, gap);
     const travelling = this.lastAnchor !== null && this.lastAnchor !== anchor;
     const reshaped = this.lastOrientation !== null && this.lastOrientation !== orient;
     this.renderer.setOrientation(orient);
     this.renderer.setAnchor(anchor);
     // Cards' content follows the Size setting (island.css :root[data-island-size]).
     if (document.documentElement.dataset.islandSize !== s.size) document.documentElement.dataset.islandSize = s.size;
+    this.renderer.setBlend(s.blend);
+    this.sheet.blend = s.blend;
     // Opening and closing (the menu too) change the pill most: no overshoot for the whole motion,
     // or a few pixels of it visibly settle back. A spring takes the config of every retarget,
     // so it is kept for as long as that motion runs.
@@ -1070,7 +1116,7 @@ export class Island {
     // only while the island moves screens or hides behind a full-screen app.
     const botShown = s.bot && !this.moving && !(fsHide && this.fullscreenOn !== null);
     const botD = bubbleSize(s.size);
-    const restPill = pillRect(this.area, anchor, w, h, s.edge);
+    const restPill = pillRect(this.area, anchor, w, h, gap);
     // The card is picked now so the bot can step aside when a card grows out of the pill.
     let picked = hidden ? null : this.pickSheet(choice, statuses, now, orient, w);
     // Grown out of the pill, the card covers its chips: it carries them itself.
@@ -1124,7 +1170,7 @@ export class Island {
     this.syncSmart(s.smartFade && !popUp && !this.open && this.view === 'main' && !this.inputActive && !this.sheetEngaged);
     // Every frame is kept for phones, whether or not Duplicate copies run.
     this.lastFrame = {
-      sig, swap, bump: bump && !hiddenEverywhere, placed, w, h, orient, anchor, edge: s.edge,
+      sig, swap, bump: bump && !hiddenEverywhere, placed, w, h, orient, anchor, edge: gap, blend: s.blend,
       hidden: hiddenEverywhere, fsHide, fullscreen: this.fullscreenAny,
       glow: beamSpec(beam), speed: s.glow,
       bot: botShown ? { d: botD } : null,
@@ -1513,8 +1559,12 @@ export class Island {
   private gridGeometry(pillW: number): { cols: number; rows: number; cell: number; width: number } {
     const scale = SIZE_SCALE[this.settings.island.size] ?? 1;
     // pillW is already scaled by the size (layout.ts levelWidth); the bounds are scaled here.
-    const want = Math.max(460 * scale, Math.min(pillW, 760 * scale));
-    const width = Math.round(Math.min(this.area.width - 32, Math.max(GRID_MIN_W, want)));
+    const s = this.settings.island;
+    // Blended into the top or bottom, the open island's card hangs flush from the bar as one shape:
+    // exactly the bar's width (Moss: no bump where a wider card stuck out past it); its cells fit it.
+    const flush = s.blend && (s.anchor === 'top' || s.anchor === 'bottom');
+    const want = flush ? Math.max(360, pillW) : Math.max(460 * scale, Math.min(pillW, 760 * scale));
+    const width = Math.round(Math.min(this.area.width - 32, flush ? want : Math.max(GRID_MIN_W, want)));
     return { cols: GRID_COLS, rows: GRID_ROWS, cell: gridCell(width, CELL_PX[this.settings.island.size] ?? CELL_PX.medium), width };
   }
 
@@ -1746,6 +1796,257 @@ export class Island {
   }
 
   /**
+   * The pill's light round the pill only, also blended into the edge with a card hanging from it:
+   * stretched round both, it drew one box wider than the card (Moss: keep it on the pill).
+   */
+  private placePillGlow(r: Rect): void {
+    this.pillGlow.place(r);
+    this.pillGlow.setCorners(this.sheet.blend ? this.renderer.shape : null);
+    this.reportPill(r);
+    this.placeFeet(r);
+  }
+
+  /** The screen border's window (frame.ts), and the light it runs round the border (Glow › Whole screen). */
+  private frameHost: FrameHost | null = null;
+  private screenGlow: GlowSpec | null = null;
+
+  /** What the border shows: the taskbar's look, the notches and their contents, the light. */
+  private frameFrame(): FrameFrame {
+    const i = this.settings.island;
+    const shelf = this.shelf();
+    return {
+      // No border: the notches melt into the screen's edge itself.
+      width: frameOn(i) ? FRAME_W : 0,
+      ...lookOf(i.taskbar.look, i),
+      accent: accentColor(i),
+      reduce: document.documentElement.classList.contains('reduce'),
+      sites: { ...i.frame.sites, list: i.sites },
+      shelf: { ...i.frame.shelf, files: shelf?.files() ?? [], undo: shelf?.canUndo() ?? false },
+      glow: frameOn(i) && i.frame.glow === 'screen' && i.glow !== 'off' ? { spec: this.screenGlow, speed: i.glow } : null,
+    };
+  }
+
+  /** Something done on the border's notches. */
+  private frameAct(a: FrameAct): void {
+    const i = this.settings.island;
+    switch (a.kind) {
+      case 'site-remove':
+        i.sites = i.sites.filter((s) => s.url !== a.url);
+        this.saveSettings();
+        return;
+      case 'site-move': {
+        const from = i.sites.findIndex((s) => s.url === a.url);
+        if (from < 0 || !Number.isFinite(a.to)) return;
+        const [s] = i.sites.splice(from, 1);
+        i.sites.splice(Math.max(0, Math.min(i.sites.length, Math.round(a.to))), 0, s);
+        this.saveSettings();
+        return;
+      }
+      case 'sites-settings':
+        void native.openApp('taskbar');
+        return;
+      case 'shelf':
+        if (typeof a.name === 'string') void this.runAct(`act:shelf:${a.name}`, a.arg ?? null);
+        return;
+      case 'shelf-drop': {
+        const paths = Array.isArray(a.paths) ? a.paths.filter((p): p is string => typeof p === 'string') : [];
+        if (paths.length) this.shelf()?.drop(paths);
+        this.schedule();
+        return;
+      }
+      case 'shelf-open':
+        this.open = true;
+        this.view = 'main';
+        this.cardFor = 'shelf';
+        this.shelfPinned = true;
+        this.chatOpen = false;
+        this.schedule();
+        return;
+    }
+  }
+
+  /** The island's melted ends: with the screen border on, the pill blended into its edge curves out
+   *  into the border on both sides, as the taskbar's ends do. */
+  private feet: HTMLElement[] = [];
+  private feetSig = '';
+  private placeFeet(r: Rect): void {
+    const i = this.settings.island;
+    const on = i.blend && frameOn(i);
+    // The pill's and the card's rims run only along their own edge then (island.css .island-melt).
+    document.documentElement.classList.toggle('island-melt', on);
+    if (!on) {
+      for (const f of this.feet) f.hidden = true;
+      return;
+    }
+    if (!this.feet.length) {
+      this.feet = [document.createElement('i'), document.createElement('i')];
+      // Under the pill (first in the stage), which draws over where they meet it.
+      const stage = document.getElementById('stage');
+      for (const f of this.feet) {
+        f.className = 'pill-foot';
+        stage?.prepend(f);
+      }
+    }
+    const side = i.anchor;
+    const across = side === 'top' || side === 'bottom';
+    const { span, tint } = this.edgeSpan(r);
+    const thick = across ? r.h : r.w;
+    const rad = Math.min(thick / 2, ISLAND_MELT.radius);
+    const out = ISLAND_MELT.out;
+    const sig = `${side}|${thick.toFixed(1)}`;
+    if (sig !== this.feetSig) {
+      this.feetSig = sig;
+      const e = meltEnds(out, thick - rad, FRAME_W, side, thick, rad);
+      const size = across ? `${e.left.width}px 100%` : `100% ${e.left.width}px`;
+      const [a, z] = across ? [`left ${side}`, `right ${side}`] : [`${side} top`, `${side} bottom`];
+      this.feet[0].style.setProperty('--foot', `${e.left.fill} ${a} / ${size} no-repeat`);
+      this.feet[1].style.setProperty('--foot', `${e.right.fill} ${z} / ${size} no-repeat`);
+      this.feet[0].style.setProperty('--foot-rim', `${e.left.rim} ${a} / ${size} no-repeat`);
+      this.feet[1].style.setProperty('--foot-rim', `${e.right.rim} ${z} / ${size} no-repeat`);
+      // A coloured card's colour fades out along each foot, away from the card.
+      this.feet[0].style.setProperty('--foot-dir', across ? 'to left' : 'to top');
+      this.feet[1].style.setProperty('--foot-dir', across ? 'to right' : 'to bottom');
+    }
+    const [f0, f1] = this.feet;
+    for (const f of this.feet) {
+      f.hidden = false;
+      f.classList.toggle('tinted', tint !== null);
+      if (tint) f.style.setProperty('--foot-tint', tint);
+    }
+    const px = (n: number) => `${n}px`;
+    if (across) {
+      Object.assign(f0.style, { left: px(span.x - out), top: px(r.y), width: px(out), height: px(thick) });
+      Object.assign(f1.style, { left: px(span.x + span.w), top: px(r.y), width: px(out), height: px(thick) });
+    } else {
+      Object.assign(f0.style, { left: px(r.x), top: px(span.y - out), width: px(thick), height: px(out) });
+      Object.assign(f1.style, { left: px(r.x), top: px(span.y + span.h), width: px(thick), height: px(out) });
+    }
+  }
+
+  /**
+   * Where the island meets its edge now (CSS px), and its colour there: the pill, or a card grown out
+   * of it that is wider (Music's player), which grows smoothly so the ends ride its sides. A card
+   * hanging below the pill (the open island) doesn't reach the edge: the ends stay on the pill's.
+   */
+  private edgeSpan(r: Rect): { span: Rect; tint: string | null } {
+    const side = this.settings.island.anchor;
+    const across = side === 'top' || side === 'bottom';
+    const e = this.sheet.edgeShape;
+    if (!e) return { span: r, tint: null };
+    const c = e.rect;
+    const atEdge = { top: Math.abs(c.y - r.y), bottom: Math.abs(c.y + c.h - (r.y + r.h)), left: Math.abs(c.x - r.x), right: Math.abs(c.x + c.w - (r.x + r.w)) }[side] < 1.5;
+    if (!atEdge) return { span: r, tint: e.tint };
+    const a = across ? Math.min(r.x, c.x) : Math.min(r.y, c.y);
+    const b = across ? Math.max(r.x + r.w, c.x + c.w) : Math.max(r.y + r.h, c.y + c.h);
+    return { span: across ? { ...r, x: a, w: b - a } : { ...r, y: a, h: b - a }, tint: e.tint };
+  }
+
+  /**
+   * Blended, a card hanging from the pill (the open island's) is one shape with it: one background
+   * runs behind both, sized to the two together, so its colour (Music's, from the art) and the glass
+   * carry on across where they meet; island.css drops the rims there.
+   */
+  private syncUnion(): void {
+    const pill = this.renderer.pill;
+    const card = this.sheet.el;
+    const j = this.sheet.blend && !this.sheet.carrying ? this.sheet.joined : null;
+    if (!j || j.k < 0.01) {
+      pill.classList.remove('joined', 'tinted');
+      card.classList.remove('joined');
+      return;
+    }
+    const p = this.renderer.rect;
+    const c = j.card;
+    const ux = Math.min(p.x, c.x);
+    const uy = Math.min(p.y, c.y);
+    const uw = Math.max(p.x + p.w, c.x + c.w) - ux;
+    const uh = Math.max(p.y + p.h, c.y + c.h) - uy;
+    const put = (el: HTMLElement, at: Rect) => {
+      el.style.setProperty('--u-w', `${uw}px`);
+      el.style.setProperty('--u-h', `${uh}px`);
+      el.style.setProperty('--u-x', `${ux - at.x}px`);
+      el.style.setProperty('--u-y', `${uy - at.y}px`);
+      el.classList.add('joined');
+    };
+    put(pill, p);
+    put(card, c);
+    const tinted = card.classList.contains('tinted');
+    pill.classList.toggle('tinted', tinted);
+    if (tinted) pill.style.setProperty('--card-tint', card.style.getPropertyValue('--card-tint'));
+  }
+
+  /** The pill's width (CSS px), for the taskbar on the top edge that leaves a gap for it. */
+  private pillWidth = 0;
+  private pillSent = 0;
+  private pillTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** The taskbar sits on the top edge with the island: it splits round the pill. */
+  private dockSplits(): boolean {
+    const i = this.settings.island;
+    return i.taskbar.on && i.taskbar.side === 'top' && i.anchor === 'top';
+  }
+
+  /** The pill moved or changed size: the split taskbar hears its width, and the screen border where
+   *  the island is (for its light's path), at most every 40 ms, and the last one. */
+  private pillRect: Rect | null = null;
+  private frameIslandSent = '';
+  private reportPill(r: Rect): void {
+    this.pillWidth = r.w;
+    this.pillRect = r;
+    if (this.pillTimer) return;
+    const splits = this.dockSplits();
+    const framed = frameOn(this.settings.island);
+    if (!splits && !framed) return;
+    this.pillTimer = setTimeout(() => {
+      this.pillTimer = undefined;
+      if (this.dockSplits() && Math.abs(this.pillWidth - this.pillSent) >= 0.5) {
+        this.pillSent = this.pillWidth;
+        void sendTo('dock', 'dock-gap', this.pillWidth);
+      }
+      if (frameOn(this.settings.island) && this.pillRect) {
+        const parts = this.islandParts(this.pillRect);
+        const json = JSON.stringify(parts);
+        if (json !== this.frameIslandSent) {
+          this.frameIslandSent = json;
+          void sendTo('frame', 'frame-island', parts);
+        }
+      }
+    }, 40);
+  }
+
+  /** The island's shapes on the screen (CSS px), for the light round the border: the pill with its
+   *  melted ends, and a card hanging flush from it. */
+  private islandParts(r: Rect): FramePart[] {
+    const i = this.settings.island;
+    const side = i.anchor;
+    const across = side === 'top' || side === 'bottom';
+    const ox = window.screenX;
+    const oy = window.screenY;
+    const thick = across ? r.h : r.w;
+    const rad = Math.min(thick / 2, ISLAND_MELT.radius);
+    // Where it meets the edge, its melted ends on either side (the pill, or a wider grown card).
+    const { span, tint } = this.edgeSpan(r);
+    const parts: FramePart[] = [
+      {
+        rect: [ox + span.x, oy + span.y, span.w, span.h],
+        side,
+        zoom: 1,
+        melt: i.blend ? { out: ISLAND_MELT.out, up: thick - rad } : null,
+        thick,
+        radius: rad,
+        tint,
+      },
+    ];
+    // The card itself (grown, or hanging from the pill): all of it, while it is there.
+    const e = this.sheet.edgeShape;
+    if (e && e.k > 0.5) {
+      const c = e.rect;
+      parts.push({ rect: [ox + c.x, oy + c.y, c.w, c.h], side, zoom: 1, melt: null, thick: across ? c.h : c.w, radius: CARD_RADIUS });
+    }
+    return parts;
+  }
+
+  /**
    * The border glow: the primary activity asks for it in its status (orbit while
    * busy, pulse when something waits on the user, progress while filling up); an
    * urgent card gets a slow orbit in the same tone.
@@ -1763,6 +2064,19 @@ export class Island {
     this.grownGlow.setSpeed(speed);
     // A still glow (Claude's reply hold) keeps the card still too.
     const urgent: GlowSpec = { tone: want?.tone ?? 'accent', motion: want?.motion === 'still' ? 'still' : 'orbit' };
+    // Glow › Whole screen: the light runs round the whole border (frame.ts), not the island.
+    if (frameOn(this.settings.island) && this.settings.island.frame.glow === 'screen') {
+      this.pillGlow.set(null, true);
+      this.grownGlow.set(null, true);
+      this.cardGlow.set(null, true);
+      const next = beamSpec(want) ?? (cardUrgent ? urgent : null);
+      if (JSON.stringify(next) !== JSON.stringify(this.screenGlow)) {
+        this.screenGlow = next;
+        this.frameHost?.tick();
+      }
+      return;
+    }
+    this.screenGlow = null;
     // A card grown out of the pill covers it: the light runs round the card's edge, not across its
     // text, also while it shrinks back, until it lands. The pill's is cut at once: fading, its ring
     // would show through the card as it grows.

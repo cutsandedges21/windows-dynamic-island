@@ -22,7 +22,10 @@ export interface MirrorFrame {
   h: number;
   orient: Orientation;
   anchor: Anchor;
+  /** The pill's gap to its edge (0 when it blends into it). */
   edge: number;
+  /** Blend into the edge: flat along it, its corners there square; absent from an Island before it had one. */
+  blend?: boolean;
   /** Hidden for reasons that hold on every screen (idle tucked away, hidden for a while). */
   hidden: boolean;
   /** Hide on a screen where something runs full screen. */
@@ -42,7 +45,7 @@ export interface MirrorFrame {
 
 export async function runMirror(stage: HTMLElement): Promise<void> {
   const renderer = new PillRenderer(stage, () => {});
-  const glow = new BorderGlow(stage);
+  const glow = new BorderGlow(stage, null, 'of-pill');
   const bubble = new BubbleView(stage, { interactive: false });
   renderer.onFrame((r) => glow.place(r));
   let area: Area = { width: 1280, height: 720 };
@@ -63,6 +66,7 @@ export async function runMirror(stage: HTMLElement): Promise<void> {
     const hidden = f.hidden || (f.fsHide && f.fullscreen === monitor);
     renderer.setOrientation(f.orient);
     renderer.setAnchor(f.anchor);
+    renderer.setBlend(f.blend === true);
     const target = hidden ? tuckedRect(area, f.anchor, f.w, f.h) : pillRect(area, f.anchor, f.w, f.h, f.edge);
     renderer.setShell(target, { config: lastAnchor && lastAnchor !== f.anchor ? springs.travel : springs.shell, immediate });
     lastAnchor = f.anchor;

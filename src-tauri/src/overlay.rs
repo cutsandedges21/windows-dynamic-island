@@ -135,7 +135,7 @@ fn drop_target(hwnd: HWND) -> *mut core::ffi::c_void {
 
 /// WebView2's windows (other processes) in the island's tree that no drop target answers for.
 #[cfg(windows)]
-fn without_drop_target(top: HWND) -> Vec<isize> {
+pub(crate) fn without_drop_target(top: HWND) -> Vec<isize> {
     unsafe extern "system" fn collect(hwnd: HWND, data: LPARAM) -> BOOL {
         let list = unsafe { &mut *(data.0 as *mut Vec<isize>) };
         list.push(hwnd.0 as isize);
@@ -157,7 +157,7 @@ fn without_drop_target(top: HWND) -> Vec<isize> {
 /// Gives each of them the target of its nearest ancestor in this process (wry's, on
 /// Chrome_WidgetWin_0). Main thread only: the OLE apartment that target lives in.
 #[cfg(windows)]
-fn share_drop_target(top: HWND) -> usize {
+pub(crate) fn share_drop_target(top: HWND) -> usize {
     let me = unsafe { GetCurrentProcessId() };
     let mut given = 0;
     for h in without_drop_target(top) {

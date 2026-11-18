@@ -548,3 +548,17 @@ button.me-grip:hover, button.me-grip:focus-visible { background: rgba(255, 255, 
 .wtip { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0 8px; padding: 9px 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.035); color: var(--muted); font-size: 12.5px; }
 .wtip .ico { width: 15px; height: 15px; flex: none; margin-top: 1px; }
 .row-actions { display: flex; align-items: center; gap: 12px; }
+
+/* Settings › Widgets › Screen border › Websites: the pinned sites, and a field to add one */
+.sites { display: flex; flex-direction: column; gap: 6px; padding: 4px 0 10px; }
+.site-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); }
+.site-ico { width: 20px; height: 20px; border-radius: 5px; flex: none; }
+.site-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.site-text b { font-weight: 600; font-size: 13px; }
+.site-text span { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-row .icon-btn { padding: 6px; display: grid; place-items: center; }
+.site-row .icon-btn svg { width: 14px; height: 14px; }
+.site-add { display: flex; gap: 8px; }
+.site-add-field { flex: 1; min-width: 0; }
+.site-note:empty { display: none; }
+.site-note { font-size: 12px; }

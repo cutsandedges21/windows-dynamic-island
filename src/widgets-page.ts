@@ -5,8 +5,39 @@
 import { section, row, segmented, toggle } from './controls';
 import { icon, type IconName } from './core/icons';
 import { sendTo } from './core/native';
-import { DOCK_LABELS, DOCK_SIZE_LABELS, DOCK_STYLE_LABELS, toggleDockItem } from './core/dock';
-import { DOCK_ITEMS, DOCK_SIZES, DOCK_STYLES, type DockSize, type DockStyle, type ItemLook, type Settings } from './core/settings';
+import { DOCK_LABELS, DOCK_SIZE_LABELS, DOCK_STYLE_LABELS, toggleDockItem, toggleStyle } from './core/dock';
+import {
+  DOCK_ITEMS,
+  DOCK_SIDES,
+  DOCK_SIZES,
+  DOCK_STYLES,
+  frameAvailable,
+  MAX_SITES,
+  NOTCH_CORNERS,
+  NOTCH_SIZES,
+  siteOf,
+  type DockSide,
+  type DockSize,
+  type DockStyle,
+  type ItemLook,
+  type NotchConfig,
+  type NotchCorner,
+  type NotchSize,
+  type Settings,
+} from './core/settings';
+import { faviconOf } from './core/frame';
+import { screenPreview } from './previews';
+
+const SIDE_LABELS: Record<DockSide, string> = { bottom: 'Bottom', left: 'Left', right: 'Right', top: 'Top' };
+const CORNER_LABELS: Record<NotchCorner, string> = { 'top-left': 'Top left', 'top-right': 'Top right', 'bottom-left': 'Bottom left', 'bottom-right': 'Bottom right' };
+const NOTCH_SIZE_LABELS: Record<NotchSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
+
+/** What each taskbar style does (Settings › Widgets › Taskbar); any of them can be on together. */
+const STYLE_HINTS: Record<DockStyle, string> = {
+  rise: 'Icons grow under the pointer.',
+  spotlight: 'A light shines down on the app in front, and glides to the next one.',
+  glide: 'A highlight and the name slide along to what you point at.',
+};
 import { MAX_WIDGETS, newWidgetId, WIDGET_KINDS } from './core/widgets';
 import { h } from './dom';
 
@@ -128,11 +159,24 @@ function gallery(host: WidgetsPageHost): HTMLElement {
   );
 }
 
-export function widgetsPage(host: WidgetsPageHost): HTMLElement {
+/** Settings › Widgets: the desktop widgets alone. */
+export function desktopWidgetsPage(host: WidgetsPageHost): HTMLElement {
+  return widgetsPage(host, 'widgets');
+}
+
+/** Settings › Taskbar & border: the taskbar, the screen border and the notches, with the screen as it will look. */
+export function taskbarPage(host: WidgetsPageHost): HTMLElement {
+  return widgetsPage(host, 'taskbar');
+}
+
+function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLElement {
   const s = host.settings();
   const w = s.island.widgets;
   const t = s.island.taskbar;
-  const head = h('div', { class: 'page-head' }, [h('h1', { text: 'Widgets' }), h('p', { text: "Tiles from Control Center, live on your desktop, and a taskbar along the bottom, in the island's look." })]);
+  const head =
+    part === 'widgets'
+      ? h('div', { class: 'page-head' }, [h('h1', { text: 'Widgets' }), h('p', { text: 'Tiles from Control Center, live on your desktop, under your windows.' })])
+      : h('div', { class: 'page-head' }, [h('h1', { text: 'Taskbar & border' }), h('p', { text: "Your own taskbar in the island's look, a line round the screen, and notches for your websites and the Shelf." })]);
   if (host.mac) {
     return h('div', { class: 'page' }, [head, section('Coming to Mac', [h('p', { class: 'muted', text: 'Desktop widgets and the taskbar are on Windows for now.' })])]);
   }
@@ -169,6 +213,17 @@ export function widgetsPage(host: WidgetsPageHost): HTMLElement {
       ? [
           dockPicker(host),
           row(
+            'Position',
+            t.side === 'top' && s.island.anchor === 'top' ? 'On the top, the island sits in the middle of the taskbar.' : 'The screen edge it sits along.',
+            segmented(t.side, DOCK_SIDES.map((k) => [k, SIDE_LABELS[k]] as [DockSide, string]), (v) => {
+              t.side = v;
+              // Its place along the old edge means nothing on the new one.
+              t.centre = -1;
+              host.save(true);
+              host.render();
+            }),
+          ),
+          row(
             'Size',
             'Medium is the size it has always been.',
             segmented(t.size, DOCK_SIZES.map((k) => [k, DOCK_SIZE_LABELS[k]] as [DockSize, string]), (v) => {
@@ -177,23 +232,37 @@ export function widgetsPage(host: WidgetsPageHost): HTMLElement {
               host.render();
             }),
           ),
+          ...DOCK_STYLES.map((k) =>
+            row(
+              DOCK_STYLE_LABELS[k],
+              STYLE_HINTS[k],
+              toggle(t.styles.includes(k), () => {
+                t.styles = toggleStyle(t.styles, k);
+                host.save(true);
+              }),
+            ),
+          ),
           row(
-            'Style',
-            'Rise: icons grow under the pointer. Spotlight: a light shines down on the app in front. Glide: a highlight and the name slide along to what you point at.',
-            segmented(t.style, DOCK_STYLES.map((k) => [k, DOCK_STYLE_LABELS[k]] as [DockStyle, string]), (v) => {
-              t.style = v;
+            t.side === 'bottom' ? 'Blend into the bottom' : `Blend into the ${t.side} edge`,
+            t.side === 'bottom' ? "Sits on the screen's bottom edge, over Windows' taskbar and the icons in its middle, instead of floating above it." : `Sits on the screen's ${t.side} edge instead of floating beside it.`,
+            toggle(t.edge, (v) => {
+              t.edge = v;
               host.save(true);
               host.render();
             }),
           ),
-          row(
-            'Blend into the bottom',
-            "Sits on the screen's bottom edge, over Windows' taskbar and the icons in its middle, instead of floating above it.",
-            toggle(t.edge, (v) => {
-              t.edge = v;
-              host.save(true);
-            }),
-          ),
+          ...(t.edge
+            ? [
+                row(
+                  'Melt the ends',
+                  'Its ends curve out into the edge of the screen instead of going straight into it.',
+                  toggle(t.melt, (v) => {
+                    t.melt = v;
+                    host.save(true);
+                  }),
+                ),
+              ]
+            : []),
           ...lookPicker(t.look, host),
           row(
             "Hide Windows' taskbar",
@@ -218,5 +287,154 @@ export function widgetsPage(host: WidgetsPageHost): HTMLElement {
         ]
       : []),
   ]);
-  return h('div', { class: 'page' }, [head, widgets, taskbar]);
+  if (part === 'widgets') return h('div', { class: 'page' }, [head, widgets]);
+  return h('div', { class: 'page' }, [head, h('div', { class: 'preview-dock' }, [screenPreview(s)]), taskbar, borderSection(host)]);
+}
+
+/** One notch's choices: on or off, where, how big. */
+function notchRows(name: string, about: string, c: NotchConfig, host: WidgetsPageHost): HTMLElement[] {
+  return [
+    row(
+      name,
+      about,
+      toggle(c.on, (v) => {
+        c.on = v;
+        host.save(true);
+        host.render();
+      }),
+    ),
+    ...(c.on
+      ? [
+          row(
+            'Place',
+            null,
+            segmented(c.corner, NOTCH_CORNERS.map((k) => [k, CORNER_LABELS[k]] as [NotchCorner, string]), (v) => {
+              c.corner = v;
+              host.save(true);
+              host.render();
+            }),
+          ),
+          row(
+            'Size',
+            'Small is smaller than the taskbar; Medium is the taskbar at Small.',
+            segmented(c.size, NOTCH_SIZES.map((k) => [k, NOTCH_SIZE_LABELS[k]] as [NotchSize, string]), (v) => {
+              c.size = v;
+              host.save(true);
+              host.render();
+            }),
+          ),
+        ]
+      : []),
+  ];
+}
+
+/** The pinned websites: each with its icon and a remove button, and a field to add one. */
+function sitesList(host: WidgetsPageHost): HTMLElement {
+  const isl = host.settings().island;
+  const field = h('input', { type: 'url', class: 'site-add-field', placeholder: 'Paste a link, like github.com', spellcheck: 'false', 'aria-label': 'Website to add' }) as HTMLInputElement;
+  const note = h('span', { class: 'muted site-note' });
+  const add = () => {
+    const site = siteOf(field.value);
+    if (!site) {
+      note.textContent = "That isn't a web address.";
+      return;
+    }
+    if (isl.sites.some((s) => s.url === site.url)) {
+      note.textContent = 'Already pinned.';
+      return;
+    }
+    if (isl.sites.length >= MAX_SITES) {
+      note.textContent = `${MAX_SITES} websites at most.`;
+      return;
+    }
+    isl.sites.push(site);
+    host.save(true);
+    host.render();
+  };
+  field.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') add();
+  });
+  const rows = isl.sites.map((s, i) =>
+    h('div', { class: 'site-row' }, [
+      h('img', { class: 'site-ico', src: faviconOf(s.url), alt: '' }),
+      h('span', { class: 'site-text' }, [h('b', { text: s.title }), h('span', { class: 'muted', text: s.url.replace(/^https?:\/\//, '').replace(/\/$/, '') })]),
+      h('button', {
+        class: 'btn ghost icon-btn',
+        title: 'Move up',
+        disabled: i === 0,
+        html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 14.5 12 9l5.5 5.5"/></svg>',
+        onclick: () => {
+          isl.sites.splice(i - 1, 0, ...isl.sites.splice(i, 1));
+          host.save(true);
+          host.render();
+        },
+      }),
+      h('button', {
+        class: 'btn ghost icon-btn',
+        title: `Remove ${s.title}`,
+        html: icon('x'),
+        onclick: () => {
+          isl.sites.splice(i, 1);
+          host.save(true);
+          host.render();
+        },
+      }),
+    ]),
+  );
+  return h('div', { class: 'sites' }, [
+    ...rows,
+    h('div', { class: 'site-add' }, [field, h('button', { class: 'btn', text: 'Add', onclick: add })]),
+    note,
+  ]);
+}
+
+/** Settings › Widgets › Screen border. */
+function borderSection(host: WidgetsPageHost): HTMLElement {
+  const isl = host.settings().island;
+  const f = isl.frame;
+  // The notches work with or without the border: without it they melt into the screen's edge.
+  const notches = [
+    ...notchRows('Websites notch', 'Your pinned sites in a notch on the screen’s edge; click one to open it in your browser.', f.sites, host),
+    ...(f.sites.on ? [sitesList(host)] : []),
+    ...notchRows('Shelf notch', 'Files you keep for later, in a notch on the screen’s edge; drag one out, or drop files on it.', f.shelf, host),
+  ];
+  const border = frameAvailable(isl)
+    ? [
+        row(
+          'Show the border',
+          'A thin line round your whole screen in the taskbar’s look, joining it and the island; the notches come out of it.',
+          toggle(f.on, (v) => {
+            f.on = v;
+            host.save(true);
+            host.render();
+          }),
+        ),
+        ...(f.on
+          ? [
+              row(
+                'Glow',
+                'Where the light runs while Claude works or something waits on you.',
+                segmented(
+                  f.glow,
+                  [
+                    ['island', 'Island only'],
+                    ['screen', 'Whole screen'],
+                  ],
+                  (v) => {
+                    f.glow = v;
+                    host.save(true);
+                  },
+                ),
+              ),
+            ]
+          : []),
+      ]
+    : [
+        row(
+          'Show the border',
+          'A thin line round your whole screen that joins the taskbar and the island. Turn on the taskbar with Blend into the edge here, and Blend into the top in Appearance, to use it.',
+          h('span', { class: 'muted', text: 'Not available yet' }),
+        ),
+      ];
+  return section('Screen border and notches', [...border, ...notches]);
 }

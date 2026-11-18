@@ -1351,8 +1351,8 @@ export class ClaudeActivity extends BaseActivity {
     const flash = this.glowNow(now);
     const unreadDone = this.unreadGlow(rows, now);
     // Border light: an amber pulse when something needs you, a still green glow while a finished
-    // chat holds for your reply, a finish's or failure's still glow for a moment, a progress bar,
-    // a blue comet while Claude works.
+    // chat holds for your reply, a finish's or failure's still glow for a moment, a blue comet while
+    // Claude works (purple for a shell). Never a filling bar: a chat's progress guess was never accurate.
     const beam: ActivityStatus['beam'] =
       card || note || needs.length
         ? { tone: 'warn', urgent: true }
@@ -1364,10 +1364,8 @@ export class ClaudeActivity extends BaseActivity {
               ? { tone: 'warn', motion: 'pulse' }
               : unreadDone
                 ? { tone: 'good', motion: 'still' }
-                : barRow?.progress
-                ? { tone: barRow.state === 'shell' ? 'purple' : 'info', motion: 'progress', value: barRow.progress.value }
-                : running
-                  ? { tone: 'info', motion: 'orbit' }
+                : barRow?.progress || running
+                  ? { tone: barRow?.state === 'shell' ? 'purple' : 'info', motion: 'orbit' }
                   : null;
     const n = sessionCount(this.rows) || this.sessions.filter((s) => s.status === 'working').length;
     // A prompt from a hook can come before its row turns orange.

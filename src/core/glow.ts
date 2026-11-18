@@ -122,6 +122,17 @@ export class BorderGlow {
   }
 
   /**
+   * The ring's own corners (CSS border-radius), for a shape not round all round (a pill blended into
+   * its edge, a card hanging flush from it); null: round by `radius` again.
+   */
+  setCorners(css: string | null): void {
+    const v = css ?? '';
+    if (this.core.style.borderRadius === v) return;
+    this.core.style.borderRadius = v;
+    this.halo.style.borderRadius = v;
+  }
+
+  /**
    * Shows `spec` (null fades the glow out; `now` drops it at once, as music's player grows
    * over the pill). The same spec again changes nothing.
    */

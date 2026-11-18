@@ -60,20 +60,38 @@ if (cmd === 'hook') {
   run(tauriCli, ['build', '--no-bundle', ...rest]);
   const out = join(root, 'release');
   mkdirSync(out, { recursive: true });
-  // Older releases also shipped these; leave only the exe (and a running Island.old.exe).
+  // Older releases also shipped these; leave only the exe and one backup.
   for (const f of readdirSync(out)) {
     if (f === 'island-hook.exe' || f.endsWith('-setup.exe')) rmSync(join(out, f), { force: true });
+    // Backups older than the last build that were running when they should have gone (below).
+    // Island.old.exe too: the updater's name (it deletes it each time Island starts), no backup any more.
+    if (/^Island\.(old|prev)-\d+\.exe$/i.test(f) || f === 'Island.old.exe') {
+      try {
+        rmSync(join(out, f), { force: true });
+      } catch {
+        // Still running: it goes next time.
+      }
+    }
   }
-  // A running Island locks its exe, but Windows lets it be renamed: move it aside, then copy.
-  try {
-    copyFileSync(join(targetDir, 'release', 'island.exe'), join(out, 'Island.exe'));
-  } catch (err) {
-    if (err.code !== 'EBUSY' && err.code !== 'EPERM') throw err;
-    rmSync(join(out, 'Island.old.exe'), { force: true });
-    renameSync(join(out, 'Island.exe'), join(out, 'Island.old.exe'));
-    copyFileSync(join(targetDir, 'release', 'island.exe'), join(out, 'Island.exe'));
-    console.log('\nIsland was running: its exe is now release/Island.old.exe. Restart Island to run the new one.');
+  // The build before this one stays as Island.prev.exe, the only backup (Moss: keep n-1, delete
+  // anything older). Not Island.old.exe: Island's updater deletes that name whenever Island starts
+  // (updater.rs), so that backup was gone after the first restart. A running exe can't be deleted
+  // but can be renamed, so this works with Island open.
+  const exe = join(out, 'Island.exe');
+  const old = join(out, 'Island.prev.exe');
+  let backedUp = false;
+  if (existsSync(exe)) {
+    try {
+      rmSync(old, { force: true });
+    } catch {
+      // The backup itself is running: move it out of the way; it is deleted next build.
+      renameSync(old, join(out, `Island.prev-${Date.now()}.exe`));
+    }
+    renameSync(exe, old);
+    backedUp = true;
   }
+  copyFileSync(join(targetDir, 'release', 'island.exe'), exe);
+  if (backedUp) console.log('\nThe previous build is release/Island.prev.exe (the only backup). Restart Island to run the new one.');
   console.log(`\nrelease/Island.exe is the whole app. Cargo output: ${targetDir}`);
 } else {
   run(tauriCli, [cmd, ...rest].filter(Boolean));

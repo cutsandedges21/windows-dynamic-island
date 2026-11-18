@@ -82,11 +82,109 @@ export type DockItem = (typeof DOCK_ITEMS)[number];
 export const DOCK_SIZES = ['small', 'medium', 'large'] as const;
 export type DockSize = (typeof DOCK_SIZES)[number];
 
+/** Which screen edge the taskbar sits along (Settings › Widgets › Taskbar › Position). */
+export const DOCK_SIDES = ['bottom', 'left', 'right', 'top'] as const;
+export type DockSide = (typeof DOCK_SIDES)[number];
+
+/** The notches that come out of the screen border (Settings › Widgets › Screen border): their size,
+ *  Small under the taskbar's Small, Medium the taskbar's Small, Large its Medium. */
+export const NOTCH_SIZES = ['small', 'medium', 'large'] as const;
+export type NotchSize = (typeof NOTCH_SIZES)[number];
+/** The four places a notch can sit: on the left or right side of the screen, near its top or bottom. */
+export const NOTCH_CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const;
+export type NotchCorner = (typeof NOTCH_CORNERS)[number];
+export interface NotchConfig {
+  on: boolean;
+  corner: NotchCorner;
+  size: NotchSize;
+}
+/** A website pinned to the Websites notch. */
+export interface PinnedSite {
+  url: string;
+  title: string;
+}
+/** The screen border's width, CSS px. */
+export const FRAME_W = 4;
+
+/** Websites pinned at most. */
+export const MAX_SITES = 16;
+
+/**
+ * The screen border (Settings › Widgets › Screen border): a thin line round the whole screen that
+ * joins the taskbar and the island, with the Websites and Shelf notches coming out of it. `glow`:
+ * an activity's light runs round the island only, or round the whole border.
+ */
+export interface FrameConfig {
+  on: boolean;
+  glow: 'island' | 'screen';
+  sites: NotchConfig;
+  shelf: NotchConfig;
+}
+
+/** The border can only be on while the taskbar and the island both sit on their edges. */
+export function frameAvailable(island: Pick<Settings['island'], 'blend' | 'taskbar'>): boolean {
+  return island.blend && island.taskbar.on && island.taskbar.edge;
+}
+
+/** The border is on and can be. */
+export function frameOn(island: Pick<Settings['island'], 'blend' | 'taskbar' | 'frame'>): boolean {
+  return island.frame.on && frameAvailable(island);
+}
+
+/** A notch is on: they need no border (without one they melt into the screen's edge itself). */
+export function notchesOn(island: Pick<Settings['island'], 'frame'>): boolean {
+  return island.frame.sites.on || island.frame.shelf.on;
+}
+
+/** A pasted or dropped link as a site to pin: https:// added when it has no scheme; null if it isn't a web address. */
+export function siteOf(text: string, title = ''): PinnedSite | null {
+  const raw = text.trim().split(/\s+/)[0] ?? '';
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  if (!url.hostname.includes('.') && url.hostname !== 'localhost') return null;
+  const name = title.trim() || url.hostname.replace(/^www\./, '');
+  return { url: url.href, title: name.slice(0, 80) };
+}
+
+function cleanNotch(v: unknown, corner: NotchCorner): NotchConfig {
+  const o = isObj(v) ? v : {};
+  return {
+    on: o.on === true,
+    corner: (NOTCH_CORNERS as readonly unknown[]).includes(o.corner) ? (o.corner as NotchCorner) : corner,
+    size: (NOTCH_SIZES as readonly unknown[]).includes(o.size) ? (o.size as NotchSize) : 'small',
+  };
+}
+
+function cleanSites(v: unknown): PinnedSite[] {
+  const out: PinnedSite[] = [];
+  for (const s of Array.isArray(v) ? v : []) {
+    if (!isObj(s) || typeof s.url !== 'string') continue;
+    const site = siteOf(s.url, typeof s.title === 'string' ? s.title : '');
+    if (site && !out.some((x) => x.url === site.url)) out.push(site);
+    if (out.length >= MAX_SITES) break;
+  }
+  return out;
+}
+
 /** How the taskbar shows what you point at and what is in front (Settings › Widgets, or its right-click
- *  menu): Rise (icons grow under the pointer), Spotlight (a light shines down on the app in front),
- *  Glide (a highlight and the name slide along to what you point at). */
+ *  menu), any of them together: Rise (icons grow under the pointer), Spotlight (a light shines down on
+ *  the app in front), Glide (a highlight and the name slide along to what you point at). */
 export const DOCK_STYLES = ['rise', 'spotlight', 'glide'] as const;
 export type DockStyle = (typeof DOCK_STYLES)[number];
+
+/** The taskbar's styles on, from saved settings: the list, or the one style saved before they could be
+ *  mixed, or Rise. */
+export function barStyles(saved: Record<string, unknown>): DockStyle[] {
+  if (Array.isArray(saved.styles)) return DOCK_STYLES.filter((k) => (saved.styles as unknown[]).includes(k));
+  if ((DOCK_STYLES as readonly unknown[]).includes(saved.style)) return [saved.style as DockStyle];
+  return ['rise'];
+}
 
 export const ITEM_COLORS: ReadonlyArray<ItemLook['color']> = ['island', 'black', 'white', 'matte-black', 'matte-white', 'glass'];
 
@@ -138,6 +236,8 @@ export interface Settings {
     widths: Widths;
     /** Gap between the pill and its screen edge, CSS px. */
     edge: number;
+    /** Blend into the edge: the pill sits on its screen edge, flat along it, instead of floating (no gap). */
+    blend: boolean;
     size: IslandSize;
     /** What the island does when nothing is happening. */
     idle: 'pill' | 'hidden';
@@ -168,9 +268,14 @@ export interface Settings {
     /**
      * The taskbar at the bottom (src/core/dock.ts); `hideWindows`: Windows' own taskbar hides itself
      * meanwhile; `centre`: where it was dragged to, 0..1 across the screen (-1: the middle); `edge`: it
-     * sits on the screen's bottom edge, over Windows' taskbar, instead of floating above it.
+     * sits on the screen's bottom edge, over Windows' taskbar, instead of floating above it; `melt`: there,
+     * its ends curve out into the edge instead of going straight down; `styles`: the ones on, together.
      */
-    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; locked: boolean; hidden: DockItem[]; size: DockSize; style: DockStyle; edge: boolean };
+    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; locked: boolean; hidden: DockItem[]; size: DockSize; styles: DockStyle[]; edge: boolean; melt: boolean; side: DockSide };
+    /** The screen border and its notches (Settings › Widgets › Screen border). */
+    frame: FrameConfig;
+    /** The Websites notch's sites, in order. */
+    sites: PinnedSite[];
     /** The island is off the screen until this time (epoch ms); 0: shown. HIDE_UNTIL_SHOWN: until the user brings it back. */
     hiddenUntil: number;
     /** Faded from the right-click menu's Fade: see-through and click-through until Show (kept across restarts). */
@@ -277,6 +382,8 @@ export function defaultSettings(): Settings {
       displayIds: [],
       widths: normalizeWidths(null),
       edge: 8,
+      // Floating, as it always was; Blend into the top is a choice.
+      blend: false,
       size: 'medium',
       idle: 'pill',
       hoverExpand: true,
@@ -295,7 +402,9 @@ export function defaultSettings(): Settings {
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       widgets: { on: false, items: [], look: { color: 'island', glass: GLASS_DEFAULT } },
-      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, locked: false, hidden: [], size: 'medium', style: 'rise', edge: false },
+      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, locked: false, hidden: [], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom' },
+      frame: { on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small' }, shelf: { on: false, corner: 'bottom-right', size: 'small' } },
+      sites: [],
       hiddenUntil: 0,
       faded: false,
       smartFade: false,
@@ -449,7 +558,15 @@ export function migrate(saved: unknown): Settings {
   const savedBar = isObj(saved.island) && isObj(saved.island.taskbar) ? saved.island.taskbar : {};
   const centre = typeof savedBar.centre === 'number' && savedBar.centre >= 0 && savedBar.centre <= 1 ? savedBar.centre : -1;
   const barHidden = Array.isArray(savedBar.hidden) ? DOCK_ITEMS.filter((k) => (savedBar.hidden as unknown[]).includes(k)) : [];
-  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), locked: savedBar.locked === true, hidden: barHidden, size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium', style: (DOCK_STYLES as readonly unknown[]).includes(savedBar.style) ? (savedBar.style as DockStyle) : 'rise', edge: savedBar.edge === true };
+  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), locked: savedBar.locked === true, hidden: barHidden, size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium', styles: barStyles(savedBar), edge: savedBar.edge === true, melt: savedBar.melt === true, side: (DOCK_SIDES as readonly unknown[]).includes(savedBar.side) ? (savedBar.side as DockSide) : 'bottom' };
+  const savedFrame = isObj(saved.island) && isObj(saved.island.frame) ? saved.island.frame : {};
+  out.island.frame = {
+    on: savedFrame.on === true,
+    glow: savedFrame.glow === 'screen' ? 'screen' : 'island',
+    sites: cleanNotch(savedFrame.sites, 'bottom-left'),
+    shelf: cleanNotch(savedFrame.shelf, 'bottom-right'),
+  };
+  out.island.sites = cleanSites(isObj(saved.island) ? saved.island.sites : null);
   out.island.displayIds = strings(isObj(saved.island) ? saved.island.displayIds : null);
   if (!Number.isFinite(out.island.hiddenUntil) || out.island.hiddenUntil < 0) out.island.hiddenUntil = 0;
   out.island.hiddenUntil = Math.min(out.island.hiddenUntil, HIDE_UNTIL_SHOWN);

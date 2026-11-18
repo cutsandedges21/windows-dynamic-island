@@ -5,7 +5,7 @@
 // Windows' taskbar while that one shows), sizes it to its content, moves it left and right as it
 // is dragged, opens Windows' own panels for its buttons, and can set Windows' taskbar to hide.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
@@ -18,19 +18,13 @@ const GAP: f64 = 8.0;
 
 /// Where the dock's centre sits across the screen, 0..1; negative: the middle.
 static CENTRE: Mutex<f64> = Mutex::new(-1.0);
+/// Which screen edge the dock sits along: bottom, left, right, top (Settings › Taskbar › Position).
+static SIDE: AtomicU8 = AtomicU8::new(0);
+/// Set while the dock on the top edge splits round the island: how far along the window (logical px
+/// from its left) the screen's middle falls, so the island sits in the gap. Negative: not split.
+static PIVOT: Mutex<f64> = Mutex::new(-1.0);
 /// Island set Windows' taskbar to hide (and puts it back when Island quits).
 static HID_WINDOWS_BAR: AtomicBool = AtomicBool::new(false);
-
-/// The dock's top-left corner (physical px) for a window `w` x `h` logical px on a screen whose
-/// work area starts at `left`, is `width` wide and ends at `bottom`, its centre at `centre` (0..1,
-/// negative: the middle). It never leaves the screen.
-pub fn place(left: i32, width: i32, bottom: i32, scale: f64, w: f64, h: f64, centre: f64) -> (i32, i32) {
-    let pw = (w * scale).round() as i32;
-    let ph = ((h + GAP) * scale).round() as i32;
-    let mid = if centre < 0.0 { left + width / 2 } else { left + (centre.min(1.0) * width as f64).round() as i32 };
-    let x = (mid - pw / 2).clamp(left, (left + width - pw).max(left));
-    (x, bottom - ph)
-}
 
 /// The centre (0..1 across the work area) of a dock `pw` physical px wide whose left edge is at `x`.
 pub fn centre_of(left: i32, width: i32, x: i32, pw: i32) -> f64 {
@@ -40,19 +34,75 @@ pub fn centre_of(left: i32, width: i32, x: i32, pw: i32) -> f64 {
     ((x + pw / 2 - left) as f64 / width as f64).clamp(0.0, 1.0)
 }
 
+/// The Apps card is open: the taskbar may take the keyboard (its search field).
+static TYPING: AtomicBool = AtomicBool::new(false);
+
+/// The extended style the dock needs: a tool window (never in Alt-Tab or Windows' taskbar;
+/// WS_EX_APPWINDOW would put it in both) that a click doesn't activate, unless the Apps card is
+/// open. The rest (click-through, topmost) is left as it is.
 #[cfg(windows)]
-fn style(win: &WebviewWindow) {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW};
+fn wanted_ex(style: u32, typing: bool) -> u32 {
+    use windows::Win32::UI::WindowsAndMessaging::{WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW};
+    let s = (style | WS_EX_TOOLWINDOW.0) & !WS_EX_APPWINDOW.0;
+    if typing {
+        s & !WS_EX_NOACTIVATE.0
+    } else {
+        s | WS_EX_NOACTIVATE.0
+    }
+}
+
+/// tao rebuilds the window's extended style from its own flags whenever it changes one (each
+/// click-through switch), dropping the tool window and adding WS_EX_APPWINDOW: the taskbar showed in
+/// Alt-Tab and a click on it took the focus. Every change passes through here and keeps the style
+/// the dock needs (as overlay.rs does for the island).
+#[cfg(windows)]
+unsafe extern "system" fn keep_style(
+    hwnd: windows::Win32::Foundation::HWND,
+    msg: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+    _id: usize,
+    _data: usize,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{GWL_EXSTYLE, STYLESTRUCT, WM_STYLECHANGING};
+    if msg == WM_STYLECHANGING && wparam.0 as i32 == GWL_EXSTYLE.0 && lparam.0 != 0 {
+        let change = unsafe { &mut *(lparam.0 as *mut STYLESTRUCT) };
+        change.styleNew = wanted_ex(change.styleNew, TYPING.load(Ordering::Relaxed));
+    }
+    unsafe { windows::Win32::UI::Shell::DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+/// Puts `keep_style` on the window (on the thread that owns it, as subclassing requires), then
+/// applies the style.
+#[cfg(windows)]
+fn guard_style(win: &WebviewWindow) {
     let Ok(h) = win.hwnd() else { return };
+    let raw = h.0 as isize;
+    let _ = win.app_handle().run_on_main_thread(move || unsafe {
+        let hwnd = windows::Win32::Foundation::HWND(raw as *mut _);
+        if !windows::Win32::UI::Shell::SetWindowSubclass(hwnd, Some(keep_style), 1, 0).as_bool() {
+            crate::log::line("dock: could not guard the window style");
+        }
+        apply_style(hwnd);
+    });
+}
+
+#[cfg(windows)]
+fn apply_style(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE};
     unsafe {
-        let hwnd = HWND(h.0);
-        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-        let want = (ex | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) & !WS_EX_APPWINDOW.0;
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let want = wanted_ex(ex as u32, TYPING.load(Ordering::Relaxed)) as isize;
         if want != ex {
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, want as isize);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, want);
         }
     }
+}
+
+#[cfg(windows)]
+fn style(win: &WebviewWindow) {
+    let Ok(h) = win.hwnd() else { return };
+    apply_style(windows::Win32::Foundation::HWND(h.0));
 }
 
 #[cfg(not(windows))]
@@ -81,26 +131,102 @@ static FULL: AtomicBool = AtomicBool::new(false);
 /// ... and while the pointer is on it (or on its way up), it is raised to its usual place.
 static UP: AtomicBool = AtomicBool::new(false);
 
-/// The dock window's top (physical px) while it waits at the bottom of a screen ending at `bottom`:
-/// the bar's bottom on the screen's edge. `ph`: the window's height.
-pub fn tucked_y(bottom: i32, ph: i32, scale: f64) -> i32 {
-    bottom - ph + (BAR_BELOW * scale).round() as i32
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Side {
+    Bottom,
+    Left,
+    Right,
+    Top,
+}
+
+impl Side {
+    fn from_u8(n: u8) -> Side {
+        match n {
+            1 => Side::Left,
+            2 => Side::Right,
+            3 => Side::Top,
+            _ => Side::Bottom,
+        }
+    }
+    fn parse(s: &str) -> Side {
+        match s {
+            "left" => Side::Left,
+            "right" => Side::Right,
+            "top" => Side::Top,
+            _ => Side::Bottom,
+        }
+    }
+    fn index(self) -> u8 {
+        match self {
+            Side::Bottom => 0,
+            Side::Left => 1,
+            Side::Right => 2,
+            Side::Top => 3,
+        }
+    }
+    /// Along the bottom or the top: the bar runs across the screen.
+    pub fn across(self) -> bool {
+        matches!(self, Side::Bottom | Side::Top)
+    }
+}
+
+fn side() -> Side {
+    Side::from_u8(SIDE.load(Ordering::SeqCst))
+}
+
+/// A screen's rect, physical px: (x, y, width, height).
+pub type Area = (i32, i32, i32, i32);
+
+/// Where the dock's window goes (physical x, y) on side `side` of a screen whose work area is `work`
+/// and whole area `bounds`, at `pw` x `ph` physical px: its centre at `centre` along the edge (0..1,
+/// negative: the middle), or with `pivot` (physical px along the window) at the edge's middle. `tucked`:
+/// on the screen's very edge (Blend into the edge, or waiting there under a full-screen app), else
+/// floating GAP inside the work area. The bar is BAR_BELOW inside the window's edge side.
+#[allow(clippy::too_many_arguments)]
+pub fn place_on(side: Side, work: Area, bounds: Area, scale: f64, pw: i32, ph: i32, centre: f64, pivot: Option<i32>, tucked: bool) -> (i32, i32) {
+    let gap = (GAP * scale).round() as i32;
+    let below = (BAR_BELOW * scale).round() as i32;
+    let (start, len, along) = if side.across() { (work.0, work.2, pw) } else { (work.1, work.3, ph) };
+    let a = match pivot {
+        Some(p) => start + len / 2 - p,
+        None => {
+            let mid = if centre < 0.0 { start + len / 2 } else { start + (centre.min(1.0) * len as f64).round() as i32 };
+            (mid - along / 2).clamp(start, (start + len - along).max(start))
+        }
+    };
+    let b = match (side, tucked) {
+        (Side::Bottom, false) => work.1 + work.3 - ph - gap,
+        (Side::Bottom, true) => bounds.1 + bounds.3 - ph + below,
+        (Side::Top, false) => work.1 + gap,
+        (Side::Top, true) => bounds.1 - below,
+        (Side::Left, false) => work.0 + gap,
+        (Side::Left, true) => bounds.0 - below,
+        (Side::Right, false) => work.0 + work.2 - pw - gap,
+        (Side::Right, true) => bounds.0 + bounds.2 - pw + below,
+    };
+    if side.across() {
+        (a, b)
+    } else {
+        (b, a)
+    }
 }
 
 /// Where the dock's window goes (physical x, y, width, height) at `w` x `h` logical px, by its mode.
 fn spot(w: f64, h: f64) -> Option<(i32, i32, i32, i32)> {
+    spot_as(w, h, None)
+}
+
+/// As `spot`; `tucked` overrides whether it sits on the edge.
+fn spot_as(w: f64, h: f64, tucked: Option<bool>) -> Option<(i32, i32, i32, i32)> {
     let m = monitors::primary()?;
     let centre = *CENTRE.lock().unwrap();
-    let (x, y) = place(m.work.x, m.work.width, m.work.y + m.work.height, m.scale, w, h, centre);
+    let pivot = *PIVOT.lock().unwrap();
     let (pw, ph) = ((w.ceil() * m.scale).round() as i32, (h.ceil() * m.scale).round() as i32);
-    let tucked = tucked_y(m.bounds.y + m.bounds.height, ph, m.scale);
-    let y = if EDGE.load(Ordering::SeqCst) {
-        tucked
-    } else if FULL.load(Ordering::SeqCst) && !UP.load(Ordering::SeqCst) {
-        tucked.max(y)
-    } else {
-        y
-    };
+    let tucked = tucked.unwrap_or_else(|| EDGE.load(Ordering::SeqCst) || (FULL.load(Ordering::SeqCst) && !UP.load(Ordering::SeqCst)));
+    let work = (m.work.x, m.work.y, m.work.width, m.work.height);
+    let bounds = (m.bounds.x, m.bounds.y, m.bounds.width, m.bounds.height);
+    let pivot = (pivot >= 0.0).then(|| (pivot * m.scale).round() as i32);
+    let (x, y) = place_on(side(), work, bounds, m.scale, pw, ph, centre, pivot, tucked);
     Some((x, y, pw, ph))
 }
 
@@ -139,12 +265,12 @@ fn set_rect(win: &WebviewWindow, x: i32, y: i32, w: i32, h: i32) {
     let _ = win.set_position(PhysicalPosition::new(x, y));
 }
 
-/// The dock's window glides from where it is to `to_y` (physical px), easing out, a frame at a time.
+/// The dock's window glides from where it is to (`to_x`, `to_y`) (physical px), easing out, a frame at a time.
 #[cfg(windows)]
-fn glide(win: &WebviewWindow, to_y: i32) {
+fn glide(win: &WebviewWindow, to_x: i32, to_y: i32) {
     use windows::Win32::Graphics::Dwm::DwmFlush;
     let (Ok(at), Ok(size)) = (win.outer_position(), win.outer_size()) else { return };
-    if at.y == to_y {
+    if at.y == to_y && at.x == to_x {
         return;
     }
     let start = std::time::Instant::now();
@@ -152,7 +278,8 @@ fn glide(win: &WebviewWindow, to_y: i32) {
         let t = (start.elapsed().as_secs_f64() * 1000.0 / GLIDE_MS).min(1.0);
         let e = 1.0 - (1.0 - t).powi(3);
         let y = at.y + ((to_y - at.y) as f64 * e).round() as i32;
-        set_rect(win, at.x, y, size.width as i32, size.height as i32);
+        let x = at.x + ((to_x - at.x) as f64 * e).round() as i32;
+        set_rect(win, x, y, size.width as i32, size.height as i32);
         if t >= 1.0 {
             return;
         }
@@ -266,25 +393,41 @@ fn is_game_or_video(exe: &str, known_game: bool, playing: Option<&str>) -> bool 
     name == "applicationframehost.exe" && !crate::media::BROWSERS.iter().any(|(a, _)| *a == playing) && !matches!(playing, "Spotify" | "Apple Music" | "Media Player")
 }
 
-/// The pointer is on the dock or anywhere on its way up: across the dock, from its usual top to the
-/// screen's bottom edge (so a raised dock doesn't drop from under a pointer at the very bottom).
+/// The pointer is on the dock or anywhere on its way out: across the dock, from its usual inner side to
+/// the screen's edge (so a raised dock doesn't drop from under a pointer at the very edge).
 #[cfg(windows)]
 fn pointer_near() -> bool {
     use windows::Win32::Foundation::POINT;
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
     let (w, h) = *SIZE.lock().unwrap();
     let Some(m) = monitors::primary() else { return false };
-    let centre = *CENTRE.lock().unwrap();
-    let (x, y) = place(m.work.x, m.work.width, m.work.y + m.work.height, m.scale, w, h, centre);
+    let Some((x, y, pw, ph)) = spot_as(w, h, Some(false)) else { return false };
     // The bar's part only, not the room for a card over it.
     let bar = *BAR_AREA.lock().unwrap();
-    let y = if bar > 0.0 && bar < h { y + ((h - bar) * m.scale).round() as i32 } else { y };
-    let pw = (w.ceil() * m.scale).round() as i32;
     let mut p = POINT::default();
     if unsafe { GetCursorPos(&mut p) }.is_err() {
         return false;
     }
-    p.x >= x && p.x < x + pw && p.y >= y && p.y <= m.bounds.y + m.bounds.height
+    let b = &m.bounds;
+    let s = m.scale;
+    match side() {
+        Side::Bottom => {
+            let top = if bar > 0.0 && bar < h { y + ((h - bar) * s).round() as i32 } else { y };
+            p.x >= x && p.x < x + pw && p.y >= top && p.y <= b.y + b.height
+        }
+        Side::Top => {
+            let bottom = if bar > 0.0 && bar < h { y + (bar * s).round() as i32 } else { y + ph };
+            p.x >= x && p.x < x + pw && p.y >= b.y && p.y <= bottom
+        }
+        Side::Left => {
+            let right = if bar > 0.0 && bar < w { x + (bar * s).round() as i32 } else { x + pw };
+            p.y >= y && p.y < y + ph && p.x >= b.x && p.x <= right
+        }
+        Side::Right => {
+            let left = if bar > 0.0 && bar < w { x + ((w - bar) * s).round() as i32 } else { x };
+            p.y >= y && p.y < y + ph && p.x >= left && p.x <= b.x + b.width
+        }
+    }
 }
 
 static WATCHER: AtomicBool = AtomicBool::new(false);
@@ -331,8 +474,8 @@ fn watch_fullscreen(app: AppHandle) {
                     }
                     tell(&win);
                     let (w, h) = *SIZE.lock().unwrap();
-                    if let Some((_, y, _, _)) = spot(w, h) {
-                        glide(&win, y);
+                    if let Some((x, y, _, _)) = spot(w, h) {
+                        glide(&win, x, y);
                     }
                 }
             }
@@ -355,7 +498,7 @@ pub fn dock_show(app: AppHandle, on: bool, w: f64, h: f64, centre: f64) {
             }
             return;
         }
-        let (w, h) = (w.clamp(120.0, 1800.0), h.clamp(32.0, 120.0));
+        let (w, h) = (w.clamp(32.0, 2400.0), h.clamp(32.0, 2400.0));
         if let Some(win) = app.get_webview_window(LABEL) {
             put(&win, w, h);
             return;
@@ -380,6 +523,9 @@ pub fn dock_show(app: AppHandle, on: bool, w: f64, h: f64, centre: f64) {
                 style(&win);
                 put(&win, w, h);
                 let _ = win.show();
+                #[cfg(windows)]
+                guard_style(&win);
+                #[cfg(not(windows))]
                 style(&win);
                 watch_fullscreen(app.clone());
                 watch_pointer(app.clone());
@@ -390,17 +536,36 @@ pub fn dock_show(app: AppHandle, on: bool, w: f64, h: f64, centre: f64) {
 }
 
 /// The dock page measured its content: the window takes that size and stays in its place. `bar`: the
-/// bar's part at the bottom (the rest is room for a card over it).
+/// bar's part at the edge side (the rest is room for a card over it). `pivot`: on the top edge split
+/// round the island, where the screen's middle falls along the window (logical px); else none.
 #[tauri::command]
-pub fn dock_fit(window: WebviewWindow, w: f64, h: f64, bar: Option<f64>) {
+pub fn dock_fit(window: WebviewWindow, w: f64, h: f64, bar: Option<f64>, pivot: Option<f64>) {
     if window.label() != LABEL || !w.is_finite() || !h.is_finite() {
         return;
     }
     if let Some(b) = bar.filter(|b| b.is_finite() && *b > 0.0) {
         *BAR_AREA.lock().unwrap() = b;
     }
-    // Taller while a card is up over the bar (the Apps card, when S/W reset).
-    put(&window, w.clamp(120.0, 1800.0), h.clamp(32.0, 720.0));
+    *PIVOT.lock().unwrap() = pivot.filter(|p| p.is_finite() && *p >= 0.0).unwrap_or(-1.0);
+    // Taller (or wider, on a side) while a card is up over the bar.
+    put(&window, w.clamp(32.0, 2400.0), h.clamp(32.0, 2400.0));
+}
+
+/// Which edge the dock sits along: "bottom", "left", "right" or "top".
+#[tauri::command]
+pub fn dock_side(app: AppHandle, side: String) {
+    let s = Side::parse(&side);
+    if SIDE.swap(s.index(), Ordering::SeqCst) == s.index() {
+        return;
+    }
+    // Its place along the old edge means nothing on the new one.
+    *CENTRE.lock().unwrap() = -1.0;
+    if let Some(win) = app.get_webview_window(LABEL) {
+        let (w, h) = *SIZE.lock().unwrap();
+        if w > 0.0 && h > 0.0 {
+            put(&win, w, h);
+        }
+    }
 }
 
 /// The Apps card is open over the bar (`on`): the taskbar takes the keyboard (for its search field,
@@ -408,24 +573,16 @@ pub fn dock_fit(window: WebviewWindow, w: f64, h: f64, bar: Option<f64>) {
 #[cfg(windows)]
 #[tauri::command]
 pub fn dock_typing(window: WebviewWindow, on: bool) {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE};
     if window.label() != LABEL {
         return;
     }
-    if !on {
-        style(&window);
-        return;
-    }
+    TYPING.store(on, Ordering::Relaxed);
     let Ok(h) = window.hwnd() else { return };
-    unsafe {
-        let hwnd = HWND(h.0);
-        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-        if ex & WS_EX_NOACTIVATE.0 != 0 {
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (ex & !WS_EX_NOACTIVATE.0) as isize);
-        }
+    let hwnd = windows::Win32::Foundation::HWND(h.0);
+    apply_style(hwnd);
+    if on {
         // The arrow was just clicked, so Windows lets this window come to the front.
-        let _ = windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd);
+        let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd) };
     }
 }
 
@@ -438,6 +595,12 @@ pub fn dock_typing(_window: WebviewWindow, _on: bool) {}
 pub fn dock_solid(rects: Vec<Vec<f64>>) {
     let clean: Vec<[f64; 4]> = rects.iter().filter(|r| r.len() == 4 && r.iter().all(|n| n.is_finite())).map(|r| [r[0], r[1], r[2], r[3]]).take(8).collect();
     *SOLID.lock().unwrap() = clean;
+}
+
+/// A full-screen game or video is in front and the taskbar waits faint at the edge (the screen
+/// border goes meanwhile).
+pub fn full() -> bool {
+    FULL.load(Ordering::SeqCst) && !UP.load(Ordering::SeqCst)
 }
 
 /// On the screen's bottom edge (over Windows' taskbar), or floating above it as usual.
@@ -487,8 +650,13 @@ fn watch_pointer(app: AppHandle) {
             let hwnd = HWND(h.0);
             tick = tick.wrapping_add(1);
             if EDGE.load(Ordering::SeqCst) && !FULL.load(Ordering::SeqCst) && tick % 15 == 0 {
-                unsafe {
-                    let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                // With the screen border, under the island and over the border (frame.rs); else on top.
+                if crate::frame::showing(&app) {
+                    crate::frame::restack(&app);
+                } else {
+                    unsafe {
+                        let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                    }
                 }
             }
             let held = unsafe { (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RBUTTON.0 as i32) as u16 & 0x8000 != 0) };
@@ -517,28 +685,29 @@ fn watch_pointer(app: AppHandle) {
 #[cfg(not(windows))]
 fn watch_pointer(_app: AppHandle) {}
 
-/// Dragging the dock: its left edge to `x` (physical px), along the bottom only. `done`: the drag
-/// ended, so its place is kept and the island told (`dock-moved`). `x` negative with `done`:
-/// back to the middle (a double-click).
+/// Dragging the dock: its start (left edge, or top edge on a side) to `x` (physical px), along its edge
+/// only. `done`: the drag ended, so its place is kept and the island told (`dock-moved`). `x` negative
+/// with `done`: back to the middle (a double-click).
 #[tauri::command]
 pub fn dock_at(app: AppHandle, window: WebviewWindow, x: f64, done: bool) {
     if window.label() != LABEL {
         return;
     }
     let (Some(m), Ok(at), Ok(size)) = (monitors::primary(), window.outer_position(), window.outer_size()) else { return };
-    let pw = size.width as i32;
-    let (left, width) = (m.work.x, m.work.width);
+    let across = side().across();
+    let (start, len, along, now) = if across { (m.work.x, m.work.width, size.width as i32, at.x) } else { (m.work.y, m.work.height, size.height as i32, at.y) };
     if done && x < 0.0 {
         *CENTRE.lock().unwrap() = -1.0;
     } else if x.is_finite() {
-        let nx = (x.round() as i32).clamp(left, (left + width - pw).max(left));
-        if nx != at.x {
-            let _ = window.set_position(PhysicalPosition::new(nx, at.y));
+        let n = (x.round() as i32).clamp(start, (start + len - along).max(start));
+        if n != now {
+            let to = if across { PhysicalPosition::new(n, at.y) } else { PhysicalPosition::new(at.x, n) };
+            let _ = window.set_position(to);
         }
         if !done {
             return;
         }
-        *CENTRE.lock().unwrap() = centre_of(left, width, nx, pw);
+        *CENTRE.lock().unwrap() = centre_of(start, len, n, along);
     }
     if let Ok(s) = window.inner_size() {
         let scale = window.scale_factor().unwrap_or(m.scale);
@@ -641,36 +810,45 @@ mod tests {
         assert!(!gv(r"c:\program files\windowsapps\notion.exe", false, None));
     }
 
-    use super::{centre_of, place};
+    use super::{centre_of, place_on, Side};
+
+    const WORK: super::Area = (0, 0, 1920, 1032);
+    const SCREEN: super::Area = (0, 0, 1920, 1080);
 
     #[test]
-    fn clicks_land_only_on_what_the_page_drew() {
-        let rects = [[10.0, 480.0, 600.0, 82.0], [12.0, 100.0, 380.0, 370.0]];
-        assert!(super::solid_at(&rects, 300.0, 520.0), "on the bar");
-        assert!(super::solid_at(&rects, 100.0, 200.0), "on the card");
-        assert!(!super::solid_at(&rects, 500.0, 200.0), "beside the card: through to the window under it");
-        assert!(!super::solid_at(&[], 300.0, 520.0), "nothing drawn yet");
-    }
-
-    #[test]
-    fn the_dock_sits_centred_just_above_the_bottom_of_the_work_area() {
-        assert_eq!(place(0, 1920, 1032, 1.0, 600.0, 56.0, -1.0), (660, 1032 - 64));
+    fn the_dock_sits_centred_just_inside_the_work_area_on_its_side() {
+        // A 600 x 64 window at the bottom, 8 px over the work area's end.
+        assert_eq!(place_on(Side::Bottom, WORK, SCREEN, 1.0, 600, 64, -1.0, None, false), (660, 1032 - 64 - 8));
         // A 125 % screen counts physical pixels.
-        assert_eq!(place(0, 1920, 1020, 1.25, 600.0, 56.0, -1.0), (585, 1020 - 80));
+        assert_eq!(place_on(Side::Bottom, (0, 0, 1920, 1020), SCREEN, 1.25, 750, 80, -1.0, None, false), (585, 1020 - 80 - 10));
+        assert_eq!(place_on(Side::Top, WORK, SCREEN, 1.0, 600, 64, -1.0, None, false), (660, 8));
+        // On a side the window stands upright, centred down the work area.
+        assert_eq!(place_on(Side::Left, WORK, SCREEN, 1.0, 64, 600, -1.0, None, false), (8, 216));
+        assert_eq!(place_on(Side::Right, WORK, SCREEN, 1.0, 64, 600, -1.0, None, false), (1920 - 64 - 8, 216));
     }
 
     #[test]
-    fn waiting_at_the_edge_the_bar_sits_on_the_screens_bottom() {
-        // An 82 px window at 125 %: 103 px tall, its bar 15 px above the window's bottom.
-        assert_eq!(super::tucked_y(1080, 103, 1.25), 1080 - 103 + 15);
-        assert_eq!(super::tucked_y(1080, 82, 1.0), 1080 - 82 + 12);
+    fn on_the_edge_the_bar_sits_on_the_screens_edge() {
+        // The bar is 12 px inside the window's edge side; the window reaches past the screen by that.
+        assert_eq!(place_on(Side::Bottom, WORK, SCREEN, 1.0, 600, 82, -1.0, None, true).1, 1080 - 82 + 12);
+        assert_eq!(place_on(Side::Bottom, WORK, SCREEN, 1.25, 600, 103, -1.0, None, true).1, 1080 - 103 + 15);
+        assert_eq!(place_on(Side::Top, WORK, SCREEN, 1.0, 600, 82, -1.0, None, true).1, -12);
+        assert_eq!(place_on(Side::Left, WORK, SCREEN, 1.0, 82, 600, -1.0, None, true).0, -12);
+        assert_eq!(place_on(Side::Right, WORK, SCREEN, 1.0, 82, 600, -1.0, None, true).0, 1920 - 82 + 12);
+    }
+
+    #[test]
+    fn split_round_the_island_its_gap_sits_on_the_screens_middle() {
+        assert_eq!(place_on(Side::Top, WORK, SCREEN, 1.0, 1200, 82, 0.3, Some(500), true).0, 960 - 500);
     }
 
     #[test]
     fn a_dragged_dock_keeps_its_place_and_never_leaves_the_screen() {
-        assert_eq!(place(0, 1920, 1080, 1.0, 600.0, 56.0, 0.25), (180, 1016));
-        assert_eq!(place(0, 1920, 1080, 1.0, 600.0, 56.0, 0.0), (0, 1016));
-        assert_eq!(place(0, 1920, 1080, 1.0, 600.0, 56.0, 1.0), (1320, 1016));
+        let at = |c: f64| place_on(Side::Bottom, SCREEN, SCREEN, 1.0, 600, 56, c, None, false).0;
+        assert_eq!(at(0.25), 180);
+        assert_eq!(at(0.0), 0);
+        assert_eq!(at(1.0), 1320);
+        assert_eq!(place_on(Side::Left, SCREEN, SCREEN, 1.0, 56, 600, 0.0, None, false).1, 0);
         assert_eq!(centre_of(0, 1920, 180, 600), 0.25);
         assert_eq!(centre_of(0, 1920, -50, 600), 0.130_208_333_333_333_34);
     }
