@@ -9,7 +9,7 @@ import type { ActivityStatus, SheetEnv } from '../core/activity';
 import { bytes } from '../core/format';
 import { native, type LandStaged } from '../core/native';
 import type { Seg } from '../core/segments';
-import type { Block, FileTile, SheetView } from '../core/sheet';
+import type { Block, FileTile, SheetView, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
 
 /** Files the Shelf remembers across restarts, at most. */
@@ -95,6 +95,27 @@ export class ShelfActivity extends BaseActivity {
     return 'Drop to keep on the Shelf';
   }
 
+  // ---------------------------------------------------------------- Control Center
+
+  /** Its own tile (Justin): how many files wait and how big they are; a tap opens the Shelf's card. */
+  tile(env: SheetEnv): Tile {
+    const ok = this.items.filter((s) => !s.error);
+    const size = ok.reduce((a, s) => a + s.size, 0);
+    return {
+      key: 'shelf',
+      tone: this.items.length ? 'accent' : undefined,
+      action: env.interactive ? 'card' : undefined,
+      tip: 'Open the Shelf',
+      body: {
+        k: 'stat',
+        icon: 'shelf',
+        label: 'Shelf',
+        value: this.items.length ? plural(this.items.length, 'file') : 'Empty',
+        sub: this.items.length ? (size > 0 ? bytes(size) : undefined) : 'Drop on the island',
+      },
+    };
+  }
+
   // ---------------------------------------------------------------- the card
 
   sheet(env: SheetEnv): SheetView | null {
@@ -141,6 +162,9 @@ export class ShelfActivity extends BaseActivity {
   async action(name: string, arg?: unknown): Promise<void> {
     const id = typeof arg === 'string' ? arg : '';
     switch (name) {
+      case 'card':
+        this.ctx.openCard?.();
+        return;
       case 'tick':
         if (this.ticked.has(id)) this.ticked.delete(id);
         else if (this.items.some((s) => s.path === id && !s.error)) this.ticked.add(id);

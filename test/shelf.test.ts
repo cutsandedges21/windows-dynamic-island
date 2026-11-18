@@ -41,3 +41,22 @@ describe("the Shelf's circle", () => {
     expect(edge.x + edge.w).toBeLessThanOrEqual(area.width - 8);
   });
 });
+
+describe("the Shelf's tile", () => {
+  it('says how many files wait, and a tap opens its card', async () => {
+    const { ShelfActivity } = await import('../src/activities/shelf');
+    const { defaultSettings } = await import('../src/core/settings');
+    const settings = defaultSettings();
+    let cards = 0;
+    const act = new ShelfActivity();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (act as any).ctx = { options: () => ({}), settings: () => settings, update: () => {}, setOptions: () => {}, openCard: () => void cards++ };
+    const env = { reason: 'open' as const, now: Date.now(), width: 400, vertical: false, interactive: true, surfaced: null };
+    expect(act.tile(env)).toMatchObject({ key: 'shelf', action: 'card', body: { k: 'stat', label: 'Shelf', value: 'Empty', sub: 'Drop on the island' } });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (act as any).items = [{ path: 'C:/a.png', name: 'a.png', size: 2048, dir: false, files: 1, error: null }, { path: 'C:/b', name: 'b', size: 0, dir: false, files: 1, error: 'gone' }];
+    expect(act.tile(env)).toMatchObject({ tone: 'accent', body: { value: '2 files', sub: '2.0 KB' } });
+    await act.action('card');
+    expect(cards).toBe(1);
+  });
+});

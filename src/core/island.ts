@@ -1351,7 +1351,8 @@ export class Island {
     if (this.open) {
       // An activity asked for its own card (Land after a drop); its card, or the grid when it has none.
       const own = this.cardFor && this.running.has(this.cardFor) ? ask(this.cardFor, 'open') : null;
-      if (own) return this.cardFor === 'shelf' ? own : withBack(own);
+      // The Shelf opened by a drop or its circle closes with its x; opened from its tile it has Back too.
+      if (own) return this.cardFor === 'shelf' && this.shelfPinned ? own : withBack(own);
       return this.gridSheet(now, orient, pillW);
     }
     if (primary && choice.surfaced) {
