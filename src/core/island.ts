@@ -1293,14 +1293,14 @@ export class Island {
       landOk = false;
     }
     const onShelf = this.shelf()?.files().length ?? 0;
-    const items: DropZone[] = [
-      { key: 'shelf', icon: 'shelf', title: 'Shelf', sub: onShelf ? `Keep them with the ${onShelf === 1 ? 'file' : `${onShelf} files`} there` : 'Keep them here for later', grow: 1 },
-      { key: 'land', icon: 'land', title: 'Land', sub: landOk ? 'Send them to a computer or phone nearby' : land ? 'Land is starting' : 'Land is off', grow: 1, off: !landOk },
-    ];
+    const items: DropZone[] = [];
+    // Each side only while its activity is on (both can be turned off in Activities).
+    if (this.shelf()) items.push({ key: 'shelf', icon: 'shelf', title: 'Shelf', sub: onShelf ? `Keep them with the ${onShelf === 1 ? 'file' : `${onShelf} files`} there` : 'Keep them here for later', grow: 1 });
+    if (land) items.push({ key: 'land', icon: 'land', title: 'Land', sub: landOk ? 'Send them to a computer or phone nearby' : 'Land is starting', grow: 1, off: !landOk });
     return { owner: 'island', view: { key: 'island/drop', wide: true, width: geo.width, blocks: [{ t: 'zones', key: 'zones', height, hot: this.fileDrag?.hot ?? null, items }] } };
   }
 
-  /** The Shelf (built in, so always running unless Island is starting or stopping). */
+  /** The Shelf, while it is on (Activities). */
   private shelf(): ShelfActivity | null {
     const s = this.running.get('shelf');
     return s instanceof ShelfActivity ? s : null;
@@ -2259,6 +2259,8 @@ export class Island {
       return;
     }
     if (e.type === 'enter' && !e.paths.length) return;
+    // With the Shelf and Land both off, nothing here takes files: the island stays as it is.
+    if (!this.fileDrag && !this.shelf() && !this.running.has('land')) return;
     const where = this.shelfBubble.contains(e.x, e.y) ? 'circle' : 'island';
     if (e.type === 'drop') {
       this.onDrop(e.paths, where, where === 'island' ? (this.zoneAt(e.x, e.y) ?? this.fileDrag?.hot ?? null) : null);

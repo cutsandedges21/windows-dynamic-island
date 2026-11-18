@@ -161,10 +161,11 @@ describe('applyPlan', () => {
     expect(s.activities.config.weather.options.city).toBe('');
   });
 
-  it('keeps Land on even with a plan that leaves it out (it is built in)', () => {
+  it('switches Land and the Shelf on (they are helpers, on by default)', () => {
     const plan = planActivities(answers({ glance: ['music'] }), desktop);
-    const s = applyPlan(base(), { ...plan, enabled: plan.enabled.filter((id) => id !== 'land') }, '');
+    const s = applyPlan(base(), plan, '');
     expect(s.activities.config.land.enabled).toBe(true);
+    expect(s.activities.config.shelf.enabled).toBe(true);
   });
 
   it('does not change the settings it was given', () => {

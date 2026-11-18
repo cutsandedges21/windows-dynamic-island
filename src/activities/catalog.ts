@@ -320,11 +320,10 @@ export const CATALOG: ActivityMeta[] = [
     id: 'shelf',
     name: 'Shelf',
     description:
-      "A place to park files for a moment. Drag files over the island and drop them on the Shelf side: they wait there, and the island stays open until you click the pill or the x. Close it and the Shelf rests as a small circle beside the pill; point at it to drag files back out. Your files are never moved or copied, the Shelf only remembers where they are.",
+      "A place to park files for a moment. Drag files over the island and drop them on the Shelf side: they wait there, on the Shelf's tile in Control Center, until you drag them back out or clear them. Your files are never moved or copied, the Shelf only remembers where they are.",
     icon: 'shelf',
     category: 'productivity',
     enabled: true,
-    builtIn: true,
     priority: 'low',
     behavior: B(false, false, true, false),
     options: [],
@@ -333,11 +332,10 @@ export const CATALOG: ActivityMeta[] = [
     id: 'land',
     name: 'Land',
     description:
-      "Send files, links and notes to your other computers, friends and phones, like AirDrop. Land is built into Island and always on: it's the little icon on the pill. Click it, drop files on the island, or hover it and press Ctrl+V to send what you copied. The other side accepts first, and everything is encrypted on the way. Files you drop stay on Land's shelf until you take them off: tick several, drag them out into a folder or an app, or send them.",
+      "Send files, links and notes to your other computers, friends and phones, like AirDrop. Its icon sits on the pill: click it, drop files on the island, or hover it and press Ctrl+V to send what you copied. The other side accepts first, and everything is encrypted on the way. Files you drop stay on Land's shelf until you take them off: tick several, drag them out into a folder or an app, or send them.",
     icon: 'land',
     category: 'network',
     enabled: true,
-    builtIn: true,
     priority: 'medium',
     // Persistent: a transfer stays on the pill while it goes (it is only active then).
     behavior: B(true, true, true, true),

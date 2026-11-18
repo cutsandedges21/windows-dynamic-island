@@ -9,8 +9,9 @@ import { activityMatches, CATALOG_BY_ID, type ActivityMeta, type Band, type Opti
 import { SpringSet } from './core/animator';
 import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from './core/format';
 import { icon, type IconName } from './core/icons';
-import { levelWidth, normalizeWidths, type Anchor, type Level } from './core/layout';
-import { MENU_ITEMS, menuSegments, normalizeMenuOrder, type MenuItemId } from './core/menu';
+import { innerPadding, levelWidth, normalizeWidths, pillSize, type Anchor, type Level } from './core/layout';
+import { MENU_ITEMS, menuMain, menuSegments, normalizeMenuOrder, type MenuItemId } from './core/menu';
+import { fitSegments } from './core/segments';
 import { isTauri, native, on, sendTo, type AutoModelState, type MonitorInfo } from './core/native';
 import { availableHere, ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
@@ -262,7 +263,7 @@ function activityCard(meta: ActivityMeta): HTMLElement {
   const head = h('div', { class: 'act-head' }, [
     h('span', { class: 'grip', html: icon('more'), title: 'Drag to reorder' }),
     h('span', { class: 'act-icon', html: icon(meta.icon) }),
-    h('div', { class: 'act-text' }, [h('div', { class: 'act-name', text: meta.name }), h('div', { class: 'act-desc', text: meta.description })]),
+    h('div', { class: 'act-text' }, [h('div', { class: 'act-name', text: meta.name }), h('div', { class: 'act-desc', text: meta.description, title: open ? '' : meta.description })]),
     reason
       ? h('span', { class: 'act-soon', text: reason })
       : meta.builtIn
@@ -1560,115 +1561,243 @@ function soundRows(snd: Settings['general']['sound']): HTMLElement[] {
   ];
 }
 
-/** The island's right-click menu: a preview of it, and its items to drag into order, show or hide, and show as icon only or icon and name. Settings is always there, last: the way back here. */
+/**
+ * The island's right-click menu: a preview of it at the island's own size (the open island's thickness,
+ * and only as long as its items, as on the screen), and its items to drag into order, show or hide, and
+ * show as icon only or icon and name. An item can be dragged straight onto the preview, or moved along it
+ * (Justin). Settings is always there, last: the way back here.
+ */
 function menuRow(i: Settings['island']): HTMLElement {
+  const stage = h('div', { class: 'menu-stage' });
   const preview = h('div', { class: 'menu-preview', 'aria-label': 'Preview of the right-click menu' });
-  const paint = () => {
-    const state = { anchor: i.anchor, dnd: settings.general.dnd, mac: platform === 'macos', reminders: true };
-    const near = h('div', { class: 'mp-end-group' });
-    const far = h('div', { class: 'mp-end-group mp-far' });
-    for (const seg of menuSegments(i.menu, state, { order: i.menuOrder, iconOnly: i.menuIconOnly, settingsIconOnly: i.menuSettingsIconOnly })) {
-      const into = seg.side === 'end' ? far : near;
-      if (seg.t === 'sep') into.append(h('span', { class: 'mp-sep' }));
-      else if (seg.t === 'text') into.append(h('span', { class: 'mp-label', text: seg.text }));
-      else if (seg.t === 'button') {
-        const b = h('span', { class: `mp-btn style-${seg.style ?? 'secondary'}${seg.label ? '' : ' icon-only'}`, title: seg.tip ?? seg.label ?? '' });
-        b.innerHTML = seg.icon ? icon(seg.icon) : '';
-        if (seg.label) b.append(h('span', { text: seg.label }));
-        into.append(b);
-      }
+  stage.append(preview);
+  const list = h('div', { class: 'menu-editor', role: 'list' });
+  const state = () => ({ anchor: i.anchor, dnd: settings.general.dnd, mac: platform === 'macos', reminders: true });
+  const lookOf = (order: MenuItemId[]) => ({ order, iconOnly: i.menuIconOnly, settingsIconOnly: i.menuSettingsIconOnly });
+  /** The menu as the island lays it out: its length, thickness and padding, and where each part sits. */
+  const layout = (order: MenuItemId[], shown: Settings['island']['menu']) => {
+    // The island's screen is this one's (Settings opens on it); the island's open size at its Size setting.
+    const area = { width: window.screen.width || 1536, height: window.screen.availHeight || 864 };
+    const size = pillSize(area, i.widths, 'maximum', i.edge, i.size, 'horizontal');
+    const pad = innerPadding(size.cross);
+    const st = state();
+    const look = lookOf(order);
+    const main = menuMain(shown, st, { max: size.main, cross: size.cross, pad, vertical: false, crossMax: size.h }, undefined, look);
+    return { main, cross: size.cross, pad, placed: fitSegments(menuSegments(shown, st, look), main - pad * 2, size.cross) };
+  };
+  /** Which item a part of the menu belongs to (Position is a label, four buttons and its lines); null: Settings. */
+  const idOf = (key: string): MenuItemId | null => {
+    const k = key.slice('menu/'.length);
+    if (['top', 'right', 'bottom', 'left', 'label', 'sep', 'sep-before'].includes(k)) return 'position';
+    if (k === 'dnd') return 'quiet';
+    return (MENU_ITEMS.some((m) => m.id === k) ? k : null) as MenuItemId | null;
+  };
+  const listOrder = () => normalizeMenuOrder([...list.children].map((r) => (r as HTMLElement).dataset.id));
+  /** Draws the preview for `order` and `shown` (a drag shows what letting go would do); `ghost` is the item being dragged. */
+  const paint = (order: MenuItemId[] = listOrder(), shown: Settings['island']['menu'] = i.menu, ghost: MenuItemId | null = null) => {
+    const { main, cross, pad, placed } = layout(order, shown);
+    preview.style.width = `${main}px`;
+    preview.style.height = `${cross}px`;
+    preview.style.borderRadius = `${cross / 2}px`;
+    preview.replaceChildren(
+      ...placed.map(({ seg, x, w }) => {
+        const id = idOf(seg.key);
+        let el: HTMLElement;
+        if (seg.t === 'sep') el = h('span', { class: 'mp-sep' });
+        else if (seg.t === 'text') el = h('span', { class: 'mp-label', text: seg.text });
+        else if (seg.t === 'button') {
+          el = h('span', { class: `mp-btn style-${seg.style ?? 'secondary'}${seg.label ? '' : ' icon-only'}`, title: seg.tip ?? seg.label ?? '' });
+          el.innerHTML = seg.icon ? icon(seg.icon) : '';
+          if (seg.label) el.append(h('span', { text: seg.label }));
+        } else el = h('span');
+        el.classList.add('mp-item');
+        if (id) el.dataset.id = id;
+        if (id && id === ghost) el.classList.add('mp-ghost');
+        el.style.left = `${pad + x}px`;
+        el.style.width = `${w}px`;
+        return el;
+      }),
+    );
+  };
+  /** Where `id` lands when let go at `clientX` over the preview: the menu's order with it there. */
+  const dropOrder = (id: MenuItemId, clientX: number, shown: Settings['island']['menu']): MenuItemId[] => {
+    const rest = listOrder().filter((x) => x !== id);
+    const without = { ...shown, [id]: false };
+    const { main, pad, placed } = layout(rest, without);
+    const box = stage.getBoundingClientRect();
+    const left = box.left + (box.width - main) / 2 + pad;
+    // Each item's middle, from the menu laid out without the dragged one (so nothing shifts under the pointer).
+    const span = new Map<MenuItemId, [number, number]>();
+    for (const p of placed) {
+      const pid = idOf(p.seg.key);
+      if (!pid) continue;
+      const [a, b] = span.get(pid) ?? [Infinity, -Infinity];
+      span.set(pid, [Math.min(a, p.x), Math.max(b, p.x + p.w)]);
     }
-    preview.replaceChildren(near, far);
+    const before = rest.find((x) => {
+      const s = span.get(x);
+      return s !== undefined && clientX < left + (s[0] + s[1]) / 2;
+    });
+    const shownRest = rest.filter((x) => span.has(x));
+    const at = before ? rest.indexOf(before) : shownRest.length ? rest.indexOf(shownRest[shownRest.length - 1]) + 1 : 0;
+    return [...rest.slice(0, at), id, ...rest.slice(at)];
+  };
+  const overStage = (e: PointerEvent) => {
+    const b = stage.getBoundingClientRect();
+    return e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top - 6 && e.clientY <= b.bottom + 6;
+  };
+  /** Puts `id` at `order`'s place and shows it, as dropped on the preview. */
+  const place = (id: MenuItemId, order: MenuItemId[]) => {
+    const was = i.menu[id];
+    i.menuOrder = normalizeMenuOrder(order);
+    i.menu[id] = true;
+    fill();
+    paint();
+    save(true);
+    // Hide's row below names the menu only while Hide is in it.
+    if (id === 'hide' && !was) render();
   };
   const label = (id: MenuItemId) => MENU_ITEMS.find((m) => m.id === id)?.label ?? id;
   const iconOf: Record<MenuItemId, IconName> = { position: 'pos-top', quiet: 'moon', hide: 'eye-off', fade: 'fade', reminders: 'bell', workspaces: 'grid', activities: 'pulse' };
-  const list = h('div', { class: 'menu-editor', role: 'list' });
   const commit = () => {
-    i.menuOrder = normalizeMenuOrder([...list.children].map((r) => (r as HTMLElement).dataset.id));
+    i.menuOrder = listOrder();
     paint();
     save(true);
   };
   const move = (r: HTMLElement, by: -1 | 1) => {
     const other = by < 0 ? r.previousElementSibling : r.nextElementSibling;
-    if (!other) return;
+    if (!other || (other as HTMLElement).classList.contains('fixed')) return;
     if (by < 0) list.insertBefore(r, other);
     else list.insertBefore(other, r);
     commit();
   };
-  for (const id of i.menuOrder) {
-    const grip = h('button', { class: 'me-grip', title: 'Drag to move (or Up / Down arrow keys)', 'aria-label': `Move ${label(id)}` });
-    grip.innerHTML = icon('grip');
-    const look = segmented(i.menuIconOnly[id] ? 'icon' : 'both', [['both', 'Icon and name'], ['icon', 'Icon only']], (v) => {
-      i.menuIconOnly[id] = v === 'icon';
-      for (const b of look.querySelectorAll('button')) b.classList.toggle('on', b.textContent === (v === 'icon' ? 'Icon only' : 'Icon and name'));
+  const fill = () => {
+    list.replaceChildren();
+    for (const id of i.menuOrder) {
+      const grip = h('button', { class: 'me-grip', title: 'Drag to move, or onto the island above (or Up / Down arrow keys)', 'aria-label': `Move ${label(id)}` });
+      grip.innerHTML = icon('grip');
+      const look = segmented(i.menuIconOnly[id] ? 'icon' : 'both', [['both', 'Icon and name'], ['icon', 'Icon only']], (v) => {
+        i.menuIconOnly[id] = v === 'icon';
+        for (const b of look.querySelectorAll('button')) b.classList.toggle('on', b.textContent === (v === 'icon' ? 'Icon only' : 'Icon and name'));
+        paint();
+        save(true);
+      });
+      const ico = h('span', { class: 'me-ico' });
+      ico.innerHTML = icon(iconOf[id]);
+      const r = h('div', { class: `me-row${i.menu[id] ? '' : ' off'}`, role: 'listitem' }, [
+        grip,
+        ico,
+        h('span', { class: 'me-name', text: label(id) }),
+        look,
+        toggle(i.menu[id], (on) => {
+          i.menu[id] = on;
+          r.classList.toggle('off', !on);
+          paint();
+          save(true);
+          // Hide's row below names the menu only while Hide is in it.
+          if (id === 'hide') render();
+        }, `Show ${label(id)}`),
+      ]);
+      r.dataset.id = id;
+      grip.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+        e.preventDefault();
+        move(r, e.key === 'ArrowUp' ? -1 : 1);
+        grip.focus();
+      });
+      // Drag by the grip: pointer events, so a mouse, a touchpad and a finger all work. Along the list it
+      // reorders; over the preview it shows where it would sit there, and letting go puts it there (on).
+      grip.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        // Followed on the window: moving the row in the list takes it out of the page for a moment, which ends a pointer capture.
+        r.classList.add('dragging');
+        const startOrder = listOrder().join();
+        let over: MenuItemId[] | null = null;
+        const onMove = (ev: PointerEvent) => {
+          if (overStage(ev)) {
+            over = dropOrder(id, ev.clientX, i.menu);
+            stage.classList.add('hot');
+            paint(over, { ...i.menu, [id]: true }, id);
+            return;
+          }
+          if (over) {
+            over = null;
+            stage.classList.remove('hot');
+            paint();
+          }
+          for (const other of [...list.children] as HTMLElement[]) {
+            if (other === r || other.classList.contains('fixed')) continue;
+            const box = other.getBoundingClientRect();
+            const mid = box.top + box.height / 2;
+            const before = (r.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
+            if (before && ev.clientY < mid) { list.insertBefore(r, other); paint(); break; }
+            if (!before && ev.clientY > mid) { list.insertBefore(r, other.nextSibling); paint(); }
+          }
+        };
+        const onUp = () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onUp);
+          r.classList.remove('dragging');
+          stage.classList.remove('hot');
+          if (over) place(id, over);
+          else if (listOrder().join() !== startOrder) commit();
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+      });
+      list.append(r);
+    }
+    // Settings: always there and always last, so it cannot be moved or hidden; its name can show.
+    const gear = h('span', { class: 'me-ico' });
+    gear.innerHTML = icon('settings');
+    const gearLook = segmented(i.menuSettingsIconOnly ? 'icon' : 'both', [['both', 'Icon and name'], ['icon', 'Icon only']], (v) => {
+      i.menuSettingsIconOnly = v === 'icon';
+      for (const b of gearLook.querySelectorAll('button')) b.classList.toggle('on', b.textContent === (v === 'icon' ? 'Icon only' : 'Icon and name'));
       paint();
       save(true);
     });
-    const ico = h('span', { class: 'me-ico' });
-    ico.innerHTML = icon(iconOf[id]);
-    const r = h('div', { class: `me-row${i.menu[id] ? '' : ' off'}`, role: 'listitem' }, [
-      grip,
-      ico,
-      h('span', { class: 'me-name', text: label(id) }),
-      look,
-      toggle(i.menu[id], (on) => {
-        i.menu[id] = on;
-        r.classList.toggle('off', !on);
-        paint();
-        save(true);
-        // Hide's row below names the menu only while Hide is in it.
-        if (id === 'hide') render();
-      }, `Show ${label(id)}`),
-    ]);
-    r.dataset.id = id;
-    grip.addEventListener('keydown', (e) => {
-      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-      e.preventDefault();
-      move(r, e.key === 'ArrowUp' ? -1 : 1);
-      grip.focus();
-    });
-    // Drag by the grip: pointer events, so a mouse, a touchpad and a finger all work.
-    grip.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      grip.setPointerCapture(e.pointerId);
-      r.classList.add('dragging');
-      const startOrder = [...list.children].map((x) => (x as HTMLElement).dataset.id).join();
-      const onMove = (ev: PointerEvent) => {
-        for (const other of [...list.children] as HTMLElement[]) {
-          if (other === r) continue;
-          const box = other.getBoundingClientRect();
-          const mid = box.top + box.height / 2;
-          const before = (r.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
-          if (before && ev.clientY < mid) { list.insertBefore(r, other); paint(); break; }
-          if (!before && ev.clientY > mid) { list.insertBefore(r, other.nextSibling); paint(); }
-        }
-      };
-      const onUp = () => {
-        grip.removeEventListener('pointermove', onMove);
-        grip.removeEventListener('pointerup', onUp);
-        grip.removeEventListener('pointercancel', onUp);
-        r.classList.remove('dragging');
-        if ([...list.children].map((x) => (x as HTMLElement).dataset.id).join() !== startOrder) commit();
-      };
-      grip.addEventListener('pointermove', onMove);
-      grip.addEventListener('pointerup', onUp);
-      grip.addEventListener('pointercancel', onUp);
-    });
-    list.append(r);
-  }
-  // Settings: always there and always last, so it cannot be moved or hidden; its name can show.
-  const gear = h('span', { class: 'me-ico' });
-  gear.innerHTML = icon('settings');
-  const gearLook = segmented(i.menuSettingsIconOnly ? 'icon' : 'both', [['both', 'Icon and name'], ['icon', 'Icon only']], (v) => {
-    i.menuSettingsIconOnly = v === 'icon';
-    for (const b of gearLook.querySelectorAll('button')) b.classList.toggle('on', b.textContent === (v === 'icon' ? 'Icon only' : 'Icon and name'));
-    paint();
-    save(true);
+    list.append(h('div', { class: 'me-row fixed', role: 'listitem' }, [h('span', { class: 'me-grip' }), gear, h('span', { class: 'me-name', text: 'Settings' }), gearLook, h('span', { class: 'muted', text: 'Always last' })]));
+  };
+  // An item on the preview moves along it: let go and it stays there; let go off it and nothing changes.
+  preview.addEventListener('pointerdown', (e) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('.mp-item[data-id]');
+    if (e.button !== 0 || !el) return;
+    const id = el.dataset.id as MenuItemId;
+    e.preventDefault();
+    const x0 = e.clientX;
+    let moving = false;
+    let over: MenuItemId[] | null = null;
+    const onMove = (ev: PointerEvent) => {
+      if (!moving && Math.abs(ev.clientX - x0) < 4) return;
+      moving = true;
+      if (overStage(ev)) {
+        over = dropOrder(id, ev.clientX, i.menu);
+        stage.classList.add('hot');
+        paint(over, i.menu, id);
+      } else if (over) {
+        over = null;
+        stage.classList.remove('hot');
+        paint(listOrder(), i.menu, id);
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      stage.classList.remove('hot');
+      if (over && over.join() !== listOrder().join()) place(id, over);
+      else paint();
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   });
-  list.append(h('div', { class: 'me-row fixed', role: 'listitem' }, [h('span', { class: 'me-grip' }), gear, h('span', { class: 'me-name', text: 'Settings' }), gearLook, h('span', { class: 'muted', text: 'Always last' })]));
+  fill();
   paint();
-  return stacked(row('Right-click menu', 'What the island shows when you right-click it, as it will look. Drag the handles to reorder; turn off what you never use and the menu gets shorter by that much. Settings always stays.', h('div', { class: 'menu-edit-wrap' }, [preview, list])));
+  return stacked(row('Right-click menu', 'What the island shows when you right-click it, as it will look and as big as it is. Drag the handles to reorder, or drag an item straight onto the island; turn off what you never use and the menu gets shorter by that much. Settings always stays.', h('div', { class: 'menu-edit-wrap' }, [stage, list])));
 }
 
 /** Hide the island for a while, or, while it is hidden, say until when and bring it back. */

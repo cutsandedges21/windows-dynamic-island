@@ -264,9 +264,11 @@ describe('settings migration', () => {
     expect(migrate({ version: 5, island: { hideInFullscreen: true } }).island.hideInFullscreen).toBe(true);
   });
 
-  it('Land is built in: on even when an older version saved it off, its options kept', () => {
-    const s = migrate({ activities: { config: { land: { enabled: false, priority: 'high', options: { visible: false } } } } });
-    expect(s.activities.config.land.enabled).toBe(true);
+  it('Land and the Shelf are on unless turned off, and stay off when turned off (Justin: make them optional)', () => {
+    const s = migrate({ activities: { config: { land: { enabled: false, priority: 'high', options: { visible: false } }, shelf: { enabled: false } } } });
+    expect(s.activities.config.land.enabled).toBe(false);
+    expect(s.activities.config.shelf.enabled).toBe(false);
+    expect(migrate({}).activities.config.shelf.enabled).toBe(true);
     expect(s.activities.config.land.priority).toBe('high');
     expect(s.activities.config.land.options.visible).toBe(false);
     expect(migrate({}).activities.config.land.enabled).toBe(true);
