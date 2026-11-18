@@ -12,7 +12,8 @@ export default defineConfig({
   server: {
     port: 1430,
     strictPort: true,
-    watch: { ignored: ['**/src-tauri/**', '**/hook/**', '**/release/**'] },
+    // phone/dist too: building the phone site reloaded the island mid-session, and it did not come back.
+    watch: { ignored: ['**/src-tauri/**', '**/hook/**', '**/release/**', '**/phone/dist/**'] },
   },
   build: {
     target: 'es2022',
