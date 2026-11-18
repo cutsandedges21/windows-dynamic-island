@@ -1069,6 +1069,10 @@ html[data-pill='matte-white'] { --bar-shade: #fff; }
    player is sized for its card already and its lyrics split works in screen pixels (player.ts). */
 :root[data-island-size='small'] { --isz: 0.88; }
 :root[data-island-size='large'] { --isz: 1.14; }
+/* Blocks keep their height when the content is taller than the card can get: it scrolls instead.
+   Shrinking them squeezed the head and rows up 3-6 px the moment Claude's card unfolded (Justin's
+   recording, 2026-11-18). No specificity, so a block that should flex still can. */
+:where(.sheet-inner) > * { flex-shrink: 0; }
 .sheet-inner > :not(.sb-tiles, .sb-player) { zoom: var(--isz, 1); }
 .sheet-inner { padding: calc(14px * var(--isz, 1)); gap: calc(10px * var(--isz, 1)); }
 

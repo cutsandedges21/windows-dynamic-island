@@ -590,6 +590,8 @@ export class SheetRenderer {
   private shown = false;
   private anchor: Anchor = 'top';
   private area: Area = { width: 1280, height: 720 };
+  /** Where each content box's left edge sits on screen, CSS px on a whole device pixel (place). */
+  private contentAt = new WeakMap<HTMLElement, number>();
   private pill: Rect = { x: 0, y: 0, w: 0, h: 0 };
   /** Where the pill is springing to (island.ts sets it with the pill's target each compose). */
   pillTo: Rect | null = null;
@@ -1331,11 +1333,20 @@ export class SheetRenderer {
     // Each edge on its own pixel, and the content on one of its own about the card's true centre, so
     // a card widening (a grown card turning into the open island's) moves neither by a part of a pixel.
     const k = window.devicePixelRatio || 1;
+    const span = snapSpan(x, w, k);
     for (const inner of this.el.querySelectorAll<HTMLElement>(':scope > .sheet-inner')) {
       const iw = parseFloat(inner.style.width);
-      if (iw > 0) inner.style.left = `${contentLeft(x, w, iw, k)}px`;
+      if (!(iw > 0)) continue;
+      // Kept on its pixel unless its spot really moves: a centre hovering on a pixel's edge (the pill's
+      // spring settling) flipped the content a whole pixel back and forth (Justin's Calendar card, 2026-11-18).
+      const want = x + w / 2 - iw / 2;
+      let at = this.contentAt.get(inner);
+      if (at === undefined || Math.abs(want - at) > 0.6 / k) {
+        at = span.x + contentLeft(x, w, iw, k);
+        this.contentAt.set(inner, at);
+      }
+      inner.style.left = `${at - span.x}px`;
     }
-    const span = snapSpan(x, w, k);
     x = span.x;
     w = span.w;
     y = snapPx(y);
@@ -2490,6 +2501,7 @@ export class SheetRenderer {
 
     const existing = new Map<string, HTMLElement>();
     for (const el of host.querySelectorAll<HTMLElement>('.tile')) if (el.dataset.k) existing.set(el.dataset.k, el);
+    const fresh = existing.size === 0;
     const was = new Map<HTMLElement, { rect: DOMRect; page: Element | null }>();
     for (const el of existing.values()) was.set(el, { rect: el.getBoundingClientRect(), page: el.parentElement });
 
@@ -2515,8 +2527,11 @@ export class SheetRenderer {
           }
           // A new tile pops in, but not one that arrives with a carried card (placeCarry): that card's
           // content fades in where it stays, and every tile growing 8% into place under the fade was
-          // content moving for half a second after the click (Justin's recordings, 2026-11-14).
-          else if (!this.carry) springAnimate(next, [{ opacity: 0, transform: 'scale(0.92)' }, { opacity: 1, transform: 'none' }], springs.content);
+          // content moving for half a second after the click (Justin's recordings, 2026-11-14). Nor a
+          // grid drawn whole (Control Center coming back from a tile's card): the card's own fade
+          // brings it in, and every tile growing into place then stepping half a pixel as its
+          // animation ended was the grid shaking (Justin's recording, 2026-11-18).
+          else if (!this.carry && !fresh) springAnimate(next, [{ opacity: 0, transform: 'scale(0.92)' }, { opacity: 1, transform: 'none' }], springs.content);
           el = next;
         }
       }
