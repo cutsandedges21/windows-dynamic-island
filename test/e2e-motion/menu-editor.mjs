@@ -6,7 +6,7 @@ const out = process.argv[2] ?? '.';
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, screen: { width: 1536, height: 960 } });
 page.on('pageerror', (e) => console.log('pageerror', e.message));
-await page.goto('http://localhost:1430/app.html#settings');
+await page.goto('http://localhost:1430/app.html#behavior');
 await page.waitForSelector('.menu-stage .mp-item');
 const stage = page.locator('.menu-stage');
 await stage.scrollIntoViewIfNeeded();
