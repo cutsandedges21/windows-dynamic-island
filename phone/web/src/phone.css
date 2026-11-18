@@ -815,6 +815,17 @@ body {
 .ph-stage .tile.span-1.k-dots .dg { gap: 3px; }
 .ph-stage .tile.k-week .ws { gap: 0; }
 .ph-stage .tile.k-week .wn { width: 20px; height: 20px; border-radius: 10px; font-size: 11.5px; }
+/* The narrowest phones (320 px: an SE, or Display Zoom): a column is about 64 px, so the one-column tiles
+   keep less padding, the battery dots get smaller so all eight fit, and the player's cover gives its
+   title room instead of squeezing it to "Mi…". */
+@media (max-width: 359px) {
+  .ph-stage .sheet-inner { padding: 10px 8px; }
+  .ph-stage .tile.span-1 { padding: 8px; }
+  .ph-stage .tile.span-1.k-dots .dg { gap: 2px; }
+  .ph-stage .tile.span-1.k-dots .dg i { width: 4px; height: 4px; }
+  .ph-stage .tile.k-media.rows-2 .ma { width: 46px; height: 46px; border-radius: 10px; }
+  .ph-stage .tile.k-media.rows-2 .m1 { font-size: 13px; }
+}
 
 
 /* The PC's Activities and Settings (screens/prefs.ts). */

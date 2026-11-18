@@ -147,11 +147,6 @@ function tiles(d: DemoState, now: number): Tile[] {
   const track = TRACKS[d.track];
   const day = new Date(now);
   const dayPct = ((day.getHours() * 60 + day.getMinutes()) / 1440) * 100;
-  const week = Array.from({ length: 7 }, (_, i) => {
-    const x = new Date(now);
-    x.setDate(day.getDate() - day.getDay() + i);
-    return { label: x.toLocaleDateString('en-US', { weekday: 'narrow' }), num: x.getDate(), today: i === day.getDay(), busy: [0, 2, 1, 3, 1, 0, 1][i] };
-  });
   const left = timerLeft(d, now);
   const timer: Tile = d.timer
     ? {
@@ -253,7 +248,8 @@ function tiles(d: DemoState, now: number): Tile[] {
         ],
       },
     }),
-    tile('calendar', { key: 'week', span: 2, body: { k: 'week', title: 'Design review', sub: 'in 2 h', days: week } }),
+    // Today's events, as the PC's Calendar tile shows them now.
+    tile('calendar', { key: 'today', span: 2, body: { k: 'list', icon: 'calendar', label: 'Today', sub: day.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }), rows: [{ key: 'e1', dot: 'accent', title: 'Design review', detail: '3:00 PM - 4:00 PM' }] } }),
     tile('land', {
       key: 'land',
       span: 2,

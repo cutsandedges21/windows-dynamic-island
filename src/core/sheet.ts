@@ -825,6 +825,9 @@ export class SheetRenderer {
    */
   show(view: SheetView | null, geo: { anchor: Anchor; area: Area; width: number; immediate?: boolean }): void {
     const anchorChanged = geo.anchor !== this.anchor;
+    // A new height to fit in (a phone turned sideways, or room kept under the card for its Back
+    // button): the card is measured again even if nothing in it changed.
+    const roomChanged = Math.abs(geo.area.height - this.area.height) > 0.5;
     this.anchor = geo.anchor;
     this.area = geo.area;
     this.el.dataset.anchor = geo.anchor;
@@ -900,7 +903,7 @@ export class SheetRenderer {
     }
     this.pinInner(this.inner, this.width);
     changed = this.patch(view.blocks) || changed;
-    if (changed || appearing) this.fit(geo.immediate === true);
+    if (changed || appearing || roomChanged) this.fit(geo.immediate === true);
     // In without a bounce: an overshooting scale reads as a shake as the island opens.
     if (appearing && !morph) this.springs.set({ o: 1, s: 1, b: 0 }, { config: { o: springs.fade, s: springs.snappy, b: springs.fade }, immediate: geo.immediate });
     // New content gets its whole-pixel spot now, not on the next frame the springs happen to move.
