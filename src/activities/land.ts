@@ -147,6 +147,12 @@ export class LandActivity extends BaseActivity {
   private note: { text: string; at: number; good?: boolean } | null = null;
   /** The note being answered (its transfer id): its card holds a box to write the reply in. */
   private replying: string | null = null;
+  /**
+   * The offer picked from the pill, Land's tile or its row (its transfer id): Land's card shows what
+   * it holds, names, count and size, until it is answered (Justin: with Control Center open under the
+   * pill he couldn't see what was being sent).
+   */
+  private viewing: string | null = null;
   /** The friend whose chat the card shows (their id), the last notes each way, and whether Rust keeps them across restarts. */
   private chatWith: string | null = null;
   private chatLog: LandChatMsg[] = [];
@@ -295,9 +301,10 @@ export class LandActivity extends BaseActivity {
     return this.friends.some((f) => f.id === key);
   }
 
-  /** The friend a computer is: its own key, or the friend key a computer nearby announced. */
+  /** The friend a computer is: its own key, or the friend key a computer nearby announced. A transfer
+   * over this network names only the Land key (land/receive.rs), so the computers nearby are asked too. */
   private friendOf(p: LandPeer): LandFriend | null {
-    const key = p.anywhere ?? p.id;
+    const key = p.anywhere ?? this.peers.find((x) => x.id === p.id)?.anywhere ?? p.id;
     return this.friends.find((f) => f.id === key) ?? null;
   }
 
@@ -644,12 +651,14 @@ export class LandActivity extends BaseActivity {
     const compact = env.level === 'compact' || env.level === 'idle';
     const ask = this.asking();
     if (ask) {
+      // A click on who and what opens the offer's card: the files, how many and how big (Justin).
+      const see = { action: 'offer', arg: ask.id, tip: ask.text ? `See what ${ask.peer.name} sent` : `See what ${ask.peer.name} wants to send` };
       const segs: Seg[] = [
-        { t: 'icon', key: 'icon', icon: 'land', tone: 'accent', anim: 'pulse', prio: 0 },
-        { t: 'text', key: 'who', text: ask.peer.name, weight: 'semibold', prio: 1, min: 50 },
+        { t: 'icon', key: 'icon', icon: 'land', tone: 'accent', anim: 'pulse', prio: 0, ...see },
+        { t: 'text', key: 'who', text: ask.peer.name, weight: 'semibold', prio: 1, min: 50, ...see },
       ];
       if (compact) return segs;
-      if (!env.vertical) segs.push({ t: 'text', key: 'what', text: ask.text ? `sent you ${what(ask)}` : `wants to send ${what(ask)}`, tone: 'muted', prio: 4, min: 60 });
+      if (!env.vertical) segs.push({ t: 'text', key: 'what', text: ask.text ? `sent you ${what(ask)}` : `wants to send ${what(ask)}`, tone: 'muted', prio: 4, min: 60, ...see });
       const note = ask.text && !ask.count;
       segs.push(
         note
@@ -763,6 +772,18 @@ export class LandActivity extends BaseActivity {
     void env;
     // Land's place is the icon on the pill; the tile only for those who switch it on.
     if (!this.opts().tile) return null;
+    // An offer waiting: the tile says who and what, and opens it (Justin: it said "3 files ready").
+    const ask = this.asking();
+    if (ask) {
+      return {
+        key: 'land',
+        tone: 'accent',
+        action: 'offer',
+        arg: ask.id,
+        tip: `See what ${ask.peer.name} ${ask.text ? 'sent' : 'wants to send'}`,
+        body: { k: 'stat', icon: 'download', label: `From ${clip(ask.peer.name, 16)}`, value: cap(what(ask)), sub: ask.text ? 'Tap to read' : `${bytes(ask.total)} · tap to see` },
+      };
+    }
     const lead = this.lead();
     if (lead) {
       const f = this.frac(lead);
@@ -817,7 +838,7 @@ export class LandActivity extends BaseActivity {
       // A note back, without taking this one (Justin).
       items.push({ key: 'reply', label: 'Reply', icon: 'chat', action: 'reply', arg: t.id, style: 'secondary' });
       items.push({ key: 'yes', label: 'Copy', icon: 'copy', action: 'accept-copy', arg: t.id, style: 'primary' });
-      blocks.push({ t: 'buttons', key: 'answer', align: 'fill', items });
+      blocks.push({ t: 'buttons', key: 'answer', align: 'fill', items }, ...this.chatButton(t.id, t.peer));
     }
     // Just answered: says the reply went (or why it didn't).
     if (this.note && env.now - this.note.at < REPLY_NOTE_MS) blocks.push({ t: 'text', key: 'note', text: this.note.text, tone: this.note.good ? 'good' : 'bad', size: 'sm' });
@@ -874,6 +895,15 @@ export class LandActivity extends BaseActivity {
     return { key: `ask/${t.id}`, blocks };
   }
 
+  /**
+   * Open chat under a friend's note: the conversation with them, this note in it (Justin: from a
+   * note he replied to, a way to the chat with that person). Only friends have a chat (land/history.rs).
+   */
+  private chatButton(id: string, peer: LandPeer): Block[] {
+    if (!this.friendOf(peer)) return [];
+    return [{ t: 'buttons', key: 'chat', align: 'fill', items: [{ key: 'chat', label: `Open chat with ${clip(peer.name, 22)}`, icon: 'chat', action: 'note-chat', arg: id, style: 'secondary', tip: `Your conversation with ${peer.name}` }] }];
+  }
+
   /** The newest note kept on the island (asks still waiting show their own card first). */
   private keptNote(): { id: string; peer: LandPeer; text: string; at: number } | null {
     let best: { id: string; peer: LandPeer; text: string; at: number } | null = null;
@@ -905,7 +935,7 @@ export class LandActivity extends BaseActivity {
       items.push({ key: 'yes', label: image ? 'Copy text' : 'Copy', icon: 'copy', action: 'note-copy', arg: n.id, style: image ? 'secondary' : 'primary' });
       if (image) items.push({ key: 'image', label: 'Copy image', icon: 'image', action: 'note-image', arg: image, style: 'primary' });
       else if (saved.length) items.push({ key: 'show', label: 'Show in folder', icon: 'folder', action: 'show', arg: saved[0], style: 'secondary' });
-      blocks.push({ t: 'buttons', key: 'answer', align: 'fill', items });
+      blocks.push({ t: 'buttons', key: 'answer', align: 'fill', items }, ...this.chatButton(n.id, n.peer));
     }
     if (this.note && env.now - this.note.at < REPLY_NOTE_MS) blocks.push({ t: 'text', key: 'note', text: this.note.text, tone: this.note.good ? 'good' : 'bad', size: 'sm' });
     blocks.push({ t: 'text', key: 'where', text: mine ? 'Answered. Done clears it.' : 'It waits on the island until you copy it, reply or press Done.', tone: 'dim', size: 'sm' });
@@ -1031,6 +1061,9 @@ export class LandActivity extends BaseActivity {
 
   /** The Land card in the open island: the files, who is nearby, Send, and the transfers. */
   private card(env: SheetEnv): SheetView {
+    // An offer picked to look at: what it holds, with Accept and Decline, until it is answered.
+    const offer = this.viewing ? this.transfers.get(this.viewing) : undefined;
+    if (offer?.state === 'asking') return this.askCard(offer, env);
     if (this.share && this.share.expires > env.now) return this.shareCard(this.share, env);
     const chatFriend = this.chatWith ? this.friends.find((f) => f.id === this.chatWith) : undefined;
     if (chatFriend) return this.chatCard(chatFriend, env);
@@ -1240,8 +1273,13 @@ export class LandActivity extends BaseActivity {
       detail,
     };
     // Cancel and Decline stay in sight: a touch screen (or a phone driving the PC) has no pointing at a row.
-    if (t.state === 'asking') row.button = { key: 'no', icon: 'x', action: 'decline', arg: t.id, style: 'ghost', tip: 'Decline', shown: true };
-    else if (active) row.button = { key: 'stop', icon: 'x', action: 'cancel', arg: t.id, style: 'ghost', tip: 'Cancel', shown: true };
+    if (t.state === 'asking') {
+      row.button = { key: 'no', icon: 'x', action: 'decline', arg: t.id, style: 'ghost', tip: 'Decline', shown: true };
+      // The row opens the offer: what it holds, and Accept.
+      row.action = 'offer';
+      row.arg = t.id;
+      row.tip = 'See what it is';
+    } else if (active) row.button = { key: 'stop', icon: 'x', action: 'cancel', arg: t.id, style: 'ghost', tip: 'Cancel', shown: true };
     // A send from here that is over (sent, failed, declined, cancelled): the same again, to the same one.
     else if (t.dir === 'out' && this.sent.has(t.id)) row.button = { key: 'again', icon: 'refresh', action: 'resend', arg: t.id, style: 'ghost', tip: `Send again to ${t.peer.name}`, shown: true };
     else if (t.dir === 'in' && t.state === 'done' && t.saved.length) {
@@ -1278,9 +1316,10 @@ export class LandActivity extends BaseActivity {
   }
 
   private async stage(paths: string[]): Promise<void> {
-    // Files dropped on the island are for the shelf, not for a chat.
+    // Files dropped on the island are for the shelf, not for a chat or an offer.
     this.chatWith = null;
     this.chatLog = [];
+    this.viewing = null;
     const fresh = paths.filter((p) => !this.staged.some((s) => s.path === p));
     if (!fresh.length) return;
     const got = await native.landStage(fresh);
@@ -1311,6 +1350,35 @@ export class LandActivity extends BaseActivity {
         void this.scan();
         void this.checkOnline();
         break;
+      case 'offer':
+        // Clicked on the pill, the tile or its row: Land's card opens on the offer (Justin).
+        if (this.transfers.get(id)?.state !== 'asking') break;
+        this.viewing = id;
+        this.chatWith = null;
+        this.ctx.openCard?.();
+        break;
+      case 'note-chat': {
+        // Their note's Open chat: the conversation with them, their note in it (Justin). The chat is
+        // where it lives now, so it leaves the pill; still asking, it is taken so Rust writes it in.
+        const n = this.kept.get(id) ?? this.transfers.get(id);
+        const f = n ? this.friendOf(n.peer) : null;
+        if (!f) break;
+        if (this.transfers.get(id)?.state === 'asking') {
+          if (native.demo) this.demoAnswer(id, true);
+          else await native.landAnswer(id, true);
+        }
+        this.kept.delete(id);
+        this.replied.delete(id);
+        if (this.replying === id) this.replying = null;
+        this.viewing = null;
+        this.chatWith = f.id;
+        this.chatLog = [];
+        this.note = null;
+        this.ctx.openCard?.();
+        await this.loadChat();
+        void this.checkOnline();
+        break;
+      }
       case 'pick': {
         const all = this.everyone();
         if (this.picked.has(id)) this.picked.delete(id);
@@ -1412,6 +1480,7 @@ export class LandActivity extends BaseActivity {
         break;
       case 'chat-open':
         if (!this.friends.some((f) => f.id === id)) break;
+        this.viewing = null;
         this.chatWith = id;
         this.chatLog = [];
         this.note = null;

@@ -40,6 +40,9 @@ export type Seg =
       min?: number;
       /** Widest it may get, even with room to spare. */
       max?: number;
+      /** Clicking it does this (Land's offer opens on what it holds); without one a click is the pill's. */
+      action?: string;
+      arg?: unknown;
     })
   | (Base & { t: 'progress'; value: number | null; pace?: number | null; tone?: Tone; w: number })
   | (Base & { t: 'bars'; active: boolean; tone?: Tone; /** The bars' colour (the album art's); absent: the tone's. */ color?: string })

@@ -537,6 +537,9 @@ export class PillRenderer {
         break;
       case 'text': {
         e.className = `seg seg-text sz-${seg.size ?? 'md'} w-${seg.weight ?? 'medium'} tone-${tone}`;
+        if (seg.action) e.dataset.action = seg.action;
+        else delete e.dataset.action;
+        args.set(e, seg.arg);
         const current = e.querySelector<HTMLElement>('.t:not(.out)')!;
         if (current.textContent !== seg.text) {
           // Clocks, timers and counters just tick in place; only wording changes roll.

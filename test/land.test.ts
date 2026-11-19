@@ -1229,3 +1229,111 @@ describe('chats with friends', () => {
     expect(block(act.sheet(sheetEnv('open'))!, 'head', 'head')!.title).toBe('Land');
   });
 });
+
+describe("seeing an offer, and a note's chat (Justin, 2026-11-18)", () => {
+  const LANKEY = 'd4'.repeat(8);
+  // A friend on the same network: the transfer names only its Land key; its friend key is on the list nearby.
+  const MOSS_NEAR: LandPeer = { id: LANKEY, name: 'MossLaptop', os: 'windows', anywhere: FRIEND.id };
+  const MOSS: LandPeer = { id: LANKEY, name: 'MossLaptop', os: 'windows' };
+  const offer = (over: Partial<LandTransfer> = {}) =>
+    transfer({
+      id: 'in-o',
+      dir: 'in',
+      peer: LAB,
+      state: 'asking',
+      total: 3_600_000,
+      count: 3,
+      items: [
+        { name: 'a.png', size: 1_200_000, files: 1, dir: false },
+        { name: 'b.png', size: 1_200_000, files: 1, dir: false },
+        { name: 'c.png', size: 1_200_000, files: 1, dir: false },
+      ],
+      expires: T0 + 120_000,
+      ...over,
+    });
+
+  it('clicking who and what on the pill opens the card on the offer: its files, how many, how big', async () => {
+    const { act, calls } = await boot();
+    emit('land-transfer', offer());
+    for (const key of ['icon', 'who', 'what']) expect(act.render(env('maximum')).find((s) => s.key === key)).toMatchObject({ action: 'offer', arg: 'in-o' });
+    smoke(act, 'offer clickable');
+    await act.action('offer', 'in-o');
+    expect(calls.openCard).toBe(1);
+    const card = act.sheet(sheetEnv('open'))!;
+    expect(card.key).toBe('ask/in-o');
+    expect(block(card, 'head')).toMatchObject({ title: 'LAB-DESKTOP-07 wants to send you', sub: '3 files · 3.4 MB' });
+    expect(block(card, 'rows', 'files')!.items.map((r) => r.title)).toEqual(['a.png', 'b.png', 'c.png']);
+    expect(block(card, 'buttons', 'answer')!.items.map((b) => b.action)).toEqual(['decline', 'accept']);
+    // Answered: the card is Land's own again, the transfer on it.
+    await act.action('accept', 'in-o');
+    emit('land-transfer', offer({ state: 'receiving', done: 100, expires: null }));
+    expect(act.sheet(sheetEnv('open'))!.key).toBe('card');
+  });
+
+  it("Land's tile and its row open the offer too; an offer already answered opens nothing", async () => {
+    const { act, calls } = await boot({ tile: true });
+    emit('land-transfer', offer());
+    expect(act.tile(sheetEnv('open'))).toMatchObject({ action: 'offer', arg: 'in-o', body: { label: 'From LAB-DESKTOP-07', value: '3 files', sub: '3.4 MB · tap to see' } });
+    const row = block(act.sheet(sheetEnv('open'))!, 'rows', 'transfers')!.items.find((r) => r.key === 'in-o')!;
+    expect(row).toMatchObject({ action: 'offer', arg: 'in-o', button: { action: 'decline' } });
+    await act.action('decline', 'in-o');
+    emit('land-transfer', offer({ state: 'declined', error: 'Declined.', expires: null }));
+    await act.action('offer', 'in-o');
+    expect(calls.openCard).toBe(0);
+    expect(act.sheet(sheetEnv('open'))!.key).toBe('card');
+  });
+
+  it('files dropped while an offer is open bring the shelf back', async () => {
+    const { act } = await boot();
+    emit('land-transfer', offer());
+    await act.action('offer', 'in-o');
+    act.drop(['C:\\x\\a.txt']);
+    await tick(0);
+    expect(act.sheet(sheetEnv('open'))!.key).toBe('card');
+  });
+
+  it("a friend's note, replied to, has Open chat: their conversation opens and the note leaves the pill", async () => {
+    withFriends([FRIEND]);
+    h.native.landChat = vi.fn(async () => ({ remember: false, messages: [{ dir: 'in', text: 'yo', at: T0 }, { dir: 'out', text: 'on it', at: T0 }] }));
+    const { act, calls } = await boot();
+    emit('land-peers', [MOSS_NEAR]);
+    const note = (over: Partial<LandTransfer>) => transfer({ id: 'in-m', dir: 'in', peer: MOSS, state: 'asking', count: 0, total: 0, items: [], text: 'yo', expires: T0 + 120_000, ...over });
+    emit('land-transfer', note({}));
+    await act.action('reply', 'in-m');
+    await act.action('reply-send', 'on it');
+    emit('land-transfer', note({ state: 'done', expires: null }));
+    const card = act.sheet(sheetEnv('urgent'))!;
+    expect(card.key).toBe('note/in-m');
+    expect(block(card, 'buttons', 'answer')!.items.map((b) => b.label)).toEqual(['Done', 'Reply', 'Copy']);
+    expect(block(card, 'buttons', 'chat')!.items).toEqual([expect.objectContaining({ label: 'Open chat with MossLaptop', icon: 'chat', action: 'note-chat', arg: 'in-m' })]);
+    h.native.landAnswer.mockClear();
+    await act.action('note-chat', 'in-m');
+    expect(h.native.landAnswer).not.toHaveBeenCalled();
+    expect(calls.openCard).toBe(1);
+    expect(h.native.landChat).toHaveBeenCalledWith(FRIEND.id);
+    expect(act.status().urgent ?? null).toBeNull();
+    const chat = act.sheet(sheetEnv('open'))!;
+    expect(chat.key).toBe(`chat/${FRIEND.id}`);
+    expect(block(chat, 'text', 'm1')!.text).toBe('on it');
+  });
+
+  it('a note still asking takes it when the chat opens; a note from someone who is not a friend has no chat', async () => {
+    withFriends([FRIEND]);
+    h.native.landChat = vi.fn(async () => ({ remember: false, messages: [] }));
+    const { act } = await boot();
+    emit('land-peers', [MOSS_NEAR, LAB]);
+    emit('land-transfer', transfer({ id: 'in-a', dir: 'in', peer: MOSS, state: 'asking', count: 0, total: 0, items: [], text: 'hey', expires: T0 + 120_000 }));
+    expect(block(act.sheet(sheetEnv('urgent'))!, 'buttons', 'chat')).toBeDefined();
+    await act.action('note-chat', 'in-a');
+    expect(h.native.landAnswer).toHaveBeenCalledWith('in-a', true);
+    expect(act.sheet(sheetEnv('open'))!.key).toBe(`chat/${FRIEND.id}`);
+    // Taken, it comes through as done: in the chat, no card of its own.
+    emit('land-transfer', transfer({ id: 'in-a', dir: 'in', peer: MOSS, state: 'done', count: 0, total: 0, items: [], text: 'hey' }));
+    expect(act.status().urgent ?? null).toBeNull();
+    await act.action('chat-close');
+    emit('land-transfer', transfer({ id: 'in-b', dir: 'in', peer: LAB, state: 'asking', count: 0, total: 0, items: [], text: 'hi', expires: T0 + 120_000 }));
+    expect(block(act.sheet(sheetEnv('urgent'))!, 'buttons', 'chat')).toBeUndefined();
+    await act.action('note-chat', 'in-b');
+    expect(h.native.landAnswer).not.toHaveBeenCalledWith('in-b', true);
+  });
+});
