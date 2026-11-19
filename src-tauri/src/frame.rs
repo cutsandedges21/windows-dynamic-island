@@ -186,6 +186,10 @@ pub fn frame_solid(rects: Vec<Vec<f64>>) {
     *SOLID.lock().unwrap() = clean;
 }
 
+/// How near the screen's edge (logical px) the pointer brings an auto-hidden border up.
+#[cfg(windows)]
+const EDGE_NEAR: f64 = 36.0;
+
 /// While the window exists: it takes clicks only on the notches (so the rest of the screen works as
 /// if it weren't there), keeps its place in the stack under the taskbar and the island, follows the
 /// main screen if it changes, and goes while a full-screen game or video is in front.
@@ -203,6 +207,8 @@ fn watch(app: AppHandle) {
         let mut tick = 0u32;
         let mut full = false;
         let mut bounds: Option<(i32, i32, i32, i32)> = None;
+        // The pointer near the screen's edge (Auto-hide: the border and notches come up).
+        let mut near: Option<bool> = None;
         loop {
             std::thread::sleep(std::time::Duration::from_millis(20));
             let Some(win) = app.get_webview_window(LABEL) else {
@@ -253,6 +259,12 @@ fn watch(app: AppHandle) {
                 dpi => dpi as f64 / 96.0,
             };
             let (x, y) = ((p.x - r.left) as f64 / scale, (p.y - r.top) as f64 / scale);
+            let (ww, wh) = ((r.right - r.left) as f64 / scale, (r.bottom - r.top) as f64 / scale);
+            let close = x < EDGE_NEAR || y < EDGE_NEAR || x > ww - EDGE_NEAR || y > wh - EDGE_NEAR;
+            if near != Some(close) {
+                near = Some(close);
+                let _ = app.emit_to(LABEL, "frame-near", close);
+            }
             let on = !full && crate::dock::solid_at(&SOLID.lock().unwrap(), x, y);
             if taking != Some(on) {
                 taking = Some(on);

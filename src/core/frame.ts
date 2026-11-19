@@ -61,7 +61,18 @@ export interface FrameFrame {
   shelf: NotchConfig & { files: ShelfFile[]; undo: boolean };
   /** The light round the whole border (Glow › Whole screen), else null. */
   glow: { spec: GlowSpec | null; speed: Exclude<GlowSpeed, 'off'> } | null;
+  /** Faint until the pointer comes to the screen's edge. */
+  autoHide?: boolean;
+  /** The notches' ends curve into the edge (unset: yes). */
+  melt?: boolean;
+  /** The notches sit on the edge (unset: yes); off they float FLOAT_GAP off it. */
+  blend?: boolean;
 }
+
+/** A notch that doesn't blend into its edge floats this far off it, CSS px. */
+export const FLOAT_GAP = 8;
+/** Ends that don't melt: next to nothing (a ring's path needs some). */
+const FLAT = { out: 0.01, up: 0.01 };
 
 /** Where the taskbar or the island is, from its own window: a rect in screen CSS px, its side (the
  *  edge it sits on), its scale, and its melted ends' size (0: none). */
@@ -537,7 +548,8 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
       // Tucked: the whole notch made small, in proportion, TAB.thick of it out of the edge.
       n.el.style.setProperty('--nk', String(Math.min(1, TAB.thick / n.thick)));
       // Its light: a ring round it as it is out, the cone turning about the screen's middle.
-      const ringMasks = [NOTCH_RING.halo, NOTCH_RING.core].map((rw) => notchRing(side, body, n.thick, 18 * z, { out: NOTCH_MELT.out * z, up: NOTCH_MELT.up * z }, w, NOTCH_RING.room, rw));
+      const melts = f.melt !== false;
+      const ringMasks = [NOTCH_RING.halo, NOTCH_RING.core].map((rw) => notchRing(side, body, n.thick, 18 * z, melts ? { out: NOTCH_MELT.out * z, up: NOTCH_MELT.up * z } : FLAT, w, NOTCH_RING.room, rw));
       const boxW = n.thick + NOTCH_RING.room;
       Object.assign(n.ring.style, { top: `${-NOTCH_MELT.out * z}px`, width: `${boxW}px`, height: `${n.len}px` });
       n.ring.style.setProperty('--m-halo', ringMasks[0]);
@@ -590,6 +602,8 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
     solid();
     drawGlow();
   });
+  // Auto-hide: up while the pointer is near the screen's edge (frame.rs).
+  await on<boolean>('frame-near', (v) => root.classList.toggle('fr-near', v === true));
   await on<string>('frame-edit', (k) => setEditingNotch(k === 'sites' || k === 'shelf' ? k : null));
   for (const n of notches) {
     let press: { id: number; x: number; y: number; moved: boolean } | null = null;
@@ -731,8 +745,9 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
       // The whole notch at restK of its size, about the middle of where it meets the edge.
       const k = restK(n);
       const body = (n.len - 2 * NOTCH_MELT.out * n.zoom) * k;
-      const x = n.side === 'left' ? 0 : screen.width - n.thick * k;
-      part({ rect: [x + o.x, n.top + n.len / 2 - body / 2 + o.y, n.thick * k, body], side: n.side, zoom: n.zoom * k, melt: NOTCH_MELT, thick: NOTCH_T, radius: 18 });
+      const off = frame?.blend === false ? FLOAT_GAP : 0;
+      const x = n.side === 'left' ? off : screen.width - n.thick * k - off;
+      part({ rect: [x + o.x, n.top + n.len / 2 - body / 2 + o.y, n.thick * k, body], side: n.side, zoom: n.zoom * k, melt: frame?.melt === false ? null : NOTCH_MELT, thick: NOTCH_T, radius: 18 });
     }
     return all;
   };
@@ -830,6 +845,9 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
     root.dataset.pill = f.color;
     root.style.setProperty('--accent', f.accent);
     root.style.setProperty('--fr-w', `${f.width}px`);
+    root.classList.toggle('fr-autohide', f.autoHide === true);
+    root.classList.toggle('fr-flat', f.melt === false);
+    root.classList.toggle('fr-float', f.blend === false);
     root.classList.toggle('reduce', f.reduce);
     applyGlass(root, f.glass);
     drawBorder();

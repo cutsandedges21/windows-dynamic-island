@@ -67,11 +67,11 @@ const LOOKS: ReadonlyArray<[ItemLook['color'], string]> = [
 ];
 
 /** A row of small swatches, one per look, the chosen one ringed; under it the glass slider when Glass is picked. */
-function lookPicker(look: ItemLook, host: WidgetsPageHost): HTMLElement[] {
+function lookPicker(look: ItemLook, host: WidgetsPageHost, followLabel = 'Like the island'): HTMLElement[] {
   const swatches = h(
     'div',
     { class: 'lookpick', role: 'radiogroup' },
-    LOOKS.map(([value, label]) =>
+    LOOKS.map(([value, name]) => [value, value === 'island' ? followLabel : name] as const).map(([value, label]) =>
       h(
         'button',
         {
@@ -558,5 +558,51 @@ function borderSection(host: WidgetsPageHost): HTMLElement {
           h('span', { class: 'muted', text: 'Not available yet' }),
         ),
       ];
-  return section('Screen border and notches', [...border, ...notches]);
+  // Their own look and ways (Moss, 11-19), for the border and both notches.
+  const shown = frameAvailable(isl) && f.on;
+  const anyNotch = f.sites.on || f.shelf.on;
+  const sides = new Set([f.sites, f.shelf].filter((c) => c.on).map((c) => c.at?.side ?? (c.corner.endsWith('left') ? 'left' : 'right')));
+  const blendLabel = sides.size === 1 ? `Blend into the ${[...sides][0]} edge` : 'Blend into the sides';
+  const ways =
+    shown || anyNotch
+      ? [
+          ...lookPicker(f.look, host, 'Like the taskbar'),
+          row(
+            'Auto-hide',
+            'The border and the notches wait faint until your pointer comes to the screen’s edge.',
+            toggle(f.autoHide, (v) => {
+              f.autoHide = v;
+              host.save(true);
+            }),
+          ),
+          ...(anyNotch
+            ? [
+                row(
+                  blendLabel,
+                  'The notches sit on the screen’s edge. Off, they float just off it, rounded all round.',
+                  toggle(f.blend, (v) => {
+                    f.blend = v;
+                    host.save(true);
+                    host.render();
+                  }),
+                ),
+                ...(f.blend
+                  ? [
+                      sub(
+                        row(
+                          'Melt the ends',
+                          'Their ends curve out into the edge instead of meeting it square.',
+                          toggle(f.melt, (v) => {
+                            f.melt = v;
+                            host.save(true);
+                          }),
+                        ),
+                      ),
+                    ]
+                  : []),
+              ]
+            : []),
+        ]
+      : [];
+  return section('Screen border and notches', [...border, ...notches, ...ways]);
 }

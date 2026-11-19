@@ -1852,7 +1852,11 @@ export class Island {
     return {
       // No border: the notches melt into the screen's edge itself.
       width: frameOn(i) ? FRAME_W : 0,
-      ...lookOf(i.taskbar.look, i),
+      // Its own look, or the taskbar's ('island' here means like the taskbar).
+      ...lookOf(i.frame.look.color === 'island' ? i.taskbar.look : i.frame.look, i),
+      autoHide: i.frame.autoHide,
+      melt: i.frame.melt && i.frame.blend,
+      blend: i.frame.blend,
       accent: accentColor(i),
       reduce: document.documentElement.classList.contains('reduce'),
       sites: { ...i.frame.sites, list: i.sites },

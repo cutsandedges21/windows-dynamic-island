@@ -134,6 +134,14 @@ export interface FrameConfig {
   glow: 'island' | 'screen';
   sites: NotchConfig;
   shelf: NotchConfig;
+  /** The border's and the notches' own look (Moss, 11-19); colour 'island' here: like the taskbar. */
+  look: ItemLook;
+  /** They wait faint until the pointer comes to the screen's edge. */
+  autoHide: boolean;
+  /** The notches' ends curve out into the edge. */
+  melt: boolean;
+  /** The notches sit on the edge (off: they float just off it, rounded all round). */
+  blend: boolean;
 }
 
 /** The border can only be on while the taskbar and the island both sit on their edges. */
@@ -470,7 +478,7 @@ export function defaultSettings(): Settings {
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       widgets: { on: false, items: [], look: { color: 'island', glass: GLASS_DEFAULT } },
       taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, scale: null, minLen: 0, hidden: [], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom', autoHide: false, names: { font: 'system', look: 'bubble', bold: false } },
-      frame: { on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small', at: null, free: false }, shelf: { on: false, corner: 'bottom-right', size: 'small', at: null, free: false } },
+      frame: { on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small', at: null, free: false }, shelf: { on: false, corner: 'bottom-right', size: 'small', at: null, free: false }, look: { color: 'island', glass: GLASS_DEFAULT }, autoHide: false, melt: true, blend: true },
       sites: [],
       hiddenUntil: 0,
       faded: false,
@@ -632,6 +640,10 @@ export function migrate(saved: unknown): Settings {
     glow: savedFrame.glow === 'screen' ? 'screen' : 'island',
     sites: cleanNotch(savedFrame.sites, 'bottom-left'),
     shelf: cleanNotch(savedFrame.shelf, 'bottom-right'),
+    look: cleanLook(savedFrame.look),
+    autoHide: savedFrame.autoHide === true,
+    melt: savedFrame.melt !== false,
+    blend: savedFrame.blend !== false,
   };
   out.island.sites = cleanSites(isObj(saved.island) ? saved.island.sites : null);
   out.island.displayIds = strings(isObj(saved.island) ? saved.island.displayIds : null);

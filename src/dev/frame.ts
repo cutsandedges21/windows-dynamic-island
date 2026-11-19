@@ -47,6 +47,10 @@ export function framePreview(emitLocal: typeof EmitLocal): void {
       ],
       undo: false,
     },
+    // &autohide=1 &melt=0 &blend=0: the border's own options.
+    autoHide: q.get('autohide') === '1',
+    melt: q.get('melt') !== '0',
+    blend: q.get('blend') !== '0',
     glow: glow ? { spec: { tone: glow as Tone, motion: (q.get('motion') as 'orbit' | 'still' | null) ?? 'orbit' }, speed: 'medium' } : null,
   };
   document.documentElement.classList.add('frame-preview');

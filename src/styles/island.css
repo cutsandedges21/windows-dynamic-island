@@ -2846,3 +2846,14 @@ html[data-side='top'] .dk-edit { bottom: auto; top: 6px; }
 .nt-edit-btn { all: unset; height: 28px; padding: 0 14px; border-radius: 999px; font: 600 12.5px/28px var(--font); color: var(--fg); background: rgba(var(--ink), 0.1); cursor: default; white-space: nowrap; }
 .nt-edit-btn:hover { background: rgba(var(--ink), 0.18); }
 .nt-edit-btn.done { background: var(--accent); color: #111; }
+
+/* The border's and notches' own options (frame.ts): ends that don't melt, notches floating off the edge
+   (FLOAT_GAP), and Auto-hide (faint until the pointer is near the screen's edge: html.fr-near). */
+html.fr-flat .notch-bg { top: 0; bottom: 0; -webkit-mask: none; mask: none; border-radius: 0 18px 18px 0; box-shadow: inset -1px 0 0 var(--dk-rim), inset 0 1px 0 var(--dk-rim), inset 0 -1px 0 var(--dk-rim); }
+html.fr-flat .notch[data-side='right'] .notch-bg { border-radius: 18px 0 0 18px; box-shadow: inset 1px 0 0 var(--dk-rim), inset 0 1px 0 var(--dk-rim), inset 0 -1px 0 var(--dk-rim); }
+html.fr-flat .notch-bg::after { display: none; }
+html.fr-float .notch { translate: 8px 0; }
+html.fr-float .notch[data-side='right'] { translate: -8px 0; }
+html.fr-float.fr-flat .notch .notch-bg { border-radius: 18px; box-shadow: inset 0 0 0 1px var(--dk-rim); }
+html.fr-autohide :is(.fr-border, .fr-glow, .fr-tint, .notch:not(.out)) { opacity: 0.12; transition: opacity 0.3s ease; }
+html.fr-autohide.fr-near :is(.fr-border, .fr-glow, .fr-tint, .notch) { opacity: 1; }
