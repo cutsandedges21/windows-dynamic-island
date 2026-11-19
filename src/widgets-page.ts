@@ -383,7 +383,7 @@ function stylesSection(host: WidgetsPageHost): HTMLElement {
 }
 
 /** One notch's choices: on or off, where, how big. */
-function notchRows(name: string, about: string, c: NotchConfig, host: WidgetsPageHost): HTMLElement[] {
+function notchRows(kind: 'sites' | 'shelf', name: string, about: string, c: NotchConfig, host: WidgetsPageHost): HTMLElement[] {
   return [
     row(
       name,
@@ -397,13 +397,44 @@ function notchRows(name: string, about: string, c: NotchConfig, host: WidgetsPag
     ...(c.on
       ? [
           row(
-            'Place',
-            null,
+            'Corner',
+            c.at ? 'It sits where you dragged it; Back to the corner puts it here again.' : null,
             segmented(c.corner, NOTCH_CORNERS.map((k) => [k, CORNER_LABELS[k]] as [NotchCorner, string]), (v) => {
               c.corner = v;
+              c.at = null;
               host.save(true);
               host.render();
             }),
+          ),
+          row(
+            'Move it',
+            'Edit position lets you drag it anywhere along either side of the screen; press Done to keep it there.',
+            h('div', { class: 'row-actions' }, [
+              ...(c.at
+                ? [
+                    h('button', {
+                      class: 'btn ghost',
+                      text: 'Back to the corner',
+                      onclick: () => {
+                        c.at = null;
+                        host.save(true);
+                        host.render();
+                      },
+                    }),
+                  ]
+                : []),
+              h('button', { class: 'btn', text: 'Edit position', onclick: () => void sendTo('frame', 'frame-edit', kind) }),
+            ]),
+          ),
+          sub(
+            row(
+              'Always movable',
+              'Drag it any time, without Edit position.',
+              toggle(c.free, (v) => {
+                c.free = v;
+                host.save(true);
+              }),
+            ),
           ),
           row(
             'Size',
@@ -485,9 +516,9 @@ function borderSection(host: WidgetsPageHost): HTMLElement {
   const f = isl.frame;
   // The notches work with or without the border: without it they melt into the screen's edge.
   const notches = [
-    ...notchRows('Websites notch', 'Your pinned sites in a notch on the screen’s edge; click one to open it in your browser.', f.sites, host),
+    ...notchRows('sites', 'Websites notch', 'Your pinned sites in a notch on the screen’s edge; click one to open it in your browser.', f.sites, host),
     ...(f.sites.on ? [sitesList(host)] : []),
-    ...notchRows('Shelf notch', 'Files you keep for later, in a notch on the screen’s edge; drag one out, or drop files on it.', f.shelf, host),
+    ...notchRows('shelf', 'Shelf notch', 'Files you keep for later, in a notch on the screen’s edge; drag one out, or drop files on it.', f.shelf, host),
   ];
   const border = frameAvailable(isl)
     ? [

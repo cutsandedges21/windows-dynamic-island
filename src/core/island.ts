@@ -32,7 +32,7 @@ import { fadeSegments, fadeSheet } from './fade-menu';
 import { quietMoon } from './quiet';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { applyGlass } from './glass';
-import { accentColor, backAt, barAutoHide, barEdge, barMinLen, barNeedsHidden, barScale, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
+import { accentColor, backAt, barAutoHide, cleanAt, barEdge, barMinLen, barNeedsHidden, barScale, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { CARD_RADIUS, mapActions, SheetRenderer, type Block, type DropZone, type SheetButton, type SheetChip, type SheetView, type Tile } from './sheet';
 import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
@@ -1887,6 +1887,15 @@ export class Island {
         const paths = Array.isArray(a.paths) ? a.paths.filter((p): p is string => typeof p === 'string') : [];
         if (paths.length) this.shelf()?.drop(paths);
         this.schedule();
+        return;
+      }
+      case 'notch-place':
+      case 'notch-free': {
+        const n = a.notch === 'sites' || a.notch === 'shelf' ? i.frame[a.notch] : null;
+        if (!n) return;
+        if (a.kind === 'notch-place') n.at = cleanAt(a.at);
+        else n.free = a.on === true;
+        this.saveSettings();
         return;
       }
       case 'shelf-open':

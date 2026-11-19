@@ -28,7 +28,7 @@ describe('screen border', () => {
 
   it('starts off, Websites bottom left and the Shelf bottom right, both small and off, the light on the island', () => {
     const s = migrate({ version: 6, island: {} }).island;
-    expect(s.frame).toEqual({ on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small' }, shelf: { on: false, corner: 'bottom-right', size: 'small' } });
+    expect(s.frame).toEqual({ on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small', at: null, free: false }, shelf: { on: false, corner: 'bottom-right', size: 'small', at: null, free: false } });
     expect(notchesOn(s)).toBe(false);
     expect(s.sites).toEqual([]);
     expect(s.taskbar.side).toBe('bottom');
@@ -39,14 +39,14 @@ describe('screen border', () => {
       version: 6,
       island: {
         taskbar: { side: 'left' },
-        frame: { on: true, glow: 'screen', sites: { on: false, corner: 'top-right', size: 'large' }, shelf: { on: true, corner: 'nowhere', size: 'huge' } },
+        frame: { on: true, glow: 'screen', sites: { on: false, corner: 'top-right', size: 'large', at: { side: 'right', y: 0.4 }, free: true }, shelf: { on: true, corner: 'nowhere', size: 'huge', at: { side: 'up', y: 2 } } },
         sites: [{ url: 'github.com', title: 'GitHub' }, { url: 'javascript:alert(1)' }, { url: 'github.com' }, 'x'],
       },
     }).island;
     expect(s.taskbar.side).toBe('left');
     expect(s.frame.glow).toBe('screen');
-    expect(s.frame.sites).toEqual({ on: false, corner: 'top-right', size: 'large' });
-    expect(s.frame.shelf).toEqual({ on: true, corner: 'bottom-right', size: 'small' });
+    expect(s.frame.sites).toEqual({ on: false, corner: 'top-right', size: 'large', at: { side: 'right', y: 0.4 }, free: true });
+    expect(s.frame.shelf).toEqual({ on: true, corner: 'bottom-right', size: 'small', at: null, free: false });
     expect(s.sites).toEqual([{ url: 'https://github.com/', title: 'GitHub' }]);
     expect(migrate({ version: 6, island: { taskbar: { side: 'middle' } } }).island.taskbar.side).toBe('bottom');
   });

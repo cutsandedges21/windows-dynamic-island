@@ -2835,3 +2835,14 @@ html[data-side='top'] .dk-edit { bottom: auto; top: 6px; }
 .dk-edit-btn { all: unset; height: 28px; padding: 0 14px; border-radius: 999px; font: 600 12.5px/28px var(--font); color: var(--fg); background: rgba(var(--ink), 0.1); cursor: default; }
 .dk-edit-btn:hover { background: rgba(var(--ink), 0.18); }
 .dk-edit-btn.done { background: var(--accent); color: #111; }
+
+/* Moving a notch (frame.ts): outlined while in Edit position, a grab cursor while it can be dragged, and
+   Back to the corner / Done beside it. */
+.notch.movable { cursor: grab; }
+.notch.dragging { cursor: grabbing; }
+.notch.editing .notch-bg { filter: drop-shadow(0 0 1.5px var(--accent)) drop-shadow(0 0 6px var(--accent)); }
+.nt-edit { position: absolute; display: none; gap: 6px; padding: 5px; border-radius: 999px; background: var(--pill); box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.12), 0 10px 24px -10px rgba(0, 0, 0, 0.6); pointer-events: auto; z-index: 5; }
+.nt-edit.on { display: flex; }
+.nt-edit-btn { all: unset; height: 28px; padding: 0 14px; border-radius: 999px; font: 600 12.5px/28px var(--font); color: var(--fg); background: rgba(var(--ink), 0.1); cursor: default; white-space: nowrap; }
+.nt-edit-btn:hover { background: rgba(var(--ink), 0.18); }
+.nt-edit-btn.done { background: var(--accent); color: #111; }

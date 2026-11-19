@@ -4,7 +4,7 @@
 // none); &size=small|medium|large their size; &out=sites,shelf slides them out; &glow=claude runs
 // the light round everything; &island=1 puts a stand-in island on top.
 
-import { FRAME_W, type NotchCorner, type NotchSize, type PillColor } from '../core/settings';
+import { cleanAt, FRAME_W, type NotchCorner, type NotchSize, type PillColor } from '../core/settings';
 import type { emitLocal as EmitLocal } from '../core/native';
 import { meltMasks } from '../core/dock';
 import type { FrameFrame, FramePart } from '../core/frame';
@@ -33,11 +33,14 @@ export function framePreview(emitLocal: typeof EmitLocal): void {
     glass: 50,
     accent: '#6aa6e8',
     reduce: false,
-    sites: { on: Boolean(sitesAt), corner: sitesAt ?? 'bottom-left', size, list: SITES },
+    // &sitesat=right,0.5: the Websites notch dragged to its own place; &free=1: movable any time.
+    sites: { on: Boolean(sitesAt), corner: sitesAt ?? 'bottom-left', size, list: SITES, at: cleanAt(q.has('sitesat') ? { side: q.get('sitesat')!.split(',')[0], y: Number(q.get('sitesat')!.split(',')[1]) } : null), free: q.get('free') === '1' },
     shelf: {
       on: Boolean(shelfAt),
       corner: shelfAt ?? 'bottom-right',
       size,
+      at: null,
+      free: q.get('free') === '1',
       files: [
         { path: 'C:\\a\\notes.pdf', name: 'notes.pdf', thumb: null, dir: false, missing: false },
         { path: 'C:\\a\\photos', name: 'photos', thumb: null, dir: true, missing: false },
@@ -53,6 +56,8 @@ export function framePreview(emitLocal: typeof EmitLocal): void {
   };
   setTimeout(send, 300);
   setTimeout(send, 1300);
+  // &edit=sites: that notch in Edit position.
+  if (q.has('edit')) setTimeout(() => emitLocal('frame-edit', q.get('edit')), 1500);
   if (q.has('out'))
     setTimeout(() => {
       for (const k of (q.get('out') ?? '').split(',')) document.querySelector(`.notch.n-${k}`)?.classList.add('out');

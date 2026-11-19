@@ -97,6 +97,21 @@ export interface NotchConfig {
   on: boolean;
   corner: NotchCorner;
   size: NotchSize;
+  /** Dragged to a place of its own (Edit position): the side it comes out of and its middle, 0..1
+   *  down the screen. Null: at its corner. */
+  at: NotchAt | null;
+  /** It can be dragged any time, not only while editing its position. */
+  free: boolean;
+}
+export interface NotchAt {
+  side: 'left' | 'right';
+  y: number;
+}
+
+export function cleanAt(v: unknown): NotchAt | null {
+  const o = isObj(v) ? v : null;
+  if (!o || (o.side !== 'left' && o.side !== 'right') || typeof o.y !== 'number' || !Number.isFinite(o.y)) return null;
+  return { side: o.side, y: Math.min(1, Math.max(0, o.y)) };
 }
 /** A website pinned to the Websites notch. */
 export interface PinnedSite {
@@ -172,6 +187,8 @@ function cleanNotch(v: unknown, corner: NotchCorner): NotchConfig {
     on: o.on === true,
     corner: (NOTCH_CORNERS as readonly unknown[]).includes(o.corner) ? (o.corner as NotchCorner) : corner,
     size: (NOTCH_SIZES as readonly unknown[]).includes(o.size) ? (o.size as NotchSize) : 'small',
+    at: cleanAt(o.at),
+    free: o.free === true,
   };
 }
 
@@ -453,7 +470,7 @@ export function defaultSettings(): Settings {
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       widgets: { on: false, items: [], look: { color: 'island', glass: GLASS_DEFAULT } },
       taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, scale: null, minLen: 0, hidden: [], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom', autoHide: false, names: { font: 'system', look: 'bubble', bold: false } },
-      frame: { on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small' }, shelf: { on: false, corner: 'bottom-right', size: 'small' } },
+      frame: { on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small', at: null, free: false }, shelf: { on: false, corner: 'bottom-right', size: 'small', at: null, free: false } },
       sites: [],
       hiddenUntil: 0,
       faded: false,

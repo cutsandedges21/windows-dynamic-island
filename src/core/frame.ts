@@ -11,13 +11,13 @@
 // frame.rs) what to show, and what is clicked there comes back as `frame-act`. The taskbar and the
 // island tell the window where they are (frame-dock, frame-island), for the light's path.
 
-import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
+import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
 import { meltMasks } from './dock';
 import { applyGlass } from './glass';
 import { GLOW_PACE, type GlowSpec, type GlowSpeed } from './glow';
 import { icon } from './icons';
 import { isTauri, native, on, onFileDrop, sendTo } from './native';
-import type { DockSide, NotchConfig, NotchCorner, NotchSize, PillColor, PinnedSite } from './settings';
+import type { DockSide, NotchAt, NotchConfig, NotchCorner, NotchSize, PillColor, PinnedSite } from './settings';
 import type { ShelfFile } from '../activities/shelf';
 
 /** Each notch size's scale; Medium is the taskbar's Small, Large its Medium. */
@@ -86,7 +86,10 @@ export type FrameAct =
   | { kind: 'sites-settings' }
   | { kind: 'shelf'; name: string; arg?: unknown }
   | { kind: 'shelf-drop'; paths: string[] }
-  | { kind: 'shelf-open' };
+  | { kind: 'shelf-open' }
+  /** A notch dragged to its own place (null: back to its corner), or made draggable any time. */
+  | { kind: 'notch-place'; notch: 'sites' | 'shelf'; at: NotchAt | null }
+  | { kind: 'notch-free'; notch: 'sites' | 'shelf'; on: boolean };
 
 /** Where notch `kind` sits along its side, CSS px from the screen's top, given what is above it
  *  in the same place: `len` its length (feet included), `before` the lengths stacked nearer the corner. */
@@ -311,6 +314,8 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
   /** Out (pointed at, or a file dragged over it), or tucked back a moment after the pointer leaves. */
   const slide = (n: Notch, out: boolean) => {
     window.clearTimeout(n.tuck);
+    // Being moved: it stays out until Done.
+    if (!out && editingNotch === n.kind) return;
     // The border's light keeps running round the slim notch; out, the notch carries its own (CSS).
     if (out) {
       if (n.out) return;
@@ -454,6 +459,7 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
         items: [
           await MenuItem.new({ text: 'Open the Shelf', action: () => send({ kind: 'shelf-open' }) }),
           await MenuItem.new({ text: 'Clear the Shelf', enabled: (frame?.shelf.files.length ?? 0) > 0, action: () => send({ kind: 'shelf', name: 'clear-all' }) }),
+          ...(await placeItems('shelf')),
         ],
       });
       await menu.popup();
@@ -463,7 +469,7 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
     e.preventDefault();
     if (!isTauri) return;
     void (async () => {
-      const menu = await Menu.new({ items: [await MenuItem.new({ text: 'Websites settings…', action: () => send({ kind: 'sites-settings' }) })] });
+      const menu = await Menu.new({ items: [await MenuItem.new({ text: 'Websites settings…', action: () => send({ kind: 'sites-settings' }) }), ...(await placeItems('sites'))] });
       await menu.popup();
     })();
   });
@@ -489,6 +495,11 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
   const placeNotches = () => {
     const f = frame;
     if (!f) return;
+    // Dragged ones go where the pointer has them until the island confirms the place.
+    for (const k of ['sites', 'shelf'] as const) {
+      const live = liveAt.get(k);
+      if (live !== undefined && JSON.stringify(live) === JSON.stringify(f[k].at)) liveAt.delete(k);
+    }
     const w = f.width;
     const cfg = { sites: f.sites, shelf: f.shelf };
     // Stacked from each corner outward, in the order Websites, Shelf.
@@ -498,7 +509,10 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
       n.el.hidden = !c.on;
       if (!c.on) continue;
       const z = NOTCH_ZOOM[c.size] ?? NOTCH_ZOOM.small;
-      const side = sideOf(c.corner);
+      const at = liveAt.has(n.kind) ? (liveAt.get(n.kind) ?? null) : c.at;
+      const side = at ? at.side : sideOf(c.corner);
+      n.el.classList.toggle('editing', editingNotch === n.kind);
+      n.el.classList.toggle('movable', editingNotch === n.kind || c.free);
       n.zoom = z;
       n.side = side;
       n.el.dataset.side = side;
@@ -510,9 +524,14 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
       const body = n.inner.offsetHeight * z;
       n.thick = NOTCH_T * z;
       n.len = body + 2 * NOTCH_MELT.out * z;
-      const before = stacked[c.corner] ?? 0;
-      stacked[c.corner] = before + n.len + STACK_GAP;
-      n.top = notchTop(c.corner, screen.height, n.len, before);
+      if (at) {
+        // Its own place: its middle where it was dropped, never off the screen.
+        n.top = Math.round(Math.min(screen.height - CORNER_GAP - n.len, Math.max(CORNER_GAP, at.y * screen.height - n.len / 2)));
+      } else {
+        const before = stacked[c.corner] ?? 0;
+        stacked[c.corner] = before + n.len + STACK_GAP;
+        n.top = notchTop(c.corner, screen.height, n.len, before);
+      }
       // Its body's top (the feet reach above and below it).
       n.el.style.top = `${Math.round(n.top + NOTCH_MELT.out * z)}px`;
       // Tucked: the whole notch made small, in proportion, TAB.thick of it out of the edge.
@@ -527,6 +546,109 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
       n.ring.style.setProperty('--cx', `${screen.width / 2 - boxLeft}px`);
       n.ring.style.setProperty('--cy', `${screen.height / 2 - n.top}px`);
     }
+  };
+
+  // ---------------------------------------------------------- moving a notch (Moss, 11-19)
+  // Edit position (its right-click menu, or Settings): drag it up or down its side, or across to the
+  // other side; Done keeps it there, Back to the corner puts it back. Always movable: drag it any time.
+  const liveAt = new Map<'sites' | 'shelf', NotchAt | null>();
+  let editingNotch: 'sites' | 'shelf' | null = null;
+  const editPill = el('div', 'nt-edit');
+  const editReset = el('button', 'nt-edit-btn');
+  editReset.textContent = 'Back to the corner';
+  const editDone = el('button', 'nt-edit-btn done');
+  editDone.textContent = 'Done';
+  editPill.append(editReset, editDone);
+  stage.append(editPill);
+  const placeEditPill = () => {
+    const n = editingNotch ? notches.find((q) => q.kind === editingNotch) : null;
+    editPill.classList.toggle('on', Boolean(n && !n.el.hidden));
+    if (!n || n.el.hidden) return;
+    const w = editPill.offsetWidth || 220;
+    const x = n.side === 'left' ? n.thick + 22 : screen.width - n.thick - 22 - w;
+    editPill.style.left = `${Math.round(x)}px`;
+    editPill.style.top = `${Math.round(n.top + n.len / 2 - 19)}px`;
+  };
+  const setEditingNotch = (k: 'sites' | 'shelf' | null) => {
+    // The one being moved stands all the way out, so it is plain which it is.
+    for (const n of notches) {
+      if (n.kind === k) slide(n, true);
+      else if (n.kind === editingNotch) slide(n, false);
+    }
+    editingNotch = k;
+    placeNotches();
+    placeEditPill();
+    solid();
+  };
+  editDone.addEventListener('click', () => setEditingNotch(null));
+  editReset.addEventListener('click', () => {
+    if (!editingNotch) return;
+    liveAt.set(editingNotch, null);
+    send({ kind: 'notch-place', notch: editingNotch, at: null });
+    placeNotches();
+    placeEditPill();
+    solid();
+    drawGlow();
+  });
+  await on<string>('frame-edit', (k) => setEditingNotch(k === 'sites' || k === 'shelf' ? k : null));
+  for (const n of notches) {
+    let press: { id: number; x: number; y: number; moved: boolean } | null = null;
+    let swallow = false;
+    n.el.addEventListener('pointerdown', (e) => {
+      const c = frame?.[n.kind];
+      if (e.button !== 0 || !c || !(editingNotch === n.kind || c.free)) return;
+      press = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+      try {
+        n.el.setPointerCapture(e.pointerId);
+      } catch {
+        // A pointer the page doesn't know (a test's).
+      }
+    });
+    n.el.addEventListener('pointermove', (e) => {
+      if (!press || e.pointerId !== press.id) return;
+      if (!press.moved && Math.hypot(e.clientX - press.x, e.clientY - press.y) < 6) return;
+      press.moved = true;
+      n.el.classList.add('dragging');
+      liveAt.set(n.kind, { side: e.clientX < screen.width / 2 ? 'left' : 'right', y: Math.min(1, Math.max(0, e.clientY / screen.height)) });
+      placeNotches();
+      placeEditPill();
+    });
+    const end = (e: PointerEvent) => {
+      if (!press || e.pointerId !== press.id) return;
+      const moved = press.moved;
+      press = null;
+      n.el.classList.remove('dragging');
+      if (!moved) return;
+      // The click a drag ends in opens nothing.
+      swallow = true;
+      window.setTimeout(() => (swallow = false), 0);
+      const at = liveAt.get(n.kind) ?? null;
+      send({ kind: 'notch-place', notch: n.kind, at });
+      solid();
+      drawGlow();
+    };
+    n.el.addEventListener('pointerup', end);
+    n.el.addEventListener('pointercancel', end);
+    n.el.addEventListener(
+      'click',
+      (e) => {
+        if (swallow) {
+          e.stopPropagation();
+          e.preventDefault();
+        }
+      },
+      true,
+    );
+  }
+  /** Its right-click menu's place items: Edit position, Back to the corner, Always movable. */
+  const placeItems = async (k: 'sites' | 'shelf') => {
+    const c = frame?.[k];
+    return [
+      await PredefinedMenuItem.new({ item: 'Separator' }),
+      await MenuItem.new({ text: editingNotch === k ? 'Done moving' : 'Edit position', action: () => setEditingNotch(editingNotch === k ? null : k) }),
+      ...(c?.at ? [await MenuItem.new({ text: 'Back to the corner', action: () => send({ kind: 'notch-place', notch: k, at: null }) })] : []),
+      await CheckMenuItem.new({ text: 'Always movable', checked: c?.free === true, action: () => send({ kind: 'notch-free', notch: k, on: !c?.free }) }),
+    ];
   };
 
   /** Where the window takes clicks: each notch (tucked, its tab and the edge beside it). */
@@ -546,6 +668,10 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
         const long = n.len * restK(n) + 16;
         rects.push([n.side === 'left' ? 0 : screen.width - reach, top + (n.len - long) / 2, reach, long]);
       }
+    }
+    if (editPill.classList.contains('on')) {
+      const r = editPill.getBoundingClientRect();
+      rects.push([r.left - 6, r.top - 6, r.width + 12, r.height + 12]);
     }
     const json = JSON.stringify(rects.map((q) => q.map((v) => Math.round(v))));
     if (json === solidSent) return;
