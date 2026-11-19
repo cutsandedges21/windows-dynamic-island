@@ -1272,7 +1272,7 @@ describe('one pop-up per moment', () => {
       rowsOf('done');
       await tick(0);
       expect(told(calls).surfaces).toEqual([]);
-      expect(log.filter((p) => p[0] === 'finish')).toEqual([['finish', { session: 'S1', via: 'poll', looking: true, why: 'its window shows "✳ Fix the parser", this chat' }]]);
+      expect(log.filter((p) => p[0] === 'finish')).toEqual([['finish', { session: 'S1', via: 'tracker', looking: true, why: 'its window shows "✳ Fix the parser", this chat' }]]);
       // Its next turn, finishing while another tab shows: it pops up (the last quiet finish is not reused).
       await tick(1000);
       rowsOf('running');
@@ -1280,7 +1280,66 @@ describe('one pop-up per moment', () => {
       rowsOf('done');
       await tick(0);
       expect(told(calls).surfaces.map((s) => s.key)).toEqual(['done:S1']);
-      expect(log.filter((p) => p[0] === 'finish').at(-1)).toEqual(['finish', { session: 'S1', via: 'poll', looking: false, why: 'its window shows "✳ Fix the parser tests", chat S2' }]);
+      expect(log.filter((p) => p[0] === 'finish').at(-1)).toEqual(['finish', { session: 'S1', via: 'row', looking: false, why: 'its window shows "✳ Fix the parser tests", chat S2' }]);
+    });
+
+    describe('without Island hooks, quick turns its row never shows running', () => {
+      // Live: Claude Code says busy at once, but writes the prompt to the transcript only after
+      // its UserPromptSubmit hooks (Auto model's router, seconds); a row seen running then still
+      // carries the last turn's start, and a quick turn may not be seen running at all.
+      const setup = async () => {
+        const log: unknown[][] = [];
+        const { act, calls } = await boot({}, () => {}, { log: (...p: unknown[]) => void log.push(p) });
+        tabs(act);
+        const s1 = act.sessions[0];
+        const tracker = act as unknown as { onTrackerEvent(e: unknown): void };
+        act.onRows([row({ id: 'S1', state: 'done', word: 'done', since: Date.now() / 1000 - 60 })]);
+        /** One turn: its prompt (in its transcript), then its finish, told by the session list and by its row (done again, or blue with a stale start, then green). */
+        const turn = async (staleRun = false) => {
+          await tick(1000);
+          const stale = s1.turnStartMs!;
+          s1.turnStartMs = Date.now();
+          await tick(3000);
+          if (staleRun) act.onRows([row({ id: 'S1', state: 'running', word: 'running', since: stale / 1000 })]);
+          tracker.onTrackerEvent({ type: 'finished', session: s1 });
+          act.onRows([row({ id: 'S1', state: 'done', word: 'done', since: Date.now() / 1000 })]);
+          await tick(0);
+        };
+        const popped = () => told(calls).surfaces.filter((s) => s.key === 'done:S1').length;
+        return { act, log, turn, popped };
+      };
+
+      it('two quick turns in a row, another tab in front: each pops up, once', async () => {
+        const { log, turn, popped } = await setup();
+        inFront(50, '✳ Fix the parser tests');
+        await turn();
+        expect(popped()).toBe(1);
+        await turn();
+        expect(popped()).toBe(2);
+        await turn(true);
+        expect(popped()).toBe(3);
+        // The same finish told again by its row (while the first report checked the window in front): dropped, and the log says so.
+        expect(log.filter((p) => p[0] === 'finish dropped').at(-1)).toMatchObject(['finish dropped', { session: 'S1', via: 'row', why: 'told while its window was checked' }]);
+        expect(log.filter((p) => p[0] === 'finish')).toHaveLength(3);
+      });
+
+      it('the tab in front: every turn stays quiet, and the next one in another tab pops up', async () => {
+        const { turn, popped } = await setup();
+        inFront(50, '✳ Fix the parser');
+        await turn();
+        await turn();
+        await turn(true);
+        expect(popped()).toBe(0);
+        inFront(50, '✳ Fix the parser tests');
+        await turn();
+        expect(popped()).toBe(1);
+        inFront(10, 'Downloads');
+        await turn(true);
+        expect(popped()).toBe(2);
+        inFront(50, '✳ Fix the parser');
+        await turn();
+        expect(popped()).toBe(2);
+      });
     });
 
     it("a background job finishes quietly while the tab of the chat parked into it is in front, and pops up when it isn't", async () => {

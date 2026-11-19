@@ -91,6 +91,11 @@ export function chatTone(tone: string): Tone {
   return TONE[tone] ?? 'dim';
 }
 
+/** A time for the log (UTC, to the second's tenth), or null when unknown. */
+function stamp(ms: number | undefined): string | null {
+  return ms && Number.isFinite(ms) ? new Date(ms).toISOString().slice(11, 22) : null;
+}
+
 /** Claude's card on a phone: chats in its list (live and closed together), folders to start a new one in, messages of one chat. */
 /** A finished chat not opened yet glows green this long after it finished (Justin: a minute, or until opened). */
 const UNREAD_GLOW_MS = 60_000;
@@ -190,6 +195,12 @@ export class ClaudeActivity extends BaseActivity {
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
   /** Chats that finished while the user was looking at them: no card, they saw it. */
   private readonly looking = new Set<string>();
+  /**
+   * The turn (when its prompt was sent) whose finish was last told, per chat. Without Island's
+   * hooks nothing reliably says a new turn began: a short one can run between two looks at its
+   * row, so its next finish is told again only because its prompt is newer than this.
+   */
+  private readonly endTurn = new Map<string, number>();
   /** Answers picked so far on a question card: request id → question index → labels. */
   private readonly picks = new Map<string, Map<number, string[]>>();
 
@@ -368,7 +379,7 @@ export class ClaudeActivity extends BaseActivity {
 
   private onTrackerEvent(ev: TrackerEvent): void {
     if (ev.type === 'needs-you') this.needsYou(ev.session.id, undefined, true);
-    else if (ev.type === 'finished') this.markFinished(ev.session.id);
+    else if (ev.type === 'finished') this.markFinished(ev.session.id, undefined, false, 'tracker');
     else if (ev.type === 'closed') this.ctx.log('closed', { session: ev.session.id, title: ev.session.displayTitle });
   }
 
@@ -414,7 +425,7 @@ export class ClaudeActivity extends BaseActivity {
         continue;
       }
       if (st === 'done' || st === 'failed') {
-        if (this.isCode(r.id)) this.markFinished(r.id, undefined, st === 'failed');
+        if (this.isCode(r.id)) this.markFinished(r.id, undefined, st === 'failed', 'row');
         else this.endOfTurn(r.id, st === 'failed');
       } else if (st === 'input') this.needsYou(r.id, undefined, true);
     }
@@ -1047,18 +1058,36 @@ export class ClaudeActivity extends BaseActivity {
    * A Claude Code turn ended (its Stop hook, the tracker, or its row turning green or red).
    * "Not when its window is in front" keeps a chat the user is looking at from popping up.
    */
-  private markFinished(id: string, ev?: HookEvent, failed = false): void {
-    if (this.moments.has(id, 'end')) return;
-    if (this.opts().onlyOtherChats) return void this.endUnlessLooking(id, ev, failed);
-    this.ctx.log('finish', { session: id.slice(0, 8), via: ev ? 'hook' : 'poll', looking: null, why: '"Not when its window is in front" is off' });
+  private markFinished(id: string, ev?: HookEvent, failed = false, via: 'hook' | 'tracker' | 'row' = ev ? 'hook' : 'tracker'): void {
+    if (this.moments.has(id, 'end')) {
+      // Told already, unless this finish ends a newer turn than the told one: without hooks a
+      // quick turn can run between two looks at its row, so nothing else said it began.
+      const start = this.turnStartOf(id);
+      const told = this.endTurn.get(id) || this.moments.toldAt(id, 'end') || Infinity;
+      if (!(start > told)) {
+        this.ctx.log('finish dropped', { session: id.slice(0, 8), via, why: 'told already', toldAt: stamp(this.moments.toldAt(id, 'end')), toldTurn: stamp(this.endTurn.get(id)), turnStart: stamp(start) });
+        return;
+      }
+      this.moments.forget(id, 'end');
+      // Whether the user looked at the last turn's end says nothing about this one.
+      this.looking.delete(id);
+    }
+    if (this.opts().onlyOtherChats) return void this.endUnlessLooking(id, ev, failed, via);
+    this.ctx.log('finish', { session: id.slice(0, 8), via, looking: null, why: '"Not when its window is in front" is off' });
     this.endOfTurn(id, failed, ev);
+  }
+
+  /** When this chat's current turn began (the prompt Island sent it, or its transcript's last prompt); 0 when unknown. */
+  private turnStartOf(id: string): number {
+    const s = this.sessions.find((x) => x.id === id);
+    return Math.max(this.hooks.turnStart.get(id) ?? 0, s?.turnStartMs ?? 0);
   }
 
   /**
    * "Not when its window is in front": a chat the user is looking at finishes quietly. Each
    * decision is logged once per finish, with why (looking or not), for when it goes wrong.
    */
-  private async endUnlessLooking(id: string, ev: HookEvent | undefined, failed: boolean): Promise<void> {
+  private async endUnlessLooking(id: string, ev: HookEvent | undefined, failed: boolean, via: string): Promise<void> {
     let look = { looking: this.looking.has(id), why: 'seen looking already (at its Stop, or switched to it)' };
     if (!look.looking) {
       try {
@@ -1067,15 +1096,20 @@ export class ClaudeActivity extends BaseActivity {
         look = { looking: false, why: `the foreground check failed: ${String(err)}` };
       }
     }
-    // The same finish reported again (the tracker, then its row turning green): told already.
-    if (this.moments.has(id, 'end')) return;
-    this.ctx.log('finish', { session: id.slice(0, 8), via: ev ? 'hook' : 'poll', looking: look.looking, why: look.why });
+    // The same finish reported twice at once (the tracker, then its row turning green, both
+    // checking the window in front): the first one told it.
+    if (this.moments.has(id, 'end')) {
+      this.ctx.log('finish dropped', { session: id.slice(0, 8), via, why: 'told while its window was checked', toldAt: stamp(this.moments.toldAt(id, 'end')), turnStart: stamp(this.turnStartOf(id)) });
+      return;
+    }
+    this.ctx.log('finish', { session: id.slice(0, 8), via, looking: look.looking, why: look.why });
     if (!look.looking) {
       this.looking.delete(id);
       return this.endOfTurn(id, failed, ev);
     }
     // Told, quietly: a later report of the same finish pops nothing either.
     this.moments.allow(id, 'end', Date.now());
+    this.endTurn.set(id, this.turnStartOf(id));
     this.looking.add(id);
     this.ctx.update();
   }
@@ -1089,6 +1123,7 @@ export class ClaudeActivity extends BaseActivity {
   private endOfTurn(id: string, failed: boolean, ev?: HookEvent): void {
     const now = Date.now();
     if (!this.moments.allow(id, 'end', now)) return;
+    this.endTurn.set(id, this.turnStartOf(id));
     const s = this.sessions.find((x) => x.id === id);
     const errored = failed || s?.status === 'errored';
     this.finished.set(id, now);

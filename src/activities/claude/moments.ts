@@ -35,6 +35,16 @@ export class MomentGate {
     return this.told.has(`${sid}|${kind}`);
   }
 
+  /** When this moment was told, or undefined. */
+  toldAt(sid: string, kind: MomentKind): number | undefined {
+    return this.told.get(`${sid}|${kind}`);
+  }
+
+  /** This moment is news again (its chat began a new turn, however that was found out). */
+  forget(sid: string, kind: MomentKind): void {
+    this.told.delete(`${sid}|${kind}`);
+  }
+
   /**
    * The chat started a turn at `startedAt` (a prompt, or a run seen starting then): what it
    * said before is old. A start no later than a moment is that moment's own turn, seen late.
