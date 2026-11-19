@@ -86,6 +86,19 @@ export class AppsActivity extends BaseActivity {
     this.ctx.setOptions?.({ apps: this.apps });
   }
 
+  /** Start's list of apps, read once (for Edit's add and the taskbar card's search). */
+  private readInstalled(): void {
+    if (this.installed || this.reading) return;
+    this.reading = true;
+    void native.wsApps().then((list) => {
+      this.reading = false;
+      if (!this.alive) return;
+      this.installed = list;
+      this.ctx.update();
+    });
+  }
+  private reading = false;
+
   private async loadIcons(): Promise<void> {
     const want = this.apps.map((a) => a.target).filter((t) => !this.icons.has(t));
     if (!want.length) return;
@@ -100,7 +113,10 @@ export class AppsActivity extends BaseActivity {
   dockCard(now = Date.now()): DockCard {
     const note = this.note && now < this.note.until ? this.note : null;
     const have = new Set(this.apps.map((a) => a.target.toLowerCase()));
-    const found = this.editing ? findApps(this.installed ?? [], this.query, have).map((a) => ({ name: a.name, target: a.target })) : [];
+    // Editing: Start's apps not on the list yet, to add. Otherwise the search opens any app (MacDock's
+    // Launchpad search, Moss): the ones on the list too.
+    const typed = this.query.trim() !== '';
+    const found = typed ? findApps(this.installed ?? [], this.query, this.editing ? have : new Set()).map((a) => ({ name: a.name, target: a.target })) : [];
     return {
       apps: this.apps.map((a) => ({ name: a.name, target: a.target, icon: this.icons.get(a.target) ?? null })),
       editing: this.editing,
@@ -108,7 +124,7 @@ export class AppsActivity extends BaseActivity {
       found,
       note: note?.text ?? null,
       bad: note?.bad ?? false,
-      reading: this.editing && !this.installed,
+      reading: (this.editing || typed) && !this.installed,
     };
   }
 
@@ -193,17 +209,23 @@ export class AppsActivity extends BaseActivity {
       case 'edit':
         this.editing = !this.editing;
         this.query = '';
-        if (this.editing && !this.installed) {
-          void native.wsApps().then((list) => {
-            if (!this.alive) return;
-            this.installed = list;
-            this.ctx.update();
-          });
-        }
+        if (this.editing) this.readInstalled();
         break;
       case 'find':
         this.query = typeof arg === 'string' ? arg : '';
+        if (this.query.trim()) this.readInstalled();
         break;
+      case 'launch': {
+        // Any of Start's apps, from the taskbar card's search.
+        const app = this.installed?.find((a) => a.target === target) ?? this.apps.find((a) => a.target === target);
+        if (!app) break;
+        this.query = '';
+        const r = await native.wsLaunch({ kind: 'app', path: app.target, args: '', cwd: '' }, '');
+        if (!this.alive) return;
+        this.note = r.ok ? { text: `Opening ${app.name}`, bad: false, until: Date.now() + NOTE_MS } : { text: `Couldn't open ${app.name}: ${r.error}`, bad: true, until: Date.now() + NOTE_MS * 2 };
+        this.later(NOTE_MS * 2 + 50, () => this.ctx.update());
+        break;
+      }
       case 'add': {
         const app = this.installed?.find((a) => a.target === target);
         if (!app || this.apps.length >= APPS_MAX || this.apps.some((a) => a.target.toLowerCase() === target.toLowerCase())) break;

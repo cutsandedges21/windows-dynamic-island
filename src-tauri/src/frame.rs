@@ -62,18 +62,18 @@ fn guard_style(win: &WebviewWindow) {
 }
 
 #[cfg(windows)]
-fn hwnd_of(app: &AppHandle, label: &str) -> Option<windows::Win32::Foundation::HWND> {
+pub(crate) fn hwnd_of(app: &AppHandle, label: &str) -> Option<windows::Win32::Foundation::HWND> {
     let win = app.get_webview_window(label)?;
     let h = win.hwnd().ok()?;
     Some(windows::Win32::Foundation::HWND(h.0))
 }
 
 /// Puts the windows on top in their order: the island, under it the taskbar, under that the border
-/// (each drawn over the one below where they meet). Without the border, nothing changes here.
+/// (each drawn over the one below where they meet). With or without the border: the taskbar never
+/// covers the island (on the top edge it runs on behind the pill, Moss: "it just covers the island").
 #[cfg(windows)]
 pub fn restack(app: &AppHandle) {
     use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE};
-    let Some(frame) = hwnd_of(app, LABEL) else { return };
     let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS;
     let mut above = HWND_TOPMOST;
     unsafe {
@@ -85,17 +85,14 @@ pub fn restack(app: &AppHandle) {
             let _ = SetWindowPos(dock, Some(above), 0, 0, 0, 0, flags);
             above = dock;
         }
-        let _ = SetWindowPos(frame, Some(above), 0, 0, 0, 0, flags);
+        if let Some(frame) = hwnd_of(app, LABEL) {
+            let _ = SetWindowPos(frame, Some(above), 0, 0, 0, 0, flags);
+        }
     }
 }
 
 #[cfg(not(windows))]
 pub fn restack(_app: &AppHandle) {}
-
-/// The border's window is up.
-pub fn showing(app: &AppHandle) -> bool {
-    app.get_webview_window(LABEL).is_some()
-}
 
 /// The window over the whole main screen (physical px), and the page told where the work area is
 /// (logical px from the screen's corner), for the island, which lives in the work area.

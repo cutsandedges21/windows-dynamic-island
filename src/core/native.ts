@@ -847,6 +847,8 @@ export const native = {
   dockSolid: (rects: number[][]) => call('dock_solid', { rects }, undefined),
   /** The taskbar sits on the screen's bottom edge (over Windows' taskbar) instead of floating above it. */
   dockEdge: (on: boolean) => call('dock_edge', { on }, undefined),
+  /** The taskbar waits faint on its edge until pointed at (Settings › Taskbar › Auto-hide). */
+  dockAuto: (on: boolean) => call('dock_auto', { on }, undefined),
   /** The screen border's window (src-tauri/src/frame.rs) over the main screen, or closed. */
   frameShow: (on: boolean) => call('frame_show', { on }, undefined),
   /** Where the border's page takes clicks (the notches): CSS px rects [x, y, w, h]. */
@@ -869,6 +871,8 @@ export const native = {
   dockMinimize: (hwnd: number, icon: DockIconRect) => call('dock_minimize', { hwnd, icon }, undefined),
   /** The app's windows close, the first one into its taskbar icon. */
   dockClose: (hwnds: number[], icon: DockIconRect) => call('dock_close', { hwnds, icon }, undefined),
+  /** Live pictures of windows drawn into the taskbar's window, each fitted in its rect (CSS px); [] takes them away. */
+  dockPeek: (items: Array<{ hwnd: number; rect: DockIconRect }>) => call('dock_peek', { items }, undefined),
   /** Desktop widgets (src-tauri/src/widgets.rs): the windows that should exist; x, y negative: not placed yet. */
   widgetsSync: (specs: Array<{ id: string; x: number; y: number; w: number; h: number }>) => call('widgets_sync', { specs }, undefined),
   /** This widget window fits its content (logical px). */

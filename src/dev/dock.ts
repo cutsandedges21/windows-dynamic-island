@@ -60,4 +60,6 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
   // The dock window asks for its frame once it is ready; send it then, and again in case it was early.
   setTimeout(() => emitLocal('dock-frame', frame), 300);
   setTimeout(() => emitLocal('dock-frame', frame), 1200);
+  // &open=1: the island open in the gap (the bar keeps only its apps and the clock).
+  if (frame.gap && q.get('open') === '1') setTimeout(() => emitLocal('dock-gap', { w: frame.gap, open: true }), 1500);
 }

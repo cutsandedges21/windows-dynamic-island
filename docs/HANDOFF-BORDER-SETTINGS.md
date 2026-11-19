@@ -1,5 +1,18 @@
 # Handoff: screen border, notches, island melt, Settings redesign (2026-11-18)
 
+## Evening update (2026-11-18, later chat) — read this part first
+- Pushed `3489523` to main (everything below "Done since the 15:02 build" + Settings part 1), rebased on Justin's b69d567. Told Justin's Claude on issue #20 (avoid app.ts, previews.ts, settings.css, dock.ts, dock.rs).
+- NOT committed since then (all in the working tree):
+  1. Settings CSS: `src/styles/settings.css` (imported after app.css). Theme by `html[data-pill]`, island-style sidebar, search hits, activity tiles + slide-in panel, all `.pv-*` previews, sticky `.preview-dock`. Checked in the browser: Island, Activities (+panel), Taskbar (black + white), Alerts. Not checked: matte looks, glass over real Mica, Phone/General/Keys/Workspaces pages.
+  2. Top taskbar covered the island: z-order fix. `frame::restack` works without the border (island > dock > frame); dock `set_rect` inserts the dock under the island; the watcher restacks instead of putting the dock on top.
+  3. Taskbar never runs off the screen (`squeezeToFit` in dock.ts): items drop one by one in `DROP` order (Claude, timer, battery, sound, Wi-Fi, bell, Now playing, arrow, clock), then apps from the end (never the front one). Split round the island, each half is measured from the screen's middle. Moss: "only keep tabs and time (if there is space)".
+  4. Now playing ⏮ ⏭ either side of the song (`dk-skip`, DockAct `skip` → `act:music:prev/next`).
+  5. MacDock picks (Moss chose: previews, search, auto-hide; NOT Downloads stack or Recycle Bin):
+     - Window previews: rest on an app → card of live DWM thumbnails (`src-tauri/src/dockpeek.rs` `dock_peek`, dock.ts `drawPeek`), click = raise that window, × = close it.
+     - Apps card search: the arrow's card has a search that opens ANY Start app (apps.ts `launch`, `readInstalled`), focused on open.
+     - Auto-hide: `taskbar.autoHide` (Settings › Taskbar & border, and the taskbar's right-click menu) → `dock_auto` makes the full-screen tuck permanent.
+- Still to check on the real screen: top taskbar with the island in it; island open → bar squeezes; previews over a real app; auto-hide; search; ⏮ ⏭.
+
 Read this first in the next chat. Nothing here is committed. Do not commit unless Moss asks.
 Other sessions (Cursor chats, other Claude chats) edit the same tree: stage only your own hunks if ever asked to commit.
 

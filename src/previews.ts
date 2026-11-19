@@ -4,7 +4,7 @@
 // from the settings alone, so they work before the island has anything to show.
 
 import type { ActivityConfig, Settings } from './core/settings';
-import { frameAvailable, NOTCH_CORNERS, ACCENTS } from './core/settings';
+import { frameAvailable, ACCENTS } from './core/settings';
 import type { ActivityMeta } from './activities/catalog';
 import { icon } from './core/icons';
 import { h } from './dom';
@@ -180,4 +180,3 @@ export function alertPreview(s: Settings, play: (kind: 'done' | 'attention') => 
   return h('div', { class: 'preview' }, [screen, g.sounds ? tryIt : h('div', { class: 'pv-caption', text: 'Sounds are off: alerts are silent.' })]);
 }
 
-export { NOTCH_CORNERS };

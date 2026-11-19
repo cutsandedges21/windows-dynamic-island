@@ -269,9 +269,10 @@ export interface Settings {
      * The taskbar at the bottom (src/core/dock.ts); `hideWindows`: Windows' own taskbar hides itself
      * meanwhile; `centre`: where it was dragged to, 0..1 across the screen (-1: the middle); `edge`: it
      * sits on the screen's bottom edge, over Windows' taskbar, instead of floating above it; `melt`: there,
-     * its ends curve out into the edge instead of going straight down; `styles`: the ones on, together.
+     * its ends curve out into the edge instead of going straight down; `styles`: the ones on, together;
+     * `autoHide`: it waits faint on its edge until the pointer comes to it (as under a full-screen app).
      */
-    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; locked: boolean; hidden: DockItem[]; size: DockSize; styles: DockStyle[]; edge: boolean; melt: boolean; side: DockSide };
+    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; locked: boolean; hidden: DockItem[]; size: DockSize; styles: DockStyle[]; edge: boolean; melt: boolean; side: DockSide; autoHide: boolean };
     /** The screen border and its notches (Settings › Widgets › Screen border). */
     frame: FrameConfig;
     /** The Websites notch's sites, in order. */
@@ -402,7 +403,7 @@ export function defaultSettings(): Settings {
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       widgets: { on: false, items: [], look: { color: 'island', glass: GLASS_DEFAULT } },
-      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, locked: false, hidden: [], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom' },
+      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, locked: false, hidden: [], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom', autoHide: false },
       frame: { on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small' }, shelf: { on: false, corner: 'bottom-right', size: 'small' } },
       sites: [],
       hiddenUntil: 0,
@@ -558,7 +559,7 @@ export function migrate(saved: unknown): Settings {
   const savedBar = isObj(saved.island) && isObj(saved.island.taskbar) ? saved.island.taskbar : {};
   const centre = typeof savedBar.centre === 'number' && savedBar.centre >= 0 && savedBar.centre <= 1 ? savedBar.centre : -1;
   const barHidden = Array.isArray(savedBar.hidden) ? DOCK_ITEMS.filter((k) => (savedBar.hidden as unknown[]).includes(k)) : [];
-  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), locked: savedBar.locked === true, hidden: barHidden, size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium', styles: barStyles(savedBar), edge: savedBar.edge === true, melt: savedBar.melt === true, side: (DOCK_SIDES as readonly unknown[]).includes(savedBar.side) ? (savedBar.side as DockSide) : 'bottom' };
+  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), locked: savedBar.locked === true, hidden: barHidden, size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium', styles: barStyles(savedBar), edge: savedBar.edge === true, melt: savedBar.melt === true, side: (DOCK_SIDES as readonly unknown[]).includes(savedBar.side) ? (savedBar.side as DockSide) : 'bottom', autoHide: savedBar.autoHide === true };
   const savedFrame = isObj(saved.island) && isObj(saved.island.frame) ? saved.island.frame : {};
   out.island.frame = {
     on: savedFrame.on === true,

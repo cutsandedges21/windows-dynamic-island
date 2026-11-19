@@ -130,6 +130,8 @@ static EDGE: AtomicBool = AtomicBool::new(false);
 static FULL: AtomicBool = AtomicBool::new(false);
 /// ... and while the pointer is on it (or on its way up), it is raised to its usual place.
 static UP: AtomicBool = AtomicBool::new(false);
+/// Auto-hide (Settings › Taskbar): it waits at the edge as under a full-screen app, always.
+static AUTO: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Side {
@@ -248,14 +250,16 @@ fn tell(win: &WebviewWindow) {
 }
 
 /// Moves and sizes the window in one step (two steps can show a frame with the new size in the old
-/// place), topmost again (a full-screen game may have put itself above it).
+/// place), topmost again (a full-screen game may have put itself above it) but under the island: on
+/// the top edge the bar runs on behind the pill, and must never cover it.
 #[cfg(windows)]
 fn set_rect(win: &WebviewWindow, x: i32, y: i32, w: i32, h: i32) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE};
     let Ok(hw) = win.hwnd() else { return };
+    let after = crate::frame::hwnd_of(win.app_handle(), crate::overlay::LABEL).unwrap_or(HWND_TOPMOST);
     unsafe {
-        let _ = SetWindowPos(HWND(hw.0), Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
+        let _ = SetWindowPos(HWND(hw.0), Some(after), x, y, w, h, SWP_NOACTIVATE);
     }
 }
 
@@ -452,7 +456,7 @@ fn watch_fullscreen(app: AppHandle) {
             #[cfg(windows)]
             {
                 let own = win.hwnd().map(|h| h.0 as isize).unwrap_or(0);
-                let now = fullscreen_in_front(own);
+                let now = AUTO.load(Ordering::SeqCst) || fullscreen_in_front(own);
                 let up = UP.load(Ordering::SeqCst);
                 let want_up = now && {
                     if pointer_near() {
@@ -617,6 +621,12 @@ pub fn dock_edge(app: AppHandle, on: bool) {
     }
 }
 
+/// Auto-hide on or off: the watcher tucks the dock at its edge until the pointer comes (watch_fullscreen).
+#[tauri::command]
+pub fn dock_auto(on: bool) {
+    AUTO.store(on, Ordering::SeqCst);
+}
+
 /// `(x, y)` (logical px in the window) is on something the page drew that takes clicks.
 pub fn solid_at(rects: &[[f64; 4]], x: f64, y: f64) -> bool {
     rects.iter().any(|r| x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3])
@@ -633,7 +643,7 @@ fn watch_pointer(app: AppHandle) {
     use windows::Win32::Foundation::{HWND, POINT, RECT};
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
-    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE};
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
     if POINTER_WATCH.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -650,14 +660,9 @@ fn watch_pointer(app: AppHandle) {
             let hwnd = HWND(h.0);
             tick = tick.wrapping_add(1);
             if EDGE.load(Ordering::SeqCst) && !FULL.load(Ordering::SeqCst) && tick % 15 == 0 {
-                // With the screen border, under the island and over the border (frame.rs); else on top.
-                if crate::frame::showing(&app) {
-                    crate::frame::restack(&app);
-                } else {
-                    unsafe {
-                        let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-                    }
-                }
+                // Over Windows' taskbar (it puts itself on top when it slides up), under the island, over
+                // the screen border (frame.rs restack).
+                crate::frame::restack(&app);
             }
             let held = unsafe { (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RBUTTON.0 as i32) as u16 & 0x8000 != 0) };
             if held && taking == Some(true) {

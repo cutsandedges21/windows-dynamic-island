@@ -3,6 +3,7 @@
 // from the island over app-command / app-reply events.
 
 import './styles/app.css';
+import './styles/settings.css';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { desktopWidgetsPage, taskbarPage } from './widgets-page';
 import { activityMatches, CATALOG_BY_ID, type ActivityMeta, type Category, type OptionSpec } from './activities/catalog';

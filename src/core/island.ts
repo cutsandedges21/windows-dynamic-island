@@ -451,6 +451,11 @@ export class Island {
           this.settings.island.taskbar.edge = on;
           this.saveSettings();
         },
+        autoHide: () => this.settings.island.taskbar.autoHide,
+        setAutoHide: (on) => {
+          this.settings.island.taskbar.autoHide = on;
+          this.saveSettings();
+        },
         melt: () => this.settings.island.taskbar.melt,
         setMelt: (on) => {
           this.settings.island.taskbar.melt = on;
@@ -1978,6 +1983,7 @@ export class Island {
   /** The pill's width (CSS px), for the taskbar on the top edge that leaves a gap for it. */
   private pillWidth = 0;
   private pillSent = 0;
+  private openSent = false;
   private pillTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** The taskbar sits on the top edge with the island: it splits round the pill. */
@@ -1999,9 +2005,11 @@ export class Island {
     if (!splits && !framed) return;
     this.pillTimer = setTimeout(() => {
       this.pillTimer = undefined;
-      if (this.dockSplits() && Math.abs(this.pillWidth - this.pillSent) >= 0.5) {
+      if (this.dockSplits() && (Math.abs(this.pillWidth - this.pillSent) >= 0.5 || this.open !== this.openSent)) {
         this.pillSent = this.pillWidth;
-        void sendTo('dock', 'dock-gap', this.pillWidth);
+        this.openSent = this.open;
+        // Open, the taskbar keeps only its apps and the clock (Moss).
+        void sendTo('dock', 'dock-gap', { w: this.pillWidth, open: this.open });
       }
       if (frameOn(this.settings.island) && this.pillRect) {
         const parts = this.islandParts(this.pillRect);

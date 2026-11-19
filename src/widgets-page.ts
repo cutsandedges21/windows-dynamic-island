@@ -263,6 +263,14 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
                 ),
               ]
             : []),
+          row(
+            'Auto-hide',
+            'It waits faint on its edge, out of the way, and slides up when you point at it (as it does over a full-screen game).',
+            toggle(t.autoHide, (v) => {
+              t.autoHide = v;
+              host.save(true);
+            }),
+          ),
           ...lookPicker(t.look, host),
           row(
             "Hide Windows' taskbar",

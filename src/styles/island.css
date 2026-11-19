@@ -2417,6 +2417,29 @@ html.dock-melt[data-pill='glass'] .dock-bg::before { border-top-color: transpare
 .dock .dk-cover .dk-pp { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); color: #fff; opacity: 0; transition: opacity 0.14s ease; }
 .dock .dk-cover .dk-pp svg { width: 15px; height: 15px; }
 .dock .dk-music:hover .dk-pp, .dock .dk-music.paused .dk-pp { opacity: 1; }
+.dock .dk-music { padding-right: 6px; }
+/* Now playing's previous and next, either side of the song: small, quiet until pointed at */
+.dock .dk-skip { width: 26px; height: 30px; padding: 0; border-radius: 9px; color: var(--muted); }
+.dock .dk-skip:hover { color: var(--fg); }
+.dock .dk-skip svg { width: 13px; height: 13px; }
+html.dk-upright .dock .dk-skip { width: 34px; height: 26px; min-height: 26px; padding: 0; }
+/* squeezed off the end so the bar stays on the screen (dock.ts squeezeToFit) */
+.dock .dk-app.dk-cut { display: none; }
+/* an app's window previews over its icon (dock.ts drawPeek): DWM draws each window's live picture
+   into its slot, a little inside it; the app's icon shows under a minimized one */
+.dk-peek { display: flex; align-items: flex-end; gap: 8px; padding: 10px; }
+.dk-peek.stack { flex-direction: column; align-items: stretch; }
+.dk-pk { display: flex; flex-direction: column; gap: 6px; }
+.dk-pk-head { display: flex; align-items: center; gap: 6px; padding: 0 2px 0 4px; min-height: 20px; }
+.dk-pk-title { flex: 1; min-width: 0; font: 600 12px/1.2 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-pop .dk-pk-x { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 10px; background: rgba(var(--ink), 0.1); opacity: 0; transition: opacity 0.15s ease, background-color 0.15s ease; }
+.dk-pk:hover .dk-pk-x { opacity: 1; }
+.dk-pop .dk-pk-x:hover { background: #e5484d; color: #fff; }
+.dk-pk-x svg { width: 11px; height: 11px; }
+.dk-pop .dk-pk-shot { display: grid; place-items: center; border-radius: 10px; background: rgba(var(--ink), 0.06); box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.08); transition: box-shadow 0.15s ease; }
+.dk-pop .dk-pk-shot:hover { box-shadow: inset 0 0 0 2px var(--accent); }
+.dk-pk-shot img { width: 32px; height: 32px; opacity: 0.5; }
+.dk-pk-more { align-self: center; padding: 0 4px; font: 600 12px/1 var(--font); opacity: 0.6; }
 .dock .dk-mtext { display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; }
 .dock .dk-mtext b { font: 650 14px/1 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dock .dk-mtext span { font: 500 11px/1 var(--font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

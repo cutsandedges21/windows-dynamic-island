@@ -22,6 +22,8 @@ export interface DockApp {
   icon: string | null;
   /** Its windows, front first. */
   windows: number[];
+  /** Each window's title, as `windows` (for the previews over its icon). */
+  titles?: string[];
   /** Its window is the one in front. */
   front: boolean;
   /** On the Apps tile's list (stays when closed). */
@@ -57,6 +59,8 @@ export interface DockFrame {
   melt?: boolean;
   /** The screen edge it sits along (bottom unless set). */
   side?: DockSide;
+  /** Auto-hide is on (for the right-click menu's tick). */
+  autoHide?: boolean;
   /** The screen border's width (CSS px) while it is on (Settings › Widgets › Screen border): the bar's
    *  melted feet flatten onto it. 0 or unset: no border. */
   border?: number;
@@ -94,6 +98,7 @@ export interface DockPref {
   edge?: boolean;
   melt?: boolean;
   side?: DockSide;
+  autoHide?: boolean;
 }
 
 /** Each item's name, for the right-click menu and Settings. */
@@ -130,9 +135,13 @@ export type DockAct =
   | { kind: 'pin'; key: string; on: boolean }
   /** Right-click › Close: every window of the app. */
   | { kind: 'close'; key: string; rect?: DockIconRect }
+  /** A window's preview over the icon: bring that one forward, or close it. */
+  | { kind: 'window' | 'closewin'; key: string; hwnd: number; rect?: DockIconRect }
   /** Dragged to place `to` in the row (its index once dropped). */
   | { kind: 'move'; key: string; to: number }
   | { kind: 'start' | 'quick' | 'notifications' | 'music' | 'timer' | 'claude' }
+  /** Now playing's buttons beside the song: the next one, or back to the one before. */
+  | { kind: 'skip'; dir: 'next' | 'prev' }
   /** The arrow opened or closed the Apps card. */
   | { kind: 'card'; open: boolean }
   /** One of the Apps card's actions (the Apps activity's: open, edit, find, add, remove). */
@@ -165,7 +174,7 @@ export function dockApps(pinned: readonly InstalledApp[], windows: readonly Live
   const app = (key: string, name: string, pin: boolean): DockApp => {
     const wins = byExe.get(key) ?? [];
     byExe.delete(key);
-    return { key, name, icon: icons.get(key) ?? null, windows: wins.map((w) => w.hwnd), front: wins.some((w) => w.hwnd === front), pinned: pin };
+    return { key, name, icon: icons.get(key) ?? null, windows: wins.map((w) => w.hwnd), titles: wins.map((w) => w.title), front: wins.some((w) => w.hwnd === front), pinned: pin };
   };
   const out = pinned.map((p) => app(keyOf(p.target), p.name, true));
   const rank = (key: string) => {
@@ -262,6 +271,9 @@ export interface DockHooks {
   setEdge(on: boolean): void;
   melt(): boolean;
   setMelt(on: boolean): void;
+  /** Auto-hide: faint on its edge until pointed at. */
+  autoHide(): boolean;
+  setAutoHide(on: boolean): void;
   side(): DockSide;
   setSide(side: DockSide): void;
   /** The screen border's width while it is on, else 0. */
@@ -285,6 +297,8 @@ export class DockHost {
   private edgeSent: boolean | undefined;
   /** The side last told to the dock's window. */
   private sideSent: DockSide | undefined;
+  /** Auto-hide, as last told to the dock's window. */
+  private autoSent: boolean | undefined;
   private offs: Array<() => void> = [];
 
   constructor(
@@ -305,6 +319,7 @@ export class DockHost {
         if (typeof p?.style === 'string' && (DOCK_STYLES as readonly string[]).includes(p.style)) this.hooks.setStyles(toggleStyle(this.hooks.styles(), p.style));
         if (typeof p?.edge === 'boolean') this.hooks.setEdge(p.edge);
         if (typeof p?.melt === 'boolean') this.hooks.setMelt(p.melt);
+        if (typeof p?.autoHide === 'boolean') this.hooks.setAutoHide(p.autoHide);
         if (typeof p?.side === 'string' && (DOCK_SIDES as readonly string[]).includes(p.side)) this.hooks.setSide(p.side);
         if (typeof p?.toggle === 'string' && (DOCK_ITEMS as readonly string[]).includes(p.toggle)) this.hooks.setHidden(toggleDockItem(this.hooks.hidden(), p.toggle));
         if (p?.centre === true) void native.dockAt(-1, true);
@@ -340,6 +355,7 @@ export class DockHost {
         this.shown = true;
         this.edgeSent = undefined;
         this.sideSent = undefined;
+        this.autoSent = undefined;
         void native.dockShow(true, 640, 60, this.hooks.centre());
       }
       const [wins, front] = await Promise.all([native.wsWindows(), native.foreground()]);
@@ -370,12 +386,18 @@ export class DockHost {
         edge: this.hooks.edge(),
         melt: this.hooks.melt(),
         side: this.hooks.side(),
+        autoHide: this.hooks.autoHide(),
         border: this.hooks.border(),
         gap: this.hooks.gap(),
       };
       if (frame.side !== this.sideSent) {
         this.sideSent = frame.side;
         void native.dockSide(frame.side ?? 'bottom');
+      }
+      const auto = this.hooks.autoHide();
+      if (auto !== this.autoSent) {
+        this.autoSent = auto;
+        void native.dockAuto(auto);
       }
       if (frame.edge !== this.edgeSent) {
         this.edgeSent = frame.edge;
@@ -408,6 +430,7 @@ export class DockHost {
       return this.tick();
     }
     if (a.kind === 'music') return this.hooks.act('act:music:toggle');
+    if (a.kind === 'skip') return this.hooks.act(a.dir === 'prev' ? 'act:music:prev' : 'act:music:next');
     if (a.kind === 'timer') return this.hooks.open('timer');
     if (a.kind === 'claude') return this.hooks.open('claude');
     if (typeof (a as { key?: unknown }).key !== 'string') return;
@@ -422,6 +445,11 @@ export class DockHost {
       if (next) this.hooks.setPinned(next);
     } else if (a.kind === 'close') {
       if (app.windows.length) void native.dockClose(app.windows, rect ?? [0, 0, 0, 0]);
+    } else if (a.kind === 'window' || a.kind === 'closewin') {
+      // Only one of its own windows.
+      if (!app.windows.includes(a.hwnd)) return;
+      if (a.kind === 'window') await native.dockRaise(a.hwnd, rect ?? [0, 0, 0, 0]);
+      else void native.dockClose([a.hwnd], rect ?? [0, 0, 0, 0]);
     } else if (a.kind === 'app') {
       const plan = clickPlan(app);
       if (plan.do === 'launch') {
@@ -445,6 +473,7 @@ const SVG = {
   up: '<svg viewBox="0 0 24 24" class="line"><path d="M6.5 14.5 12 9l5.5 5.5"/></svg>',
   plus: '<svg viewBox="0 0 24 24" class="line"><path d="M12 6v12M6 12h12"/></svg>',
   x: '<svg viewBox="0 0 24 24" class="line"><path d="M7 7l10 10M17 7 7 17"/></svg>',
+  go: '<svg viewBox="0 0 24 24" class="line"><path d="M7 17 17 7M9 7h8v8"/></svg>',
   play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
   pause: '<svg viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1"/><rect x="13.5" y="5" width="4" height="14" rx="1"/></svg>',
   timer: '<svg viewBox="0 0 24 24" class="line"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M10 2.5h4"/></svg>',
@@ -456,6 +485,9 @@ const SVG = {
   app: '<svg viewBox="0 0 24 24" class="line"><rect x="4" y="4" width="16" height="16" rx="4"/></svg>',
   bolt: '<svg viewBox="0 0 24 24"><path d="M13 2 5 13.5h5.5L10 22l8-11.5h-5.5z"/></svg>',
   note: '<svg viewBox="0 0 24 24"><path d="M9 17.5a3 3 0 1 1-2-2.83V5l11-2v12.5a3 3 0 1 1-2-2.83V6.4l-7 1.3z"/></svg>',
+  // As the island's own (icons.ts prev / next).
+  prev: '<svg viewBox="0 0 24 24" class="line"><path d="M18 6l-9 6 9 6z" fill="currentColor"/><path d="M6 6v12" stroke-width="2.4"/></svg>',
+  next: '<svg viewBox="0 0 24 24" class="line"><path d="M6 6l9 6-9 6z" fill="currentColor"/><path d="M18 6v12" stroke-width="2.4"/></svg>',
 };
 
 function el(tag: string, cls: string, html?: string): HTMLElement {
@@ -493,6 +525,7 @@ async function dockMenu(f: DockFrame, pref: (p: DockPref) => void): Promise<void
       await CheckMenuItem.new({ text: side === 'bottom' ? 'Blend into the bottom' : `Blend into the ${side} edge`, checked: f.edge === true, action: () => pref({ edge: !f.edge }) }),
       ...(f.edge ? [await CheckMenuItem.new({ text: 'Melt the ends', checked: f.melt === true, action: () => pref({ melt: !f.melt }) })] : []),
       await PredefinedMenuItem.new({ item: 'Separator' }),
+      await CheckMenuItem.new({ text: 'Auto-hide', checked: f.autoHide === true, action: () => pref({ autoHide: !f.autoHide }) }),
       await CheckMenuItem.new({ text: 'Lock in place', checked: f.locked, action: () => pref({ locked: !f.locked }) }),
       await MenuItem.new({ text: 'Back to the middle', action: () => pref({ centre: true }) }),
       await PredefinedMenuItem.new({ item: 'Separator' }),
@@ -655,6 +688,8 @@ const POP_GAP = 8;
 const POP_MS = 240;
 /** Pointing at S/W this long shows when they reset, ms. */
 const TIP_DELAY_MS = 250;
+/** Resting on an app this long shows its windows' previews, ms. */
+const PEEK_DELAY_MS = 420;
 
 /** A drag along the bottom starts once the pointer has moved this far (CSS px); a shorter press is a click. */
 const DRAG_PX = 5;
@@ -714,6 +749,13 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   musicText.append(musicTitle, musicArtist);
   music.append(musicCover, musicText);
   music.addEventListener('click', () => send({ kind: 'music' }));
+  // Either side of the song: back to the one before, on to the next.
+  const musicPrev = el('button', 'dk-btn dk-skip dk-prev', SVG.prev);
+  musicPrev.title = 'Previous';
+  musicPrev.addEventListener('click', () => send({ kind: 'skip', dir: 'prev' }));
+  const musicNext = el('button', 'dk-btn dk-skip dk-next', SVG.next);
+  musicNext.title = 'Next';
+  musicNext.addEventListener('click', () => send({ kind: 'skip', dir: 'next' }));
   const timer = el('button', 'dk-timer', SVG.timer);
   const timerText = el('span', '');
   timer.append(timerText);
@@ -746,7 +788,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const bell = el('button', 'dk-btn dk-bell', SVG.bell);
   bell.title = 'Notifications';
   bell.addEventListener('click', () => send({ kind: 'notifications' }));
-  bar.append(start, appsBox, gapEl, sepA, music, timer, claude, sepB, battery, wifi, sound, clock, bell);
+  bar.append(start, appsBox, gapEl, sepA, musicPrev, music, musicNext, timer, claude, sepB, battery, wifi, sound, clock, bell);
 
   // Over the bar, coming up from behind it: the Apps card (the arrow) and when S/W reset (pointing at them).
   const above = el('div', 'dk-above');
@@ -766,7 +808,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   cardEmpty.textContent = 'No apps here yet. Press Edit and add the ones you open most.';
   const find = document.createElement('input');
   find.className = 'dk-find';
-  find.placeholder = 'Add an app: type its name';
+  find.placeholder = 'Search your apps';
   find.spellcheck = false;
   const found = el('div', 'dk-found');
   card.append(cardHead, cardGrid, cardEmpty, find, found);
@@ -808,9 +850,17 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     send({ kind: 'card', open: on });
     // The card's search field needs the keyboard: the taskbar can be the active window meanwhile.
     void native.dockTyping(on);
-    if (on) hidePop(tip);
-    else {
+    if (on) {
+      hidePop(tip);
+      closePeek();
+      // Type straight away: the search opens any app (MacDock's Launchpad search).
+      requestAnimationFrame(() => requestAnimationFrame(() => find.focus()));
+    } else {
       find.blur();
+      if (find.value) {
+        find.value = '';
+        send({ kind: 'apps', name: 'find', arg: '' });
+      }
       hidePop(card);
       // Closed while editing: the next open starts with the apps, not the search.
       if (wasEditing) send({ kind: 'apps', name: 'edit' });
@@ -856,26 +906,35 @@ export async function runDock(stage: HTMLElement): Promise<void> {
         }),
       );
     }
-    cardEmpty.hidden = c.apps.length > 0 || c.editing || Boolean(c.off);
-    find.hidden = !c.editing;
-    if (!c.editing) find.value = '';
-    else if (document.activeElement !== find && find.value !== c.query) find.value = c.query;
-    if (c.editing && !wasEditing) requestAnimationFrame(() => find.focus());
+    const typed = c.query.trim() !== '';
+    // Searching: the results in place of the apps; editing: the add field under them.
+    cardGrid.hidden = typed && !c.editing;
+    cardEmpty.hidden = c.apps.length > 0 || c.editing || typed || Boolean(c.off);
+    find.hidden = Boolean(c.off);
+    find.placeholder = c.editing ? 'Add an app: type its name' : 'Search your apps';
+    if (c.editing) card.insertBefore(find, found);
+    else card.insertBefore(find, cardGrid);
+    if (document.activeElement !== find && find.value !== c.query) find.value = c.query;
+    if (c.editing !== wasEditing) requestAnimationFrame(() => find.focus());
     wasEditing = c.editing;
-    const typed = c.editing && c.query.trim() !== '';
-    const fsig = JSON.stringify([c.found, c.reading, typed]);
+    const fsig = JSON.stringify([c.found, c.reading, typed, c.editing]);
     if (fsig !== foundSig) {
       foundSig = fsig;
       const rows = c.found.map((a) => {
-        const r = el('button', 'dk-row', SVG.plus);
+        const r = el('button', 'dk-row', c.editing ? SVG.plus : SVG.go);
         const name = el('span', '');
         name.textContent = a.name;
         r.append(name);
-        r.title = `Add ${a.name}`;
+        r.title = c.editing ? `Add ${a.name}` : `Open ${a.name}`;
         r.addEventListener('click', () => {
           find.value = '';
-          send({ kind: 'apps', name: 'add', arg: a.target });
-          find.focus();
+          if (c.editing) {
+            send({ kind: 'apps', name: 'add', arg: a.target });
+            find.focus();
+          } else {
+            send({ kind: 'apps', name: 'launch', arg: a.target });
+            setCard(false);
+          }
         });
         return r;
       });
@@ -953,6 +1012,124 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     return [r.left, r.top, r.width, r.height];
   };
 
+  // Pointing at an app with windows open: a live picture of each over its icon (MacDock's previews,
+  // Moss). A click brings that window forward, the x closes it. DWM draws the pictures into this window
+  // where the slots are (src-tauri/src/dockpeek.rs), once the card has slid up.
+  const peek = el('div', 'dk-pop dk-peek');
+  peek.hidden = true;
+  above.append(peek);
+  let peekKey: string | null = null;
+  let peekSig = '';
+  let peekWait = 0;
+  let peekLeave = 0;
+  let peekShots = 0;
+  const clearShots = () => {
+    window.clearTimeout(peekShots);
+    void native.dockPeek([]);
+  };
+  const closePeek = () => {
+    window.clearTimeout(peekWait);
+    window.clearTimeout(peekLeave);
+    if (peekKey === null && peek.hidden) return;
+    peekKey = null;
+    peekSig = '';
+    clearShots();
+    hidePop(peek);
+  };
+  /** The pictures into the slots, each a little inside its slot (its hover ring shows round it). */
+  const sendShots = () => {
+    if (peekKey === null || peek.hidden) return;
+    const items = [...peek.querySelectorAll<HTMLElement>('.dk-pk-shot')].map((s) => {
+      const r = s.getBoundingClientRect();
+      return { hwnd: Number(s.dataset.hwnd), rect: [r.left + 4, r.top + 4, r.width - 8, r.height - 8] as DockIconRect };
+    });
+    void native.dockPeek(items);
+  };
+  const drawPeek = (b: HTMLElement) => {
+    const a = appOf(b.dataset.key ?? '');
+    if (!a || !a.windows.length || cardOn || move?.moved || b.hidden || b.classList.contains('dk-cut')) return closePeek();
+    const up = upright();
+    const sig = JSON.stringify([a.key, a.windows, a.titles, up]);
+    const changed = sig !== peekSig;
+    peekKey = a.key;
+    if (changed) {
+      peekSig = sig;
+      const fits = up ? Math.max(1, Math.floor((window.innerHeight - 40) / (200 * 0.62 + 40))) : 4;
+      const n = Math.min(a.windows.length, fits, 4);
+      const w = up ? 200 : Math.round(Math.max(140, Math.min(220, (window.innerWidth - 40) / n - 8)));
+      const slots: HTMLElement[] = a.windows.slice(0, n).map((hwnd, i) => {
+        const slot = el('div', 'dk-pk');
+        slot.style.width = `${w}px`;
+        const title = el('span', 'dk-pk-title');
+        title.textContent = a.titles?.[i] || a.name;
+        const x = el('button', 'dk-pk-x', SVG.x);
+        x.title = 'Close this window';
+        x.addEventListener('click', (e) => {
+          e.stopPropagation();
+          send({ kind: 'closewin', key: a.key, hwnd, rect: iconRect(b) });
+          closePeek();
+        });
+        const head = el('div', 'dk-pk-head');
+        head.append(title, x);
+        const shot = el('button', 'dk-pk-shot');
+        shot.dataset.hwnd = String(hwnd);
+        shot.title = title.textContent ?? '';
+        shot.style.height = `${Math.round(w * 0.62)}px`;
+        // Under the picture (a minimized window draws none): the app's icon.
+        if (a.icon) {
+          const img = document.createElement('img');
+          img.src = a.icon;
+          img.alt = '';
+          img.draggable = false;
+          shot.append(img);
+        }
+        shot.addEventListener('click', () => {
+          send({ kind: 'window', key: a.key, hwnd, rect: iconRect(b) });
+          closePeek();
+        });
+        slot.append(head, shot);
+        return slot;
+      });
+      if (a.windows.length > n) {
+        const more = el('span', 'dk-pk-more');
+        more.textContent = `+${a.windows.length - n}`;
+        slots.push(more);
+      }
+      peek.replaceChildren(...slots);
+      peek.classList.toggle('stack', up);
+    }
+    peek.hidden = false;
+    const r = b.getBoundingClientRect();
+    if (up) {
+      const h = peek.offsetHeight;
+      peek.style.left = '';
+      peek.style.top = `${Math.round(Math.max(8, Math.min(window.innerHeight - h - 8, r.top + r.height / 2 - h / 2)))}px`;
+    } else {
+      const w = peek.offsetWidth;
+      peek.style.top = '';
+      peek.style.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2)))}px`;
+    }
+    const wasUp = peek.classList.contains('up');
+    showPop(peek);
+    if (changed || !wasUp) {
+      clearShots();
+      peekShots = window.setTimeout(sendShots, wasUp ? 40 : POP_MS + 40);
+    }
+  };
+  /** Pointing at an app: its previews once the pointer rests there (at once if some are up already). */
+  const peekEnter = (b: HTMLElement) => {
+    window.clearTimeout(peekLeave);
+    window.clearTimeout(peekWait);
+    peekWait = window.setTimeout(() => drawPeek(b), peekKey !== null ? 60 : PEEK_DELAY_MS);
+  };
+  const peekOut = () => {
+    window.clearTimeout(peekWait);
+    window.clearTimeout(peekLeave);
+    peekLeave = window.setTimeout(closePeek, 280);
+  };
+  peek.addEventListener('pointerenter', () => window.clearTimeout(peekLeave));
+  peek.addEventListener('pointerleave', peekOut);
+
   // Launching: the icon bounces until the app has a window (or a few seconds pass).
   const bounce = (b: HTMLElement) => {
     b.classList.add('launching');
@@ -963,7 +1140,10 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   let move: { b: HTMLElement; id: number; x0: number; moved: boolean; slots: number[]; from: number; to: number } | null = null;
   let swallowClick = false;
   const wireApp = (b: HTMLElement) => {
+    b.addEventListener('pointerenter', () => peekEnter(b));
+    b.addEventListener('pointerleave', peekOut);
     b.addEventListener('click', () => {
+      closePeek();
       if (swallowClick) return;
       const key = b.dataset.key!;
       const a = appOf(key);
@@ -983,6 +1163,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       if (!m.moved) {
         if (Math.abs(dx) < DRAG_PX) return;
         m.moved = true;
+        closePeek();
         b.setPointerCapture(e.pointerId);
         bar.classList.add('reordering');
         b.classList.add('moving');
@@ -1177,6 +1358,96 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (want) gapEl.style.width = `${(want + 2 * GAP_PAD) / (DOCK_ZOOM[frame?.size ?? 'medium'] ?? 1)}px`;
   };
 
+  /** The island is open in the gap (the top bar splits round it). */
+  let islandOpen = false;
+  /** What the island's frame shows, before any squeezing. */
+  const want = { start: true, apps: true, music: false, timer: false, claude: false, battery: false, wifi: true, sound: true, clock: true, bell: true };
+  /**
+   * What goes first when the bar runs off the screen (an open island in the middle of a top bar, or a
+   * small screen), one at a time until it fits; what is left at the end is the apps (Moss: "the
+   * taskbar CANNOT go off the screen ... only keep tabs and time (if there is space)").
+   */
+  const DROP = ['claude', 'timer', 'battery', 'sound', 'wifi', 'bell', 'music', 'start', 'clock'] as const;
+  /** Shows what `want` says, less the first `n` of DROP. */
+  const showItems = (n: number) => {
+    const gone = new Set<string>(DROP.slice(0, n));
+    const keep = (k: (typeof DROP)[number]) => want[k] && !gone.has(k);
+    start.hidden = !keep('start');
+    appsBox.hidden = !want.apps;
+    music.hidden = musicPrev.hidden = musicNext.hidden = !keep('music');
+    timer.hidden = !keep('timer');
+    claude.hidden = !keep('claude');
+    battery.hidden = !keep('battery');
+    wifi.hidden = !keep('wifi');
+    sound.hidden = !keep('sound');
+    bell.hidden = !keep('bell');
+    clock.hidden = !keep('clock');
+    const split = !gapEl.hidden;
+    const middle = !music.hidden || !timer.hidden || !claude.hidden;
+    // Beside the island's gap a line is one too many: the island parts them.
+    sepA.hidden = !middle || split;
+    const leftShown = !start.hidden || !appsBox.hidden || middle;
+    const rightShown = !battery.hidden || !wifi.hidden || !sound.hidden || !clock.hidden || !bell.hidden;
+    sepB.hidden = !leftShown || !rightShown || (split && !middle);
+  };
+  /** The screen's length along the bar (CSS px): its work area's (the window is only the bar's size);
+   *  in the browser preview, the page's. */
+  const screenLen = () => {
+    const preview = document.documentElement.classList.contains('dock-preview');
+    if (upright()) return preview ? innerHeight : screen.availHeight || screen.height;
+    return preview ? innerWidth : screen.availWidth || screen.width;
+  };
+  /** How far (CSS px) the bar runs past the screen's ends, 0 when it fits: `apps` past the end its apps
+   *  are at, `any` past either. Split round the island, each half counts from the screen's middle
+   *  (dock.rs puts the gap's middle there). */
+  const overflow = (): { apps: number; any: number } => {
+    const r = bar.getBoundingClientRect();
+    const up = upright();
+    const zoom = frame ? (DOCK_ZOOM[frame.size] ?? 1) : 1;
+    // The window's 12px at each end, and the melted feet.
+    const ends = 12 + (frame?.edge && frame.melt ? MELT.out * zoom : 0);
+    const len = screenLen();
+    if (!gapEl.hidden) {
+      const g = gapEl.getBoundingClientRect();
+      const mid = up ? g.top + g.height / 2 : g.left + g.width / 2;
+      const before = Math.max(0, mid - (up ? r.top : r.left) + ends - len / 2);
+      const after = Math.max(0, (up ? r.bottom : r.right) - mid + ends - len / 2);
+      return { apps: before, any: Math.max(before, after) };
+    }
+    const over = Math.max(0, (up ? r.height : r.width) + 2 * ends - len);
+    return { apps: over, any: over };
+  };
+  /** The bar squeezed until it fits on the screen: DROP's items go one by one, then the apps furthest
+   *  along (never the one in front). Everything comes back once there is room again. */
+  const squeezeToFit = () => {
+    for (const k of appsBox.children) (k as HTMLElement).classList.remove('dk-cut');
+    // The island open in the bar's middle: only the apps and the clock, room or not (Moss: "temporarily
+    // hide things like now playing ... only keep tabs and time").
+    let n = islandOpen && !gapEl.hidden ? DROP.indexOf('clock') : 0;
+    showItems(n);
+    while (n < DROP.length && overflow().any > 0) {
+      // Past the ones not on the bar anyway: no layout for those.
+      do n++;
+      while (n < DROP.length && !want[DROP[n - 1]]);
+      showItems(n);
+    }
+    let sq = n;
+    const over = overflow().apps;
+    if (over > 0) {
+      sq = DROP.length + 1;
+      const zoom = frame ? (DOCK_ZOOM[frame.size] ?? 1) : 1;
+      // An app's place: its 40px and the 2px between apps.
+      let cut = Math.ceil(over / (42 * zoom));
+      for (const k of [...appsBox.children].reverse() as HTMLElement[]) {
+        if (cut <= 0) break;
+        if (k.classList.contains('front')) continue;
+        k.classList.add('dk-cut');
+        cut--;
+      }
+    }
+    document.documentElement.dataset.squeeze = String(sq);
+  };
+
   /** The window to the bar's width, with the room over it for a card. */
   const fit = async (): Promise<void> => {
     const r = bar.getBoundingClientRect();
@@ -1251,11 +1522,12 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       }[side()];
       rects.push(...feet);
     }
-    if (!card.hidden) {
+    for (const pop of [card, peek]) {
+      if (pop.hidden) continue;
       // The card where it stands when up (its slide is a transform, which offsets leave out).
       const a = above.getBoundingClientRect();
       const m = POP_GAP + 4;
-      rects.push([a.left + card.offsetLeft - m, a.top + card.offsetTop - m, card.offsetWidth + 2 * m, card.offsetHeight + 2 * m]);
+      rects.push([a.left + pop.offsetLeft - m, a.top + pop.offsetTop - m, pop.offsetWidth + 2 * m, pop.offsetHeight + 2 * m]);
     }
     const json = JSON.stringify(rects.map((q) => q.map((n) => Math.round(n))));
     if (json === solidSent) return;
@@ -1305,7 +1577,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
         wireApp(b);
         appEls.set(a.key, b);
       }
-      b.title = a.name;
+      // With windows open the previews over it carry its name: Windows' tooltip would cover them.
+      if (a.windows.length) {
+        b.removeAttribute('title');
+        delete b.dataset.tip;
+      } else b.title = a.name;
       b.classList.toggle('open', a.windows.length > 0);
       if (a.windows.length) b.classList.remove('launching');
       b.classList.toggle('front', a.front);
@@ -1328,11 +1604,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
         appEls.delete(key);
       }
     }
-    start.hidden = off.has('arrow');
-    appsBox.hidden = off.has('apps');
+    want.start = !off.has('arrow');
+    want.apps = !off.has('apps');
     // What is playing, and the timer.
     const m = off.has('music') ? null : f.music;
-    music.hidden = !m;
+    want.music = Boolean(m);
     if (m) {
       music.title = `${m.playing ? 'Pause' : 'Play'}: ${m.title}${m.artist ? ` · ${m.artist}` : ''}`;
       music.classList.toggle('paused', !m.playing);
@@ -1349,17 +1625,16 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       }
     }
     const t = off.has('timer') ? null : f.timer;
-    timer.hidden = !t;
+    want.timer = Boolean(t);
     timerText.textContent = t ?? '';
     // Claude's limits: S: 42% | W: 18%.
     const c = off.has('claude') ? null : f.claude;
-    claude.hidden = !c;
+    want.claude = Boolean(c);
     // Upright, S and W stack.
     if (c) claudeText.textContent = upright() ? claudeUsageText(c).replace(' | ', '\n') : claudeUsageText(c);
-    sepA.hidden = !m && !t && !c;
     // The battery: a small one filled to its charge, the percent beside it.
     const b = off.has('battery') ? null : f.battery;
-    battery.hidden = !b;
+    want.battery = Boolean(b);
     if (b) {
       const pct = Math.max(0, Math.min(100, Math.round(b.percent)));
       battFill.style.width = `${pct}%`;
@@ -1368,24 +1643,22 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       battery.title = `Battery ${pct}%${b.charging ? ', charging' : ''}`;
     }
     // Wi-Fi and sound.
-    wifi.hidden = off.has('wifi');
+    want.wifi = !off.has('wifi');
     const wk = f.wifi === false ? 'off' : 'on';
     if (wifi.dataset.k !== wk) {
       wifi.dataset.k = wk;
       wifi.innerHTML = wk === 'off' ? SVG.wifiOff : SVG.wifi;
     }
-    sound.hidden = off.has('sound');
+    want.sound = !off.has('sound');
     const sk = f.muted ? 'mute' : 'sound';
     if (sound.dataset.k !== sk) {
       sound.dataset.k = sk;
       sound.innerHTML = SVG[sk];
     }
-    clock.hidden = off.has('clock');
-    bell.hidden = off.has('notifications');
-    const leftShown = !start.hidden || !appsBox.hidden || !sepA.hidden;
-    const rightShown = !battery.hidden || !wifi.hidden || !sound.hidden || !clock.hidden || !bell.hidden;
-    sepB.hidden = !leftShown || !rightShown;
+    want.clock = !off.has('clock');
+    want.bell = !off.has('notifications');
     tickClock();
+    squeezeToFit();
     if (cardOn && f.card) {
       drawCard(f.card);
       showPop(card);
@@ -1394,6 +1667,12 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     void fit();
     titles();
     placeSpot();
+    // Previews up: the app's windows may have changed (one closed, a title).
+    if (peekKey !== null) {
+      const pb = appEls.get(peekKey);
+      if (pb) drawPeek(pb);
+      else closePeek();
+    }
   };
 
   // Dragging along its edge: by anything but a button. Not while it splits round the island.
@@ -1433,10 +1712,14 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     void fit();
   });
   // The island's pill changed width, while the bar splits round it: the gap follows at once.
-  await on<number>('dock-gap', (w) => {
+  await on<number | { w: number; open?: boolean }>('dock-gap', (g) => {
+    const w = typeof g === 'number' ? g : g?.w;
+    if (typeof g === 'object' && g) islandOpen = g.open === true;
     if (!frame || side() !== 'top' || !frame.gap || typeof w !== 'number' || !Number.isFinite(w)) return;
     setGap(w);
+    squeezeToFit();
     void fit();
+    placeSpot();
   });
   await on<DockFrame>('dock-frame', (f) => {
     frame = f;

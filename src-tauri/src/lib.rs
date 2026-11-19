@@ -79,6 +79,7 @@ mod updater;
 mod web;
 mod dock;
 mod dockfx;
+mod dockpeek;
 mod frame;
 #[cfg_attr(target_os = "macos", path = "mac/widgets.rs")]
 mod widgets;
@@ -312,6 +313,8 @@ pub fn run() {
             dock::dock_typing,
             dock::dock_solid,
             dock::dock_edge,
+            dock::dock_auto,
+            dockpeek::dock_peek,
             dock::dock_side,
             frame::frame_show,
             frame::frame_solid,
