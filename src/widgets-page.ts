@@ -30,7 +30,7 @@ import {
   type NotchSize,
   type Settings,
 } from './core/settings';
-import { faviconOf } from './core/frame';
+import { loadSiteIcon } from './core/frame';
 import { screenPreview } from './previews';
 
 const SIDE_LABELS: Record<DockSide, string> = { bottom: 'Bottom', left: 'Left', right: 'Right', top: 'Top' };
@@ -513,9 +513,14 @@ function sitesList(host: WidgetsPageHost): HTMLElement {
   field.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') add();
   });
+  const icoOf = (url: string) => {
+    const img = h('img', { class: 'site-ico', alt: '' }) as HTMLImageElement;
+    loadSiteIcon(img, url);
+    return img;
+  };
   const rows = isl.sites.map((s, i) =>
     h('div', { class: 'site-row' }, [
-      h('img', { class: 'site-ico', src: faviconOf(s.url), alt: '' }),
+      icoOf(s.url),
       h('span', { class: 'site-text' }, [h('b', { text: s.title }), h('span', { class: 'muted', text: s.url.replace(/^https?:\/\//, '').replace(/\/$/, '') })]),
       h('button', {
         class: 'btn ghost icon-btn',
@@ -591,7 +596,7 @@ function borderSection(host: WidgetsPageHost): HTMLElement {
     : [
         row(
           'Show the border',
-          'A thin line round your whole screen that joins the taskbar and the island. Turn on the taskbar with Blend into the edge here, and Blend into the top in Appearance, to use it.',
+          'A thin line round your whole screen that joins the taskbar and the island. Turn on the taskbar with Blend into the edge here to use it.',
           h('span', { class: 'muted', text: 'Not available yet' }),
         ),
       ];

@@ -2115,6 +2115,8 @@ export class Island {
     const thick = across ? r.h : r.w;
     const rad = Math.min(thick / 2, ISLAND_MELT.radius);
     // Where it meets the edge, its melted ends on either side (the pill, or a wider grown card).
+    // Floating (not blended), it isn't on the border: the line and its light run straight past it.
+    if (!i.blend) return [];
     const { span, tint } = this.edgeSpan(r);
     const parts: FramePart[] = [
       {
@@ -2155,18 +2157,19 @@ export class Island {
     // A still glow (Claude's reply hold) keeps the card still too.
     const urgent: GlowSpec = { tone: want?.tone ?? 'accent', motion: want?.motion === 'still' ? 'still' : 'orbit' };
     // Glow › Whole screen: the light runs round the whole border (frame.ts), not the island.
-    if (frameOn(this.settings.island) && this.settings.island.frame.glow === 'screen') {
+    // A floating island keeps its own light too: the border's runs past it, not round it.
+    const screen = frameOn(this.settings.island) && this.settings.island.frame.glow === 'screen';
+    const next = screen ? (beamSpec(want) ?? (cardUrgent ? urgent : null)) : null;
+    if (JSON.stringify(next) !== JSON.stringify(this.screenGlow)) {
+      this.screenGlow = next;
+      this.frameHost?.tick();
+    }
+    if (screen && this.settings.island.blend) {
       this.pillGlow.set(null, true);
       this.grownGlow.set(null, true);
       this.cardGlow.set(null, true);
-      const next = beamSpec(want) ?? (cardUrgent ? urgent : null);
-      if (JSON.stringify(next) !== JSON.stringify(this.screenGlow)) {
-        this.screenGlow = next;
-        this.frameHost?.tick();
-      }
       return;
     }
-    this.screenGlow = null;
     // A card grown out of the pill covers it: the light runs round the card's edge, not across its
     // text, also while it shrinks back, until it lands. The pill's is cut at once: fading, its ring
     // would show through the card as it grows.

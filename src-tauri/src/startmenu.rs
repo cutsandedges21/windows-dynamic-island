@@ -66,8 +66,8 @@ pub struct Placed {
 }
 
 /// The menu's window on side `side` of a work area `work`, for a bar at `bar` whose Start button is at
-/// `button` (all physical px), at `scale`. Along the bar the menu starts where the bar starts (the Start
-/// button's end), kept inside the work area; across, it stands on the bar's inner edge with GAP between,
+/// `button` (all physical px), at `scale`. Along the bar the menu is centred on the bar's middle (Moss,
+/// 11-19: the same place whatever the bar holds, Now playing or tray icons), kept inside the work area; across, it stands on the bar's inner edge with GAP between,
 /// as tall (or wide) as there is room for, up to MENU_W x MENU_H.
 pub fn place(side: Side, work: Area, bar: Area, button: Area, scale: f64) -> Placed {
     let s = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
@@ -82,7 +82,7 @@ pub fn place(side: Side, work: Area, bar: Area, button: Area, scale: f64) -> Pla
             let mw = MENU_W.min(room(ww / s - 2.0 * MARGIN));
             let avail = if side == Side::Bottom { (by - wy) / s - GAP - MARGIN } else { (wy + wh - (by + bh)) / s - GAP - MARGIN };
             let mh = MENU_H.min(room(avail));
-            let left = clamp_along(bx, wx, ww, mw);
+            let left = clamp_along(bx + (bw - mw * s) / 2.0, wx, ww, mw);
             let x = left - PAD * s;
             let (y, menu_y) = if side == Side::Bottom { (by - (mh + GAP + PAD) * s, PAD) } else { (by + bh, GAP) };
             let (w, h) = (mw + 2.0 * PAD, mh + PAD + GAP);
@@ -93,7 +93,7 @@ pub fn place(side: Side, work: Area, bar: Area, button: Area, scale: f64) -> Pla
             let mh = MENU_H.min(room(wh / s - 2.0 * MARGIN));
             let avail = if side == Side::Left { (wx + ww - (bx + bw)) / s - GAP - MARGIN } else { (bx - wx) / s - GAP - MARGIN };
             let mw = MENU_W.min(room(avail));
-            let top = clamp_along(by, wy, wh, mh);
+            let top = clamp_along(by + (bh - mh * s) / 2.0, wy, wh, mh);
             let y = top - PAD * s;
             let (x, menu_x) = if side == Side::Left { (bx + bw, GAP) } else { (bx - (mw + GAP + PAD) * s, PAD) };
             let (w, h) = (mw + PAD + GAP, mh + 2.0 * PAD);
@@ -1020,7 +1020,7 @@ mod tests {
     const WORK: Area = (0, 0, 1920, 1032);
 
     #[test]
-    fn at_the_bottom_the_menu_stands_on_the_bar_from_its_start() {
+    fn at_the_bottom_the_menu_stands_on_the_bar_centred_on_it() {
         // A bar 600 wide in the middle, 52 tall, 8 over the work area's end; Start at its left.
         let bar = (660, 1032 - 8 - 52, 600, 52);
         let button = (672, 978, 40, 40);
@@ -1028,8 +1028,8 @@ mod tests {
         let (x, y, w, h) = p.window;
         // The window's bottom edge is the bar's top edge: the menu slides out from behind the bar.
         assert_eq!(y + h, bar.1);
-        // The menu lines up with the bar's start.
-        assert_eq!(x as f64 + p.menu[0], 660.0);
+        // The menu's middle is the bar's middle.
+        assert_eq!(x as f64 + p.menu[0] + p.menu[2] / 2.0, 960.0);
         assert_eq!(p.menu[2], MENU_W);
         assert_eq!(p.menu[3], MENU_H);
         assert_eq!(w as f64, MENU_W + 2.0 * PAD);
@@ -1040,7 +1040,8 @@ mod tests {
     #[test]
     fn a_short_screen_gets_a_shorter_menu_and_an_edge_bar_a_menu_inside_the_screen() {
         let work = (0, 0, 1366, 728);
-        let bar = (0, 728 - 52, 900, 52);
+        // Short and at the left end: centred, the menu would start off the screen.
+        let bar = (0, 728 - 52, 400, 52);
         let p = place(Side::Bottom, work, bar, (12, 682, 40, 40), 1.0);
         assert_eq!(p.menu[3], 728.0 - 52.0 - GAP - MARGIN);
         // Never off the screen's left edge.
@@ -1063,7 +1064,7 @@ mod tests {
         let left = place(Side::Left, WORK, (8, 200, 52, 600), (14, 212, 40, 40), 1.0);
         assert_eq!(left.window.0, 60);
         assert_eq!(left.menu[0], GAP);
-        assert_eq!(left.window.1 as f64 + left.menu[1], 200.0);
+        assert_eq!(left.window.1 as f64 + left.menu[1] + left.menu[3] / 2.0, 500.0);
         let right = place(Side::Right, WORK, (1860, 200, 52, 600), (1866, 212, 40, 40), 1.0);
         assert_eq!(right.window.0 + right.window.2, 1860);
         assert_eq!(right.origin[0], right.window.2 as f64);
@@ -1077,6 +1078,17 @@ mod tests {
         assert_eq!(p.window.1 + p.window.3, bar.1);
         assert_eq!(p.window.2, ((MENU_W + 2.0 * PAD) * 1.25).round() as i32);
         assert_eq!(p.menu[2], MENU_W);
+        // Centred on the bar in physical px: its middle at 585 + 750 / 2.
+        let mid = p.window.0 as f64 + (p.menu[0] + p.menu[2] / 2.0) * 1.25;
+        assert!((mid - 960.0).abs() < 1.0, "{mid}");
+    }
+
+    #[test]
+    fn a_longer_bar_round_the_same_middle_keeps_the_menu_where_it_was() {
+        // Now playing or tray icons make the bar longer on both sides of its middle.
+        let short = place(Side::Bottom, WORK, (760, 972, 400, 52), (772, 978, 40, 40), 1.0);
+        let long = place(Side::Bottom, WORK, (560, 972, 800, 52), (572, 978, 40, 40), 1.0);
+        assert_eq!(short.window, long.window);
     }
 
     #[test]

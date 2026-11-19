@@ -29,8 +29,11 @@ export const NOTCH_MELT = { out: 44, up: 30 };
 /** Tucked, a notch is the same notch, as long, only this thick from the screen's edge (CSS px): it
  *  widens out of the border as one shape when pointed at (Moss: not a bump of its own). */
 export const TAB = { thick: 13 };
-/** How small a tucked notch is: TAB.thick of its thickness, the rest of it in proportion. */
-const restK = (n: { thick: number }): number => (n.thick > 0 ? Math.min(1, TAB.thick / n.thick) : 1);
+/** A tucked notch's thickness out of the edge, CSS px: TAB.thick at Small, more as its size grows
+ *  (Moss, 11-19: the sizes showed no difference while tucked). */
+export const restThick = (zoom: number): number => (TAB.thick * zoom) / NOTCH_ZOOM.small;
+/** How small a tucked notch is: restThick of its thickness, the rest of it in proportion. */
+const restK = (n: { thick: number; zoom: number }): number => (n.thick > 0 ? Math.min(1, restThick(n.zoom) / n.thick) : 1);
 /** The light's path is drawn again this long after the last shape moved, ms. */
 const GLOW_SETTLE_MS = 60;
 /** The light round an expanded notch: its ring's width and the halo's, CSS px; the room for it past
@@ -118,6 +121,27 @@ export function faviconOf(url: string): string {
   } catch {
     return '';
   }
+}
+
+/**
+ * Puts a site's icon in `img`. In the app Rust fetches it (the webview wouldn't load Google's icons
+ * itself: Moss saw letters); in a browser preview the page loads it. No picture: `img` errors.
+ */
+export function loadSiteIcon(img: HTMLImageElement, url: string): void {
+  if (!isTauri) {
+    img.src = faviconOf(url);
+    return;
+  }
+  let host = '';
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    // Not a web address: no picture.
+  }
+  void (host ? native.siteIcon(host) : Promise.resolve(null)).then((data) => {
+    if (data && data.startsWith('data:image/')) img.src = data;
+    else img.dispatchEvent(new Event('error'));
+  });
 }
 
 /**
@@ -280,6 +304,8 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
   const origin = () => ({ x: window.screenX, y: window.screenY });
   let dock: FramePart | null = null;
   let island: FramePart[] = [];
+  /** Blended into the edge, the notches slide in and out at full size; detached, they grow (as before). */
+  const slides = () => frame?.blend !== false;
   const send = (a: FrameAct) => void sendTo('island', 'frame-act', a);
 
   const border = el('div', 'fr-border');
@@ -374,13 +400,13 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
       const img = document.createElement('img');
       img.alt = '';
       img.draggable = false;
-      img.src = faviconOf(s.url);
       // No picture: the site's first letter.
       img.addEventListener('error', () => {
         pic.textContent = (s.title || s.url).replace(/^https?:\/\/(www\.)?/, '').charAt(0).toUpperCase();
         pic.classList.add('letter');
       });
       pic.append(img);
+      loadSiteIcon(img, s.url);
       b.append(pic);
       b.addEventListener('click', () => void native.openUrl(s.url));
       b.addEventListener('pointerenter', () => showLabel(sites, b, s.title));
@@ -546,7 +572,11 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
       // Its body's top (the feet reach above and below it).
       n.el.style.top = `${Math.round(n.top + NOTCH_MELT.out * z)}px`;
       // Tucked: the whole notch made small, in proportion, TAB.thick of it out of the edge.
-      n.el.style.setProperty('--nk', String(Math.min(1, TAB.thick / n.thick)));
+      n.el.style.setProperty('--nk', String(restK(n)));
+      // Blended (fr-slide): the full-size notch pushed into the edge instead, TAB.thick of it showing;
+      // it slides out as it is, never growing (Moss, 11-19). Its inside is zoomed, its ring isn't.
+      n.el.style.setProperty('--nslide', `${Math.max(0, NOTCH_T - restThick(z) / z)}px`);
+      n.el.style.setProperty('--nslide-px', `${Math.max(0, n.thick - restThick(z))}px`);
       // Its light: a ring round it as it is out, the cone turning about the screen's middle.
       const melts = f.melt !== false;
       const ringMasks = [NOTCH_RING.halo, NOTCH_RING.core].map((rw) => notchRing(side, body, n.thick, 18 * z, melts ? { out: NOTCH_MELT.out * z, up: NOTCH_MELT.up * z } : FLAT, w, NOTCH_RING.room, rw));
@@ -678,8 +708,8 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
         rects.push([x, top, n.thick + 10, n.len]);
       } else {
         // The small notch, and a little beyond it, so the pointer finds it on its way to the edge.
-        const reach = Math.max(w, TAB.thick) + 8;
-        const long = n.len * restK(n) + 16;
+        const reach = Math.max(w, restThick(n.zoom)) + 8;
+        const long = (slides() ? n.len : n.len * restK(n)) + 16;
         rects.push([n.side === 'left' ? 0 : screen.width - reach, top + (n.len - long) / 2, reach, long]);
       }
     }
@@ -742,6 +772,14 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
     // this ring's part round it), so a notch coming out never makes this path change.
     for (const n of notches) {
       if (n.el.hidden) continue;
+      if (slides()) {
+        // The full notch pushed into the edge, TAB.thick of it out (its feet go off the screen).
+        const push = Math.max(0, n.thick - restThick(n.zoom));
+        const body = n.len - 2 * NOTCH_MELT.out * n.zoom;
+        const x = n.side === 'left' ? -push : screen.width - n.thick + push;
+        part({ rect: [x + o.x, n.top + NOTCH_MELT.out * n.zoom + o.y, n.thick, body], side: n.side, zoom: n.zoom, melt: frame?.melt === false ? null : NOTCH_MELT, thick: NOTCH_T, radius: 18 });
+        continue;
+      }
       // The whole notch at restK of its size, about the middle of where it meets the edge.
       const k = restK(n);
       const body = (n.len - 2 * NOTCH_MELT.out * n.zoom) * k;
@@ -802,7 +840,7 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
     const g = frame?.glow;
     if (!g || !g.spec) return;
     glowWait = window.setTimeout(() => {
-      const sig = JSON.stringify([screen, frame?.width, dock, island, notches.map((n) => [n.el.hidden, n.top, n.len, n.side, n.thick])]);
+      const sig = JSON.stringify([screen, frame?.width, frame?.blend, frame?.melt, dock, island, notches.map((n) => [n.el.hidden, n.top, n.len, n.side, n.thick])]);
       if (sig === glowSig) return;
       glowSig = sig;
       core.style.setProperty('--m', ringMask(1.6, 0));
@@ -848,6 +886,7 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
     root.classList.toggle('fr-autohide', f.autoHide === true);
     root.classList.toggle('fr-flat', f.melt === false);
     root.classList.toggle('fr-float', f.blend === false);
+    root.classList.toggle('fr-slide', slides());
     root.classList.toggle('reduce', f.reduce);
     applyGlass(root, f.glass);
     drawBorder();
@@ -863,7 +902,7 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
   const overShelf = (x: number, y: number) => {
     if (shelf.el.hidden) return false;
     const r = shelf.el.getBoundingClientRect();
-    const reach = Math.max(frame?.width ?? 3, TAB.thick) + 12;
+    const reach = Math.max(frame?.width ?? 3, restThick(shelf.zoom)) + 12;
     const left = shelf.side === 'left' ? 0 : Math.min(r.left, screen.width - reach);
     const right = shelf.side === 'left' ? Math.max(r.right, reach) : screen.width;
     return x >= left && x <= right && y >= r.top && y <= r.bottom;

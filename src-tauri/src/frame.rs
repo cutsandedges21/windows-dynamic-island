@@ -186,6 +186,47 @@ pub fn frame_solid(rects: Vec<Vec<f64>>) {
     *SOLID.lock().unwrap() = clean;
 }
 
+/// Site icons fetched so far (host → data: URL). Failures aren't kept: offline now, maybe not later.
+static ICONS: Mutex<Option<std::collections::HashMap<String, String>>> = Mutex::new(None);
+
+/// A host name we may put in a URL: letters, digits, dots and dashes only.
+pub(crate) fn clean_host(host: &str) -> Option<String> {
+    let h = host.trim().to_ascii_lowercase();
+    let ok = !h.is_empty() && h.len() <= 253 && h.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') && !h.starts_with('.') && !h.starts_with('-');
+    ok.then_some(h)
+}
+
+/// An image's type from its Content-Type, safe to put in a data: URL (none: not an image).
+pub(crate) fn icon_mime(header: Option<&str>) -> Option<String> {
+    let m = header.unwrap_or("image/png").split(';').next()?.trim().to_ascii_lowercase();
+    let ok = m.starts_with("image/") && m.chars().all(|c| c.is_ascii_alphanumeric() || "/.+-".contains(c));
+    ok.then_some(m)
+}
+
+/// A pinned site's icon as a data: URL, fetched here and not in the page: the webview wouldn't load
+/// Google's icons in the border's window (Moss, 11-19: letters instead of pictures). None: no picture.
+#[tauri::command]
+pub async fn site_icon(host: String) -> Option<String> {
+    use base64::Engine as _;
+    let host = clean_host(&host)?;
+    if let Some(hit) = ICONS.lock().unwrap().as_ref().and_then(|m| m.get(&host).cloned()) {
+        return Some(hit);
+    }
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(8)).build().ok()?;
+    let res = client.get(format!("https://www.google.com/s2/favicons?domain={host}&sz=64")).send().await.ok()?;
+    if !res.status().is_success() {
+        return None;
+    }
+    let mime = icon_mime(res.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()))?;
+    let bytes = res.bytes().await.ok()?;
+    if bytes.is_empty() || bytes.len() > 512 * 1024 {
+        return None;
+    }
+    let url = format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes));
+    ICONS.lock().unwrap().get_or_insert_with(Default::default).insert(host, url.clone());
+    Some(url)
+}
+
 /// How near the screen's edge (logical px) the pointer brings an auto-hidden border up.
 #[cfg(windows)]
 const EDGE_NEAR: f64 = 36.0;
@@ -276,3 +317,27 @@ fn watch(app: AppHandle) {
 
 #[cfg(not(windows))]
 fn watch(_app: AppHandle) {}
+
+#[cfg(test)]
+mod tests {
+    use super::{clean_host, icon_mime};
+
+    #[test]
+    fn only_plain_host_names_go_in_the_icon_url() {
+        assert_eq!(clean_host(" GitHub.com "), Some("github.com".into()));
+        assert_eq!(clean_host("www.youtube.com"), Some("www.youtube.com".into()));
+        assert_eq!(clean_host(""), None);
+        assert_eq!(clean_host("a.com&sz=1"), None);
+        assert_eq!(clean_host("a.com/x"), None);
+        assert_eq!(clean_host(".evil"), None);
+    }
+
+    #[test]
+    fn only_image_types_make_a_data_url() {
+        assert_eq!(icon_mime(Some("image/png")), Some("image/png".into()));
+        assert_eq!(icon_mime(Some("image/svg+xml; charset=utf-8")), Some("image/svg+xml".into()));
+        assert_eq!(icon_mime(None), Some("image/png".into()));
+        assert_eq!(icon_mime(Some("text/html")), None);
+        assert_eq!(icon_mime(Some("image/png\"onerror")), None);
+    }
+}

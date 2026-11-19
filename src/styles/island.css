@@ -2868,3 +2868,15 @@ html.fr-autohide.fr-near :is(.fr-border, .fr-glow, .fr-tint, .notch) { opacity: 
 .dock .dk-tray[hidden] { display: none; }
 .dock .dk-tray-ico { width: 30px; padding: 0; }
 .dock .dk-tray-ico img { width: 16px; height: 16px; image-rendering: auto; pointer-events: none; }
+
+/* Blended into the border (frame.ts fr-slide, Moss 11-19): the notch is always its full, expanded size,
+   pushed into the edge with a sliver (TAB.thick) showing; pointed at, it slides out as it is. No growing.
+   Detached (fr-float) keeps the grow above. */
+html.fr-slide .notch-in { transform: translateX(calc(-1 * var(--nslide))); }
+html.fr-slide .notch[data-side='right'] .notch-in { transform: translateX(var(--nslide)); }
+html.fr-slide .nt-ring { transform: translateX(calc(-1 * var(--nslide-px))); }
+html.fr-slide .notch[data-side='right'] .nt-ring { transform: translateX(var(--nslide-px)); }
+html.fr-slide .notch:is(.out, .drop) .notch-in,
+html.fr-slide .notch[data-side='right']:is(.out, .drop) .notch-in,
+html.fr-slide .notch:is(.out, .drop) .nt-ring,
+html.fr-slide .notch[data-side='right']:is(.out, .drop) .nt-ring { transform: none; }

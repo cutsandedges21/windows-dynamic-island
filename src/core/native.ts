@@ -864,6 +864,8 @@ export const native = {
   frameSolid: (rects: number[][]) => call('frame_solid', { rects }, undefined),
   /** The border's page loaded: Rust tells it the screen's size again (frame-screen). */
   frameHello: () => call('frame_hello', {}, undefined),
+  /** A pinned site's icon as a data: URL, fetched by Rust (null: none). */
+  siteIcon: (host: string) => call<string | null>('site_icon', { host }, null),
   /** Which screen edge the taskbar sits along. */
   dockSide: (side: 'bottom' | 'left' | 'right' | 'top') => call('dock_side', { side }, undefined),
   /** The Apps card is open over the taskbar: it may take the keyboard (its search field) until closed. */

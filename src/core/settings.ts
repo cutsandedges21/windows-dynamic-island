@@ -147,9 +147,12 @@ export interface FrameConfig {
   blend: boolean;
 }
 
-/** The border can only be on while the taskbar and the island both sit on their edges. */
-export function frameAvailable(island: Pick<Settings['island'], 'blend' | 'taskbar'>): boolean {
-  return island.blend && island.taskbar.on && barEdge(island.taskbar);
+/**
+ * The border can only be on while the taskbar sits on its edge. The island may float (Moss, 11-19):
+ * then the line just runs straight across the top under it; blended, it melts into it.
+ */
+export function frameAvailable(island: Pick<Settings['island'], 'taskbar'>): boolean {
+  return island.taskbar.on && barEdge(island.taskbar);
 }
 
 /**
@@ -167,7 +170,7 @@ export function barAutoHide(t: Pick<Settings['island']['taskbar'], 'autoHide' | 
 }
 
 /** The border is on and can be. */
-export function frameOn(island: Pick<Settings['island'], 'blend' | 'taskbar' | 'frame'>): boolean {
+export function frameOn(island: Pick<Settings['island'], 'taskbar' | 'frame'>): boolean {
   return island.frame.on && frameAvailable(island);
 }
 

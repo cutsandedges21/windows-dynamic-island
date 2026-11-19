@@ -1,14 +1,13 @@
 import { GLASS_DEFAULT } from '../src/core/glass';
 import { describe, expect, it } from 'vitest';
 import { meltEnds, meltMasks } from '../src/core/dock';
-import { barOutline, faviconOf, notchTop, sideOf } from '../src/core/frame';
+import { barOutline, faviconOf, NOTCH_ZOOM, notchTop, restThick, sideOf, TAB } from '../src/core/frame';
 import { defaultSettings, frameAvailable, frameOn, migrate, notchesOn, siteOf } from '../src/core/settings';
 
 describe('screen border', () => {
-  it('is only offered while the taskbar and the island both sit on their edges', () => {
+  it('is only offered while the taskbar sits on its edge, the island blended or floating', () => {
     const s = defaultSettings().island;
     expect(frameAvailable(s)).toBe(false);
-    s.blend = true;
     s.taskbar.on = true;
     expect(frameAvailable(s)).toBe(false);
     s.taskbar.edge = true;
@@ -17,7 +16,15 @@ describe('screen border', () => {
     s.frame.on = true;
     expect(frameOn(s)).toBe(true);
     s.blend = false;
-    expect(frameOn(s)).toBe(false);
+    expect(frameOn(s)).toBe(true);
+    s.blend = true;
+    expect(frameOn(s)).toBe(true);
+  });
+
+  it('tucks each notch size thicker than the last, Small as before', () => {
+    expect(restThick(NOTCH_ZOOM.small)).toBeCloseTo(TAB.thick);
+    expect(restThick(NOTCH_ZOOM.medium)).toBeGreaterThan(restThick(NOTCH_ZOOM.small));
+    expect(restThick(NOTCH_ZOOM.large)).toBeGreaterThan(restThick(NOTCH_ZOOM.medium));
   });
 
   it('lets the notches run without it', () => {

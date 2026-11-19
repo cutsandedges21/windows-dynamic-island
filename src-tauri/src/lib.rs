@@ -338,6 +338,7 @@ pub fn run() {
             frame::frame_show,
             frame::frame_solid,
             frame::frame_hello,
+            frame::site_icon,
             dock::dock_at,
             dock::dock_panel,
             dock::dock_autohide,
