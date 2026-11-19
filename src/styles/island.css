@@ -2139,7 +2139,8 @@ html[data-pill='glass'] .sb-tiles.editing ~ .sb-buttons {
 .dock {
   position: absolute;
   /* The bar's zoom (its Size) would scale these too: --dk-z (dock.ts) divides it back out. */
-  left: calc(12px / var(--dk-z, 1));
+  /* (+ --dk-room: room for the bar to widen into while Rise spreads its icons, dock.ts RISE_ROOM) */
+  left: calc((12px + var(--dk-room, 0px)) / var(--dk-z, 1));
   /* 12px over the window's bottom (BAR_BELOW in dock.rs). The window is 4px plus room for icons
      rising under the pointer (HEADROOM in dock.ts) taller than that, more while a card is up. */
   bottom: calc(12px / var(--dk-z, 1));
@@ -2397,7 +2398,7 @@ html.dock-melt[data-pill='glass'] .dock-bg::before { border-top-color: transpare
 .dk-tip-row b { font: 650 13px/1.2 var(--font); font-variant-numeric: tabular-nums; }
 .dk-tip-row span { font: 500 12px/1.2 var(--font); opacity: 0.72; font-variant-numeric: tabular-nums; }
 .dock .dk-apps { display: flex; align-items: center; gap: 2px; }
-.dock .dk-app { position: relative; width: 40px; padding: 0; }
+.dock .dk-app { position: relative; width: 40px; padding: 0; flex: none; }
 .dock .dk-app:hover, .dock .dk-app:active { background: transparent; }
 /* Rises and grows from its bottom edge as the pointer passes (dock.ts riseAt). */
 .dock .dk-ico { display: grid; place-items: center; width: 26px; height: 26px; transform-origin: 50% 100%; will-change: transform; }

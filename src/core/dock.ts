@@ -561,6 +561,16 @@ const RISE_GROW = 0.4;
 const RISE_LIFT = 8;
 /** Room above the bar for risen icons, CSS px. */
 const HEADROOM = 14;
+/** Rise along a bar across the screen also makes room (Moss, 11-19, "like Windhawk's"): an icon right
+ *  under the pointer grows this much and its place this much wider, pushing its neighbours apart. */
+const RISE_GROW_SPREAD = 0.6;
+const RISE_SPREAD = 0.55;
+/** An app's place on the bar and the gap between places, CSS px (island.css .dk-app, .dk-apps). */
+const APP_W = 40;
+const APP_GAP = 2;
+/** Room the window keeps at each end for the bar to widen into while it spreads (CSS px before its
+ *  size's zoom): the window never resizes under the pointer. */
+const RISE_ROOM = 36;
 
 export const DOCK_SIZE_LABELS: Record<DockSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
 export const DOCK_STYLE_LABELS: Record<DockStyle, string> = { rise: 'Rise', spotlight: 'Spotlight', glide: 'Glide', names: 'Names' };
@@ -1261,30 +1271,56 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     b.addEventListener('pointercancel', end);
   };
 
-  // The hover rise: each icon eases toward how high it should be, every frame while any moves.
+  // The hover rise: each icon eases toward how high it should be, every frame while any moves. Along
+  // a bar across the screen (not split round the island) its place widens too and the bar with it,
+  // from its middle, into room its window keeps at each end (RISE_ROOM).
   const rise = new Map<HTMLElement, number>();
   let pointerX: number | null = null;
   let raf = 0;
   let lastT = 0;
+  /** How much wider the spread makes the bar now (CSS px before the zoom). */
+  let riseExtra = 0;
+  let solidAt = 0;
+  const spreads = () => has('rise') && !upright() && gapEl.hidden;
   const animateRise = (t: number) => {
     const dt = lastT ? Math.min(64, t - lastT) : 16;
     lastT = t;
     const k = 1 - Math.exp(-dt / 70);
     let busy = false;
-    for (const b of appEls.values()) {
+    const spread = spreads();
+    const z = Number(bar.style.zoom) || 1;
+    // Where each place's middle would be with nothing spread: the pointer is measured against
+    // those, so the spreading never moves the icon it is on away from it.
+    const places = [...appsBox.children].filter((c): c is HTMLElement => c instanceof HTMLElement && c.classList.contains('dk-app') && !c.hidden);
+    const left0 = appsBox.getBoundingClientRect().left + (riseExtra / 2) * z;
+    let extra = 0;
+    places.forEach((b, i) => {
       const ico = b.querySelector<HTMLElement>('.dk-ico');
-      if (!ico) continue;
+      if (!ico) return;
       let want = 0;
       if (pointerX !== null && !move?.moved && has('rise')) {
-        want = riseAt(pointerX - alongOf(b.getBoundingClientRect()));
+        const mid = spread ? left0 + (i * (APP_W + APP_GAP) + APP_W / 2) * z : alongOf(b.getBoundingClientRect());
+        want = riseAt(pointerX - mid);
       }
       const was = rise.get(b) ?? 0;
       const now = Math.abs(want - was) < 0.002 ? want : was + (want - was) * k;
       if (now !== want) busy = true;
       rise.set(b, now);
-      ico.style.transform = now ? `${outward(Number((RISE_LIFT * now).toFixed(2)))} scale(${(1 + RISE_GROW * now).toFixed(3)})` : '';
-    }
+      const grow = spread ? RISE_GROW_SPREAD : RISE_GROW;
+      ico.style.transform = now ? `${outward(Number((RISE_LIFT * now).toFixed(2)))} scale(${(1 + grow * now).toFixed(3)})` : '';
+      const wide = spread ? APP_W * RISE_SPREAD * now : 0;
+      b.style.width = wide > 0.05 ? `${(APP_W + wide).toFixed(2)}px` : '';
+      extra += wide;
+    });
+    riseExtra = extra > 0.05 ? extra : 0;
+    // Wider from its middle: half of it to each side.
+    bar.style.translate = riseExtra ? `${(-riseExtra / 2).toFixed(2)}px 0` : '';
     raf = busy ? requestAnimationFrame(animateRise) : 0;
+    // Where it takes clicks follows the widened bar, now and then while it moves, and when it stops.
+    if (!raf || t - solidAt > 120) {
+      solidAt = t;
+      solid();
+    }
     if (!raf) lastT = 0;
   };
   const kickRise = () => {
@@ -1474,7 +1510,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       const after = Math.max(0, (up ? r.bottom : r.right) - mid + ends - len / 2);
       return { apps: before, any: Math.max(before, after) };
     }
-    const over = Math.max(0, (up ? r.height : r.width) + 2 * ends - len);
+    const over = Math.max(0, (up ? r.height : r.width) - riseExtra * zoom + 2 * ends - len);
     return { apps: over, any: over };
   };
   /** The bar squeezed until it fits on the screen: DROP's items go one by one, then the apps furthest
@@ -1514,7 +1550,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const up = upright();
     // 12px at each end; the melted ends grow with the bar's size, as the bar does.
     const zoom = frame ? (DOCK_ZOOM[frame.size] ?? 1) : 1;
-    const len = Math.ceil((up ? r.height : r.width) + 24 + (frame?.edge && frame.melt ? 2 * MELT.out * zoom : 0));
+    // Rise spreading: room at each end for the bar to widen into (and its width without the spread).
+    const spreadRoom = spreads() ? RISE_ROOM * zoom : 0;
+    document.documentElement.style.setProperty('--dk-room', `${spreadRoom}px`);
+    const restLen = (up ? r.height : r.width) - riseExtra * zoom;
+    const len = Math.ceil(restLen + 24 + 2 * spreadRoom + (frame?.edge && frame.melt ? 2 * MELT.out * zoom : 0));
     const thick = up ? r.width : r.height;
     const barArea = Math.ceil(thick + 16 + HEADROOM);
     // Beside an upright bar the card stands out sideways, as tall as the bar lets it.
