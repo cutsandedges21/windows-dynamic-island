@@ -1550,22 +1550,9 @@ export class ClaudeActivity extends BaseActivity {
     return this.phoneSheet(env.now);
   }
 
-  /** Claude Status's header: how many sessions or how many wait, the Auto model button, and `extra` buttons. */
+  /** Claude Status's header: how many sessions or how many wait, and `extra` buttons. */
   private statusHead(extra: SheetButton[] = []): Block {
-    const buttons: SheetButton[] = [];
-    // Only once Auto model is installed (Activities › Claude Status).
-    if (this.auto.installed) {
-      buttons.push({
-        key: 'router',
-        label: this.auto.on ? 'Auto model: on' : 'Auto model: off',
-        action: 'router',
-        style: this.auto.on ? 'secondary' : 'ghost',
-        tip: this.auto.on
-          ? 'Warns you before a prompt runs on a far too strong or too weak Claude model, and checks a chat when it compacts, passes 500k tokens or ends: was it on the right model. Click to pause.'
-          : 'Paused: Claude runs every prompt on the model you picked, with no checks. Click to turn back on.',
-      });
-    }
-    return { t: 'head', key: 'head', icon: 'claude', tone: this.mark(), title: 'Claude', sub: this.rows.length ? statusSub(this.rows) : 'No Claude sessions right now', buttons: [...buttons, ...extra] };
+    return { t: 'head', key: 'head', icon: 'claude', tone: this.mark(), title: 'Claude', sub: this.rows.length ? statusSub(this.rows) : 'No Claude sessions right now', buttons: extra };
   }
 
   /** Every session's row, each with its progress bar on its second line; Claude Code's carry their Alt+Shift number. */
