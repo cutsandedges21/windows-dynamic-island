@@ -758,6 +758,16 @@ export class PeekRest {
   }
 }
 
+/**
+ * `node` into `parent` just before `before`, only if it isn't there already. Moving an element, even
+ * to where it already is, takes it out of the page for a moment, and that takes the keyboard off it:
+ * the Apps card's search field put back in place on every frame lost the typing after each letter.
+ */
+export function keepBefore(parent: Pick<Node, 'insertBefore'>, node: Pick<Node, 'nextSibling' | 'parentNode'>, before: Node): void {
+  if (node.parentNode === parent && node.nextSibling === before) return;
+  parent.insertBefore(node as Node, before);
+}
+
 /** A drag along the bottom starts once the pointer has moved this far (CSS px); a shorter press is a click. */
 const DRAG_PX = 5;
 
@@ -1046,8 +1056,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     cardEmpty.hidden = c.apps.length > 0 || c.editing || typed || Boolean(c.off);
     find.hidden = Boolean(c.off);
     find.placeholder = c.editing ? 'Add an app: type its name' : 'Search your apps';
-    if (c.editing) card.insertBefore(find, found);
-    else card.insertBefore(find, cardGrid);
+    keepBefore(card, find, c.editing ? found : cardGrid);
     if (document.activeElement !== find && find.value !== c.query) find.value = c.query;
     if (c.editing !== wasEditing) requestAnimationFrame(() => find.focus());
     wasEditing = c.editing;
