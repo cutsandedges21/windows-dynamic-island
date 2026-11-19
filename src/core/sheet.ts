@@ -710,7 +710,12 @@ export class SheetRenderer {
       e.stopPropagation();
       // The action first: the press pulse is decoration and must never stand in its way.
       this.onAction(target.dataset.action!, args.get(target), target);
-      springAnimate(target, [{ transform: 'scale(0.94)' }, { transform: 'none' }], springs.bouncy);
+      // Not a tile, nor a card's Back: each swaps the card for another, and the tile (or arrow) shrinking and
+      // bouncing back while the card faded away was everything on it jumping a few pixels (Justin: opening
+      // the Shelf, closing Calendar, 2026-11-18).
+      const head = target.parentElement;
+      const back = head?.classList.contains('has-back') === true && head.firstElementChild === target;
+      if (!target.classList.contains('tile') && !back) springAnimate(target, [{ transform: 'scale(0.94)' }, { transform: 'none' }], springs.bouncy);
     });
     // Grown out of the pill, the card covers it, so it takes the pill's right-click and scroll too.
     this.el.addEventListener('contextmenu', (e) => {
