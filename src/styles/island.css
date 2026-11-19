@@ -2689,9 +2689,12 @@ html.frame-window.fr-full :is(.fr-border, .notch, .fr-glow, .fr-label) { opacity
 .notch.out .nt-items, .notch.drop .nt-items { opacity: 1; transform: none; transition-delay: 0.14s; }
 /* its own light while it is out: the border's cone, turning about the screen's middle in step with it,
    seen through a ring round the notch (frame.ts notchRing); it comes in as the notch finishes widening */
-.nt-ring { position: absolute; left: 0; pointer-events: none; opacity: 0; transition: opacity 0.18s ease; mix-blend-mode: screen; }
-.notch[data-side='right'] .nt-ring { left: auto; right: 0; }
-html.fr-lit .notch.out .nt-ring, html.fr-lit .notch.drop .nt-ring { opacity: 1; transition: opacity 0.3s ease 0.36s; }
+/* Its light grows out of the border WITH it (Moss, 11-19: no delay, "move as one"): squeezed to the tucked
+   notch's thickness (--nk) from the screen's edge, it opens to the whole ring on the same curve as the
+   notch's background; it comes on at once and goes once the notch is back in. */
+.nt-ring { position: absolute; left: 0; pointer-events: none; opacity: 0; transform: scaleX(var(--nk)); transform-origin: 0 50%; transition: opacity 0.12s ease 0.34s, transform 0.46s cubic-bezier(0.22, 1, 0.36, 1); mix-blend-mode: screen; }
+.notch[data-side='right'] .nt-ring { left: auto; right: 0; transform-origin: 100% 50%; }
+html.fr-lit .notch.out .nt-ring, html.fr-lit .notch.drop .nt-ring { opacity: 1; transform: none; transition: opacity 0.08s ease, transform 0.46s cubic-bezier(0.22, 1, 0.36, 1); }
 html[data-pill='white'] .nt-ring, html[data-pill='matte-white'] .nt-ring { mix-blend-mode: normal; }
 .nt-ring > div { position: absolute; inset: 0; overflow: hidden; }
 .nt-ring-halo { opacity: 0.45; -webkit-mask: var(--m-halo) 0 0 / 100% 100% no-repeat; mask: var(--m-halo) 0 0 / 100% 100% no-repeat; filter: blur(1.5px); }
