@@ -78,6 +78,8 @@ export const PHONE = 'phone:';
 const isPhone = (id: string) => id.startsWith(PHONE);
 /** A picture the clipboard can take, by its name. */
 const isImageName = (name: string) => /\.(png|jpe?g|gif|bmp|webp|heic|tiff?)$/i.test(name);
+/** The one picture a finished transfer saved (from a computer or a phone), if that is all it brought. */
+const pictureOf = (t: LandTransfer): string | null => (t.count === 1 && t.saved.length === 1 && isImageName(t.saved[0]) ? t.saved[0] : null);
 
 /** "Moss's MacBook Air" → "MM", "DESKTOP-K2L3M4" → "DK", "studio" → "ST". */
 export function initials(name: string): string {
@@ -186,6 +188,12 @@ export class LandActivity extends BaseActivity {
   private phoneSeq = 0;
   /** Transfers from a phone whose picture Rust also put on the clipboard. */
   private phoneCopied = new Set<string>();
+  /**
+   * Received pictures no longer where they were saved (moved or deleted): their rows lose Copy again.
+   * Rows only live in memory (KEEP_MS), so after a restart there is no row, and nothing to check.
+   */
+  private readonly picturesGone = new Set<string>();
+  private lastPictures = 0;
   private demoTimers: Array<ReturnType<typeof setTimeout>> = [];
 
   constructor() {
@@ -445,6 +453,23 @@ export class LandActivity extends BaseActivity {
     if (this.ctx.cardOpen?.() && now - this.lastScan >= SCAN_MS) void this.scan();
     if (this.ctx.cardOpen?.() && now - this.lastFirewall >= FIREWALL_MS) void this.checkFirewall();
     if (this.ctx.cardOpen?.() && this.friends.length && now - this.lastOnline >= ONLINE_MS) void this.checkOnline();
+    if (this.ctx.cardOpen?.() && now - this.lastPictures >= SCAN_MS) void this.checkPictures();
+  }
+
+  /** While the card is open: is each received picture with Copy again still on disk? A gone one hides its button. */
+  private async checkPictures(): Promise<void> {
+    this.lastPictures = Date.now();
+    if (native.demo) return;
+    const paths = [...this.transfers.values()]
+      .filter((t) => t.dir === 'in' && t.state === 'done' && !t.text)
+      .map(pictureOf)
+      .filter((p): p is string => !!p && !this.picturesGone.has(p));
+    if (!paths.length) return;
+    const stats = await native.statMany(paths);
+    if (!this.alive) return;
+    const gone = paths.filter((_, i) => !stats[i]);
+    for (const p of gone) this.picturesGone.add(p);
+    if (gone.length) this.ctx.update();
   }
 
   private async checkFirewall(): Promise<void> {
@@ -1316,7 +1341,22 @@ export class LandActivity extends BaseActivity {
       row.arg = t.id;
       row.tip = isLink(t.text) ? 'Open the link' : 'Copy it again';
     }
+    // What came in, a note or one picture: Copy again, where a send's Send again sits (Justin).
+    if (t.dir === 'in' && t.state === 'done') {
+      const copy = this.copyAgainButton(t);
+      if (copy) row.button = copy;
+    }
     return row;
+  }
+
+  /** A received note (a link too), or a received picture still on disk: Copy again puts it back on the clipboard. */
+  private copyAgainButton(t: Live): SheetButton | null {
+    const button = (tip: string): SheetButton => ({ key: 'copy', icon: 'copy', action: 'copy-again', arg: t.id, style: 'ghost', tip, shown: true });
+    if (t.text) return button('Copy again');
+    const picture = pictureOf(t);
+    if (!picture || this.picturesGone.has(picture)) return null;
+    // A phone's picture went on the clipboard when it came; one from a computer did not.
+    return button(this.phoneCopied.has(t.id) ? 'Copy again' : 'Copy the picture');
   }
 
   // ---------------------------------------------------------------- files dropped on the island
@@ -1646,6 +1686,25 @@ export class LandActivity extends BaseActivity {
         if (!text) break;
         if (name === 'open-text' && isLink(text)) void native.openUrl(text.trim());
         else void native.clipboardSetText(text);
+        break;
+      }
+      case 'copy-again': {
+        // A received row's Copy again: the note as text, a picture as a picture (like when it came).
+        const t = this.transfers.get(id);
+        if (!t || t.dir !== 'in' || t.state !== 'done') break;
+        if (t.text) {
+          void native.clipboardSetText(t.text);
+          this.note = { text: 'Text copied', at: Date.now(), good: true };
+          break;
+        }
+        const picture = pictureOf(t);
+        if (!picture) break;
+        if (await native.clipboardCopyImage(picture)) this.note = { text: 'Image copied', at: Date.now(), good: true };
+        else if (!native.demo && !(await native.statMany([picture]))[0]) {
+          // Moved or deleted since it came: the button goes, and the card says why.
+          this.picturesGone.add(picture);
+          this.note = { text: 'That picture was moved or deleted.', at: Date.now() };
+        } else this.note = { text: "Couldn't copy that picture.", at: Date.now() };
         break;
       }
       case 'cancel':

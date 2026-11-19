@@ -773,6 +773,47 @@ describe('text and links', () => {
     expect(block(act.sheet(sheetEnv('open')), 'text', 'note')!.text).toContain('That device is gone');
   });
 
+  it('a note that came has Copy again where Send again sits: the text back on the clipboard', async () => {
+    const { act } = await boot();
+    emit('land-transfer', transfer({ id: 'in-t', dir: 'in', peer: LAB, state: 'done', count: 0, total: 26, items: [], text: 'https://example.com/recipe' }));
+    const row = block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items.find((r) => r.key === 'in-t')!;
+    expect(row.button).toMatchObject({ key: 'copy', icon: 'copy', action: 'copy-again', arg: 'in-t', style: 'ghost', tip: 'Copy again', shown: true });
+    // The row itself still opens a link.
+    expect(row.action).toBe('open-text');
+    await act.action('copy-again', 'in-t');
+    expect(h.native.clipboardSetText).toHaveBeenCalledWith('https://example.com/recipe');
+    expect(block(act.sheet(sheetEnv('open')), 'text', 'note')).toMatchObject({ text: 'Text copied', tone: 'good' });
+  });
+
+  it('a picture that came has Copy again (as a picture) while it is on disk; gone, the button goes', async () => {
+    h.native.statMany = vi.fn(async (paths: string[]) => paths.map(() => ({ size: 1, mtimeMs: 0, dir: false })));
+    const { act, calls } = await boot();
+    const pic = 'C:\\Users\\me\\Downloads\\photo.png';
+    act.fromPhone({ kind: 'file', phone: 'p1', from: 'iPhone', id: 7, name: 'photo.png', path: pic, size: 200_000, copied: true } as never);
+    emit('land-transfer', transfer({ id: 'in-pc', dir: 'in', peer: LAB, state: 'done', count: 1, total: 1000, items: [{ name: 'shot.jpg', size: 1000, files: 1, dir: false }], saved: ['C:\\Users\\me\\Downloads\\shot.jpg'] }));
+    // A file that is not a picture, or several files: nothing to copy.
+    emit('land-transfer', transfer({ id: 'in-pdf', dir: 'in', state: 'done', count: 1, items: [{ name: 'a.pdf', size: 1, files: 1, dir: false }], saved: ['C:\\Users\\me\\Downloads\\a.pdf'] }));
+    const rows = () => block(act.sheet(sheetEnv('open')), 'rows', 'transfers')!.items;
+    expect(rows().find((r) => r.key === 'phone-in-7')!.button).toMatchObject({ icon: 'copy', action: 'copy-again', arg: 'phone-in-7', tip: 'Copy again' });
+    expect(rows().find((r) => r.key === 'in-pc')!.button).toMatchObject({ action: 'copy-again', tip: 'Copy the picture' });
+    expect(rows().find((r) => r.key === 'in-pdf')!.button).toBeUndefined();
+    await act.action('copy-again', 'phone-in-7');
+    expect(h.native.clipboardCopyImage).toHaveBeenCalledWith(pic);
+    expect(h.native.clipboardSetText).not.toHaveBeenCalled();
+    // Deleted from Downloads: the open card notices and the button goes, no failure to press.
+    h.native.statMany = vi.fn(async (paths: string[]) => paths.map((p) => (p === pic ? null : { size: 1, mtimeMs: 0, dir: false })));
+    calls.cardOpen = true;
+    await tick(5000);
+    expect(rows().find((r) => r.key === 'phone-in-7')!.button).toBeUndefined();
+    expect(rows().find((r) => r.key === 'in-pc')!.button).toMatchObject({ action: 'copy-again' });
+    // Pressed before the check: the copy fails, the button goes, and the card says why.
+    h.native.clipboardCopyImage = vi.fn(async () => false);
+    h.native.statMany = vi.fn(async () => [null]);
+    await act.action('copy-again', 'in-pc');
+    expect(rows().find((r) => r.key === 'in-pc')!.button).toBeUndefined();
+    expect(block(act.sheet(sheetEnv('open')), 'text', 'note')!.text).toBe('That picture was moved or deleted.');
+  });
+
   it('a link pasted in the card goes to the computer picked, and the card empties', async () => {
     const { act } = await boot();
     emit('land-peers', [MAC, LAB]);
