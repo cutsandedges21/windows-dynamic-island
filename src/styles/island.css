@@ -2439,12 +2439,17 @@ html.dk-upright .dock .dk-skip { width: 34px; height: 26px; min-height: 26px; pa
 .dk-peek { display: flex; align-items: flex-end; gap: 8px; padding: 10px; }
 .dk-peek.stack { flex-direction: column; align-items: stretch; }
 .dk-pk { display: flex; flex-direction: column; gap: 6px; }
-.dk-pk-head { display: flex; align-items: center; gap: 6px; padding: 0 2px 0 4px; min-height: 20px; }
+/* The title row like Windows 11's thumbnails: the app's icon, the title, and at the end a plain thin x
+   that gets Windows' red rounded square under it when pointed at (lighter while pressed). */
+.dk-pk-head { display: flex; align-items: center; gap: 8px; padding: 0 0 0 4px; min-height: 24px; }
+.dk-pk-icon { width: 16px; height: 16px; flex: none; }
 .dk-pk-title { flex: 1; min-width: 0; font: 600 12px/1.2 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dk-pop .dk-pk-x { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 10px; background: rgba(var(--ink), 0.1); opacity: 0; transition: opacity 0.15s ease, background-color 0.15s ease; }
+.dk-pop .dk-pk-x { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 4px; opacity: 0; transition: opacity 0.15s ease, background-color 0.1s ease; }
 .dk-pk:hover .dk-pk-x { opacity: 1; }
-.dk-pop .dk-pk-x:hover { background: #e5484d; color: #fff; }
-.dk-pk-x svg { width: 11px; height: 11px; }
+.dk-pop .dk-pk-x:hover { background: #c42b1c; color: #fff; }
+.dk-pop .dk-pk-x:active { background: #d4483a; color: #fff; }
+/* Its own stroke: the preview sits outside .dock, so .dock svg.line doesn't reach it (the x was not drawn). */
+.dk-pk-x svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; }
 .dk-pop .dk-pk-shot { display: grid; place-items: center; border-radius: 10px; background: rgba(var(--ink), 0.06); box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.08); transition: box-shadow 0.15s ease; }
 .dk-pop .dk-pk-shot:hover { box-shadow: inset 0 0 0 2px var(--accent); }
 .dk-pk-shot img { width: 32px; height: 32px; opacity: 0.5; }

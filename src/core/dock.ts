@@ -1215,6 +1215,15 @@ export async function runDock(stage: HTMLElement): Promise<void> {
           closePeek();
         });
         const head = el('div', 'dk-pk-head');
+        // The app's icon before the title, as on Windows' own thumbnails.
+        if (a.icon) {
+          const ic = document.createElement('img');
+          ic.className = 'dk-pk-icon';
+          ic.src = a.icon;
+          ic.alt = '';
+          ic.draggable = false;
+          head.append(ic);
+        }
         head.append(title, x);
         const shot = el('button', 'dk-pk-shot');
         shot.dataset.hwnd = String(hwnd);
