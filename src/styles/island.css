@@ -2395,6 +2395,13 @@ html.dock-melt[data-pill='glass'] .dock-bg::before { border-top-color: transpare
 .dk-tip { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px 11px; white-space: nowrap; pointer-events: none; }
 /* An app's right-click menu (dock.ts openMenu): the app (a new window), Pin, Close, in the bar's look. */
 .dk-menu { display: flex; flex-direction: column; gap: 2px; min-width: 220px; padding: 6px; border-radius: 16px; }
+/* Glass: the page can't blur what is behind it, so the menu's words sat over the windows behind,
+   hard to read (Justin's 11-19 screenshot). Its glass sheen over a solid frosted grey. */
+html[data-pill='glass'] .dk-menu {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02) 50%, rgba(255, 255, 255, 0.05)),
+    rgb(34, 36, 42);
+}
 .dk-pop .dk-mi { display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 14px 0 10px; border-radius: 10px; font: 500 13px/1 var(--font); white-space: nowrap; transition: background-color 0.12s ease; }
 .dk-pop .dk-mi:hover { background: rgba(var(--ink), 0.1); }
 .dk-pop .dk-mi:active { background: rgba(var(--ink), 0.16); }

@@ -266,8 +266,15 @@ export function startName(name: string, key: string, start: readonly InstalledAp
   if (name.toLowerCase() !== file) return name;
   const exact = start.find((s) => keyOf(s.target) === key);
   if (exact) return exact.name;
-  const same = start.filter((s) => !/^shell:/i.test(s.target) && nameOf(s.target).toLowerCase() === file);
-  return same.length === 1 ? same[0].name : name;
+  const one = (list: readonly InstalledApp[]) => (list.length === 1 ? list[0].name : null);
+  // Start lists most desktop apps by an app id: Chrome is "Chrome", Claude "com.squirrel.AnthropicClaude.claude".
+  const byId = one(start.filter((s) => /^shell:appsfolder\\/i.test(s.target) && s.target.split(/[\\.]/).pop()?.toLowerCase() === file));
+  if (byId) return byId;
+  const byFile = one(start.filter((s) => !/^shell:/i.test(s.target) && nameOf(s.target).toLowerCase() === file));
+  if (byFile) return byFile;
+  // Else the one Start name holding the file's name (netbeans64: Apache NetBeans).
+  const word = file.replace(/\d+$/, '');
+  return (word.length >= 4 && one(start.filter((s) => s.name.toLowerCase().replace(/\s+/g, '').includes(word)))) || name;
 }
 
 /** The programs with a window, in the order they opened: `seen` plus newly opened ones, less closed ones. */
