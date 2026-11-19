@@ -50,6 +50,21 @@ describe('status (status.test.js)', () => {
     expect(refineWithNative('working', null, null)).toBe('working');
   });
 
+  it('a picker the user opened with /model, /effort, /config... after a turn is not "needs you"', () => {
+    // What Claude Code's registry says while the picker shows (seen live with /model, /effort, /config, /resume).
+    expect(refineWithNative('awaiting_input', 'waiting', 'dialog open')).toBe('awaiting_input');
+    // End to end: the turn ended (or the last entry is an earlier slash command), then the picker opened.
+    const ended = { ...base, lastEntryKind: 'assistant' as const, lastStopReason: 'end_turn', nativeStatus: 'waiting', waitingFor: 'dialog open' };
+    expect(deriveStatus(ended)).toBe('awaiting_input');
+    expect(deriveStatus({ ...ended, lastEntryKind: 'local_command', lastStopReason: null })).toBe('awaiting_input');
+    // Claude's own dialog mid-turn, and real prompts, still need you.
+    expect(refineWithNative('working', 'waiting', 'dialog open')).toBe('awaiting_permission');
+    expect(refineWithNative('awaiting_input', 'waiting', 'permission prompt')).toBe('awaiting_permission');
+    expect(refineWithNative('awaiting_input', 'waiting', 'input needed')).toBe('awaiting_permission');
+    expect(deriveStatus({ ...ended, lastEntryKind: 'assistant', lastStopReason: 'tool_use', pendingTool: true, lastToolName: 'AskUserQuestion' })).toBe('awaiting_permission');
+    expect(deriveStatus({ ...ended, lastEntryKind: 'assistant', lastStopReason: 'tool_use', pendingTool: true, lastToolName: 'Bash', permissionMode: 'default', waitingFor: 'permission prompt' })).toBe('awaiting_permission');
+  });
+
   it('pendingBlockReason: dialogs, modes, children, stalls', () => {
     const p = (extra: Partial<RawStatus>) => pendingBlockReason({ alive: true, hasTranscript: true, pendingTool: true, ageSeconds: 1, childCount: 0, ...extra });
     expect(p({ lastToolName: 'AskUserQuestion', permissionMode: 'bypassPermissions', childCount: 2 })).toBe('dialog');

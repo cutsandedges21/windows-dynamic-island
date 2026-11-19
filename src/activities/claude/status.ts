@@ -77,9 +77,24 @@ export function classify(raw: RawStatus & { pendingBlocking?: boolean; turnPreda
   return 'unknown';
 }
 
+/**
+ * A picker the user opened with a slash command (/model, /effort, /config, /resume, /permissions,
+ * /agents, /theme...), not something Claude asks. While one is showing, Claude Code's registry says
+ * "waiting" for "dialog open" (the same words for every such command), and the transcript only gets
+ * the command once the picker closes, so it still reads as the turn being over. Seen live: a picker
+ * opened mid-turn never shows as waiting (the chat stays busy), so "dialog open" during a turn is
+ * Claude Code's own and still needs you. So do permission prompts, questions and plans: they leave
+ * a pending tool in the transcript (the turn isn't over), and a permission prompt says
+ * "permission prompt", not "dialog open".
+ */
+function isUserPicker(status: Status, waitingFor: string | null | undefined): boolean {
+  return waitingFor === 'dialog open' && status === 'awaiting_input';
+}
+
 export function refineWithNative(status: Status, nativeStatus: string | null | undefined, waitingFor: string | null | undefined): Status {
   if (status === 'awaiting_permission' || status === 'interrupted' || status === 'errored' || nativeStatus == null) return status;
   if (nativeStatus === 'busy' && status !== 'new') return 'working';
+  if (nativeStatus === 'waiting' && isUserPicker(status, waitingFor)) return status;
   if (nativeStatus === 'waiting' && waitingFor && status !== 'new') return 'awaiting_permission';
   // "shell": Claude Code is idle with a background shell still running (its "1 shell").
   if ((nativeStatus === 'idle' || nativeStatus === 'shell') && status !== 'new') return 'awaiting_input';
