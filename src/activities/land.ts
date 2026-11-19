@@ -1041,7 +1041,15 @@ export class LandActivity extends BaseActivity {
       blocks: [
         { t: 'head', key: 'head', icon: 'check', tone: 'good', title: `${what(t)} from ${t.peer.name}`, sub: `${bytes(t.total)} · in Downloads${this.phoneCopied.has(t.id) ? ' · Copied to the clipboard' : ''}` },
         { t: 'rows', key: 'saved', items: rows },
-        { t: 'buttons', key: 'act', items: [{ key: 'show', label: 'Show in folder', icon: 'folder', action: 'show', arg: t.saved[0], style: 'secondary' }] },
+        {
+          t: 'buttons',
+          key: 'act',
+          items: [
+            // Moss, 11-18: open what arrived from here, not only show it in its folder.
+            { key: 'open', label: t.saved.length > 1 ? 'Open first' : 'Open', icon: 'external', action: 'open', arg: t.saved[0], style: 'primary' },
+            { key: 'show', label: 'Show in folder', icon: 'folder', action: 'show', arg: t.saved[0], style: 'secondary' },
+          ],
+        },
       ],
     };
   }

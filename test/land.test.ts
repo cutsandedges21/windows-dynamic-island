@@ -647,6 +647,11 @@ describe('land', () => {
     expect(keys).toEqual(['icon', 'end', 'show']);
     const done = act.sheet(sheetEnv('surfaced'))!;
     expect(block(done, 'rows', 'saved')!.items.map((r) => r.title)).toEqual(['Trip', 'itinerary.pdf']);
+    // Open (the first of them) next to Show in folder.
+    expect(block(done, 'buttons', 'act')!.items.map((b) => [b.key, b.label, b.action, b.arg])).toEqual([
+      ['open', 'Open first', 'open', 'C:\\Users\\m\\Downloads\\Trip'],
+      ['show', 'Show in folder', 'show', 'C:\\Users\\m\\Downloads\\Trip'],
+    ]);
     await act.action('show', 'C:\\Users\\m\\Downloads\\Trip');
     expect(h.native.reveal).toHaveBeenCalledWith('C:\\Users\\m\\Downloads\\Trip');
   });

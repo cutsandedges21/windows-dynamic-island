@@ -4,7 +4,7 @@
 
 import type { Activity } from '../core/activity';
 import type { Island } from '../core/island';
-import type { FileDrop, native as Native } from '../core/native';
+import { emitLocal, type FileDrop, type native as Native } from '../core/native';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -20,6 +20,17 @@ export async function landPreview(island: Island, native: typeof Native, mode: s
   if (mode === 'chat') {
     land.demoChat?.();
     await land.action?.('card');
+    island.schedule();
+    return;
+  }
+  if (mode === 'got') {
+    // A finished send from a computer nearby: the card with Open and Show in folder.
+    const peer = { id: 'a1b2c3d4e5f60718', name: 'MossLaptop', kind: 'pc' } as unknown as Parameters<typeof emitLocal>[1];
+    const saved = ['C:/Users/me/Downloads/Screenshot 2026-11-18 230633.png', 'C:/Users/me/Downloads/Screenshot 2026-11-18 230633 (1).png'];
+    const base = { id: 't-got', dir: 'in', peer, done: 63_300, total: 63_300, count: 2, items: [], error: null, saved, folder: null, expires: null, via: 'lan' };
+    emitLocal('land-transfer', { ...base, state: 'sending' });
+    await sleep(200);
+    emitLocal('land-transfer', { ...base, state: 'done' });
     island.schedule();
     return;
   }
