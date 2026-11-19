@@ -161,7 +161,8 @@ describe('what a phone sends', () => {
     expect(pill.find((s) => s.key === 'end')).toMatchObject({ text: "IMG_0001.JPG from Moss's iPhone" });
     expect(pill.find((s) => s.key === 'open')).toMatchObject({ action: 'open', arg: 'C:\\Users\\moss\\Downloads\\IMG_0001.JPG' });
     const card = act.sheet(sheetEnv('surfaced'));
-    expect(block(card, 'buttons')?.items[0]).toMatchObject({ label: 'Show in folder', action: 'show' });
+    expect(block(card, 'buttons')?.items[0]).toMatchObject({ label: 'Open', action: 'open' });
+    expect(block(card, 'buttons')?.items[1]).toMatchObject({ label: 'Show in folder', action: 'show' });
     expect(block(card, 'head')?.sub).not.toContain('clipboard');
   });
 
