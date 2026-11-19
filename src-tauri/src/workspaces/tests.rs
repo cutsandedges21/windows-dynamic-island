@@ -220,7 +220,9 @@ fn installed_apps_are_programs_or_store_apps() {
     for a in &apps {
         assert!(!a.name.trim().is_empty());
         let t = a.target.to_lowercase();
-        assert!(t.starts_with("shell:appsfolder\\") || (t.ends_with(".exe") && std::path::Path::new(&a.target).is_file()), "{a:?}");
+        // Start's apps by path or id, and shortcuts on the desktop to apps Start doesn't list.
+        let file = std::path::Path::new(&a.target).is_file();
+        assert!(t.starts_with("shell:appsfolder\\") || ((t.ends_with(".exe") || t.ends_with(".lnk")) && file), "{a:?}");
     }
 }
 
