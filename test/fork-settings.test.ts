@@ -73,7 +73,7 @@ describe("Moss's 0.4.2 settings file", () => {
       options: { resetAlerts: true, sessionHotkeys: true, notifications: true, phone: true, showLimits: true, showDesktop: true, finishedSeconds: 8, onlyOtherChats: false, replyWindowSeconds: 0, requireHello: false },
     });
     // His saved 45 s Reply window (Claude Code's old default) went off once, with settings version 6.
-    expect(s.activities.config.claude.options).toMatchObject({ showDone: true, showAutoModel: true, glowInFront: true, permissions: true, questions: true, replyBox: true });
+    expect(s.activities.config.claude.options).toMatchObject({ showDone: true, glowInFront: true, permissions: true, questions: true, replyBox: true });
     // The heading over Claude Code's options holds no value.
     expect('code' in s.activities.config.claude.options).toBe(false);
   });
@@ -128,14 +128,14 @@ describe("Justin's 0.2.11 settings file", () => {
     expect(s.activities.order[0]).toBe('claude');
     expect(s.activities.config.claude).toMatchObject({
       enabled: true, priority: 'high', autoShow: true, persistent: true, interactive: true, interrupt: true, grows: 'wide',
-      options: { showDone: true, showAutoModel: true, glowInFront: true, finishedSeconds: 8, replyWindowSeconds: 0, requireHello: false, sessionHotkeys: true },
+      options: { showDone: true, glowInFront: true, finishedSeconds: 8, replyWindowSeconds: 0, requireHello: false, sessionHotkeys: true },
     });
   });
 
   it("Claude Status's switches he turned off stay off", () => {
     const saved = load('settings-justin-0.2.11.json') as { activities: { config: Record<string, { options: Record<string, unknown> }> } };
-    saved.activities.config.claudeStatus.options = { showDone: false, showAutoModel: false, glowInFront: false };
-    expect(migrate(saved).activities.config.claude.options).toMatchObject({ showDone: false, showAutoModel: false, glowInFront: false });
+    saved.activities.config.claudeStatus.options = { showDone: false, glowInFront: false };
+    expect(migrate(saved).activities.config.claude.options).toMatchObject({ showDone: false, glowInFront: false });
   });
 
   it('loading it again changes nothing', () => {

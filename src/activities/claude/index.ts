@@ -37,8 +37,6 @@ import { UsageClient, WeeklyTokens, weekWindowStart, type UsageData, type UsageS
 interface Options {
   /** A session that finishes or fails pops the island up for a moment (Claude Status's). */
   showDone: boolean;
-  /** Once Auto model is on, the card's header has a button that pauses it. */
-  showAutoModel: boolean;
   /** While a session runs, its blue glow stays on round the island whatever is in front. */
   glowInFront: boolean;
   /** The Claude icon stays Claude's orange; off, it takes the accent colour. */
@@ -232,7 +230,6 @@ export class ClaudeActivity extends BaseActivity {
     const o = this.ctx.options<Partial<Options>>();
     return {
       showDone: o.showDone !== false,
-      showAutoModel: o.showAutoModel !== false,
       glowInFront: o.glowInFront !== false,
       orangeMark: o.orangeMark === true,
       permissions: o.permissions !== false,
@@ -1555,10 +1552,9 @@ export class ClaudeActivity extends BaseActivity {
 
   /** Claude Status's header: how many sessions or how many wait, the Auto model button, and `extra` buttons. */
   private statusHead(extra: SheetButton[] = []): Block {
-    const o = this.opts();
     const buttons: SheetButton[] = [];
-    // Only once Auto model is installed (Activities › Claude Status); "Show Auto model button" there hides it.
-    if (this.auto.installed && o.showAutoModel) {
+    // Only once Auto model is installed (Activities › Claude Status).
+    if (this.auto.installed) {
       buttons.push({
         key: 'router',
         label: this.auto.on ? 'Auto model: on' : 'Auto model: off',

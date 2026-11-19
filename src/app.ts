@@ -472,7 +472,7 @@ function cardBody(meta: ActivityMeta): HTMLElement {
       .flatMap((o) =>
         meta.id === 'system' && o.key === 'always'
           ? [optionRow(meta.id, o), systemTable()]
-          : meta.id === 'claude' && o.key === 'showAutoModel'
+          : meta.id === 'claude' && o.key === 'glowInFront'
             ? [autoModelRow(), optionRow(meta.id, o)]
             : [optionRow(meta.id, o)],
       ),

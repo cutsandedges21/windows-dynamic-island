@@ -685,7 +685,7 @@ const CLAUDE_TILES: Record<string, string> = {
 };
 
 /** Claude Status's own switches, which Claude carries now. */
-const STATUS_OPTIONS = ['showDone', 'showAutoModel', 'glowInFront'];
+const STATUS_OPTIONS = ['showDone', 'glowInFront'];
 
 /**
  * Claude Code and Claude Status became one activity, Claude (shown as Claude Status). On if either
