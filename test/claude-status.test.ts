@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/core/native', async () => await import('./fake-native'));
 
-import type { UiChat, UiScan } from '../src/core/native';
+import { native, type UiChat, type UiScan } from '../src/core/native';
 import { ChatWatcher, chatKey, renameLike } from '../src/activities/claude-status/chats';
-import { applyShells, applyWorkflow, hostOf, isDismissed, isStale, shellDismissed, labelItems, normTitle, orderWithShells, runProgress, sortItems, sourceTag, stateWord, type Item } from '../src/activities/claude-status/engine';
+import { applyShells, applyWorkflow, hostOf, isDismissed, isStale, shellDismissed, labelItems, normTitle, orderWithShells, runProgress, sortItems, sourceTag, stateWord, StatusEngine, type Item } from '../src/activities/claude-status/engine';
+import type { SessionTracker, SessionView } from '../src/activities/claude/tracker';
 import { bashCommand, estimate, fmtLeft, shellKey, shellSamples } from '../src/activities/claude-status/estimate';
 import { age, toneOf, type StatusRow } from '../src/activities/claude-status';
 import { emptyWork, fold } from '../src/activities/claude-status/work';
@@ -298,5 +299,38 @@ describe('Claude Status: the rules (widget.pyw)', () => {
     expect(shellDismissed(sh, { since: 600 }, d)).toBe(false); // a new turn, or the turn ended
     expect(shellDismissed({ ...sh, since: 700 }, { since: 400 }, d)).toBe(false); // a newer shell
     expect(shellDismissed(sh, { since: 400 }, undefined)).toBe(false);
+  });
+});
+
+describe('Claude Status: the red dot (unread) goes once you look', () => {
+  // A chat's Claude Code process (pid 100) and a background job (pid 300) parked out of it; the Windows Terminal window is pid 50.
+  const view = (over: Partial<SessionView>): SessionView => ({ id: 'S1', sessionId: 'S1', pid: 100, kind: 'interactive', alive: true, title: null, name: 'chat', ...over }) as SessionView;
+  const job = view({ id: 'J1', sessionId: 'J1', pid: 300, kind: 'bg', jobId: 'J1', title: 'click-hover-expansion-motion', name: 'click-hover-expansion-motion' });
+  const tab = view({ title: 'click-hover-expansion-motion', name: 'click-hover-expansion-motion', parkedJobId: 'J1' });
+  const other = view({ id: 'S2', sessionId: 'S2', pid: 200, title: 'Release notes', name: 'release' });
+  const tracker = { probe: { processName: (pid: number) => (pid === 50 ? 'windowsterminal.exe' : null), ancestors: (pid: number) => (pid === 300 ? [] : [{ pid: 50, name: 'windowsterminal.exe' }]) } };
+
+  async function unreadWith(tabTitle: string) {
+    const engine = new StatusEngine('C:/cfg', () => {}, tracker as unknown as SessionTracker) as unknown as { views: SessionView[]; seen: Record<string, number>; markUnread(items: Item[], now: number): Promise<void> };
+    engine.views = [job, tab, other];
+    engine.seen = { J1: 0, S1: 0, S2: 0 }; // finished while Island watched
+    native.foreground = async () => 9;
+    native.winEnum = async () => [{ hwnd: 9, pid: 50, title: tabTitle }];
+    const items = [
+      item({ id: 'J1', host: hostOf([], 'bg'), state: 'done', since: 1000, title: job.title!, view: job }),
+      item({ id: 'S1', state: 'done', since: 1000, title: tab.title!, view: tab }),
+      item({ id: 'S2', state: 'done', since: 1000, title: 'Release notes', view: other }),
+    ];
+    await engine.markUnread(items, 2000);
+    return Object.fromEntries(items.map((x) => [x.id, x.unread]));
+  }
+
+  it("a background job is read once the tab of the chat parked into it is in front, with Claude Code's status mark before its title", async () => {
+    expect(await unreadWith('✳ click-hover-expansion-motion')).toEqual({ J1: false, S1: false, S2: true });
+    expect(await unreadWith('◐ click-hover-expansion-motion')).toEqual({ J1: false, S1: false, S2: true });
+  });
+
+  it('another tab in front leaves it unread', async () => {
+    expect(await unreadWith('✳ Release notes')).toEqual({ J1: true, S1: true, S2: false });
   });
 });

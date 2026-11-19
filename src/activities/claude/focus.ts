@@ -63,6 +63,19 @@ export function chatsShownIn<T extends { title: string | null; name: string }>(w
   return shown;
 }
 
+type Parkable = { id: string; kind: string; alive: boolean; jobId?: string | null; parkedJobId?: string | null };
+
+/**
+ * The chat whose terminal shows this background job: Claude Code runs a chat sent to the
+ * background (or parked) as a job of its own, with no window, and the chat it was parked from
+ * says so (its parkedJobId) while its tab shows the job's work. Null for anything else.
+ */
+export function viewerOf<T extends Parkable>(s: T | null | undefined, sessions: T[]): T | null {
+  if (s?.kind !== 'bg') return null;
+  const job = s.jobId || s.id.slice(0, 8);
+  return sessions.find((x) => x.id !== s.id && x.kind !== 'bg' && x.alive && x.parkedJobId === job) ?? null;
+}
+
 /**
  * The Claude Code extension's own deep link. With `prompt`, the chat opens
  * with that prompt (how Continue Session reaches editor chats).

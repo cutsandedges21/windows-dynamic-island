@@ -8,7 +8,7 @@
 // dismissing, order. Times are in seconds, like the widget's.
 
 import { native, type WindowRow } from '../../core/native';
-import { focusSession, selectWindow } from '../claude/focus';
+import { chatsShownIn, focusSession, selectWindow, viewerOf } from '../claude/focus';
 import { joinPath, type Status } from '../claude/status';
 import { SessionTracker, type SessionView } from '../claude/tracker';
 import { ChatWatcher, type ChatRecord } from './chats';
@@ -437,6 +437,8 @@ export class StatusEngine {
   private readonly codeSeenOnce = new Set<string>();
   /** The last rows built, by id, for jumping. */
   private items = new Map<string, Item>();
+  /** Claude Code's sessions as last polled: which chat a background job shows in, and the tab titles to tell apart. */
+  private views: SessionView[] = [];
 
   /**
    * `tracker`: the Claude activity's own session list, so one scan of Claude Code's registry,
@@ -490,6 +492,7 @@ export class StatusEngine {
   /** Claude Code sessions, in the widget's words. `listed`: the sessions the activity just polled (hidden ones left out). */
   private async codeItems(now: number, listed?: SessionView[]): Promise<Item[]> {
     const sessions = listed ?? (await this.tracker.poll()).sessions;
+    this.views = sessions;
     const out: Item[] = [];
     const files = new Set<string>();
     let changed = false;
@@ -672,22 +675,29 @@ export class StatusEngine {
 
   // ---------------------------------------------------------------- unread
 
-  private windowFor(x: Item, windows: WindowRow[]): number | null {
-    const v = x.view;
-    if (!v) return x.chat?.hwnd ?? null;
+  private windowOf(v: SessionView, windows: WindowRow[]): number | null {
     const candidates = [v.pid, ...this.tracker.probe.ancestors(v.pid).filter((a) => a.name !== 'explorer.exe').map((a) => a.pid)];
     return selectWindow(windows, candidates, v.project);
   }
 
-  /** Is this what you're looking at? Windows Terminal: its title is the active tab's. */
+  /**
+   * Is this what you're looking at? Windows Terminal: its title is the active tab's, read the way
+   * the Claude activity reads it (chatsShownIn: after Claude Code's status mark, longest title wins).
+   * A background job has no window: it is open when the chat it was parked from is (viewerOf).
+   */
   private isOpen(x: Item, fg: number, windows: WindowRow[]): boolean {
     if (!fg) return false;
     if (x.source === 'chrome') return fg === x.chat?.hwnd;
-    if (x.host === 'Terminal') {
+    const viewer = viewerOf(x.view, this.views);
+    const v = viewer ?? x.view;
+    const host = viewer ? hostOf(this.tracker.probe.ancestors(viewer.pid).map((a) => a.name), viewer.kind) : x.host;
+    if (v && host === 'Terminal') {
       const w = windows.find((r) => r.hwnd === fg);
-      return !!w && this.tracker.probe.processName(w.pid) === 'windowsterminal.exe' && normTitle(w.title) === normTitle(x.view?.title || x.view?.name);
+      if (!w || this.tracker.probe.processName(w.pid) !== 'windowsterminal.exe') return false;
+      // Background jobs carry their chat's title too: the tab is the chat's, never the job's.
+      return chatsShownIn(w.title, [v, ...this.views.filter((s) => s.kind !== 'bg' && s.id !== v.id)]).includes(v);
     }
-    return fg === this.windowFor(x, windows);
+    return fg === (v ? this.windowOf(v, windows) : (x.chat?.hwnd ?? null));
   }
 
   private markSeen(x: Item, now: number): void {

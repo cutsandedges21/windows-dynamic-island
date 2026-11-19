@@ -22,7 +22,7 @@ import { BaseActivity, chime } from '../base';
 import { sessionCount, SHOW_MS, statusRows, statusSegments, statusSub, toneOf, waitingRows } from '../claude-status';
 import { StatusEngine, type StatusRow, type StatusState } from '../claude-status/engine';
 import { chatUrl, DesktopChats, type DesktopChat } from './desktop';
-import { afterModifiersReleased, chatsShownIn, deepLink, focusSession, selectWindow } from './focus';
+import { afterModifiersReleased, chatsShownIn, deepLink, focusSession, selectWindow, viewerOf } from './focus';
 import { HookState, questionsOf, type HookEvent, type PermissionCard, type ReplyHold } from './hooks';
 import { MomentGate } from './moments';
 import { markSlept, sleepDue, sleptFor, SLEEP_COUNTDOWN_MS, type SleepDue } from './sleepguard';
@@ -846,16 +846,9 @@ export class ClaudeActivity extends BaseActivity {
     return { looking: front.id === sid, why: `its window is in front; of ${sharing.length} chats there, ${front.id === sid ? 'this one' : front.id.slice(0, 8)} was prompted last` };
   }
 
-  /**
-   * The chat whose terminal shows this background job: Claude Code runs a chat sent to the
-   * background (or parked) as a job of its own, with no window, and the chat it was parked from
-   * says so (its parkedJobId) while its tab shows the job's work.
-   */
+  /** The chat whose terminal tab shows this background job (focus.ts viewerOf), or null. */
   private viewerOf(sid: string): SessionView | null {
-    const s = this.sessions.find((x) => x.id === sid);
-    if (s?.kind !== 'bg') return null;
-    const job = s.jobId || sid.slice(0, 8);
-    return this.sessions.find((x) => x.id !== sid && x.kind !== 'bg' && x.alive && x.parkedJobId === job) ?? null;
+    return viewerOf(this.sessions.find((x) => x.id === sid), this.sessions);
   }
 
   /** The title of the window in front, or null when it can't be read. */
