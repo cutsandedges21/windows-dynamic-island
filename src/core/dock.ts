@@ -144,6 +144,8 @@ export function batteryTone(b: { percent: number; charging: boolean }): 'low' | 
 
 export type DockAct =
   | { kind: 'app'; key: string; rect?: DockIconRect }
+  /** Right-click › the app's name: start another of it (a new window). */
+  | { kind: 'launch'; key: string }
   /** Right-click › Pin to taskbar / Unpin from taskbar. */
   | { kind: 'pin'; key: string; on: boolean }
   /** Right-click › Close: every window of the app. */
@@ -314,6 +316,8 @@ export interface DockHooks {
 
 export class DockHost {
   private apps: DockApp[] = [];
+  /** The windows the apps were made from (an open app's own target, to start another of it). */
+  private live: LiveWindow[] = [];
   /** Programs with a window, in the order they opened (their places on the dock). */
   private seen: string[] = [];
   private readonly icons = new Map<string, string | null>();
@@ -403,6 +407,7 @@ export class DockHost {
       }
       this.seen = openOrder(this.seen, live);
       this.apps = dockApps(pinned, live, front, this.icons, this.seen);
+      this.live = live;
       const frame: DockFrame = {
         apps: this.apps,
         music: this.hooks.music(),
@@ -481,6 +486,13 @@ export class DockHost {
     } else if (a.kind === 'move') {
       const next = movePins(this.hooks.pinned(), this.apps, app.key, Number(a.to));
       if (next) this.hooks.setPinned(next);
+    } else if (a.kind === 'launch') {
+      // Another of it (a new window), as the app's name in Windows' taskbar menu does: what it is
+      // pinned as, else what its open window runs.
+      const pin = this.hooks.pinned().find((p) => keyOf(p.target) === app.key)?.target;
+      const win = this.live.find((w) => app.windows.includes(w.hwnd));
+      const target = pin ?? (win ? targetOf(win) : null);
+      if (target) await native.wsLaunch({ kind: 'app', path: target, args: '', cwd: '' }, '');
     } else if (a.kind === 'close') {
       if (app.windows.length) void native.dockClose(app.windows, rect ?? [0, 0, 0, 0]);
     } else if (a.kind === 'window' || a.kind === 'closewin') {
@@ -576,11 +588,11 @@ async function dockMenu(f: DockFrame, pref: (p: DockPref) => void, edit: { on: b
   await menu.popup();
 }
 
-/** An app's right-click menu: Pin or Unpin, and Close its windows. */
+/** An app's right-click menu, as Windows' taskbar's: its name opens another (a new window), Pin or Unpin, and Close its windows. */
 async function appMenu(a: DockApp, act: (x: DockAct) => void, rect: () => DockIconRect): Promise<void> {
   const n = a.windows.length;
   const items = [
-    await MenuItem.new({ text: a.name, enabled: false }),
+    await MenuItem.new({ text: a.name, action: () => act({ kind: 'launch', key: a.key }) }),
     await PredefinedMenuItem.new({ item: 'Separator' }),
     await MenuItem.new({ text: a.pinned ? 'Unpin from taskbar' : 'Pin to taskbar', action: () => act({ kind: 'pin', key: a.key, on: !a.pinned }) }),
   ];
