@@ -26,6 +26,8 @@ export interface RegistryRecord {
   nativeStatus: string | null;
   waitingFor: string | null;
   jobId: string | null;
+  /** The background job this chat was parked into: its terminal tab now shows that job. */
+  parkedJobId: string | null;
   procStart: bigint | null;
   startedAt: number | null;
   version: string | null;
@@ -57,6 +59,7 @@ export function normalize(data: unknown): RegistryRecord | null {
     nativeStatus: str(d.status),
     waitingFor: str(d.waitingFor),
     jobId: str(d.jobId),
+    parkedJobId: str(d.parkedJobId),
     procStart: parseProcStart(d.procStart),
     startedAt: typeof d.startedAt === 'number' && d.startedAt > 0 ? d.startedAt : null,
     version: str(d.version),
@@ -152,6 +155,10 @@ export interface SessionView {
   context?: ContextFill | null;
   /** How long its recent finished turns took, oldest first, for "done in". */
   turns?: number[];
+  /** A background job's id (Claude Code's jobId). */
+  jobId?: string | null;
+  /** The background job this chat was parked into: its terminal tab shows that job now. */
+  parkedJobId?: string | null;
 }
 
 export interface ClosedView {
@@ -285,6 +292,8 @@ export class SessionTracker {
         version: rec.version || t.version,
         context: contextFill(t.model, t.ctx),
         turns: t.turns,
+        jobId: rec.jobId,
+        parkedJobId: rec.parkedJobId,
       };
       if (prev && prev.alive && !prev.needsYou && view.needsYou) events.push({ type: 'needs-you', session: view });
       if (prev && prev.status === 'working' && view.status === 'awaiting_input') events.push({ type: 'finished', session: view });

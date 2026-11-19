@@ -306,7 +306,7 @@ export function soundStyleKnown(style: string): boolean {
 }
 
 
-export const SETTINGS_VERSION = 7;
+export const SETTINGS_VERSION = 8;
 
 export interface Settings {
   version: number;
@@ -692,7 +692,9 @@ export function migrate(saved: unknown): Settings {
   }
   // Version 7: a Claude chat that finishes in the window (or terminal tab) in front no longer pops
   // up, also where an earlier build saved that switch off (it was off by default, so never chosen).
-  if (from < 7) {
+  // Version 8 does it again: a development build stamped version 7 on settings before that step
+  // existed, so they kept the switch off. Nobody had version 7 for long enough to choose off.
+  if (from < 8) {
     const o = out.activities.config.claude?.options;
     if (o) o.onlyOtherChats = true;
   }

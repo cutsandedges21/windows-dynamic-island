@@ -1261,6 +1261,49 @@ describe('one pop-up per moment', () => {
       expect(told(calls).surfaces.map((s) => s.key)).toEqual(['done:S1']);
     });
 
+    it('without Island hooks: a finish seen only by the session list or its row turning green is decided the same way, and said in the log', async () => {
+      const log: unknown[][] = [];
+      const { act, calls } = await boot({}, () => {}, { log: (...p: unknown[]) => void log.push(p) });
+      tabs(act);
+      inFront(50, '✳ Fix the parser');
+      const rowsOf = (state: 'running' | 'done') => act.onRows([row({ id: 'S1', state, word: state, since: Date.now() / 1000 }), row({ id: 'S2', label: 'Fix the parser tests', state: 'running', word: 'running' })]);
+      rowsOf('running');
+      (act as unknown as { onTrackerEvent(e: unknown): void }).onTrackerEvent({ type: 'finished', session: session({ id: 'S1', sessionId: 'S1', pid: 100 }) });
+      rowsOf('done');
+      await tick(0);
+      expect(told(calls).surfaces).toEqual([]);
+      expect(log.filter((p) => p[0] === 'finish')).toEqual([['finish', { session: 'S1', via: 'poll', looking: true, why: 'its window shows "✳ Fix the parser", this chat' }]]);
+      // Its next turn, finishing while another tab shows: it pops up (the last quiet finish is not reused).
+      await tick(1000);
+      rowsOf('running');
+      inFront(50, '✳ Fix the parser tests');
+      rowsOf('done');
+      await tick(0);
+      expect(told(calls).surfaces.map((s) => s.key)).toEqual(['done:S1']);
+      expect(log.filter((p) => p[0] === 'finish').at(-1)).toEqual(['finish', { session: 'S1', via: 'poll', looking: false, why: 'its window shows "✳ Fix the parser tests", chat S2' }]);
+    });
+
+    it("a background job finishes quietly while the tab of the chat parked into it is in front, and pops up when it isn't", async () => {
+      const { act, calls } = await boot();
+      // The job runs under Claude Code's own host process (no window); the chat it was parked from shows it in its tab.
+      const job = session({ id: 'J1', sessionId: 'J1', pid: 300, kind: 'bg', jobId: 'J1', title: 'Fix the parser' });
+      const tab = session({ id: 'S1', sessionId: 'S1', pid: 100, title: 'Fix the parser', parkedJobId: 'J1' });
+      const other = session({ id: 'S2', sessionId: 'S2', pid: 200, title: 'Release notes' });
+      stubTracker(act, [job, tab, other], { 100: [60, 50, 10], 200: [70, 50, 10], 300: [301] }, WT);
+      inFront(50, '✳ Fix the parser');
+      (act as unknown as { onTrackerEvent(e: unknown): void }).onTrackerEvent({ type: 'finished', session: job });
+      await tick(0);
+      expect(told(calls).surfaces).toEqual([]);
+      // Its next turn (a hook's prompt would say so; here, its row turning blue).
+      await tick(1000);
+      act.onRows([row({ id: 'J1', state: 'done', word: 'done' })]);
+      act.onRows([row({ id: 'J1', state: 'running', word: 'running', since: Date.now() / 1000 })]);
+      inFront(50, '✳ Release notes');
+      (act as unknown as { onTrackerEvent(e: unknown): void }).onTrackerEvent({ type: 'finished', session: job });
+      await tick(0);
+      expect(told(calls).surfaces.map((s) => s.key)).toEqual(['done:J1']);
+    });
+
     it('off: the chat in front pops up too', async () => {
       const { act, calls } = await boot({ onlyOtherChats: false });
       tabs(act);

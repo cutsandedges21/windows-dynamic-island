@@ -41,6 +41,17 @@ describe('settings v2', () => {
     expect(defaultSettings().activities.config.claude.options.onlyOtherChats).toBe(true);
   });
 
+  it('v8: settings a development build stamped version 7 with that switch still off get it on, once', () => {
+    const stamped = defaultSettings() as unknown as Record<string, any>;
+    stamped.version = 7;
+    stamped.activities.config.claude.options.onlyOtherChats = false;
+    const s = migrate(stamped);
+    expect(s.version).toBe(8);
+    expect(s.activities.config.claude.options.onlyOtherChats).toBe(true);
+    s.activities.config.claude.options.onlyOtherChats = false;
+    expect(migrate(JSON.parse(JSON.stringify(s))).activities.config.claude.options.onlyOtherChats).toBe(false);
+  });
+
   it('keeps a well-formed grid layout and drops the rest', () => {
     const raw = defaultSettings() as unknown as Record<string, any>;
     raw.island.grid = {

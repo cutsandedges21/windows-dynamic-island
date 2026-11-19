@@ -403,7 +403,11 @@ export class ClaudeActivity extends BaseActivity {
       // No longer waiting: the next time it waits is news.
       if (st !== 'input' && !r.parent) this.moments.stopped(r.id);
       if (!before || before === st || r.parent) continue;
-      if (st === 'running') this.moments.ran(r.id, r.since * 1000);
+      if (st === 'running') {
+        this.moments.ran(r.id, r.since * 1000);
+        // A new turn (seen here when no hook says so): whether the user looked at the last one's end is old news.
+        if (!this.moments.has(r.id, 'end')) this.looking.delete(r.id);
+      }
       // Stopping one yourself (Esc) is no news: it only turns red, and glows red a moment.
       if (r.stopped) {
         this.glow('bad');
@@ -802,26 +806,56 @@ export class ClaudeActivity extends BaseActivity {
    * chat the user last sent a prompt to.
    */
   private async isLookingAt(sid: string, ev?: HookEvent): Promise<boolean> {
+    return (await this.lookAt(sid, ev)).looking;
+  }
+
+  /** isLookingAt, with why: the finish log says it, so a chat that popped up (or didn't) can be explained. */
+  private async lookAt(sid: string, ev?: HookEvent): Promise<{ looking: boolean; why: string }> {
+    const no = (why: string) => ({ looking: false, why });
+    // A background job has no window: it shows in the terminal tab of the chat parked into it.
+    const viewer = this.viewerOf(sid);
+    if (viewer) {
+      const look = await this.lookAt(viewer.id);
+      return { looking: look.looking, why: `shown by chat ${viewer.id.slice(0, 8)}: ${look.why}` };
+    }
     const fg = await native.foregroundPid();
-    if (!fg || !this.tracker) return false;
+    if (!fg || !this.tracker) return no('no window in front');
     const probe = this.tracker.probe;
     const pidOf = (id: string) => this.sessions.find((s) => s.id === id)?.pid ?? 0;
     const pid = pidOf(sid) || Number(ev?.hook_ppid) || 0;
-    if (!pid) return false;
+    if (!pid) return no('its process is unknown');
     if (!probe.table.has(pid)) probe.load(await native.procSnapshot());
-    if (!this.windowChainOf(pid).includes(fg)) return false;
+    const chain = this.windowChainOf(pid);
+    if (!chain.includes(fg)) return no(`another window is in front (${probe.processName(fg) ?? fg}; the chat's chain is ${chain.join('<')})`);
     const sharing = this.sessions.filter((s) => s.alive && s.pid && this.windowChainOf(s.pid).includes(fg));
     const lastPrompt = (s: SessionView) => this.hooks.turnStart.get(s.id) ?? s.turnStartMs ?? 0;
     const latest = (list: SessionView[]) => list.reduce((a, b) => (lastPrompt(b) > lastPrompt(a) ? b : a));
     const title = await this.foregroundTitle();
+    const titles = sharing.map((s) => `${s.id.slice(0, 8)}=${s.title ?? s.name}`).join(', ');
     if (title !== null) {
       const shown = chatsShownIn(title, sharing);
-      if (shown.length) return latest(shown).id === sid;
+      if (shown.length) {
+        const front = latest(shown);
+        return { looking: front.id === sid, why: `its window shows "${clip(title, 60)}", ${front.id === sid ? 'this chat' : `chat ${front.id.slice(0, 8)}`}` };
+      }
       const owner = probe.ancestors(pid).find((a) => a.pid === fg)?.name ?? '';
-      if (TERMINAL_HOSTS.has(owner)) return false;
+      if (TERMINAL_HOSTS.has(owner)) return no(`its terminal shows "${clip(title, 60)}", none of its chats (${titles})`);
     }
-    if (sharing.length <= 1) return true;
-    return latest(sharing).id === sid;
+    if (sharing.length <= 1) return { looking: true, why: 'its window is in front' };
+    const front = latest(sharing);
+    return { looking: front.id === sid, why: `its window is in front; of ${sharing.length} chats there, ${front.id === sid ? 'this one' : front.id.slice(0, 8)} was prompted last` };
+  }
+
+  /**
+   * The chat whose terminal shows this background job: Claude Code runs a chat sent to the
+   * background (or parked) as a job of its own, with no window, and the chat it was parked from
+   * says so (its parkedJobId) while its tab shows the job's work.
+   */
+  private viewerOf(sid: string): SessionView | null {
+    const s = this.sessions.find((x) => x.id === sid);
+    if (s?.kind !== 'bg') return null;
+    const job = s.jobId || sid.slice(0, 8);
+    return this.sessions.find((x) => x.id !== sid && x.kind !== 'bg' && x.alive && x.parkedJobId === job) ?? null;
   }
 
   /** The title of the window in front, or null when it can't be read. */
@@ -1022,25 +1056,34 @@ export class ClaudeActivity extends BaseActivity {
    */
   private markFinished(id: string, ev?: HookEvent, failed = false): void {
     if (this.moments.has(id, 'end')) return;
-    if (this.opts().onlyOtherChats) void this.endUnlessLooking(id, ev, failed);
-    else this.endOfTurn(id, failed, ev);
+    if (this.opts().onlyOtherChats) return void this.endUnlessLooking(id, ev, failed);
+    this.ctx.log('finish', { session: id.slice(0, 8), via: ev ? 'hook' : 'poll', looking: null, why: '"Not when its window is in front" is off' });
+    this.endOfTurn(id, failed, ev);
   }
 
-  /** "Not when its window is in front": a chat the user is looking at finishes quietly. */
+  /**
+   * "Not when its window is in front": a chat the user is looking at finishes quietly. Each
+   * decision is logged once per finish, with why (looking or not), for when it goes wrong.
+   */
   private async endUnlessLooking(id: string, ev: HookEvent | undefined, failed: boolean): Promise<void> {
-    let looking = this.looking.has(id);
-    if (!looking) {
+    let look = { looking: this.looking.has(id), why: 'seen looking already (at its Stop, or switched to it)' };
+    if (!look.looking) {
       try {
-        looking = await this.isLookingAt(id, ev);
+        look = await this.lookAt(id, ev);
       } catch (err) {
-        this.ctx.log('finish: foreground check failed', String(err));
+        look = { looking: false, why: `the foreground check failed: ${String(err)}` };
       }
     }
-    if (!looking) return this.endOfTurn(id, failed, ev);
+    // The same finish reported again (the tracker, then its row turning green): told already.
+    if (this.moments.has(id, 'end')) return;
+    this.ctx.log('finish', { session: id.slice(0, 8), via: ev ? 'hook' : 'poll', looking: look.looking, why: look.why });
+    if (!look.looking) {
+      this.looking.delete(id);
+      return this.endOfTurn(id, failed, ev);
+    }
     // Told, quietly: a later report of the same finish pops nothing either.
-    if (!this.moments.allow(id, 'end', Date.now())) return;
+    this.moments.allow(id, 'end', Date.now());
     this.looking.add(id);
-    this.ctx.log('finished quietly', { session: id.slice(0, 8) });
     this.ctx.update();
   }
 
