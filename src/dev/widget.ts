@@ -9,7 +9,7 @@ const TILES: Record<string, Tile> = {
   weather: { key: 'weather/weather', span: 2, rows: 1, body: { k: 'forecast', icon: 'sun', temp: '14°', label: 'Sunny · Toronto', hours: [{ t: '3 PM', icon: 'sun', temp: '15°' }, { t: '4 PM', icon: 'sun', temp: '14°' }, { t: '5 PM', icon: 'sun', temp: '12°' }] } },
   timer: { key: 'timer/timer', span: 2, rows: 1, body: { k: 'actions', icon: 'timer', label: 'Focus timer', sub: '25:00', buttons: [{ key: 'go', icon: 'play', action: 'act:timer:start', style: 'primary' }] } },
   system: { key: 'system/cpu', span: 2, rows: 1, body: { k: 'dots', label: 'CPU', pct: 31, sub: '61°' } },
-  music: { key: 'music/music', span: 2, rows: 2, body: { k: 'media', title: 'Neon Harbor', artist: 'Kavi Rao', playing: true, progress: 0.4, buttons: [{ key: 'p', icon: 'pause', action: 'act:music:toggle', style: 'secondary' }] } },
+  music: { key: 'music/music', span: 2, rows: 2, tint: new URLSearchParams(location.search).get('tint') ?? 'hsl(200 70% 55%)', body: { k: 'media', title: 'Neon Harbor', artist: 'Kavi Rao', playing: true, progress: 0.4, buttons: [{ key: 'p', icon: 'pause', action: 'act:music:toggle', style: 'secondary' }] } },
 };
 
 export function widgetPreview(stage: HTMLElement): void {

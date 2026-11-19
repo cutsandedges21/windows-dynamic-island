@@ -382,6 +382,11 @@ export async function runWidget(stage: HTMLElement, label = windowLabel): Promis
     // The card hangs from a point PAD from the window's top, centred.
     sheet.follow({ x: area.width / 2, y: PAD - 8, w: 0, h: 0 });
     sheet.show(v, { anchor: 'top', area, width, immediate: !drawn });
+    // Music's colour from the art, as the island's music card takes it (Moss, 11-18): the card's
+    // glass fades to it, and over to the next song's.
+    const tint = shown.tint && /^[#\w\s(),.%-]+$/.test(shown.tint) ? shown.tint : null;
+    if (tint) sheet.el.style.setProperty('--card-tint', tint);
+    sheet.el.classList.toggle('tinted', tint !== null);
     drawn = true;
   };
 

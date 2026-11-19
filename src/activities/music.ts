@@ -232,6 +232,8 @@ export class MusicActivity extends BaseActivity {
       rows: 2,
       action: env.interactive ? 'card' : undefined,
       tip: this.lyricsOn() ? 'Lyrics' : 'Now playing',
+      // The Music widget takes the art's colour as the island's music card does (Moss, 11-18).
+      tint: this.barTint() ?? null,
       body: { k: 'media', art: showArt ? m.thumbnail : null, title: m.title, artist: m.artist || m.app || '', playing, progress: null, buttons },
     };
   }

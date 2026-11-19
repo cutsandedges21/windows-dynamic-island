@@ -247,6 +247,8 @@ export interface Tile {
   resting?: boolean;
   /** Sizes (columns, rows) its corner can be dragged to while editing. */
   sizes?: Array<[number, number]>;
+  /** Its colour where it stands alone as a desktop widget (Music's, from the art), as the island's own music card takes it. */
+  tint?: string | null;
   body: TileBody;
 }
 
