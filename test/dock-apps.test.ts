@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
 import { clickPlan, dockApps, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
-import { barStyles } from '../src/core/settings';
+import { barAutoHide, barEdge, barStyles, cleanNames } from '../src/core/settings';
 
 const app = (key: string, pinned: boolean, windows: number[] = [], front = false): DockApp => ({ key, name: key.toUpperCase(), icon: null, windows, front, pinned });
 const pin = (key: string) => ({ name: key.toUpperCase(), target: key });
@@ -112,10 +112,35 @@ describe('taskbar apps', () => {
   });
 
   it('reads the styles saved, or the one style saved before they mixed', () => {
-    expect(barStyles({ styles: ['glide', 'nope', 'spotlight'] })).toEqual(['spotlight', 'glide']);
+    expect(barStyles({ styles: ['spotlight', 'nope'], names: {} })).toEqual(['spotlight']);
     expect(barStyles({ style: 'spotlight' })).toEqual(['spotlight']);
     expect(barStyles({})).toEqual(['rise']);
     expect(barStyles({ styles: [] })).toEqual([]);
+  });
+
+  it('keeps the names for a bar saved with Glide before Names was its own style', () => {
+    expect(barStyles({ styles: ['glide', 'nope', 'spotlight'] })).toEqual(['spotlight', 'glide', 'names']);
+    // Saved since: what was saved, Names off included.
+    expect(barStyles({ styles: ['glide'], names: { font: 'serif' } })).toEqual(['glide']);
+    expect(barStyles({ styles: ['rise', 'names'], names: {} })).toEqual(['rise', 'names']);
+  });
+
+  it('cleans the names look, falling back to System in a bubble', () => {
+    expect(cleanNames(undefined)).toEqual({ font: 'system', look: 'bubble', bold: false });
+    expect(cleanNames({ font: 'serif', look: 'outline', bold: true })).toEqual({ font: 'serif', look: 'outline', bold: true });
+    expect(cleanNames({ font: 'comic', look: 'neon', bold: 'yes' })).toEqual({ font: 'system', look: 'bubble', bold: false });
+  });
+
+  it('only blends or auto-hides at the bottom while Windows\' taskbar is hidden', () => {
+    const t = { edge: true, autoHide: true, hideWindows: false, side: 'bottom' as const };
+    expect(barEdge(t)).toBe(false);
+    expect(barAutoHide(t)).toBe(false);
+    expect(barEdge({ ...t, hideWindows: true })).toBe(true);
+    expect(barAutoHide({ ...t, hideWindows: true })).toBe(true);
+    // Off the bottom, Windows' taskbar is not in the way.
+    expect(barEdge({ ...t, side: 'left' })).toBe(true);
+    expect(barAutoHide({ ...t, side: 'top' })).toBe(true);
+    expect(barEdge({ ...t, edge: false, hideWindows: true })).toBe(false);
   });
 
   it('melts each end from the top corner down to the edge, its rim along the same outline', () => {

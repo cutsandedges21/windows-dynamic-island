@@ -12,7 +12,7 @@ import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tau
 import { duration } from './format';
 import { applyGlass } from './glass';
 import { isTauri, native, on, sendTo, type DockIconRect, type InstalledApp, type LiveWindow } from './native';
-import { DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type PillColor } from './settings';
+import { DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
 
 /** One app on the dock. */
 export interface DockApp {
@@ -51,8 +51,10 @@ export interface DockFrame {
   /** Dragging it is off (right-click › Lock in place). */
   locked: boolean;
   size: DockSize;
-  /** Rise, Spotlight, Glide: the ones on (Settings › Widgets › Style). */
+  /** Rise, Spotlight, Glide, Names: the ones on (Settings › Taskbar › Styles). */
   styles?: DockStyle[];
+  /** How the names over the bar look (style Names): font, bubble/plain/outline, bold. */
+  names?: NameStyle;
   /** On the screen's bottom edge, over Windows' taskbar ... */
   edge?: boolean;
   /** ... its ends curving out into the edge. */
@@ -267,6 +269,8 @@ export interface DockHooks {
   setSize(size: DockSize): void;
   styles(): DockStyle[];
   setStyles(styles: DockStyle[]): void;
+  /** How the names over the bar look. */
+  names(): NameStyle;
   edge(): boolean;
   setEdge(on: boolean): void;
   melt(): boolean;
@@ -383,6 +387,7 @@ export class DockHost {
         locked: this.hooks.locked(),
         size: this.hooks.size(),
         styles: this.hooks.styles(),
+        names: this.hooks.names(),
         edge: this.hooks.edge(),
         melt: this.hooks.melt(),
         side: this.hooks.side(),
@@ -557,7 +562,7 @@ const RISE_LIFT = 8;
 const HEADROOM = 14;
 
 export const DOCK_SIZE_LABELS: Record<DockSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
-export const DOCK_STYLE_LABELS: Record<DockStyle, string> = { rise: 'Rise', spotlight: 'Spotlight', glide: 'Glide' };
+export const DOCK_STYLE_LABELS: Record<DockStyle, string> = { rise: 'Rise', spotlight: 'Spotlight', glide: 'Glide', names: 'Names' };
 
 /** The taskbar's styles with `style` turned on, or off. */
 export function toggleStyle(on: readonly DockStyle[], style: DockStyle): DockStyle[] {
@@ -688,8 +693,36 @@ const POP_GAP = 8;
 const POP_MS = 240;
 /** Pointing at S/W this long shows when they reset, ms. */
 const TIP_DELAY_MS = 250;
-/** Resting on an app this long shows its windows' previews, ms. */
-const PEEK_DELAY_MS = 420;
+/** The pointer resting on an app this long (still) shows its windows' previews, ms (Moss, 11-18: "only
+ *  show the previews after a delay, not instant"). */
+export const PEEK_REST_MS = 500;
+/** The pointer moving less than this (CSS px) from where it came to rest still counts as resting. */
+export const PEEK_STILL_PX = 6;
+/** Previews already up: resting on the next app shows its own after this, ms. */
+export const PEEK_SWITCH_MS = 90;
+
+/**
+ * Whether the pointer has rested on an app long enough for its previews: each move further than
+ * PEEK_STILL_PX from where it came to rest starts the wait again, so sweeping across the icons shows
+ * none. `due` is when the wait ends (on the clock `move` is given), null while there is none.
+ */
+export class PeekRest {
+  private x = 0;
+  private y = 0;
+  due: number | null = null;
+  /** The pointer is at (x, y) at `now`; `quick`: previews are up already. The new due time when the
+   *  wait (re)started, else null (still resting, the wait goes on). */
+  move(x: number, y: number, now: number, quick: boolean): number | null {
+    if (this.due !== null && Math.hypot(x - this.x, y - this.y) < PEEK_STILL_PX) return null;
+    this.x = x;
+    this.y = y;
+    this.due = now + (quick ? PEEK_SWITCH_MS : PEEK_REST_MS);
+    return this.due;
+  }
+  stop(): void {
+    this.due = null;
+  }
+}
 
 /** A drag along the bottom starts once the pointer has moved this far (CSS px); a shorter press is a click. */
 const DRAG_PX = 5;
@@ -1116,15 +1149,35 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       peekShots = window.setTimeout(sendShots, wasUp ? 40 : POP_MS + 40);
     }
   };
-  /** Pointing at an app: its previews once the pointer rests there (at once if some are up already). */
-  const peekEnter = (b: HTMLElement) => {
+  /** Pointing at an app: its previews once the pointer has rested there (PeekRest), not while it sweeps
+   *  across the icons; quickly when another app's are up already. */
+  const rest = new PeekRest();
+  let restOn: HTMLElement | null = null;
+  const peekRest = (b: HTMLElement, e: PointerEvent) => {
+    // Its own previews are up already.
+    if (peekKey === b.dataset.key && !peek.hidden) return;
+    const due = rest.move(e.clientX, e.clientY, performance.now(), peekKey !== null);
+    if (due === null) return;
+    window.clearTimeout(peekWait);
+    peekWait = window.setTimeout(
+      () => {
+        if (restOn === b) drawPeek(b);
+      },
+      Math.max(0, due - performance.now()),
+    );
+  };
+  const peekEnter = (b: HTMLElement, e: PointerEvent) => {
     window.clearTimeout(peekLeave);
     window.clearTimeout(peekWait);
-    peekWait = window.setTimeout(() => drawPeek(b), peekKey !== null ? 60 : PEEK_DELAY_MS);
+    rest.stop();
+    restOn = b;
+    peekRest(b, e);
   };
   const peekOut = () => {
     window.clearTimeout(peekWait);
     window.clearTimeout(peekLeave);
+    rest.stop();
+    restOn = null;
     peekLeave = window.setTimeout(closePeek, 280);
   };
   peek.addEventListener('pointerenter', () => window.clearTimeout(peekLeave));
@@ -1140,7 +1193,10 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   let move: { b: HTMLElement; id: number; x0: number; moved: boolean; slots: number[]; from: number; to: number } | null = null;
   let swallowClick = false;
   const wireApp = (b: HTMLElement) => {
-    b.addEventListener('pointerenter', () => peekEnter(b));
+    b.addEventListener('pointerenter', (e) => peekEnter(b, e));
+    b.addEventListener('pointermove', (e) => {
+      if (restOn === b) peekRest(b, e);
+    });
     b.addEventListener('pointerleave', peekOut);
     b.addEventListener('click', () => {
       closePeek();
@@ -1265,24 +1321,25 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     } else spot.style.transform = slide(x);
   };
 
-  // Glide: a highlight slides behind what the pointer is on, and its name slides along over the bar.
+  // Glide: a highlight slides behind what the pointer is on. Names: its name slides along over the bar
+  // (part of Glide until 11-19; now a style of its own, with its own font and look).
   const glow = el('i', 'dk-glow');
   bar.insertBefore(glow, start);
   const label = el('div', 'dk-label');
   above.append(label);
   let glideOn: HTMLElement | null = null;
-  /** In Glide the names are the label over the bar, not Windows' tooltips. */
+  /** With Names on, the names are the label over the bar, not Windows' tooltips. */
   const titles = () => {
-    const glide = has('glide');
+    const names = has('names');
     for (const b of bar.querySelectorAll<HTMLElement>('button')) {
-      if (glide && b.title) {
+      if (names && b.title) {
         b.dataset.tip = b.title;
         b.removeAttribute('title');
-      } else if (!glide && !b.title && b.dataset.tip) b.title = b.dataset.tip;
+      } else if (!names && !b.title && b.dataset.tip) b.title = b.dataset.tip;
     }
   };
   const glideTo = (b: HTMLElement | null) => {
-    if (!has('glide') || b === glideOn) return;
+    if ((!has('glide') && !has('names')) || b === glideOn) return;
     const from = glideOn;
     glideOn = b;
     if (!b) {
@@ -1290,20 +1347,22 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       label.classList.remove('on');
       return;
     }
-    // The highlight: from nothing it appears in place; from another item it slides over.
-    const box = `translate(${b.offsetLeft}px, ${b.offsetTop}px)`;
-    const jump = !glow.classList.contains('on');
-    if (jump) glow.style.transition = 'none';
-    glow.style.width = `${b.offsetWidth}px`;
-    glow.style.height = `${b.offsetHeight}px`;
-    glow.style.transform = box;
-    if (jump) {
-      void glow.offsetWidth;
-      glow.style.transition = '';
-    }
-    glow.classList.add('on');
+    if (has('glide')) {
+      // The highlight: from nothing it appears in place; from another item it slides over.
+      const box = `translate(${b.offsetLeft}px, ${b.offsetTop}px)`;
+      const jump = !glow.classList.contains('on');
+      if (jump) glow.style.transition = 'none';
+      glow.style.width = `${b.offsetWidth}px`;
+      glow.style.height = `${b.offsetHeight}px`;
+      glow.style.transform = box;
+      if (jump) {
+        void glow.offsetWidth;
+        glow.style.transition = '';
+      }
+      glow.classList.add('on');
+    } else glow.classList.remove('on');
     // The name, over the bar (not for S/W: when they reset comes up there instead).
-    const name = b === claude ? '' : (b.dataset.tip ?? b.title ?? '');
+    const name = !has('names') || b === claude ? '' : (b.dataset.tip ?? b.title ?? '');
     if (!name) {
       label.classList.remove('on');
       return;
@@ -1561,6 +1620,9 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     setGap(side() === 'top' && f.gap ? f.gap : 0);
     applyGlass(root, f.glass);
     for (const k of DOCK_STYLES) root.classList.toggle(`dk-${k}`, (f.styles ?? ['rise']).includes(k));
+    root.dataset.nameFont = f.names?.font ?? 'system';
+    root.dataset.nameLook = f.names?.look ?? 'bubble';
+    root.classList.toggle('dk-name-bold', f.names?.bold === true);
     root.classList.toggle('dock-edge', f.edge === true);
     root.classList.toggle('dock-melt', f.edge === true && f.melt === true);
     bar.classList.toggle('locked', f.locked);

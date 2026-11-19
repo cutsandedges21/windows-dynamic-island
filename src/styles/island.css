@@ -2327,8 +2327,16 @@ html.dk-glide .dock button:hover, html.dk-glide .dock button:active { background
   translate: 0 6px;
   transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease, translate 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
-html.dk-glide .dk-label.on { opacity: 1; translate: 0 0; }
+html.dk-names .dk-label.on { opacity: 1; translate: 0 0; }
 .dk-label span { padding: 0 12px; }
+/* Names (a style of its own since 11-19): font, bold and look, from Settings › Taskbar › Styles (dock.ts sets the data on <html>) */
+html[data-name-font='clean'] .dk-label { font-family: Bahnschrift, 'Segoe UI Variable Display', 'Segoe UI', sans-serif; }
+html[data-name-font='serif'] .dk-label { font-family: Georgia, Cambria, 'Times New Roman', serif; }
+html[data-name-font='mono'] .dk-label { font-family: 'Cascadia Code', 'Cascadia Mono', Consolas, monospace; }
+html[data-name-font='hand'] .dk-label { font-family: 'Ink Free', 'Segoe Print', 'Comic Sans MS', cursive; font-size: 13.5px; }
+html.dk-name-bold .dk-label { font-weight: 800; }
+html[data-name-look='plain'] .dk-label { background: transparent; box-shadow: none; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 12px rgba(0, 0, 0, 0.4); }
+html[data-name-look='outline'] .dk-label { background: transparent; box-shadow: inset 0 0 0 1.5px rgba(var(--ink), 0.55); backdrop-filter: blur(10px); }
 .dk-label span.in-r { animation: dk-in-r 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
 .dk-label span.in-l { animation: dk-in-l 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
 @keyframes dk-in-r { from { transform: translateX(14px); opacity: 0; } }
@@ -2647,7 +2655,7 @@ html .dk-pop.up { opacity: 1; transform: none; }
 html[data-side='top'] .dk-label { bottom: auto; top: 0; translate: 0 -6px; }
 html.dk-upright .dk-label { bottom: auto; top: 0; translate: -6px 0; }
 html[data-side='right'] .dk-label { left: auto; right: 0; translate: 6px 0; }
-html.dk-glide .dk-label.on { translate: 0 0; }
+html.dk-names .dk-label.on { translate: 0 0; }
 
 /* ------------------------------------------------------------------ the screen border (src/core/frame.ts)
    A thin line round the screen in the taskbar's look, joining it and the island; the notches come out of

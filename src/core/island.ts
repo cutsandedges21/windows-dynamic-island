@@ -32,7 +32,7 @@ import { fadeSegments, fadeSheet } from './fade-menu';
 import { quietMoon } from './quiet';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { applyGlass } from './glass';
-import { accentColor, backAt, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
+import { accentColor, backAt, barAutoHide, barEdge, barNeedsHidden, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { CARD_RADIUS, mapActions, SheetRenderer, type Block, type DropZone, type SheetButton, type SheetChip, type SheetView, type Tile } from './sheet';
 import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
@@ -446,14 +446,21 @@ export class Island {
           this.settings.island.taskbar.styles = styles;
           this.saveSettings();
         },
-        edge: () => this.settings.island.taskbar.edge,
+        names: () => this.settings.island.taskbar.names,
+        // At the bottom these two live inside Hide Windows' taskbar: they only count while it hides,
+        // and turning one on from the taskbar's menu hides Windows' taskbar too.
+        edge: () => barEdge(this.settings.island.taskbar),
         setEdge: (on) => {
-          this.settings.island.taskbar.edge = on;
+          const t = this.settings.island.taskbar;
+          t.edge = on;
+          if (on && barNeedsHidden(t)) t.hideWindows = true;
           this.saveSettings();
         },
-        autoHide: () => this.settings.island.taskbar.autoHide,
+        autoHide: () => barAutoHide(this.settings.island.taskbar),
         setAutoHide: (on) => {
-          this.settings.island.taskbar.autoHide = on;
+          const t = this.settings.island.taskbar;
+          t.autoHide = on;
+          if (on && barNeedsHidden(t)) t.hideWindows = true;
           this.saveSettings();
         },
         melt: () => this.settings.island.taskbar.melt,

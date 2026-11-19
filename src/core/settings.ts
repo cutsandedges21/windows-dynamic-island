@@ -123,7 +123,21 @@ export interface FrameConfig {
 
 /** The border can only be on while the taskbar and the island both sit on their edges. */
 export function frameAvailable(island: Pick<Settings['island'], 'blend' | 'taskbar'>): boolean {
-  return island.blend && island.taskbar.on && island.taskbar.edge;
+  return island.blend && island.taskbar.on && barEdge(island.taskbar);
+}
+
+/**
+ * At the bottom, Blend into the bottom and Auto-hide live inside Hide Windows' taskbar (Moss, 11-18:
+ * on with Windows' own taskbar still there, they look wrong), so there they only count while it hides.
+ */
+export function barNeedsHidden(t: Pick<Settings['island']['taskbar'], 'side'>): boolean {
+  return t.side === 'bottom';
+}
+export function barEdge(t: Pick<Settings['island']['taskbar'], 'edge' | 'side' | 'hideWindows'>): boolean {
+  return t.edge && (!barNeedsHidden(t) || t.hideWindows);
+}
+export function barAutoHide(t: Pick<Settings['island']['taskbar'], 'autoHide' | 'side' | 'hideWindows'>): boolean {
+  return t.autoHide && (!barNeedsHidden(t) || t.hideWindows);
 }
 
 /** The border is on and can be. */
@@ -175,15 +189,39 @@ function cleanSites(v: unknown): PinnedSite[] {
 /** How the taskbar shows what you point at and what is in front (Settings › Widgets, or its right-click
  *  menu), any of them together: Rise (icons grow under the pointer), Spotlight (a light shines down on
  *  the app in front), Glide (a highlight and the name slide along to what you point at). */
-export const DOCK_STYLES = ['rise', 'spotlight', 'glide'] as const;
+export const DOCK_STYLES = ['rise', 'spotlight', 'glide', 'names'] as const;
 export type DockStyle = (typeof DOCK_STYLES)[number];
 
 /** The taskbar's styles on, from saved settings: the list, or the one style saved before they could be
  *  mixed, or Rise. */
 export function barStyles(saved: Record<string, unknown>): DockStyle[] {
-  if (Array.isArray(saved.styles)) return DOCK_STYLES.filter((k) => (saved.styles as unknown[]).includes(k));
-  if ((DOCK_STYLES as readonly unknown[]).includes(saved.style)) return [saved.style as DockStyle];
-  return ['rise'];
+  let out: DockStyle[];
+  if (Array.isArray(saved.styles)) out = DOCK_STYLES.filter((k) => (saved.styles as unknown[]).includes(k));
+  else if ((DOCK_STYLES as readonly unknown[]).includes(saved.style)) out = [saved.style as DockStyle];
+  else out = ['rise'];
+  // The names over the bar were part of Glide until 11-19: a bar saved before then with Glide keeps them.
+  if (saved.names === undefined && out.includes('glide') && !out.includes('names')) out = DOCK_STYLES.filter((k) => k === 'names' || out.includes(k));
+  return out;
+}
+
+/** The names over the taskbar (style Names): their font and how they sit (Settings › Taskbar › Styles). */
+export const NAME_FONTS = ['system', 'clean', 'serif', 'mono', 'hand'] as const;
+export type NameFont = (typeof NAME_FONTS)[number];
+export const NAME_LOOKS = ['bubble', 'plain', 'outline'] as const;
+export type NameLook = (typeof NAME_LOOKS)[number];
+export interface NameStyle {
+  font: NameFont;
+  look: NameLook;
+  bold: boolean;
+}
+
+export function cleanNames(v: unknown): NameStyle {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  return {
+    font: (NAME_FONTS as readonly unknown[]).includes(o.font) ? (o.font as NameFont) : 'system',
+    look: (NAME_LOOKS as readonly unknown[]).includes(o.look) ? (o.look as NameLook) : 'bubble',
+    bold: o.bold === true,
+  };
 }
 
 export const ITEM_COLORS: ReadonlyArray<ItemLook['color']> = ['island', 'black', 'white', 'matte-black', 'matte-white', 'glass'];
@@ -272,7 +310,7 @@ export interface Settings {
      * its ends curve out into the edge instead of going straight down; `styles`: the ones on, together;
      * `autoHide`: it waits faint on its edge until the pointer comes to it (as under a full-screen app).
      */
-    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; locked: boolean; hidden: DockItem[]; size: DockSize; styles: DockStyle[]; edge: boolean; melt: boolean; side: DockSide; autoHide: boolean };
+    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; locked: boolean; hidden: DockItem[]; size: DockSize; styles: DockStyle[]; edge: boolean; melt: boolean; side: DockSide; autoHide: boolean; names: NameStyle };
     /** The screen border and its notches (Settings › Widgets › Screen border). */
     frame: FrameConfig;
     /** The Websites notch's sites, in order. */
@@ -403,7 +441,7 @@ export function defaultSettings(): Settings {
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       widgets: { on: false, items: [], look: { color: 'island', glass: GLASS_DEFAULT } },
-      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, locked: false, hidden: [], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom', autoHide: false },
+      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, locked: false, hidden: [], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom', autoHide: false, names: { font: 'system', look: 'bubble', bold: false } },
       frame: { on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small' }, shelf: { on: false, corner: 'bottom-right', size: 'small' } },
       sites: [],
       hiddenUntil: 0,
@@ -559,7 +597,7 @@ export function migrate(saved: unknown): Settings {
   const savedBar = isObj(saved.island) && isObj(saved.island.taskbar) ? saved.island.taskbar : {};
   const centre = typeof savedBar.centre === 'number' && savedBar.centre >= 0 && savedBar.centre <= 1 ? savedBar.centre : -1;
   const barHidden = Array.isArray(savedBar.hidden) ? DOCK_ITEMS.filter((k) => (savedBar.hidden as unknown[]).includes(k)) : [];
-  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), locked: savedBar.locked === true, hidden: barHidden, size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium', styles: barStyles(savedBar), edge: savedBar.edge === true, melt: savedBar.melt === true, side: (DOCK_SIDES as readonly unknown[]).includes(savedBar.side) ? (savedBar.side as DockSide) : 'bottom', autoHide: savedBar.autoHide === true };
+  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), locked: savedBar.locked === true, hidden: barHidden, size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium', styles: barStyles(savedBar), edge: savedBar.edge === true, melt: savedBar.melt === true, side: (DOCK_SIDES as readonly unknown[]).includes(savedBar.side) ? (savedBar.side as DockSide) : 'bottom', autoHide: savedBar.autoHide === true, names: cleanNames(savedBar.names) };
   const savedFrame = isObj(saved.island) && isObj(saved.island.frame) ? saved.island.frame : {};
   out.island.frame = {
     on: savedFrame.on === true,

@@ -4,7 +4,7 @@
 // from the settings alone, so they work before the island has anything to show.
 
 import type { ActivityConfig, Settings } from './core/settings';
-import { frameAvailable, ACCENTS } from './core/settings';
+import { barEdge, frameAvailable, ACCENTS } from './core/settings';
 import type { ActivityMeta } from './activities/catalog';
 import { icon } from './core/icons';
 import { h } from './dom';
@@ -80,10 +80,12 @@ export function screenPreview(s: Settings): HTMLElement {
   const look = lookOf(s, t.look);
   const framed = i.frame.on && frameAvailable(i);
   const zoom = { small: 0.84, medium: 1, large: 1.18 }[t.size] ?? 1;
+  // Blend and Melt count only as the taskbar really does them (barEdge: at the bottom, only with Windows' hidden).
+  const edge = barEdge(t);
   const bar = t.on
-    ? h('div', { class: `pv-bar side-${t.side}${t.edge ? ' edge' : ''}${t.edge && t.melt ? ' melt' : ''}`, 'data-look': look }, [
+    ? h('div', { class: `pv-bar side-${t.side}${edge ? ' edge' : ''}${edge && t.melt ? ' melt' : ''}`, 'data-look': look }, [
         h('i', { class: 'pv-bar-bg' }),
-        ...(t.edge && t.melt ? [h('i', { class: 'pv-foot a' }), h('i', { class: 'pv-foot b' })] : []),
+        ...(edge && t.melt ? [h('i', { class: 'pv-foot a' }), h('i', { class: 'pv-foot b' })] : []),
         h('div', { class: 'pv-bar-in' }, [h('i', { class: 'start' }), h('i'), h('i', { class: 'on' }), h('i'), h('i'), h('b'), h('i', { class: 'clock' })]),
       ])
     : null;
@@ -108,7 +110,7 @@ export function screenPreview(s: Settings): HTMLElement {
     notch('sites', i.frame.sites, 0),
     notch('shelf', i.frame.shelf, sameCorner ? 46 : 0),
   ]);
-  const where = t.on ? `Taskbar on the ${t.side}${t.edge ? (t.melt ? ', melted into the edge' : ', on the edge') : ', floating'}` : 'No taskbar';
+  const where = t.on ? `Taskbar on the ${t.side}${edge ? (t.melt ? ', melted into the edge' : ', on the edge') : ', floating'}` : 'No taskbar';
   const extra = [framed ? 'screen border' : null, i.frame.sites.on ? 'Websites notch' : null, i.frame.shelf.on ? 'Shelf notch' : null].filter(Boolean).join(', ');
   return h('div', { class: 'preview' }, [screen, h('div', { class: 'pv-caption', text: extra ? `${where} · ${extra}` : where })]);
 }

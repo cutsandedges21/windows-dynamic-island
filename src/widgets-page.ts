@@ -7,12 +7,17 @@ import { icon, type IconName } from './core/icons';
 import { sendTo } from './core/native';
 import { DOCK_LABELS, DOCK_SIZE_LABELS, DOCK_STYLE_LABELS, toggleDockItem, toggleStyle } from './core/dock';
 import {
+  barNeedsHidden,
   DOCK_ITEMS,
   DOCK_SIDES,
   DOCK_SIZES,
   DOCK_STYLES,
   frameAvailable,
   MAX_SITES,
+  NAME_FONTS,
+  NAME_LOOKS,
+  type NameFont,
+  type NameLook,
   NOTCH_CORNERS,
   NOTCH_SIZES,
   siteOf,
@@ -36,7 +41,8 @@ const NOTCH_SIZE_LABELS: Record<NotchSize, string> = { small: 'Small', medium: '
 const STYLE_HINTS: Record<DockStyle, string> = {
   rise: 'Icons grow under the pointer.',
   spotlight: 'A light shines down on the app in front, and glides to the next one.',
-  glide: 'A highlight and the name slide along to what you point at.',
+  glide: 'A highlight slides along to what you point at.',
+  names: 'The name of what you point at shows over the bar.',
 };
 import { MAX_WIDGETS, newWidgetId, WIDGET_KINDS } from './core/widgets';
 import { h } from './dom';
@@ -232,54 +238,22 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
               host.render();
             }),
           ),
-          ...DOCK_STYLES.map((k) =>
-            row(
-              DOCK_STYLE_LABELS[k],
-              STYLE_HINTS[k],
-              toggle(t.styles.includes(k), () => {
-                t.styles = toggleStyle(t.styles, k);
-                host.save(true);
-              }),
-            ),
-          ),
+          // Off the bottom, Windows' taskbar is not in the way: Blend and Auto-hide stand on their own.
+          ...(barNeedsHidden(t) ? [] : edgeRows(host)),
+          ...lookPicker(t.look, host),
           row(
-            t.side === 'bottom' ? 'Blend into the bottom' : `Blend into the ${t.side} edge`,
-            t.side === 'bottom' ? "Sits on the screen's bottom edge, over Windows' taskbar and the icons in its middle, instead of floating above it." : `Sits on the screen's ${t.side} edge instead of floating beside it.`,
-            toggle(t.edge, (v) => {
-              t.edge = v;
+            "Hide Windows' taskbar",
+            barNeedsHidden(t) && !t.hideWindows
+              ? "Windows' own taskbar hides itself while this one shows, and comes back when you turn this off or quit Island. Turn it on to blend this one into the bottom or let it auto-hide."
+              : "Windows' own taskbar hides itself while this one shows, and comes back when you turn this off or quit Island. Pointing at the very bottom edge still brings it up.",
+            toggle(t.hideWindows, (v) => {
+              t.hideWindows = v;
               host.save(true);
               host.render();
             }),
           ),
-          ...(t.edge
-            ? [
-                row(
-                  'Melt the ends',
-                  'Its ends curve out into the edge of the screen instead of going straight into it.',
-                  toggle(t.melt, (v) => {
-                    t.melt = v;
-                    host.save(true);
-                  }),
-                ),
-              ]
-            : []),
-          row(
-            'Auto-hide',
-            'It waits faint on its edge, out of the way, and slides up when you point at it (as it does over a full-screen game).',
-            toggle(t.autoHide, (v) => {
-              t.autoHide = v;
-              host.save(true);
-            }),
-          ),
-          ...lookPicker(t.look, host),
-          row(
-            "Hide Windows' taskbar",
-            "Windows' own taskbar hides itself while this one shows, and comes back when you turn this off or quit Island. Pointing at the very bottom edge still brings it up.",
-            toggle(t.hideWindows, (v) => {
-              t.hideWindows = v;
-              host.save(true);
-            }),
-          ),
+          // At the bottom they live inside it (Moss, 11-18: on with Windows' taskbar still there they look wrong).
+          ...(barNeedsHidden(t) && t.hideWindows ? edgeRows(host).map(sub) : []),
           row(
             'Lock in place',
             'Off: drag the taskbar by its empty space to slide it along the bottom; double-click there to bring it back to the middle.',
@@ -296,7 +270,118 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
       : []),
   ]);
   if (part === 'widgets') return h('div', { class: 'page' }, [head, widgets]);
-  return h('div', { class: 'page' }, [head, h('div', { class: 'preview-dock' }, [screenPreview(s)]), taskbar, borderSection(host)]);
+  return h('div', { class: 'page' }, [head, h('div', { class: 'preview-dock' }, [screenPreview(s)]), taskbar, ...(t.on ? [stylesSection(host)] : []), borderSection(host)]);
+}
+
+/** A row that belongs to the one above it: indented under it. */
+function sub(r: HTMLElement): HTMLElement {
+  r.classList.add('sub');
+  return r;
+}
+
+/** Blend into the edge (+ Melt the ends) and Auto-hide. */
+function edgeRows(host: WidgetsPageHost): HTMLElement[] {
+  const t = host.settings().island.taskbar;
+  return [
+    row(
+      t.side === 'bottom' ? 'Blend into the bottom' : `Blend into the ${t.side} edge`,
+      t.side === 'bottom' ? "Sits on the screen's bottom edge instead of floating above it." : `Sits on the screen's ${t.side} edge instead of floating beside it.`,
+      toggle(t.edge, (v) => {
+        t.edge = v;
+        host.save(true);
+        host.render();
+      }),
+    ),
+    ...(t.edge
+      ? [
+          row(
+            'Melt the ends',
+            'Its ends curve out into the edge of the screen instead of going straight into it.',
+            toggle(t.melt, (v) => {
+              t.melt = v;
+              host.save(true);
+            }),
+          ),
+        ]
+      : []),
+    row(
+      'Auto-hide',
+      'It waits faint on its edge, out of the way, and slides up when you point at it (as it does over a full-screen game).',
+      toggle(t.autoHide, (v) => {
+        t.autoHide = v;
+        host.save(true);
+      }),
+    ),
+  ];
+}
+
+const NAME_FONT_LABELS: Record<NameFont, string> = { system: 'System', clean: 'Clean', serif: 'Serif', mono: 'Mono', hand: 'Handwritten' };
+const NAME_LOOK_LABELS: Record<NameLook, string> = { bubble: 'Bubble', plain: 'Plain', outline: 'Outline' };
+
+/** Settings › Taskbar › Styles: how the taskbar answers the pointer, on its own card (Moss, 11-18). */
+function stylesSection(host: WidgetsPageHost): HTMLElement {
+  const t = host.settings().island.taskbar;
+  const n = t.names;
+  const rows: HTMLElement[] = DOCK_STYLES.map((k) =>
+    row(
+      DOCK_STYLE_LABELS[k],
+      STYLE_HINTS[k],
+      toggle(t.styles.includes(k), () => {
+        t.styles = toggleStyle(t.styles, k);
+        host.save(true);
+        // Names brings its own rows.
+        if (k === 'names') host.render();
+      }),
+    ),
+  );
+  if (t.styles.includes('names')) {
+    const sample = h('span', { class: 'name-sample', 'data-name-font': n.font, 'data-name-look': n.look }, [h('span', { text: 'Spotify' })]);
+    sample.classList.toggle('bold', n.bold);
+    const font = segmented(
+      n.font,
+      NAME_FONTS.map((k) => [k, NAME_FONT_LABELS[k]] as [NameFont, string]),
+      (v) => {
+        n.font = v;
+        host.save(true);
+        host.render();
+      },
+    );
+    // Each font's button is written in that font.
+    font.querySelectorAll('button').forEach((b, i) => b.setAttribute('data-name-font', NAME_FONTS[i]));
+    const fontRow = row('Font', null, font);
+    fontRow.classList.add('stack');
+    rows.push(
+      sub(fontRow),
+      sub(
+        row(
+          'Look',
+          'Bubble sits in a small pill, Plain is the name alone, Outline is a thin ring round it.',
+          segmented(
+            n.look,
+            NAME_LOOKS.map((k) => [k, NAME_LOOK_LABELS[k]] as [NameLook, string]),
+            (v) => {
+              n.look = v;
+              host.save(true);
+              host.render();
+            },
+          ),
+        ),
+      ),
+      sub(
+        row(
+          'Bold',
+          null,
+          toggle(n.bold, (v) => {
+            n.bold = v;
+            sample.classList.toggle('bold', v);
+            host.save(true);
+          }),
+        ),
+      ),
+      sub(row('How it looks', null, h('div', { class: 'name-stage' }, [sample]))),
+    );
+  }
+  return section('Styles', [h('p', { class: 'muted section-note', text: 'How the taskbar answers your pointer. Mix any of them.' }), ...rows]);
 }
 
 /** One notch's choices: on or off, where, how big. */

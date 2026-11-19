@@ -6,7 +6,7 @@
 
 import type { DockFrame } from '../core/dock';
 import type { emitLocal as EmitLocal } from '../core/native';
-import { DOCK_ITEMS, DOCK_STYLES, FRAME_W, type DockItem, type DockSide, type DockSize, type DockStyle, type PillColor } from '../core/settings';
+import { cleanNames, DOCK_ITEMS, DOCK_STYLES, FRAME_W, type DockItem, type DockSide, type DockSize, type DockStyle, type PillColor } from '../core/settings';
 
 export function dockPreview(emitLocal: typeof EmitLocal): void {
   const q = new URLSearchParams(location.search);
@@ -28,6 +28,8 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
     locked: false,
     size: (q.get('size') as DockSize | null) ?? 'medium',
     styles: q.has('styles') ? (q.get('styles') ?? '').split(',').filter((k): k is DockStyle => (DOCK_STYLES as readonly string[]).includes(k)) : ['rise'],
+    // &names=serif,plain,bold: the names' font, look, and bold (style Names).
+    names: cleanNames({ font: (q.get('names') ?? '').split(',')[0], look: (q.get('names') ?? '').split(',')[1], bold: (q.get('names') ?? '').includes('bold') }),
     edge: q.get('edge') === '1',
     melt: q.get('melt') === '1',
     side: (q.get('side') as DockSide | null) ?? 'bottom',

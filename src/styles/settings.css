@@ -136,8 +136,12 @@ html[data-pill='glass'] .preview-dock { background: rgba(26, 28, 34, 0.94); }
 .switch { width: 42px; height: 24px; border-radius: 12px; border: 0; background: rgba(var(--ink), 0.16); box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.06); transition: background-color 0.22s ease, box-shadow 0.22s ease; }
 .switch i { top: 3px; left: 3px; width: 18px; height: 18px; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); transition: left 0.34s var(--spring), width 0.2s ease; }
 .switch:active i { width: 22px; }
-.switch.on { background: var(--accent); box-shadow: 0 0 12px -2px color-mix(in srgb, var(--accent) 70%, transparent); }
-.switch.on i { left: 21px; background: #fff; }
+/* On: the accent toned down into the window's own colour, no glow (Moss, 11-18: "too bright when
+   turned on", most of all with a white accent, where track and knob were both bright white). */
+.switch.on { background: color-mix(in srgb, var(--accent) 46%, var(--bg-solid)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
+.switch.on i { left: 21px; background: #f1f1f3; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45); }
+html[data-pill='white'] .switch.on, html[data-pill='matte-white'] .switch.on { background: color-mix(in srgb, var(--accent) 62%, #3a3a40); }
+html[data-pill='white'] .switch.on i, html[data-pill='matte-white'] .switch.on i { background: #fff; }
 .switch.on:active i { left: 17px; }
 .segmented { padding: 3px; gap: 2px; border-radius: 12px; background: rgba(var(--ink), 0.06); border: 0; box-shadow: inset 0 0 0 1px var(--line); }
 .segmented button { padding: 5px 13px; border-radius: 9px; transition: background-color 0.18s ease, color 0.18s ease, transform 0.3s var(--spring); }
@@ -156,6 +160,8 @@ html[data-pill='black'] .segmented button.on { background: rgba(255, 255, 255, 0
 .swatch.on { border-color: var(--fg); box-shadow: 0 0 0 2px var(--bg-solid) inset, 0 0 12px -2px var(--c); }
 .row input[type='text'], .row input[type='password'], .hotkey input, .num input, .site-add input, .w-city input { border-radius: 10px; border: 0; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); }
 .row input:focus, .hotkey input:focus, .num input:focus, .site-add input:focus { box-shadow: inset 0 0 0 1.5px var(--accent); }
+/* A slider being dragged drew that focus ring as a box round it (Moss, 11-18): sliders get none. */
+.row input[type='range'], .row input[type='range']:focus, .row input[type='range']:focus-visible { box-shadow: none; outline: none; }
 .act-search { height: 38px; border-radius: 19px; border: 0; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); padding: 0 14px; }
 .act-search:focus-within { box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent); }
 .chip { border-color: var(--line); transition: background-color 0.15s ease, color 0.15s ease, transform 0.3s var(--spring); }
@@ -396,3 +402,20 @@ html[data-pill='glass'] .act-panel { background: rgba(28, 30, 37, 0.97); }
   .brand-pill i, .pv-dot, .pv-glow > i, .pv-pill.pulse { animation: none; }
   .act-panel, .pv-pill, .pv-bot, .pv-toast, .pv-phone { animation: none; }
 }
+
+/* Rows that belong to the one above (Settings › Taskbar: Blend and Auto-hide inside Hide Windows' taskbar,
+   the name options under Names): indented, a thin line down their left. */
+.row.sub { margin-left: 14px; padding-left: 14px; box-shadow: inset 2px 0 0 rgba(var(--ink), 0.1); border-top-color: transparent; }
+.row.sub .row-title { font-weight: 500; }
+.section-note { margin: -2px 0 6px; font-size: 12.5px; }
+/* The names' fonts: each Font button is written in its font, and the sample (the taskbar's own label: island.css). */
+[data-name-font='clean'] { font-family: Bahnschrift, 'Segoe UI Variable Display', 'Segoe UI', sans-serif; }
+[data-name-font='serif'] { font-family: Georgia, Cambria, 'Times New Roman', serif; }
+[data-name-font='mono'] { font-family: 'Cascadia Code', 'Cascadia Mono', Consolas, monospace; }
+[data-name-font='hand'] { font-family: 'Ink Free', 'Segoe Print', 'Comic Sans MS', cursive; }
+.name-stage { display: grid; place-items: center; min-width: 180px; height: 52px; border-radius: 14px; background: linear-gradient(135deg, #3b4a6b, #6b4a5e 55%, #b0745a); box-shadow: inset 0 0 0 1px var(--line); }
+.name-sample { display: inline-grid; place-items: center; height: 30px; padding: 0 14px; border-radius: 999px; font-size: 12.5px; font-weight: 600; line-height: 1; white-space: nowrap; color: #fff; background: #060607; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 8px 20px -10px rgba(0, 0, 0, 0.6); }
+.name-sample.bold { font-weight: 800; }
+.name-sample[data-name-font='hand'] { font-size: 13.5px; }
+.name-sample[data-name-look='plain'] { background: transparent; box-shadow: none; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 12px rgba(0, 0, 0, 0.4); }
+.name-sample[data-name-look='outline'] { background: transparent; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.55); backdrop-filter: blur(10px); }
