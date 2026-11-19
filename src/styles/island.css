@@ -2398,10 +2398,10 @@ html.dock-melt[data-pill='glass'] .dock-bg::before { border-top-color: transpare
 .dk-tip-row b { font: 650 13px/1.2 var(--font); font-variant-numeric: tabular-nums; }
 .dk-tip-row span { font: 500 12px/1.2 var(--font); opacity: 0.72; font-variant-numeric: tabular-nums; }
 .dock .dk-apps { display: flex; align-items: center; gap: 2px; }
-.dock .dk-app { position: relative; width: 40px; padding: 0; flex: none; }
+/* Grows from the bar's edge as the pointer passes, its highlight and dot with it (dock.ts riseAt). */
+.dock .dk-app { position: relative; width: 40px; padding: 0; flex: none; transform-origin: 50% 100%; }
 .dock .dk-app:hover, .dock .dk-app:active { background: transparent; }
-/* Rises and grows from its bottom edge as the pointer passes (dock.ts riseAt). */
-.dock .dk-ico { display: grid; place-items: center; width: 26px; height: 26px; transform-origin: 50% 100%; will-change: transform; }
+.dock .dk-ico { display: grid; place-items: center; width: 26px; height: 26px; }
 /* Dragging one along the row: the others slide aside for it. */
 .dock.reordering .dk-app:not(.moving) { transition: transform 0.18s ease; }
 .dock .dk-app.moving { z-index: 2; }
@@ -2635,9 +2635,9 @@ html.dk-upright .dock .dk-clock { gap: 3px; }
 html.dk-upright .dock .dk-clock b { font-size: 12.5px; }
 html.dk-upright .dock .dk-clock span { font-size: 10px; }
 /* each icon rises away from the screen's edge */
-html[data-side='top'] .dock .dk-ico { transform-origin: 50% 0; }
-html[data-side='left'] .dock .dk-ico { transform-origin: 0 50%; }
-html[data-side='right'] .dock .dk-ico { transform-origin: 100% 50%; }
+html[data-side='top'] .dock .dk-app { transform-origin: 50% 0; }
+html[data-side='left'] .dock .dk-app { transform-origin: 0 50%; }
+html[data-side='right'] .dock .dk-app { transform-origin: 100% 50%; }
 /* the running dot on the edge side of the icon */
 html[data-side='top'] .dock .dk-dot { bottom: auto; top: 2px; }
 html.dk-upright .dock .dk-dot { bottom: auto; left: 2px; top: 50%; width: 3px; height: 5px; margin: -2.5px 0 0 0; transition: height 0.18s ease, margin 0.18s ease, opacity 0.18s ease; }

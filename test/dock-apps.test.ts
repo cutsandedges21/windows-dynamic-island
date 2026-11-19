@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
-import { clickPlan, dockApps, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
+import { clickPlan, dockApps, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, riseShifts, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
 import { barAutoHide, barEdge, barStyles, cleanNames } from '../src/core/settings';
 
 const app = (key: string, pinned: boolean, windows: number[] = [], front = false): DockApp => ({ key, name: key.toUpperCase(), icon: null, windows, front, pinned });
@@ -87,10 +87,25 @@ describe('taskbar apps', () => {
 
   it('rises most under the pointer and not at all two icons away', () => {
     expect(riseAt(0)).toBe(1);
-    expect(riseAt(-48)).toBeCloseTo(0.5, 5);
-    expect(riseAt(48)).toBeCloseTo(0.5, 5);
-    expect(riseAt(96)).toBe(0);
+    expect(riseAt(-50)).toBeCloseTo(0.5, 5);
+    expect(riseAt(50)).toBeCloseTo(0.5, 5);
+    expect(riseAt(100)).toBe(0);
     expect(riseAt(200)).toBe(0);
+  });
+
+  it("parts the row round what grew, like Windhawk's dock: half the growth as room, the ends out by half of it", () => {
+    // Nothing grown: nothing moves.
+    expect(riseShifts([0, 0, 0])).toEqual({ shifts: [0, 0, 0], total: 0 });
+    // The middle one fully grown: 30 % of 40 px, half of it as room (6 px); the others 3 px out each side.
+    const one = riseShifts([0, 1, 0]);
+    expect(one.total).toBeCloseTo(6, 5);
+    expect(one.shifts.map((s) => Number(s.toFixed(5)))).toEqual([-3, 0, 3]);
+    // Grown on one side more than the other: the row parts nearer the pointer, every app stays in order.
+    const lop = riseShifts([0, 1, 0.5, 0]);
+    expect(lop.total).toBeCloseTo(9, 5);
+    expect(lop.shifts[0]).toBeCloseTo(-4.5, 5);
+    expect(lop.shifts[3]).toBeCloseTo(4.5, 5);
+    for (let i = 1; i < 4; i++) expect(lop.shifts[i]).toBeGreaterThanOrEqual(lop.shifts[i - 1]);
   });
 
   it('says when a limit resets: the session in so long and at what time, the week on what day', () => {

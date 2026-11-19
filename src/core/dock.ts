@@ -579,17 +579,27 @@ async function appMenu(a: DockApp, act: (x: DockAct) => void, rect: () => DockIc
   await menu.popup();
 }
 
-/** How far from the pointer an icon still rises, CSS px. */
-const RISE_REACH = 96;
-/** An icon right under the pointer: this much bigger and this many CSS px higher. */
-const RISE_GROW = 0.4;
-const RISE_LIFT = 8;
-/** Room above the bar for risen icons, CSS px. */
-const HEADROOM = 14;
-/** Rise along a bar across the screen also makes room (Moss, 11-19, "like Windhawk's"): an icon right
- *  under the pointer grows this much and its place this much wider, pushing its neighbours apart. */
-const RISE_GROW_SPREAD = 0.6;
-const RISE_SPREAD = 0.55;
+// Rise is Windhawk's Taskbar Dock Animation with Justin's settings (11-19), in CSS px for its pixels.
+/** How far from the pointer an app still grows, CSS px (Effect radius 100). */
+const RISE_REACH = 100;
+/** An app right under the pointer grows this much (Max scale 130 %)… */
+const RISE_GROW = 0.3;
+/** …and makes room for this share of what it grows by, its neighbours pushed apart (Spacing factor 50 %). */
+const RISE_SPACING = 0.5;
+/** How fast it follows the pointer, per second (Lerp speed 60). */
+const RISE_FOLLOW = 60;
+/** It fades in over this long when the pointer comes onto the apps, and out when it leaves, ms (Focus duration 150). */
+const RISE_FADE_MS = 150;
+/** The pointer left still this long (Bounce delay 500 ms), the app under it bobs: up this many CSS px
+ *  and this much bigger, and back, once every RISE_BOB_MS. */
+const RISE_BOB_AFTER = 500;
+const RISE_BOB_MS = 1200;
+const RISE_BOB_LIFT = 4;
+const RISE_BOB_GROW = 0.05;
+/** With Rise on, the Glide highlight eases onto the item it moves to with this time constant, ms. */
+const GLIDE_EASE_MS = 70;
+/** Room above the bar for grown (and bobbing) apps, CSS px. */
+const HEADROOM = 20;
 /** An app's place on the bar and the gap between places, CSS px (island.css .dk-app, .dk-apps). */
 const APP_W = 40;
 const APP_GAP = 2;
@@ -644,12 +654,29 @@ export function resetLine(at: number | null | undefined, now: number, week: bool
 }
 
 /**
- * The hover rise, as on a Mac: how much an icon `d` CSS px from the pointer rises and grows (0..1),
- * falling off smoothly over about two icons each side.
+ * The hover rise, as on a Mac: how much an icon `d` CSS px from the pointer grows (0..1), falling off
+ * smoothly over about two icons each side (Windhawk's Cosine).
  */
 export function riseAt(d: number): number {
   const r = Math.abs(d) / RISE_REACH;
   return r >= 1 ? 0 : (Math.cos(r * Math.PI) + 1) / 2;
+}
+
+/**
+ * How far each app slides along the bar (CSS px) for the room the ones grown by `levels` (riseAt) make,
+ * and the room in all: each makes room for part of what it grows by, the row parting round the middle
+ * of what grew, so the apps before it slide back and the ones after it on by half of `total` each.
+ */
+export function riseShifts(levels: readonly number[]): { shifts: number[]; total: number } {
+  const room = levels.map((l) => RISE_GROW * l * APP_W * RISE_SPACING);
+  const total = room.reduce((a, b) => a + b, 0);
+  let before = 0;
+  const shifts = room.map((r) => {
+    const at = before + r / 2 - total / 2;
+    before += r;
+    return at;
+  });
+  return { shifts, total };
 }
 
 /** The Apps card's width at most (CSS px); never wider than the bar. */
@@ -801,8 +828,6 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   /** Along the bar: x across the screen, y on a side. */
   const along = (e: { clientX: number; clientY: number }) => (upright() ? e.clientY : e.clientX);
   const alongOf = (r: DOMRect) => (upright() ? r.top + r.height / 2 : r.left + r.width / 2);
-  /** Away from the screen's edge by `px`, as a CSS translate. */
-  const outward = (px: number) => ({ bottom: `translateY(${-px}px)`, top: `translateY(${px}px)`, left: `translateX(${px}px)`, right: `translateX(${-px}px)` })[side()];
   /** Along the bar by `px`, as a CSS translate. */
   const slide = (px: number) => (upright() ? `translateY(${px}px)` : `translateX(${px}px)`);
 
@@ -1397,50 +1422,87 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     b.addEventListener('pointercancel', end);
   };
 
-  // The hover rise: each icon eases toward how high it should be, every frame while any moves. Along
-  // a bar across the screen (not split round the island) its place widens too and the bar with it,
-  // from its middle, into room its window keeps at each end (RISE_ROOM).
+  // The hover rise, Windhawk's Taskbar Dock Animation as Justin has it set up (Moss, 11-19, "like
+  // Windhawk's"; Justin, 11-19: Rise with Glide was "rly messed up" next to his Windows taskbar). Each
+  // app's whole place (its highlight and dot with it) grows from the bar's edge, most under the pointer;
+  // along a bar across the screen (not split round the island) its neighbours slide apart to make half
+  // that room and the bar widens from its middle, into room its window keeps at each end (RISE_ROOM).
+  // It follows the pointer at once (RISE_FOLLOW) and fades in and out with it (RISE_FADE_MS); left
+  // still a moment, the app under the pointer bobs (RISE_BOB_*). Only `scale` and `translate` move a
+  // place: its layout and its `transform` (a drag along the row) stay as they are.
   const rise = new Map<HTMLElement, number>();
+  /** Each place's grow and shifts now, for the Glide highlight to sit on it. */
+  const placed = new Map<HTMLElement, { s: number; along: number; out: number }>();
   let pointerX: number | null = null;
+  let pointerIn = false;
+  let intensity = 0;
+  let stillSince = 0;
+  let bobFrom = 0;
   let raf = 0;
   let lastT = 0;
   /** How much wider the spread makes the bar now (CSS px before the zoom). */
   let riseExtra = 0;
   let solidAt = 0;
   const spreads = () => has('rise') && !upright() && gapEl.hidden;
+  /** -1 where away from the screen's edge is up or left (a bar at the bottom or on the right). */
+  const outSign = () => (side() === 'bottom' || side() === 'right' ? -1 : 1);
   const animateRise = (t: number) => {
     const dt = lastT ? Math.min(64, t - lastT) : 16;
     lastT = t;
-    const k = 1 - Math.exp(-dt / 70);
     let busy = false;
+    intensity = pointerIn ? Math.min(1, intensity + dt / RISE_FADE_MS) : Math.max(0, intensity - dt / RISE_FADE_MS);
+    if (intensity > 0 && intensity < 1) busy = true;
+    const k = 1 - Math.exp(-RISE_FOLLOW * (dt / 1000));
     const spread = spreads();
+    const up = upright();
     const z = Number(bar.style.zoom) || 1;
-    // Where each place's middle would be with nothing spread: the pointer is measured against
-    // those, so the spreading never moves the icon it is on away from it.
-    const places = [...appsBox.children].filter((c): c is HTMLElement => c instanceof HTMLElement && c.classList.contains('dk-app') && !c.hidden);
-    const left0 = appsBox.getBoundingClientRect().left + (riseExtra / 2) * z;
-    let extra = 0;
-    places.forEach((b, i) => {
-      const ico = b.querySelector<HTMLElement>('.dk-ico');
-      if (!ico) return;
-      let want = 0;
-      if (pointerX !== null && !move?.moved && has('rise')) {
-        const mid = spread ? left0 + (i * (APP_W + APP_GAP) + APP_W / 2) * z : alongOf(b.getBoundingClientRect());
-        want = riseAt(pointerX - mid);
-      }
+    const places = [...appsBox.children].filter((c): c is HTMLElement => c instanceof HTMLElement && c.classList.contains('dk-app') && !c.hidden && !c.classList.contains('dk-cut'));
+    // Where each place's middle is with nothing spread: the pointer is measured against those, so the
+    // spreading never moves the icon it is on away from it.
+    const box = appsBox.getBoundingClientRect();
+    const start0 = (up ? box.top : box.left) + (riseExtra / 2) * z;
+    const on = pointerX !== null && !move?.moved && has('rise');
+    const dist = places.map((_, i) => (on ? (pointerX! - (start0 + (i * (APP_W + APP_GAP) + APP_W / 2) * z)) / z : Infinity));
+    const levels = places.map((b, i) => {
+      const want = on ? riseAt(dist[i]) * intensity : 0;
       const was = rise.get(b) ?? 0;
       const now = Math.abs(want - was) < 0.002 ? want : was + (want - was) * k;
       if (now !== want) busy = true;
       rise.set(b, now);
-      const grow = spread ? RISE_GROW_SPREAD : RISE_GROW;
-      ico.style.transform = now ? `${outward(Number((RISE_LIFT * now).toFixed(2)))} scale(${(1 + grow * now).toFixed(3)})` : '';
-      const wide = spread ? APP_W * RISE_SPREAD * now : 0;
-      b.style.width = wide > 0.05 ? `${(APP_W + wide).toFixed(2)}px` : '';
-      extra += wide;
+      return now;
     });
-    riseExtra = extra > 0.05 ? extra : 0;
-    // Wider from its middle: half of it to each side.
+    // The bob: the app nearest the pointer, once the pointer has been still a while.
+    let nearest = -1;
+    dist.forEach((d, i) => {
+      if (Math.abs(d) < RISE_REACH / 2 && (nearest < 0 || Math.abs(d) < Math.abs(dist[nearest]))) nearest = i;
+    });
+    let bob = 0;
+    // Kept going while the pointer is on an app, for the bob to start once it has been still long enough.
+    if (on && pointerIn && nearest >= 0) busy = true;
+    if (on && pointerIn && nearest >= 0 && t - stillSince > RISE_BOB_AFTER) {
+      if (!bobFrom) bobFrom = t;
+      bob = Math.sin((((t - bobFrom) % RISE_BOB_MS) / RISE_BOB_MS) * Math.PI);
+    } else bobFrom = 0;
+    const { shifts, total } = riseShifts(spread ? levels : levels.map(() => 0));
+    places.forEach((b, i) => {
+      const bobs = i === nearest ? bob : 0;
+      const s = (1 + RISE_GROW * levels[i]) * (1 + RISE_BOB_GROW * bobs);
+      const along = shifts[i];
+      const out = RISE_BOB_LIFT * bobs;
+      placed.set(b, { s, along, out });
+      if (Math.abs(s - 1) < 0.0005 && Math.abs(along) < 0.01 && out < 0.01) {
+        b.style.scale = b.style.translate = '';
+        return;
+      }
+      b.style.scale = s.toFixed(4);
+      const [x, y] = up ? [outSign() * out, along] : [along, outSign() * out];
+      b.style.translate = `${x.toFixed(2)}px ${y.toFixed(2)}px`;
+    });
+    // Wider from its middle: half of it to each side, as room the apps' row keeps at its ends.
+    riseExtra = total > 0.05 ? total : 0;
+    appsBox.style.paddingInline = riseExtra ? `${(riseExtra / 2).toFixed(2)}px` : '';
     bar.style.translate = riseExtra ? `${(-riseExtra / 2).toFixed(2)}px 0` : '';
+    if (placeGlow(dt)) busy = true;
     raf = busy ? requestAnimationFrame(animateRise) : 0;
     // Where it takes clicks follows the widened bar, now and then while it moves, and when it stops.
     if (!raf || t - solidAt > 120) {
@@ -1453,13 +1515,60 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (!raf) raf = requestAnimationFrame(animateRise);
   };
   appsBox.addEventListener('pointermove', (e) => {
-    pointerX = along(e);
+    const x = along(e);
+    if (pointerX === null || Math.abs(x - pointerX) > 0.5) stillSince = performance.now();
+    pointerX = x;
+    pointerIn = true;
     kickRise();
   });
   appsBox.addEventListener('pointerleave', () => {
-    pointerX = null;
+    // It shrinks back where it is as the pointer leaves, not toward where the pointer went.
+    pointerIn = false;
     kickRise();
   });
+
+  /** Where the Glide highlight is while Rise drives it (null: not shown yet, so it appears in place). */
+  let glowAt: { x: number; y: number; w: number; h: number } | null = null;
+  /** The item it is on, and how far it still is from it (the slide over from the last one, closing). */
+  let glowFor: HTMLElement | null = null;
+  let glowOff = { x: 0, y: 0, w: 0, h: 0 };
+  /**
+   * With Rise on, the Glide highlight is put here every frame onto the item as it is now (grown and
+   * pushed aside), easing over from the last one. A CSS transition chasing a box that moves every frame
+   * lagged behind the icon, and it was aimed at the item's place before it grew (Justin's 11-19
+   * screenshot). True while it is still on its way.
+   */
+  const placeGlow = (dt: number): boolean => {
+    const b = glideOn;
+    if (!b || !has('glide') || !has('rise') || !glow.classList.contains('on')) return false;
+    const p = placed.get(b);
+    const s = p?.s ?? 1;
+    const w = b.offsetWidth;
+    const h = b.offsetHeight;
+    // Grown from the bar's edge (the place's transform-origin), then moved by its translate.
+    const out = outSign() * (p?.out ?? 0);
+    const [ax, ay] = upright() ? [out, p?.along ?? 0] : [p?.along ?? 0, out];
+    const ox = { left: 0, right: w, top: w / 2, bottom: w / 2 }[side()];
+    const oy = { left: h / 2, right: h / 2, top: 0, bottom: h }[side()];
+    const want = { x: b.offsetLeft + ox - ox * s + ax, y: b.offsetTop + oy - oy * s + ay, w: w * s, h: h * s };
+    // Moved onto another item: it starts where it was and the gap left closes; on the same item it moves
+    // with it (growing, bobbing), only what is left of the gap easing away.
+    if (glowFor !== b) {
+      glowOff = glowAt ? { x: glowAt.x - want.x, y: glowAt.y - want.y, w: glowAt.w - want.w, h: glowAt.h - want.h } : { x: 0, y: 0, w: 0, h: 0 };
+      glowFor = b;
+    } else {
+      const keep = Math.exp(-dt / GLIDE_EASE_MS);
+      glowOff = { x: glowOff.x * keep, y: glowOff.y * keep, w: glowOff.w * keep, h: glowOff.h * keep };
+    }
+    const settled = Math.max(Math.abs(glowOff.x), Math.abs(glowOff.y), Math.abs(glowOff.w), Math.abs(glowOff.h)) < 0.05;
+    if (settled) glowOff = { x: 0, y: 0, w: 0, h: 0 };
+    glowAt = { x: want.x + glowOff.x, y: want.y + glowOff.y, w: want.w + glowOff.w, h: want.h + glowOff.h };
+    glow.style.transition = 'opacity 0.18s ease';
+    glow.style.width = `${glowAt.w.toFixed(2)}px`;
+    glow.style.height = `${glowAt.h.toFixed(2)}px`;
+    glow.style.transform = `translate(${glowAt.x.toFixed(2)}px, ${glowAt.y.toFixed(2)}px)`;
+    return !settled;
+  };
 
   // Spotlight: a line on the bar's top edge over the app in front, its light shining down on it; it
   // slides to the next app in front.
@@ -1511,18 +1620,25 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       return;
     }
     if (has('glide')) {
-      // The highlight: from nothing it appears in place; from another item it slides over.
-      const box = `translate(${b.offsetLeft}px, ${b.offsetTop}px)`;
+      // The highlight: from nothing it appears in place; from another item it slides over. With Rise
+      // on, placeGlow moves it every frame, onto the item as it grows.
       const jump = !glow.classList.contains('on');
-      if (jump) glow.style.transition = 'none';
-      glow.style.width = `${b.offsetWidth}px`;
-      glow.style.height = `${b.offsetHeight}px`;
-      glow.style.transform = box;
-      if (jump) {
-        void glow.offsetWidth;
-        glow.style.transition = '';
+      if (has('rise')) {
+        if (jump) glowAt = glowFor = null;
+        glow.classList.add('on');
+        kickRise();
+      } else {
+        const box = `translate(${b.offsetLeft}px, ${b.offsetTop}px)`;
+        glow.style.transition = jump ? 'none' : '';
+        glow.style.width = `${b.offsetWidth}px`;
+        glow.style.height = `${b.offsetHeight}px`;
+        glow.style.transform = box;
+        if (jump) {
+          void glow.offsetWidth;
+          glow.style.transition = '';
+        }
+        glow.classList.add('on');
       }
-      glow.classList.add('on');
     } else glow.classList.remove('on');
     // The name, over the bar (not for S/W: when they reset comes up there instead).
     const name = !has('names') || b === claude ? '' : (b.dataset.tip ?? b.title ?? '');
