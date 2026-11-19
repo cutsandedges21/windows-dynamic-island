@@ -10,6 +10,7 @@
 
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tauri-apps/api/menu';
 import { duration } from './format';
+import { packageFamily } from './store-app';
 import { applyGlass } from './glass';
 import { isTauri, native, on, sendTo, type DockIconRect, type InstalledApp, type LiveWindow, type TrayIcon } from './native';
 import { BAR_SCALE, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
@@ -165,8 +166,14 @@ export const DOCK_MAX = 14;
 const SKIP = /\\(island|explorer|applicationframehost|textinputhost|shellexperiencehost|searchhost|startmenuexperiencehost|systemsettings)\.exe$/i;
 
 const keyOf = (path: string) => path.toLowerCase();
-/** What a window belongs to: its web app (YouTube Music), else its program (so not "Chrome"). */
-export const targetOf = (w: LiveWindow) => (w.appId ? 'shell:AppsFolder\\' + w.appId : w.exe);
+/** File Explorer's id in Start, which a pinned File Explorer is. */
+const FILE_EXPLORER = 'shell:AppsFolder\\Microsoft.Windows.Explorer';
+/** A File Explorer window: explorer.exe runs the shell too, so only its folder windows count. */
+const isFileExplorer = (w: Pick<LiveWindow, 'exe' | 'className'>) => /\\explorer\.exe$/i.test(w.exe) && w.className === 'CabinetWClass';
+/** A window that gets a place on the dock: not the shell's or Island's own, File Explorer's yes. */
+const onDock = (w: LiveWindow) => Boolean(w.exe) && (!SKIP.test(w.exe) || isFileExplorer(w));
+/** What a window belongs to: File Explorer, its web app (YouTube Music), else its program (so not "Chrome"). */
+export const targetOf = (w: LiveWindow) => (isFileExplorer(w) ? FILE_EXPLORER : w.appId ? 'shell:AppsFolder\\' + w.appId : w.exe);
 const nameOf = (path: string) => (path.split(/[\\/]/).pop() ?? path).replace(/\.exe$/i, '');
 
 /**
@@ -177,15 +184,18 @@ const nameOf = (path: string) => (path.split(/[\\/]/).pop() ?? path).replace(/\.
 export function dockApps(pinned: readonly InstalledApp[], windows: readonly LiveWindow[], front: number, icons: ReadonlyMap<string, string | null>, seen: readonly string[] = []): DockApp[] {
   const byExe = new Map<string, LiveWindow[]>();
   for (const w of windows) {
-    if (!w.exe || SKIP.test(w.exe)) continue;
+    if (!onDock(w)) continue;
     const k = keyOf(targetOf(w));
     const list = byExe.get(k);
     if (list) list.push(w);
     else byExe.set(k, [w]);
   }
   const app = (key: string, name: string, pin: boolean): DockApp => {
-    const wins = byExe.get(key) ?? [];
-    byExe.delete(key);
+    // A Store app pinned by its program's path (an older pin) still finds its windows, which go by its id.
+    const family = pin && !byExe.has(key) ? packageFamily(key) : null;
+    const own = family ? [...byExe.keys()].find((k) => packageFamily(k) === family) : undefined;
+    const wins = byExe.get(own ?? key) ?? [];
+    byExe.delete(own ?? key);
     return { key, name, icon: icons.get(key) ?? null, windows: wins.map((w) => w.hwnd), titles: wins.map((w) => w.title), front: wins.some((w) => w.hwnd === front), pinned: pin };
   };
   const out = pinned.map((p) => app(keyOf(p.target), p.name, true));
@@ -203,7 +213,7 @@ export function dockApps(pinned: readonly InstalledApp[], windows: readonly Live
 export function openOrder(seen: readonly string[], windows: readonly LiveWindow[]): string[] {
   const open: string[] = [];
   for (const w of windows) {
-    if (!w.exe || SKIP.test(w.exe)) continue;
+    if (!onDock(w)) continue;
     const k = keyOf(targetOf(w));
     if (!open.includes(k)) open.push(k);
   }

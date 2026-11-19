@@ -7,6 +7,7 @@ import type { ActivityStatus, SheetEnv } from '../core/activity';
 import type { DockCard } from '../core/dock';
 import { native, type InstalledApp } from '../core/native';
 import type { Seg } from '../core/segments';
+import { packageFamily, storeTargets } from '../core/store-app';
 import type { Block, FileTile, SheetRow, SheetView, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
 
@@ -68,6 +69,20 @@ export class AppsActivity extends BaseActivity {
       this.apps = pinned;
       if (pinned.length) this.save();
     }
+    void this.loadIcons();
+    this.ctx.update();
+    void this.fixStoreApps();
+  }
+
+  /** Store apps kept by their program's path (no icon, a second place on the taskbar): by Start's id instead. */
+  private async fixStoreApps(): Promise<void> {
+    if (!this.apps.some((a) => !/^shell:/i.test(a.target) && packageFamily(a.target))) return;
+    const installed = await native.wsApps();
+    if (!this.alive) return;
+    const fixed = storeTargets(this.apps, installed);
+    if (!fixed) return;
+    this.apps = cleanApps(fixed);
+    this.save();
     void this.loadIcons();
     this.ctx.update();
   }
