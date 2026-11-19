@@ -93,6 +93,30 @@ export async function listSessions(sessionsDir: string): Promise<RegistryRecord[
   return out;
 }
 
+// ------------------------------------------------------------------ Auto model's own runs
+
+/**
+ * Auto model (src-tauri/model-router, installed in ~/.claude/model-router) asks Claude about every
+ * prompt and every finished chat with `claude -p`: router.mjs before a prompt runs (a few seconds),
+ * review.mjs after a turn or a compaction. Each is a session of its own in Claude Code's registry
+ * that starts and ends at once, so it showed as a chat finishing ("done" for a split second) every
+ * time the user sent a prompt. They are told apart by their process, not their title: a
+ * non-interactive run (entrypoint "sdk-…") whose command line, or its parent's (node running
+ * router.mjs or review.mjs), names the model-router folder. The user's own `claude -p` names
+ * neither, and still shows.
+ */
+export const isSdkRun = (entrypoint: string | null): boolean => !!entrypoint && entrypoint.startsWith('sdk');
+
+const MODEL_ROUTER = /[\\/]model-router[\\/]/i;
+
+/** From the run's own command line and its parent's (null: could not be read). */
+export function isAutoModelRun(own: string | null | undefined, parent: string | null | undefined): boolean {
+  return MODEL_ROUTER.test(own ?? '') || MODEL_ROUTER.test(parent ?? '');
+}
+
+/** What router.mjs's prompt starts with: the title its run gets, for when no command line can be read. */
+const ROUTER_PROMPT = /^Current model: \S+, effort: /;
+
 // ------------------------------------------------------------------ transcripts on disk
 
 const transcriptCache = new Map<string, string>();
@@ -201,6 +225,8 @@ export class SessionTracker {
   private slots = new Map<string, number>();
   private order = new Map<string, number>();
   private seq = 0;
+  /** Non-interactive runs looked at, by session: whether each is one of Auto model's (isAutoModelRun). */
+  private readonly helperRuns = new Map<string, boolean>();
   latestVersion: string | null = null;
   private busy: Promise<{ sessions: SessionView[]; closed: ClosedView[]; events: TrackerEvent[] }> | null = null;
 
@@ -223,11 +249,12 @@ export class SessionTracker {
     const current = new Map<string, SessionView>();
     const activeFiles = new Set<string>();
 
-    const live: Array<{ rec: RegistryRecord; info: ProbeResult }> = [];
+    let live: Array<{ rec: RegistryRecord; info: ProbeResult }> = [];
     for (const rec of records) {
       const info = this.probe.probe(rec.pid, rec.procStart);
       if (info.alive && !live.some((l) => l.rec.sessionId === rec.sessionId)) live.push({ rec, info });
     }
+    live = await this.withoutHelperRuns(live);
     const files = await Promise.all(live.map(({ rec }) => findTranscript(this.projectsDir, rec.sessionId, rec.cwd)));
     const stats = await native.statMany(files.map((f) => f ?? ''));
     const infos: TranscriptInfo[] = await Promise.all(live.map((_, i) => this.transcripts.read(files[i], files[i] ? (stats[i] as FileStat | null) : null)));
@@ -236,6 +263,7 @@ export class SessionTracker {
       const file = files[i];
       if (file) activeFiles.add(file);
       const t = infos[i];
+      if (isSdkRun(rec.entrypoint) && !this.helperRuns.has(rec.sessionId) && ROUTER_PROMPT.test(t.title ?? '')) return;
       const prev = this.known.get(rec.sessionId);
       const lastActivityMs = t.lastTimestampMs ?? (t.hasTranscript ? t.mtimeMs : null);
       const processStartMs = rec.startedAt ?? info.startMs;
@@ -331,6 +359,25 @@ export class SessionTracker {
       .map((s) => ({ ...s, slot: this.slots.get(s.id) ?? null }))
       .sort((a, b) => (a.slot ?? 99) - (b.slot ?? 99) || this.order.get(a.id)! - this.order.get(b.id)!);
     return { sessions, closed: this.closedList(), events };
+  }
+
+  /**
+   * The live sessions without Auto model's own `claude -p` runs: no row, no dot, no finish, no
+   * "closed". Each non-interactive run's command lines are read once, the first poll it shows in.
+   */
+  private async withoutHelperRuns<T extends { rec: RegistryRecord }>(live: T[]): Promise<T[]> {
+    const ids = new Set(live.map((l) => l.rec.sessionId));
+    for (const id of [...this.helperRuns.keys()]) if (!ids.has(id)) this.helperRuns.delete(id);
+    const fresh = live.filter((l) => isSdkRun(l.rec.entrypoint) && !this.helperRuns.has(l.rec.sessionId));
+    if (fresh.length) {
+      const lines = await native.claudeStatusCmdlines(fresh.flatMap(({ rec }) => [rec.pid, this.probe.table.get(rec.pid)?.ppid ?? 0]));
+      fresh.forEach(({ rec }, i) => {
+        const [own, parent] = [lines[2 * i], lines[2 * i + 1]];
+        // Neither readable: asked again next poll; meanwhile the router's title gives it away.
+        if (own || parent) this.helperRuns.set(rec.sessionId, isAutoModelRun(own, parent));
+      });
+    }
+    return live.filter((l) => !this.helperRuns.get(l.rec.sessionId));
   }
 
   /** Merge chats found closed in transcripts (ones that ended before we saw them). */
