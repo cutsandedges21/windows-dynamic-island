@@ -1352,7 +1352,12 @@ export class SheetRenderer {
         at = span.x + contentLeft(x, w, iw, k);
         this.contentAt.set(inner, at);
       }
-      inner.style.left = `${at - span.x}px`;
+      // Moved by a transform, not `left`: a `left` a part of a CSS pixel off (the card's edge on a
+      // device pixel, 0.8 px at 125 %) lays the tiles' edges and icons out a pixel to one side on every
+      // other step of the card's edge, so a card settling around still content flickered them back and
+      // forth (Justin's 2026-11-19 clip: Calendar back to Control Center, the Shelf opening).
+      inner.style.left = '0px';
+      inner.style.transform = `translate(${at - span.x}px)`;
     }
     x = span.x;
     w = span.w;
