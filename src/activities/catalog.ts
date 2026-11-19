@@ -256,6 +256,13 @@ export const CATALOG: ActivityMeta[] = [
         help: "Point at the music on the pill and it grows into a player, like an iPhone's Dynamic Island: the track, a scrubber, and play, skip and sound output; click the art to go to the app playing. Even when the hover card is set to Claude stats. Off, the pill widens instead.",
         default: true,
       },
+      {
+        key: 'newSongPlayer',
+        type: 'toggle',
+        label: 'Player on a new song',
+        help: "When the song changes, the player grows out of the pill for a moment, the same card as pointing at it, instead of the pill widening with the song's name. Pointing at it keeps it there. Works when pointing at the music shows the player (Player on hover on, and it does not grow Sideways).",
+        default: false,
+      },
       { key: 'showArt', type: 'toggle', label: 'Album art', default: true },
       { key: 'lyrics', type: 'toggle', label: 'Lyrics', help: "The line being sung, under the track in the player. Lyrics come from LRCLIB, a free lyrics library: Island sends it the song's name, artist and length.", default: true },
       { key: 'pausedMinutes', type: 'number', label: 'Keep a paused track for', default: 5, min: 0, max: 120, unit: 'min' },

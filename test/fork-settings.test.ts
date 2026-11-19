@@ -62,6 +62,8 @@ describe("Moss's 0.4.2 settings file", () => {
     // This music had "Player on hover" off: pointing at it widens the pill.
     expect(s.activities.config.music.options.hoverPlayer).toBe(false);
     expect(hoverGrows('music', grows(s, 'music'), s.activities.config.music.options)).toBe('wide');
+    // Saved before "Player on a new song": off, so a new song still widens the pill.
+    expect(s.activities.config.music.options.newSongPlayer).toBe(false);
   });
 
   it("Claude Code is Claude now (shown as Claude Status): still on, his options as he had them, Claude Status's switches at their defaults", () => {

@@ -1735,6 +1735,38 @@ describe('music', () => {
     expect(calls.close).toBe(1);
   });
 
+  it('"Player on a new song": a new song grows the player out of the resting pill instead of widening it', async () => {
+    const surfaced = (key: string | null) => ({ reason: 'surfaced' as const, now: Date.now(), width: 340, vertical: false, interactive: true, surfaced: key });
+    const { act, calls } = await boot(new MusicActivity(), { hoverPlayer: true, newSongPlayer: true });
+    emit('media', media({ title: 'Next One' }));
+    const key = 'track:Next One\u0000Luca Noir';
+    expect(calls.surface.at(-1)).toMatchObject({ key, level: 'compact', bump: false, hoverHolds: true });
+    const v = act.sheet(surfaced(key))!;
+    // The same card as pointing at it, so the hover carries it on.
+    expect(v).toMatchObject({ key: 'player', morph: true });
+    expect(v.blocks[0]).toMatchObject({ t: 'player', title: 'Next One' });
+    // Under it the pill rests as it was: no title widening it.
+    expect(act.render(env('compact', { surfaced: key })).map((s) => s.key)).toEqual(['art', 'bars']);
+    // Play/pause still only nods the pill, with no card.
+    expect(act.sheet(surfaced('state:paused'))).toBeNull();
+  });
+
+  it('"Player on a new song" off, or no player to grow into: the pill widens with the song as before', async () => {
+    const surfaced = (key: string) => ({ reason: 'surfaced' as const, now: Date.now(), width: 340, vertical: false, interactive: true, surfaced: key });
+    const check = async (options: Record<string, unknown>, tweak: (s: ReturnType<typeof defaultSettings>) => void = () => {}) => {
+      const { act, calls } = await boot(new MusicActivity(), options, tweak);
+      emit('media', media({ title: 'Next One' }));
+      const key = 'track:Next One\u0000Luca Noir';
+      expect(calls.surface.at(-1)).toEqual({ key, ms: 3200 });
+      expect(act.sheet(surfaced(key))).toBeNull();
+      expect(act.render(env('compact', { surfaced: key })).map((s) => s.key)).toEqual(['art', 'title', 'bars']);
+    };
+    await check({ hoverPlayer: true });
+    await check({ hoverPlayer: false, newSongPlayer: true });
+    // Grows › Sideways: pointing at the music shows no player, so a new song does not either.
+    await check({ hoverPlayer: true, newSongPlayer: true }, (s) => (s.activities.config.music.grows = 'wide'));
+  });
+
   it('tells headphones from speakers by name', () => {
     expect(headphonesLike('Headphones (WH-1000XM4 Stereo)')).toBe(true);
     expect(headphonesLike("Moss's AirPods Pro")).toBe(true);

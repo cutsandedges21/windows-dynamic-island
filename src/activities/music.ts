@@ -9,9 +9,11 @@ import { artColour, barColour } from '../core/artcolor';
 import type { PetSignal } from '../core/pet';
 import type { ActivityStatus, ChipView, RenderEnv, SheetEnv } from '../core/activity';
 import { clock } from '../core/format';
+import { hoverGrows } from '../core/grow';
 import { emitLocal, native, type AudioState, type MediaState } from '../core/native';
 import { platform } from '../core/platform';
 import type { PlayerBlock } from '../core/player';
+import { growsOf } from '../core/settings';
 import type { Seg } from '../core/segments';
 import type { SheetButton, SheetView, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
@@ -77,7 +79,12 @@ export class MusicActivity extends BaseActivity {
     if (track && track !== this.lastTrack) {
       this.lastTrack = track;
       if (!first && playing) {
-        this.ctx.surface({ key: `track:${track}`, ms: 3200 });
+        // Player on a new song: the player grows out of the resting pill (sheet() below) and the
+        // pointer holds it like the hover card; the pill under it stays compact, so nothing widens
+        // underneath and nothing moves when the card goes back. No nod: the card would bob with
+        // the pill while it grows, and the growing is the sign of the new song.
+        if (this.newSongPlayer()) this.ctx.surface({ key: `track:${track}`, ms: 3200, level: 'compact', bump: false, hoverHolds: true });
+        else this.ctx.surface({ key: `track:${track}`, ms: 3200 });
         this.saw('track', 'music:track');
       }
     } else if (!first && prev && prev.status !== m.status && track) {
@@ -129,6 +136,22 @@ export class MusicActivity extends BaseActivity {
 
   private hoverPlayer(): boolean {
     return this.ctx.options<{ hoverPlayer: boolean }>().hoverPlayer !== false;
+  }
+
+  /**
+   * A new song grows the player out of the pill instead of widening it (Activities › Music › Player
+   * on a new song): only when pointing at the music grows that same player, so it is never a card
+   * the hover would not show (Player on hover off, or Grows › Sideways).
+   */
+  private newSongPlayer(): boolean {
+    if (this.ctx.options<{ newSongPlayer: boolean }>().newSongPlayer !== true || !this.hoverPlayer()) return false;
+    const grows = hoverGrows('music', growsOf(this.ctx.config(), this.ctx.settings().island.defaultGrows, 'music'), this.ctx.options());
+    return grows === 'card';
+  }
+
+  /** Surfaced by a new song with Player on a new song: the player shows, not the widened pill. */
+  private newSongCard(surfaced: string | null): boolean {
+    return Boolean(surfaced?.startsWith('track:')) && this.newSongPlayer();
   }
 
   /** Pointing at the music grows the pill into the player (Activities › Music › Player on hover). */
@@ -185,7 +208,8 @@ export class MusicActivity extends BaseActivity {
     const title: Seg = { t: 'text', key: 'title', text: m.title, weight: 'semibold', prio: 0, max: env.level === 'compact' ? 120 : undefined };
 
     if (env.level === 'compact' || env.level === 'idle') {
-      return env.surfaced ? [art, title, bars] : [art, bars];
+      // Under the player a new song grew, the pill rests as it was: no title widening it.
+      return env.surfaced && !this.newSongCard(env.surfaced) ? [art, title, bars] : [art, bars];
     }
     const segs: Seg[] = [art, title];
     if (m.artist) segs.push({ t: 'text', key: 'artist', text: m.artist, tone: 'muted', prio: 4, min: 40 });
@@ -301,7 +325,10 @@ export class MusicActivity extends BaseActivity {
   sheet(env: SheetEnv): SheetView | null {
     const m = this.m;
     if (env.reason === 'open') return m?.title ? this.stageCard(env) : null;
-    if (env.reason !== 'hover' || !this.hoverPlayer() || !m?.title) return null;
+    // Pointed at, or a new song with Player on a new song: the same player, so pointing at it
+    // after a new song keeps the card it already shows.
+    const asked = env.reason === 'hover' || (env.reason === 'surfaced' && this.newSongCard(env.surfaced));
+    if (!asked || !this.hoverPlayer() || !m?.title) return null;
     const on = env.interactive;
     const pos = this.position(env.now);
     const showArt = this.ctx.options<{ showArt: boolean }>().showArt !== false;
