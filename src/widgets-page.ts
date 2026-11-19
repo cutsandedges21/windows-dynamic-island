@@ -234,6 +234,7 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
             'Medium is the size it has always been.',
             segmented(t.size, DOCK_SIZES.map((k) => [k, DOCK_SIZE_LABELS[k]] as [DockSize, string]), (v) => {
               t.size = v;
+              t.scale = null;
               host.save(true);
               host.render();
             }),
@@ -255,14 +256,11 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
           // At the bottom they live inside it (Moss, 11-18: on with Windows' taskbar still there they look wrong).
           ...(barNeedsHidden(t) && t.hideWindows ? edgeRows(host).map(sub) : []),
           row(
-            'Lock in place',
-            'Off: drag the taskbar by its empty space to slide it along the bottom; double-click there to bring it back to the middle.',
+            'Place',
+            'It stays put. Edit position lets you drag it along its edge, stretch its ends to make it longer and its top to make it taller, and double-click it back to the middle; press Done when it is right.',
             h('div', { class: 'row-actions' }, [
               h('button', { class: 'btn ghost', text: 'Back to the middle', onclick: () => void sendTo('island', 'dock-pref', { centre: true }) }),
-              toggle(t.locked, (v) => {
-                t.locked = v;
-                host.save(true);
-              }),
+              h('button', { class: 'btn', text: 'Edit position', onclick: () => void sendTo('dock', 'dock-edit', true) }),
             ]),
           ),
           h('p', { class: 'wtip', html: `${icon('info')}<span>Right-click the taskbar for the same choices.</span>` }),

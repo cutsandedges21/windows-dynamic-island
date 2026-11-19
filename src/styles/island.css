@@ -2811,3 +2811,27 @@ html[data-pill='glass'][data-blend] :is(.pill.joined > .pill-bg, .sheet.joined >
 .fr-tint { position: absolute; pointer-events: none; opacity: 0; transition: opacity 0.3s ease; }
 .fr-tint.on { opacity: 1; }
 html.frame-window.fr-full .fr-tint { opacity: 0; }
+
+/* ------------------------------------------------------------------ Edit position (dock.ts setEditing)
+   The taskbar stays put unless edited: then an accent outline, handles on its ends (longer) and on
+   its inner edge (taller), a grab cursor, and Reset size / Done over it. */
+.dock .dk-fill { flex: 1 1 0; min-width: 0; }
+.dock .dk-handle { display: none; position: absolute; z-index: 3; background: var(--accent); border-radius: 3px; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35); }
+html.dk-editing .dock .dk-handle { display: block; }
+html.dk-editing .dock { cursor: grab; }
+html.dk-editing .dock.grabbing { cursor: grabbing; }
+html.dk-editing .dock-bg { box-shadow: 0 0 0 2px var(--accent), 0 0 18px -4px var(--accent); }
+.dock .dk-handle.h-start, .dock .dk-handle.h-end { top: 50%; width: 6px; height: 22px; margin-top: -11px; cursor: ew-resize; }
+.dock .dk-handle.h-start { left: -3px; }
+.dock .dk-handle.h-end { right: -3px; }
+.dock .dk-handle.h-inner { left: 50%; top: -3px; width: 34px; height: 6px; margin-left: -17px; cursor: ns-resize; }
+html[data-side='top'] .dock .dk-handle.h-inner { top: auto; bottom: -3px; }
+html.dk-upright .dock .dk-handle.h-start, html.dk-upright .dock .dk-handle.h-end { display: none; }
+html[data-side='left'] .dock .dk-handle.h-inner { top: 50%; left: auto; right: -3px; width: 6px; height: 34px; margin: -17px 0 0; cursor: ew-resize; }
+html[data-side='right'] .dock .dk-handle.h-inner { top: 50%; left: -3px; width: 6px; height: 34px; margin: -17px 0 0; cursor: ew-resize; }
+.dk-edit { display: none; position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); gap: 6px; padding: 5px; border-radius: 999px; background: var(--pill); box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.12), 0 10px 24px -10px rgba(0, 0, 0, 0.6); pointer-events: auto; }
+html.dk-editing .dk-edit { display: flex; }
+html[data-side='top'] .dk-edit { bottom: auto; top: 6px; }
+.dk-edit-btn { all: unset; height: 28px; padding: 0 14px; border-radius: 999px; font: 600 12.5px/28px var(--font); color: var(--fg); background: rgba(var(--ink), 0.1); cursor: default; }
+.dk-edit-btn:hover { background: rgba(var(--ink), 0.18); }
+.dk-edit-btn.done { background: var(--accent); color: #111; }

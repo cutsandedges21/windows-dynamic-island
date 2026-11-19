@@ -12,7 +12,7 @@ import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tau
 import { duration } from './format';
 import { applyGlass } from './glass';
 import { isTauri, native, on, sendTo, type DockIconRect, type InstalledApp, type LiveWindow } from './native';
-import { DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
+import { BAR_SCALE, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
 
 /** One app on the dock. */
 export interface DockApp {
@@ -48,8 +48,10 @@ export interface DockFrame {
   accent: string;
   color: PillColor;
   glass?: number;
-  /** Dragging it is off (right-click › Lock in place). */
-  locked: boolean;
+  /** Its own height (a zoom like its sizes'), stretched in Edit position; null or unset: its size's. */
+  scale?: number | null;
+  /** Its least length (CSS px before its zoom), stretched in Edit position; 0 or unset: as long as what it holds. */
+  minLen?: number;
   size: DockSize;
   /** Rise, Spotlight, Glide, Names: the ones on (Settings › Taskbar › Styles). */
   styles?: DockStyle[];
@@ -89,7 +91,9 @@ export interface DockCard {
 
 /** What the taskbar's right-click menu changes. */
 export interface DockPref {
-  locked?: boolean;
+  /** Its own height and least length (Edit position); scale null: its size's again. */
+  scale?: number | null;
+  minLen?: number;
   /** Back to the middle. */
   centre?: boolean;
   /** Show or hide one of its items. */
@@ -264,8 +268,9 @@ export interface DockHooks {
   /** Where the taskbar was dragged to, 0..1 across the screen (-1: the middle). */
   centre(): number;
   saveCentre(centre: number): void;
-  locked(): boolean;
-  setLocked(on: boolean): void;
+  scale(): number | null;
+  minLen(): number;
+  setShape(scale: number | null, minLen: number): void;
   size(): DockSize;
   setSize(size: DockSize): void;
   styles(): DockStyle[];
@@ -319,7 +324,11 @@ export class DockHost {
         void this.tick();
       }),
       await on<DockPref>('dock-pref', (p) => {
-        if (typeof p?.locked === 'boolean') this.hooks.setLocked(p.locked);
+        if (p && ('scale' in p || 'minLen' in p)) {
+          const scale = p.scale === null ? null : typeof p.scale === 'number' && Number.isFinite(p.scale) ? p.scale : this.hooks.scale();
+          const minLen = typeof p.minLen === 'number' && Number.isFinite(p.minLen) ? p.minLen : this.hooks.minLen();
+          this.hooks.setShape(scale, minLen);
+        }
         if (typeof p?.size === 'string' && (DOCK_SIZES as readonly string[]).includes(p.size)) this.hooks.setSize(p.size);
         if (typeof p?.style === 'string' && (DOCK_STYLES as readonly string[]).includes(p.style)) this.hooks.setStyles(toggleStyle(this.hooks.styles(), p.style));
         if (typeof p?.edge === 'boolean') this.hooks.setEdge(p.edge);
@@ -385,7 +394,8 @@ export class DockHost {
         wifi: this.hooks.wifi(),
         hidden: this.hooks.hidden(),
         ...this.hooks.look(),
-        locked: this.hooks.locked(),
+        scale: this.hooks.scale(),
+        minLen: this.hooks.minLen(),
         size: this.hooks.size(),
         styles: this.hooks.styles(),
         names: this.hooks.names(),
@@ -504,7 +514,7 @@ function el(tag: string, cls: string, html?: string): HTMLElement {
 }
 
 /** The taskbar's right-click menu (Windows' own): what it shows, lock it in place, back to the middle, Settings › Widgets. */
-async function dockMenu(f: DockFrame, pref: (p: DockPref) => void): Promise<void> {
+async function dockMenu(f: DockFrame, pref: (p: DockPref) => void, edit: { on: boolean; set(on: boolean): void }): Promise<void> {
   const show = await Submenu.new({
     text: 'Show on the taskbar',
     items: await Promise.all(DOCK_ITEMS.map((k) => CheckMenuItem.new({ text: DOCK_LABELS[k], checked: !(f.hidden ?? []).includes(k), action: () => pref({ toggle: k }) }))),
@@ -532,7 +542,8 @@ async function dockMenu(f: DockFrame, pref: (p: DockPref) => void): Promise<void
       ...(f.edge ? [await CheckMenuItem.new({ text: 'Melt the ends', checked: f.melt === true, action: () => pref({ melt: !f.melt }) })] : []),
       await PredefinedMenuItem.new({ item: 'Separator' }),
       await CheckMenuItem.new({ text: 'Auto-hide', checked: f.autoHide === true, action: () => pref({ autoHide: !f.autoHide }) }),
-      await CheckMenuItem.new({ text: 'Lock in place', checked: f.locked, action: () => pref({ locked: !f.locked }) }),
+      // Always in place (Moss, 11-18); Edit position moves and stretches it until Done.
+      await CheckMenuItem.new({ text: 'Edit position', checked: edit.on, action: () => edit.set(!edit.on) }),
       await MenuItem.new({ text: 'Back to the middle', action: () => pref({ centre: true }) }),
       await PredefinedMenuItem.new({ item: 'Separator' }),
       await MenuItem.new({ text: 'Taskbar settings…', action: () => void native.openApp('taskbar') }),
@@ -571,6 +582,9 @@ const APP_GAP = 2;
 /** Room the window keeps at each end for the bar to widen into while it spreads (CSS px before its
  *  size's zoom): the window never resizes under the pointer. */
 const RISE_ROOM = 36;
+
+/** The bar's zoom: its own height when stretched in Edit position, else its size's. */
+export const zoomOf = (f: Pick<DockFrame, 'size' | 'scale'> | null): number => (f ? (f.scale ?? DOCK_ZOOM[f.size] ?? 1) : 1);
 
 export const DOCK_SIZE_LABELS: Record<DockSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
 export const DOCK_STYLE_LABELS: Record<DockStyle, string> = { rise: 'Rise', spotlight: 'Spotlight', glide: 'Glide', names: 'Names' };
@@ -832,7 +846,9 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const bell = el('button', 'dk-btn dk-bell', SVG.bell);
   bell.title = 'Notifications';
   bell.addEventListener('click', () => send({ kind: 'notifications' }));
-  bar.append(start, appsBox, gapEl, sepA, musicPrev, music, musicNext, timer, claude, sepB, battery, wifi, sound, clock, bell);
+  // Takes the room when the bar is stretched longer than what it holds (Edit position).
+  const fillEl = el('i', 'dk-fill');
+  bar.append(start, appsBox, fillEl, gapEl, sepA, musicPrev, music, musicNext, timer, claude, sepB, battery, wifi, sound, clock, bell);
 
   // Over the bar, coming up from behind it: the Apps card (the arrow) and when S/W reset (pointing at them).
   const above = el('div', 'dk-above');
@@ -1451,7 +1467,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (want === gapW) return;
     gapW = want;
     gapEl.hidden = !want;
-    if (want) gapEl.style.width = `${(want + 2 * GAP_PAD) / (DOCK_ZOOM[frame?.size ?? 'medium'] ?? 1)}px`;
+    if (want) gapEl.style.width = `${(want + 2 * GAP_PAD) / zoomOf(frame)}px`;
   };
 
   /** The island is open in the gap (the top bar splits round it). */
@@ -1499,7 +1515,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const overflow = (): { apps: number; any: number } => {
     const r = bar.getBoundingClientRect();
     const up = upright();
-    const zoom = frame ? (DOCK_ZOOM[frame.size] ?? 1) : 1;
+    const zoom = zoomOf(frame);
     // The window's 12px at each end, and the melted feet.
     const ends = 12 + (frame?.edge && frame.melt ? MELT.out * zoom : 0);
     const len = screenLen();
@@ -1531,7 +1547,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const over = overflow().apps;
     if (over > 0) {
       sq = DROP.length + 1;
-      const zoom = frame ? (DOCK_ZOOM[frame.size] ?? 1) : 1;
+      const zoom = zoomOf(frame);
       // An app's place: its 40px and the 2px between apps.
       let cut = Math.ceil(over / (42 * zoom));
       for (const k of [...appsBox.children].reverse() as HTMLElement[]) {
@@ -1549,7 +1565,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const r = bar.getBoundingClientRect();
     const up = upright();
     // 12px at each end; the melted ends grow with the bar's size, as the bar does.
-    const zoom = frame ? (DOCK_ZOOM[frame.size] ?? 1) : 1;
+    const zoom = zoomOf(frame);
     // Rise spreading: room at each end for the bar to widen into (and its width without the spread).
     const spreadRoom = spreads() ? RISE_ROOM * zoom : 0;
     document.documentElement.style.setProperty('--dk-room', `${spreadRoom}px`);
@@ -1611,7 +1627,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     }
     if (frame?.edge && frame.melt) {
       // The thick part of each melted foot takes clicks too: what they cover can't be seen.
-      const z = DOCK_ZOOM[frame.size] ?? 1;
+      const z = zoomOf(frame);
       const fw = MELT.out * z * 0.3;
       const fh = MELT.up * z * 0.6;
       const feet = {
@@ -1621,6 +1637,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
         right: [[r.right - fh, r.top - fw, fh, fw], [r.right - fh, r.bottom, fh, fw]],
       }[side()];
       rects.push(...feet);
+    }
+    if (editing) {
+      // Done and Reset over the bar.
+      const e = editBox.getBoundingClientRect();
+      rects.push([e.left - 6, e.top - 6, e.width + 12, e.height + 12]);
     }
     for (const pop of [card, peek]) {
       if (pop.hidden) continue;
@@ -1640,14 +1661,14 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (!f) return;
     const root = document.documentElement;
     root.style.setProperty('--accent', f.accent);
-    bar.style.zoom = String(DOCK_ZOOM[f.size] ?? 1);
+    bar.style.zoom = String(zoomOf(f));
     // The zoom scales the bar's place in its window too; the CSS divides it back out of that.
     root.style.setProperty('--dk-z', bar.style.zoom);
     root.dataset.pill = f.color;
     root.dataset.side = side();
     root.classList.toggle('dk-upright', upright());
     // The melted ends' masks for this side, their feet on the border while it is on.
-    const z = DOCK_ZOOM[f.size] ?? 1;
+    const z = zoomOf(f);
     const border = f.edge ? (f.border ?? 0) : 0;
     const sig = `${side()}|${(border / z).toFixed(2)}`;
     if (sig !== meltSig) {
@@ -1666,7 +1687,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     root.classList.toggle('dk-name-bold', f.names?.bold === true);
     root.classList.toggle('dock-edge', f.edge === true);
     root.classList.toggle('dock-melt', f.edge === true && f.melt === true);
-    bar.classList.toggle('locked', f.locked);
+    // Stretched longer in Edit position: the room goes between the apps and what follows them.
+    if (!stretching) bar.style.minWidth = !upright() && f.minLen ? `${f.minLen}px` : '';
     const off = new Set(f.hidden ?? []);
     // Apps, kept by key.
     const seen = new Set<string>();
@@ -1785,7 +1807,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   // screen's left edge made one, so the taskbar bounced back to the middle (Moss).
   const leftPx = (e: PointerEvent) => Math.max(0, (screenAlong(e) - drag!.grab) * devicePixelRatio);
   bar.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || (e.target as HTMLElement).closest('button') || frame?.locked || !gapEl.hidden) return;
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button, .dk-handle') || !editing || !gapEl.hidden) return;
     drag = { id: e.pointerId, grab: screenAlong(e) - (upright() ? window.screenY : window.screenX), startX: screenAlong(e), moved: false };
     bar.setPointerCapture(e.pointerId);
     bar.classList.add('grabbing');
@@ -1805,8 +1827,103 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   bar.addEventListener('pointerup', end);
   bar.addEventListener('pointercancel', end);
   bar.addEventListener('dblclick', (e) => {
-    if (!(e.target as HTMLElement).closest('button') && !frame?.locked) void native.dockAt(-1, true);
+    if (editing && !(e.target as HTMLElement).closest('button, .dk-handle')) void native.dockAt(-1, true);
   });
+
+  // Edit position (right-click › Edit position, or Settings › Taskbar): otherwise the taskbar never
+  // moves under a stray drag (Moss, 11-18: always locked). While editing: drag it along its edge,
+  // double-click it back to the middle, stretch its ends longer and its inner edge taller; Done.
+  let editing = false;
+  let stretching = false;
+  const editBox = el('div', 'dk-edit');
+  const resetBtn = el('button', 'dk-edit-btn');
+  resetBtn.textContent = 'Reset size';
+  const doneBtn = el('button', 'dk-edit-btn done');
+  doneBtn.textContent = 'Done';
+  editBox.append(resetBtn, doneBtn);
+  above.append(editBox);
+  const handleOf = (k: 'start' | 'end' | 'inner') => {
+    const hd = el('i', `dk-handle h-${k}`);
+    bar.append(hd);
+    return hd;
+  };
+  const handles = { start: handleOf('start'), end: handleOf('end'), inner: handleOf('inner') };
+  function setEditing(on: boolean): void {
+    editing = on;
+    document.documentElement.classList.toggle('dk-editing', on);
+    if (!on) bar.classList.remove('grabbing');
+    solid();
+  }
+  doneBtn.addEventListener('click', () => setEditing(false));
+  resetBtn.addEventListener('click', () => {
+    bar.style.minWidth = '';
+    void sendTo('island', 'dock-pref', { scale: null, minLen: 0 });
+  });
+  await on<boolean>('dock-edit', (v) => setEditing(v !== false));
+  // Stretching: the window follows now and then while the pointer moves, and once more at the end.
+  let fitAt = 0;
+  const refit = (force = false) => {
+    const now = performance.now();
+    if (!force && now - fitAt < 40) return;
+    fitAt = now;
+    lastSize = '';
+    void fit();
+  };
+  const stretch = (hd: HTMLElement, kind: 'start' | 'end' | 'inner') => {
+    hd.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !editing) return;
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        hd.setPointerCapture(e.pointerId);
+      } catch {
+        // A pointer the page doesn't know (a test's): the handle still hears it while it is over it.
+      }
+      stretching = true;
+      const z0 = zoomOf(frame);
+      const r0 = bar.getBoundingClientRect();
+      const len0 = (upright() ? r0.height : r0.width) / z0;
+      const x0 = e.screenX;
+      const y0 = e.screenY;
+      let scale = z0;
+      let minLen = frame?.minLen ?? 0;
+      const move = (ev: PointerEvent) => {
+        if (kind === 'inner') {
+          // Away from the screen's edge: taller.
+          const d = side() === 'top' ? ev.screenY - y0 : side() === 'left' ? ev.screenX - x0 : side() === 'right' ? x0 - ev.screenX : y0 - ev.screenY;
+          scale = Math.min(BAR_SCALE.max, Math.max(BAR_SCALE.min, z0 * (1 + d / (BAR_H * z0))));
+          bar.style.zoom = String(scale);
+          document.documentElement.style.setProperty('--dk-z', bar.style.zoom);
+        } else {
+          // Both ends move (it stays centred), so each end follows the pointer: twice the move.
+          const along = upright() ? ev.screenY - y0 : ev.screenX - x0;
+          const grow = (kind === 'end' ? along : -along) * 2;
+          minLen = Math.max(0, Math.round(len0 + grow / z0));
+          bar.style.minWidth = upright() ? '' : `${minLen}px`;
+        }
+        refit();
+      };
+      const up = (ev: PointerEvent) => {
+        hd.removeEventListener('pointermove', move);
+        hd.removeEventListener('pointerup', up);
+        hd.removeEventListener('pointercancel', up);
+        stretching = false;
+        move(ev);
+        refit(true);
+        if (kind === 'inner') void sendTo('island', 'dock-pref', { scale: Number(scale.toFixed(3)) });
+        else {
+          // No longer than what it holds (no room left between the apps and the rest): back to fitting it.
+          void sendTo('island', 'dock-pref', { minLen: fillEl.offsetWidth < 1 ? 0 : minLen });
+        }
+      };
+      hd.addEventListener('pointermove', move);
+      hd.addEventListener('pointerup', up);
+      hd.addEventListener('pointercancel', up);
+    });
+  };
+  stretch(handles.start, 'start');
+  stretch(handles.end, 'end');
+  stretch(handles.inner, 'inner');
 
   await on<{ full: boolean; up: boolean }>('dock-full', (st) => bar.classList.toggle('faint', Boolean(st?.full && !st.up)));
   // The screen border's window just opened: it hears where the bar is.
@@ -1836,7 +1953,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       void appMenu(a, send, () => iconRect(b)).catch((err) => void native.log(`taskbar app menu: ${String(err)}`));
       return;
     }
-    if (isTauri && frame) void dockMenu(frame, (p) => void sendTo('island', 'dock-pref', p)).catch((err) => void native.log(`taskbar menu: ${String(err)}`));
+    if (isTauri && frame) void dockMenu(frame, (p) => void sendTo('island', 'dock-pref', p), { on: editing, set: setEditing }).catch((err) => void native.log(`taskbar menu: ${String(err)}`));
   });
   setInterval(() => {
     tickClock();

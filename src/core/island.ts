@@ -32,7 +32,7 @@ import { fadeSegments, fadeSheet } from './fade-menu';
 import { quietMoon } from './quiet';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { applyGlass } from './glass';
-import { accentColor, backAt, barAutoHide, barEdge, barNeedsHidden, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
+import { accentColor, backAt, barAutoHide, barEdge, barMinLen, barNeedsHidden, barScale, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { CARD_RADIUS, mapActions, SheetRenderer, type Block, type DropZone, type SheetButton, type SheetChip, type SheetView, type Tile } from './sheet';
 import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
@@ -434,14 +434,18 @@ export class Island {
         },
         look: () => ({ accent: this.settings.island.accent, ...lookOf(this.settings.island.taskbar.look, this.settings.island) }),
         act: (action) => void this.runAct(action, null),
-        locked: () => this.settings.island.taskbar.locked,
-        setLocked: (on) => {
-          this.settings.island.taskbar.locked = on;
+        scale: () => this.settings.island.taskbar.scale,
+        minLen: () => this.settings.island.taskbar.minLen,
+        setShape: (scale, minLen) => {
+          this.settings.island.taskbar.scale = barScale(scale);
+          this.settings.island.taskbar.minLen = barMinLen(minLen);
           this.saveSettings();
         },
         size: () => this.settings.island.taskbar.size,
         setSize: (size) => {
           this.settings.island.taskbar.size = size;
+          // A size picked puts back its own height.
+          this.settings.island.taskbar.scale = null;
           this.saveSettings();
         },
         styles: () => this.settings.island.taskbar.styles,
