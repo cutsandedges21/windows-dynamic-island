@@ -218,6 +218,42 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
     ...(t.on
       ? [
           dockPicker(host),
+          ...(t.hidden.includes('start')
+            ? []
+            : [
+                sub(
+                  row(
+                    'Start opens',
+                    "Island's own Start: your pinned apps, every app, your recent files, search and the power menu, in the taskbar's look.",
+                    segmented(
+                      t.startOpens,
+                      [
+                        ['island', "Island's Start"],
+                        ['windows', "Windows' Start"],
+                      ],
+                      (v) => {
+                        t.startOpens = v;
+                        host.save(true);
+                        host.render();
+                      },
+                    ),
+                  ),
+                ),
+                ...(t.startOpens === 'island'
+                  ? [
+                      sub(
+                        row(
+                          'The Windows key opens it too',
+                          "A press of the Windows key on its own opens Island's Start; shortcuts like Win+E stay Windows'.",
+                          toggle(t.startKey, (v) => {
+                            t.startKey = v;
+                            host.save(true);
+                          }),
+                        ),
+                      ),
+                    ]
+                  : []),
+              ]),
           row(
             'Position',
             t.side === 'top' && s.island.anchor === 'top' ? 'On the top, the island sits in the middle of the taskbar.' : 'The screen edge it sits along.',

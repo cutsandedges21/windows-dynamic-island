@@ -57,6 +57,9 @@ export interface DockFrame {
   styles?: DockStyle[];
   /** How the names over the bar look (style Names): font, bubble/plain/outline, bold. */
   names?: NameStyle;
+  /** The Start button opens Island's Start menu (else Windows'); the Windows key too. */
+  startOpens?: 'island' | 'windows';
+  startKey?: boolean;
   /** On the screen's bottom edge, over Windows' taskbar ... */
   edge?: boolean;
   /** ... its ends curving out into the edge. */
@@ -109,6 +112,7 @@ export interface DockPref {
 
 /** Each item's name, for the right-click menu and Settings. */
 export const DOCK_LABELS: Record<DockItem, string> = {
+  start: 'Start',
   arrow: 'Apps arrow',
   apps: 'Apps',
   music: 'Now playing',
@@ -278,6 +282,8 @@ export interface DockHooks {
   setStyles(styles: DockStyle[]): void;
   /** How the names over the bar look. */
   names(): NameStyle;
+  startOpens(): 'island' | 'windows';
+  startKey(): boolean;
   edge(): boolean;
   setEdge(on: boolean): void;
   melt(): boolean;
@@ -400,6 +406,8 @@ export class DockHost {
         size: this.hooks.size(),
         styles: this.hooks.styles(),
         names: this.hooks.names(),
+        startOpens: this.hooks.startOpens(),
+        startKey: this.hooks.startKey(),
         edge: this.hooks.edge(),
         melt: this.hooks.melt(),
         side: this.hooks.side(),
@@ -897,7 +905,24 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   bell.addEventListener('click', () => send({ kind: 'notifications' }));
   // Takes the room when the bar is stretched longer than what it holds (Edit position).
   const fillEl = el('i', 'dk-fill');
-  bar.append(start, appsBox, fillEl, gapEl, sepA, musicPrev, music, musicNext, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell);
+  // Start: Island's own menu (startmenu.ts) or Windows', as Settings › Taskbar says.
+  const winStart = el('button', 'dk-btn dk-winstart', '<svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7.6" height="7.6" rx="1.6"/><rect x="12.9" y="3.5" width="7.6" height="7.6" rx="1.6"/><rect x="3.5" y="12.9" width="7.6" height="7.6" rx="1.6"/><rect x="12.9" y="12.9" width="7.6" height="7.6" rx="1.6"/></svg>');
+  winStart.title = 'Start';
+  const tellStart = () => {
+    const b = winStart.getBoundingClientRect();
+    const r = bar.getBoundingClientRect();
+    void native.startAnchor([b.left, b.top, b.width, b.height], [r.left, r.top, r.width, r.height], side());
+  };
+  winStart.addEventListener('click', () => {
+    if (frame?.startOpens === 'windows') {
+      send({ kind: 'start' });
+      return;
+    }
+    tellStart();
+    void native.startToggle();
+  });
+  let startPrepared: string | null = null;
+  bar.append(winStart, start, appsBox, fillEl, gapEl, sepA, musicPrev, music, musicNext, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell);
 
   // Over the bar, coming up from behind it: the Apps card (the arrow) and when S/W reset (pointing at them).
   const above = el('div', 'dk-above');
@@ -1522,18 +1547,19 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   /** The island is open in the gap (the top bar splits round it). */
   let islandOpen = false;
   /** What the island's frame shows, before any squeezing. */
-  const want = { start: true, apps: true, music: false, timer: false, claude: false, tray: true, battery: false, wifi: true, sound: true, clock: true, bell: true };
+  const want = { winStart: true, start: true, apps: true, music: false, timer: false, claude: false, tray: true, battery: false, wifi: true, sound: true, clock: true, bell: true };
   /**
    * What goes first when the bar runs off the screen (an open island in the middle of a top bar, or a
    * small screen), one at a time until it fits; what is left at the end is the apps (Moss: "the
    * taskbar CANNOT go off the screen ... only keep tabs and time (if there is space)").
    */
-  const DROP = ['tray', 'claude', 'timer', 'battery', 'sound', 'wifi', 'bell', 'music', 'start', 'clock'] as const;
+  const DROP = ['tray', 'claude', 'timer', 'battery', 'sound', 'wifi', 'bell', 'music', 'start', 'winStart', 'clock'] as const;
   /** Shows what `want` says, less the first `n` of DROP. */
   const showItems = (n: number) => {
     const gone = new Set<string>(DROP.slice(0, n));
     const keep = (k: (typeof DROP)[number]) => want[k] && !gone.has(k);
     start.hidden = !keep('start');
+    winStart.hidden = !keep('winStart');
     appsBox.hidden = !want.apps;
     music.hidden = musicPrev.hidden = musicNext.hidden = !keep('music');
     timer.hidden = !keep('timer');
@@ -1819,6 +1845,15 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     }
     // Wi-Fi and sound.
     want.tray = !off.has('tray');
+    want.winStart = !off.has('start');
+    // Island's Start ready ahead (so it opens at once), and the Windows key while asked for.
+    const startSig = `${want.winStart && f.startOpens !== 'windows'}|${f.startKey === true}`;
+    if (isTauri && startSig !== startPrepared) {
+      startPrepared = startSig;
+      const mine = want.winStart && f.startOpens !== 'windows';
+      void native.startPrepare(mine);
+      void native.startKeys(mine && f.startKey === true);
+    }
     void trayWanted(want.tray);
     want.wifi = !off.has('wifi');
     const wk = f.wifi === false ? 'off' : 'on';

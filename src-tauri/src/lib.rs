@@ -45,6 +45,7 @@ mod monitors;
 #[cfg_attr(target_os = "macos", path = "mac/msgwin.rs")]
 mod msgwin;
 mod trayhost;
+mod startmenu;
 #[cfg_attr(target_os = "macos", path = "mac/net.rs")]
 mod net;
 mod nowindow;
@@ -313,6 +314,20 @@ pub fn run() {
             trayhost::tray_icons,
             trayhost::tray_host,
             trayhost::tray_click,
+            startmenu::start_anchor,
+            startmenu::start_toggle,
+            startmenu::start_show,
+            startmenu::start_hidden,
+            startmenu::start_hello,
+            startmenu::start_prepare,
+            startmenu::start_keys,
+            startmenu::start_recent,
+            startmenu::start_user,
+            startmenu::start_do,
+            startmenu::start_search,
+            startmenu::start_open_recent,
+            startmenu::start_admin,
+            startmenu::start_reveal,
             dock::dock_fit,
             dock::dock_typing,
             dock::dock_solid,
@@ -456,6 +471,8 @@ pub fn run() {
                 term::quit(app);
                 // Windows' taskbar comes back if Island's taskbar had it hide.
                 dock::quit(app);
+                // The Windows key is Windows' again.
+                startmenu::quit(app);
             }
         });
 }

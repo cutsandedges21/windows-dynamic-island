@@ -884,6 +884,21 @@ export const native = {
   dockPeek: (items: Array<{ hwnd: number; rect: DockIconRect }>) => call('dock_peek', { items }, undefined),
   /** The notification area's icons on the taskbar (trayhost.rs): start or stop reading them, the list now, a click. */
   trayHost: (on: boolean) => call('tray_host', { on }, undefined),
+  /** Island's Start menu (startmenu.rs): where the Start button is, open/close it, and what it shows. */
+  startAnchor: (button: number[], bar: number[], side: string) => call('start_anchor', { button, bar, side }, undefined),
+  startToggle: () => call('start_toggle', {}, undefined),
+  startShow: (on: boolean) => call('start_show', { on }, undefined),
+  startHidden: (gen: number) => call('start_hidden', { gen }, undefined),
+  startHello: () => call('start_hello', {}, undefined),
+  startPrepare: (on: boolean) => call('start_prepare', { on }, undefined),
+  startKeys: (on: boolean) => call('start_keys', { on }, undefined),
+  startRecent: (limit: number) => call<Array<{ name: string; path: string; lnk: string; at: number }>>('start_recent', { limit }, []),
+  startUser: () => call<{ name: string; picture: string | null }>('start_user', {}, { name: '', picture: null }),
+  startDo: (what: string) => call('start_do', { what }, false),
+  startSearch: (kind: 'web' | 'files', query: string) => call('start_search', { kind, query }, false),
+  startOpenRecent: (lnk: string) => call('start_open_recent', { lnk }, false),
+  startAdmin: (target: string) => call('start_admin', { target }, false),
+  startReveal: (path: string) => call('start_reveal', { path }, false),
   trayIcons: () => call<TrayIcon[]>('tray_icons', {}, []),
   trayClick: (key: string, button: 'left' | 'right' | 'double', x: number, y: number) => call('tray_click', { key, button, x: Math.round(x), y: Math.round(y) }, false),
   /** Desktop widgets (src-tauri/src/widgets.rs): the windows that should exist; x, y negative: not placed yet. */

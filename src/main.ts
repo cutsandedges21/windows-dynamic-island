@@ -28,7 +28,12 @@ const dock = windowLabel === 'dock' || dockPreview;
 // The screen border and its notches; its browser preview: /?frame (src/dev/frame.ts), with &dock too.
 const framePreview = native.demo && new URLSearchParams(location.search).has('frame');
 const frameWin = windowLabel === 'frame' || framePreview;
-const island = mirror || widget || dock || frameWin ? null : new Island(stage, createRegistry());
+// Island's Start menu (src/core/startmenu.ts); its browser preview: /?start (src/dev/start.ts).
+const startPreview = native.demo && new URLSearchParams(location.search).has('start');
+const startWin = windowLabel === 'start' || startPreview;
+const island = mirror || widget || dock || frameWin || startWin ? null : new Island(stage, createRegistry());
+if (startWin) void import('./core/startmenu').then((m) => m.runStart(stage)).catch((err) => void native.log(`start menu failed: ${String(err)}`));
+if (startPreview) void import('./dev/start').then((m) => m.startPreview(emitLocal));
 if (frameWin) void runFrame(stage).catch((err) => void native.log(`screen border failed: ${String(err)}`));
 if (framePreview) void import('./dev/frame').then((m) => m.framePreview(emitLocal));
 if (dock) void runDock(stage).catch((err) => void native.log(`taskbar failed: ${String(err)}`));
