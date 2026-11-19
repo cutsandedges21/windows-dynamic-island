@@ -82,7 +82,7 @@ mod imp {
     use windows::Win32::Graphics::Gdi::{CreateSolidBrush, GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DestroyWindow, GetSystemMetrics, GetWindowPlacement, GetWindowRect, IsIconic, IsWindow, PostMessageW, RegisterClassW, SetLayeredWindowAttributes,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, GetSystemMetrics, GetWindowPlacement, GetWindowRect, IsIconic, IsWindow, IsWindowVisible, PostMessageW, RegisterClassW, SetLayeredWindowAttributes,
         SetWindowPlacement, SetWindowPos, ShowWindow, SystemParametersInfoW, ANIMATIONINFO, LWA_COLORKEY, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
         SM_YVIRTUALSCREEN, SPI_GETANIMATION, SPI_SETANIMATION, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_MINIMIZE, SW_RESTORE, SW_SHOWMAXIMIZED, SW_SHOWNOACTIVATE,
         SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOWPLACEMENT, WINDOWPLACEMENT_FLAGS, WM_CLOSE, WNDCLASSW, WPF_RESTORETOMAXIMIZED, WS_EX_LAYERED, WS_EX_NOACTIVATE,
@@ -436,10 +436,12 @@ mod imp {
                 ask(&all);
                 if animated {
                     // Still there after a moment (it asks to save first): back where it was, so
-                    // its question can be seen.
+                    // its question can be seen. Not one that hid itself (Notion, Discord, Spotify
+                    // close to the tray): shown again, it came back as a blank white window
+                    // over the whole screen (Moss, 11-19: "glitch when closing windows").
                     std::thread::sleep(Duration::from_millis(700));
                     unsafe {
-                        if IsWindow(Some(w)).as_bool() && IsIconic(w).as_bool() {
+                        if IsWindow(Some(w)).as_bool() && IsWindowVisible(w).as_bool() && IsIconic(w).as_bool() {
                             let _ = ShowWindow(w, SW_RESTORE);
                         }
                     }
