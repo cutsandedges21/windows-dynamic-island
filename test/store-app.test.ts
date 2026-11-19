@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dockApps, multiWindow, startName } from '../src/core/dock';
+import { browserDataDir, dockApps, launchArgs, multiWindow, privateLabel, startName } from '../src/core/dock';
 import { packageFamily, storeTargets } from '../src/core/store-app';
 
 const TERMINAL_EXE = 'c:\\program files\\windowsapps\\microsoft.windowsterminal_1.25.3131.0_x64__8wekyb3d8bbwe\\windowsterminal.exe';
@@ -67,6 +67,26 @@ describe('Store apps and File Explorer on the taskbar', () => {
     expect(multiWindow(spotify, 1, none)).toBe(false);
     expect(multiWindow(spotify, 2, none)).toBe(true);
     expect(multiWindow(spotify, 0, new Set([spotify]))).toBe(true);
+  });
+
+  it("opens a browser's new window in the profile last used, so Chrome doesn't ask who is using it", () => {
+    const chrome = String.raw`c:\program files\google\chrome\application\chrome.exe`;
+    const edge = String.raw`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`;
+    const firefox = String.raw`C:\Program Files\Mozilla Firefox\firefox.exe`;
+    expect(launchArgs(chrome, 'new', 'Default')).toBe('--profile-directory="Default" --new-window');
+    expect(launchArgs(chrome, undefined, 'Profile 2')).toBe('--profile-directory="Profile 2" --new-window');
+    expect(launchArgs(chrome, 'private', 'Default')).toBe('--profile-directory="Default" --incognito');
+    expect(launchArgs(edge, 'private', null)).toBe('--inprivate');
+    expect(launchArgs(firefox, 'private', null)).toBe('-private-window');
+    // A profile name that isn't a plain folder name stays off the command line.
+    expect(launchArgs(chrome, 'new', '" --evil')).toBe('--new-window');
+    // Other apps start as they are; they have no private window.
+    expect(launchArgs('shell:AppsFolder\\Microsoft.Windows.Explorer', 'new', null)).toBe('');
+    expect(launchArgs('shell:AppsFolder\\Microsoft.Windows.Explorer', 'private', null)).toBeNull();
+    expect(privateLabel(chrome)).toBe('New Incognito window');
+    expect(privateLabel(edge)).toBe('New InPrivate window');
+    expect(privateLabel(String.raw`c:\x\spotify.exe`)).toBeNull();
+    expect(browserDataDir(chrome)).toBe('Google\\Chrome');
   });
 
   it('names an app as Start does when all it has is its file name', () => {

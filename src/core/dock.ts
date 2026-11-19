@@ -144,8 +144,8 @@ export function batteryTone(b: { percent: number; charging: boolean }): 'low' | 
 
 export type DockAct =
   | { kind: 'app'; key: string; rect?: DockIconRect }
-  /** Right-click › the app's name: start another of it (a new window). */
-  | { kind: 'launch'; key: string }
+  /** Right-click › the app's name (start it again), New window, or a browser's private window (launchArgs). */
+  | { kind: 'launch'; key: string; mode?: 'new' | 'private' }
   /** Right-click › Pin to taskbar / Unpin from taskbar. */
   | { kind: 'pin'; key: string; on: boolean }
   /** Right-click › Close: every window of the app. */
@@ -209,6 +209,34 @@ export function dockApps(pinned: readonly InstalledApp[], windows: readonly Live
   // A Store app by Start's name for it (Calculator, not CalculatorApp), a web app by its title.
   for (const [key, wins] of rest) out.push(app(key, wins[0].appName || (wins[0].appId ? wins[0].title : nameOf(wins[0].exe)), false));
   return out.slice(0, DOCK_MAX);
+}
+
+/** The browser a program is, by its file name: its private window's name and switch, its data folder. */
+const BROWSERS: Record<string, { private: string; flag: string; data?: string }> = {
+  chrome: { private: 'New Incognito window', flag: '--incognito', data: 'Google\\Chrome' },
+  brave: { private: 'New private window', flag: '--incognito', data: 'BraveSoftware\\Brave-Browser' },
+  vivaldi: { private: 'New private window', flag: '--incognito', data: 'Vivaldi' },
+  msedge: { private: 'New InPrivate window', flag: '--inprivate', data: 'Microsoft\\Edge' },
+  firefox: { private: 'New private window', flag: '-private-window' },
+};
+const browserOf = (target: string) => (/^shell:/i.test(target) ? undefined : BROWSERS[nameOf(target).toLowerCase()]);
+/** A Chromium browser's folder under Local AppData (its User Data, with Local State in it). */
+export const browserDataDir = (target: string): string | null => browserOf(target)?.data ?? null;
+/** A browser's private window as its own menu calls it (New Incognito window); null for other apps. */
+export const privateLabel = (target: string): string | null => browserOf(target)?.private ?? null;
+
+/**
+ * What to start an app with from its menu: a browser gets its own switch for a new window (or a
+ * private one), in `profile` when it has more than one (else it asks "Who's using Chrome?" and
+ * picking the one already open only brings that window back). Null: the app has no such window.
+ */
+export function launchArgs(target: string, mode: 'new' | 'private' | undefined, profile: string | null): string | null {
+  const b = browserOf(target);
+  if (!b) return mode === 'private' ? null : '';
+  if (b.flag.startsWith('-private')) return mode === 'private' ? b.flag : '-new-window';
+  // Only a plain profile folder name (Default, Profile 2) goes on the command line.
+  const p = profile && /^[\w .-]{1,64}$/.test(profile) ? `--profile-directory="${profile}" ` : '';
+  return mode === 'private' ? `${p}${b.flag}` : `${p}--new-window`;
 }
 
 /** Where the taskbar keeps the apps it has seen with two windows open (multiWindow). */
@@ -407,6 +435,21 @@ export class DockHost {
     if (this.shown) void native.dockShow(false, 0, 0);
   }
 
+  /** The profile a Chromium browser last used (its Local State), for a new window to open in; null for other apps. */
+  private async browserProfile(target: string): Promise<string | null> {
+    const dir = browserDataDir(target);
+    if (!dir) return null;
+    const { localAppData } = await native.knownFolders();
+    if (!localAppData) return null;
+    const text = await native.readText(`${localAppData}\\${dir}\\User Data\\Local State`, 8 * 1024 * 1024);
+    try {
+      const used: unknown = (JSON.parse(text ?? '') as { profile?: { last_used?: unknown } }).profile?.last_used;
+      return typeof used === 'string' ? used : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Once a second: the dock open or closed as Settings says, and its frame when it changed. */
   async tick(): Promise<void> {
     if (!this.enabled()) {
@@ -533,7 +576,13 @@ export class DockHost {
       const pin = this.hooks.pinned().find((p) => keyOf(p.target) === app.key)?.target;
       const win = this.live.find((w) => app.windows.includes(w.hwnd));
       const target = pin ?? (win ? targetOf(win) : null);
-      if (target) await native.wsLaunch({ kind: 'app', path: target, args: '', cwd: '' }, '');
+      // A browser with more than one profile shows its "Who's using Chrome?" picker, and picking the
+      // profile already open only brought its window back (Justin, 11-19): it opens in the one last used.
+      const args = target ? launchArgs(target, a.mode, await this.browserProfile(target)) : null;
+      if (target && args !== null) {
+        const r = await native.wsLaunch({ kind: 'app', path: target, args, cwd: '' }, '');
+        if (!r.ok) void native.log(`taskbar: couldn't start ${target} ${args}: ${r.error}`);
+      }
     } else if (a.kind === 'close') {
       if (app.windows.length) void native.dockClose(app.windows, rect ?? [0, 0, 0, 0]);
     } else if (a.kind === 'window' || a.kind === 'closewin') {
@@ -566,6 +615,8 @@ const SVG = {
   x: '<svg viewBox="0 0 24 24" class="line"><path d="M7 7l10 10M17 7 7 17"/></svg>',
   // A window with a plus at its corner (an app's menu: New window).
   newWin: '<svg viewBox="0 0 24 24" class="line"><path d="M13 4.5H7A2.5 2.5 0 0 0 4.5 7v10A2.5 2.5 0 0 0 7 19.5h10a2.5 2.5 0 0 0 2.5-2.5v-6"/><path d="M4.5 9h8.5M18.5 3v6M15.5 6h6"/></svg>',
+  // A hat over glasses (an app's menu: a browser's private window).
+  incognito: '<svg viewBox="0 0 24 24" class="line"><path d="M3 11.5h18M6.2 11.5 8 5.5h8l1.8 6"/><circle cx="7.8" cy="16.8" r="2.6"/><circle cx="16.2" cy="16.8" r="2.6"/><path d="M10.4 16.8h3.2"/></svg>',
   // A pushpin, and the same struck through (an app's menu: Pin to / Unpin from taskbar).
   pin: '<svg viewBox="0 0 24 24" class="line"><path d="M9.5 3.5h5l-.8 6 3.3 3.5H7l3.3-3.5z"/><path d="M12 13v7.5"/></svg>',
   unpin: '<svg viewBox="0 0 24 24" class="line"><path d="M9.5 3.5h5l-.8 6 3.3 3.5H7l3.3-3.5z"/><path d="M12 13v7.5M4 4l16 16"/></svg>',
@@ -1151,7 +1202,9 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const rows: HTMLElement[] = [
       row('dk-mi-app', face, a.name, { kind: 'launch', key: a.key }),
       // Only for an app that can have more than one window open (Spotify would just come forward).
-      ...(multiWindow(a.key, n, multiSeen) ? [row('', SVG.newWin, 'New window', { kind: 'launch', key: a.key })] : []),
+      ...(multiWindow(a.key, n, multiSeen) ? [row('', SVG.newWin, 'New window', { kind: 'launch', key: a.key, mode: 'new' })] : []),
+      // A browser's own private window, as its Windows menu has (New Incognito window).
+      ...(privateLabel(a.key) ? [row('', SVG.incognito, privateLabel(a.key)!, { kind: 'launch', key: a.key, mode: 'private' })] : []),
       el('i', 'dk-mi-sep'),
       row('', a.pinned ? SVG.unpin : SVG.pin, a.pinned ? 'Unpin from taskbar' : 'Pin to taskbar', { kind: 'pin', key: a.key, on: !a.pinned }),
     ];
