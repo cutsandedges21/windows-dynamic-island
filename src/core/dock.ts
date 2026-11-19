@@ -270,6 +270,8 @@ export interface DockHooks {
   act(action: string): void;
   /** Opens the island, on activity `id` when given (the timer: its time is there). */
   open(id?: string): void;
+  /** The Claude usage item tapped: Claude's card with its limits and tokens, or closes it when it is up. */
+  claudeCard(): void;
   /** Where the taskbar was dragged to, 0..1 across the screen (-1: the middle). */
   centre(): number;
   saveCentre(centre: number): void;
@@ -457,7 +459,7 @@ export class DockHost {
     if (a.kind === 'music') return this.hooks.act('act:music:toggle');
     if (a.kind === 'skip') return this.hooks.act(a.dir === 'prev' ? 'act:music:prev' : 'act:music:next');
     if (a.kind === 'timer') return this.hooks.open('timer');
-    if (a.kind === 'claude') return this.hooks.open('claude');
+    if (a.kind === 'claude') return this.hooks.claudeCard();
     if (typeof (a as { key?: unknown }).key !== 'string') return;
     const app = this.apps.find((x) => x.key === (a as { key: string }).key);
     if (!app) return;

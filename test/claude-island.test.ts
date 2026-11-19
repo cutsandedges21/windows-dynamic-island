@@ -617,6 +617,35 @@ describe('notifications and the hover card', () => {
     }
   });
 
+  it("the taskbar's Claude usage opens the island on the hover card, already unfolded; a phone's card stays its own", async () => {
+    let here = false;
+    const { act } = await boot({}, () => {}, {
+      isOpen: () => here,
+      openCard: () => void (here = true),
+      cardOpen: () => here,
+      cardHere: () => here,
+    });
+    stubTracker(act, [session({ lastAssistantText: 'Parser fixed.' })], { 100: [50] });
+    act.rows = [row({})];
+    limits(act);
+    // A reply box left from a right-clicked row doesn't take its place.
+    await act.action!('reply-to', 'S1');
+    here = false;
+    await act.action!('usage-card', null);
+    expect(here).toBe(true);
+    const card = act.sheet!(senv('open'))!;
+    expect(card.key).toBe('usage');
+    expect(block(card, 'head')).toMatchObject({ title: 'Claude' });
+    expect(block(card, 'rows', 'rows')).toBeTruthy();
+    // No ⌄ to press: the limits and tokens are there at once.
+    expect(card.blocks.some((b) => b.t === 'buttons' && b.key === 'more')).toBe(false);
+    expect((card.blocks.filter((b) => b.t === 'meter') as Array<Extract<Block, { t: 'meter' }>>).map((m) => m.text)).toEqual(['41%', '79%']);
+    expect(block(card, 'stats')?.items.find((s) => s.key === 'fresh')?.value).toBe('4.1M');
+    // Closed on this screen, a phone opening Claude's card gets its chats, not this.
+    here = false;
+    expect(act.sheet!(senv('open'))?.key).not.toBe('usage');
+  });
+
   it('the grid tile lists every session, with both limits in its label, and stays with no session', async () => {
     const { act } = await boot();
     stubTracker(act, [session({}), session({ id: 'S2', sessionId: 'S2', pid: 200 })], { 100: [50], 200: [60] });

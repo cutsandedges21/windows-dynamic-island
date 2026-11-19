@@ -133,6 +133,8 @@ export interface ActivityContext {
   closeCard?(): void;
   /** This activity's card is the one the open island shows. */
   cardOpen?(): boolean;
+  /** This activity's card is the one this screen's open island shows (not a phone's). */
+  cardHere?(): boolean;
   /** Asks another activity through its command() (the bot sets reminders this way); undefined while that activity is off. */
   tell?(target: string, cmd: string, arg: unknown): Promise<unknown>;
 }

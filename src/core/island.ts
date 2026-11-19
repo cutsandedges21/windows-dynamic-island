@@ -144,6 +144,9 @@ export function withBack(c: { owner: string; view: SheetView }): { owner: string
   return { ...c, view: { ...c.view, blocks } };
 }
 
+/** A press and its release on the taskbar (a tap) fit in this (ms): see the taskbar's claudeCard. */
+const RETAP_MS = 800;
+
 /** The open island's bar, blended into the top or bottom, is at least this wide (CSS px): room for Control Center's card under it. */
 const FLUSH_MIN_W = 360;
 
@@ -246,6 +249,8 @@ export class Island {
   private fullscreenAny: string | null = null;
   /** The activity whose own card the open island shows instead of Control Center (Land after a drop). */
   private cardFor: string | null = null;
+  /** The activity card a tap outside just closed, and when: the taskbar's Claude usage tapped again closes its card. */
+  private closedCard: { id: string; at: number } | null = null;
   /**
    * Files are being dragged over the island (it opens on the drop card: the Shelf | Land) or over
    * the Shelf's circle; `hot`: the side under the pointer; `was`: how the island was before, to go
@@ -500,6 +505,20 @@ export class Island {
           if (id && this.running.has(id)) this.pick(id, Date.now());
           this.open = true;
           this.schedule();
+        },
+        claudeCard: () => {
+          // The press on the taskbar already closed the island (a press off it closes it): when that
+          // closed Claude's card, this tap was to close it, so it doesn't open again.
+          const c = this.closedCard;
+          if (c?.id === 'claude' && Date.now() - c.at < RETAP_MS) return;
+          if (this.open && this.cardFor === 'claude') return this.dismiss();
+          if (!this.running.has('claude')) {
+            this.view = 'main';
+            this.open = true;
+            this.schedule();
+            return;
+          }
+          void this.runAct('act:claude:usage-card', null);
         },
         centre: () => this.settings.island.taskbar.centre,
         saveCentre: (c) => {
@@ -857,6 +876,7 @@ export class Island {
         this.schedule();
       },
       cardOpen: () => (this.open && this.cardFor === id) || (this.hub?.showsCard(id) ?? false),
+      cardHere: () => this.open && this.cardFor === id,
       notify: (title, body, phone = true) => {
         const g = this.settings.general;
         if (g.dnd) return;
@@ -2259,6 +2279,7 @@ export class Island {
     this.gridEditing = false;
     this.gridDrag = null;
     this.gridBefore = null;
+    this.closedCard = this.open && this.cardFor ? { id: this.cardFor, at: Date.now() } : null;
     this.open = false;
     this.cardFor = null;
     this.fileDrag = null;

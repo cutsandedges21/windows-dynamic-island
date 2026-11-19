@@ -1583,6 +1583,8 @@ export class ClaudeActivity extends BaseActivity {
       const reply = this.finishedSheet(this.replyTo, 'card');
       if (reply) return reply;
     }
+    // On this screen only the taskbar's Claude usage opens Claude's card: the hover card, unfolded.
+    if (this.ctx.cardHere?.()) return this.usageSheet(env.now);
     // Only a phone opens Claude's own card (its Claude button): a chat with Claude.
     return this.phoneSheet(env.now);
   }
@@ -1820,6 +1822,16 @@ export class ClaudeActivity extends BaseActivity {
       view.blocks.push({ t: 'buttons', key: 'more', align: 'center', items: [button] });
     }
     if (full) view.blocks.push(...this.moreBlocks(now));
+    return view;
+  }
+
+  /**
+   * The taskbar's Claude usage tapped: the hover card with everything its ⌄ opens (limits, this
+   * week's tokens, closed chats) already open, as the open island's card instead of Control Center (Justin).
+   */
+  private usageSheet(now: number): SheetView {
+    const view = this.statusCard('usage', now);
+    view.blocks.push(...this.moreBlocks(now));
     return view;
   }
 
@@ -2179,6 +2191,11 @@ export class ClaudeActivity extends BaseActivity {
         break;
       case 'unfold':
         this.unfold = { on: !this.unfold.on, asked: Date.now() };
+        break;
+      case 'usage-card':
+        // The taskbar's "S: 2% | W: 19%": the island opens on Claude's card (usageSheet), not a reply box left from before.
+        this.replyTo = null;
+        this.ctx.openCard?.();
         break;
       case 'point':
         // The pointer on a finished chat's reply box holds its pop-up; off it, untouched, the pop-up goes soon after.
