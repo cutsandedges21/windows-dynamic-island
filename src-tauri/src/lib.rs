@@ -44,6 +44,7 @@ mod media;
 mod monitors;
 #[cfg_attr(target_os = "macos", path = "mac/msgwin.rs")]
 mod msgwin;
+mod trayhost;
 #[cfg_attr(target_os = "macos", path = "mac/net.rs")]
 mod net;
 mod nowindow;
@@ -309,6 +310,9 @@ pub fn run() {
             shell::shell_power,
             widgets::widgets_sync,
             dock::dock_show,
+            trayhost::tray_icons,
+            trayhost::tray_host,
+            trayhost::tray_click,
             dock::dock_fit,
             dock::dock_typing,
             dock::dock_solid,

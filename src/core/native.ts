@@ -641,6 +641,13 @@ export interface InstalledApp {
   target: string;
 }
 /** An app window on screen (src-tauri/src/workspaces/layout.rs). */
+/** One notification-area icon (trayhost.rs). */
+export interface TrayIcon {
+  key: string;
+  tip: string;
+  icon: string | null;
+}
+
 export interface LiveWindow {
   hwnd: number;
   pid: number;
@@ -875,6 +882,10 @@ export const native = {
   dockClose: (hwnds: number[], icon: DockIconRect) => call('dock_close', { hwnds, icon }, undefined),
   /** Live pictures of windows drawn into the taskbar's window, each fitted in its rect (CSS px); [] takes them away. */
   dockPeek: (items: Array<{ hwnd: number; rect: DockIconRect }>) => call('dock_peek', { items }, undefined),
+  /** The notification area's icons on the taskbar (trayhost.rs): start or stop reading them, the list now, a click. */
+  trayHost: (on: boolean) => call('tray_host', { on }, undefined),
+  trayIcons: () => call<TrayIcon[]>('tray_icons', {}, []),
+  trayClick: (key: string, button: 'left' | 'right' | 'double', x: number, y: number) => call('tray_click', { key, button, x: Math.round(x), y: Math.round(y) }, false),
   /** Desktop widgets (src-tauri/src/widgets.rs): the windows that should exist; x, y negative: not placed yet. */
   widgetsSync: (specs: Array<{ id: string; x: number; y: number; w: number; h: number }>) => call('widgets_sync', { specs }, undefined),
   /** This widget window fits its content (logical px). */

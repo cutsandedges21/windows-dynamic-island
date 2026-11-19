@@ -2857,3 +2857,9 @@ html.fr-float .notch[data-side='right'] { translate: -8px 0; }
 html.fr-float.fr-flat .notch .notch-bg { border-radius: 18px; box-shadow: inset 0 0 0 1px var(--dk-rim); }
 html.fr-autohide :is(.fr-border, .fr-glow, .fr-tint, .notch:not(.out)) { opacity: 0.12; transition: opacity 0.3s ease; }
 html.fr-autohide.fr-near :is(.fr-border, .fr-glow, .fr-tint, .notch) { opacity: 1; }
+
+/* The notification area's icons on the taskbar (dock.ts trayBox, trayhost.rs). */
+.dock .dk-tray { display: flex; align-items: center; gap: 0; }
+.dock .dk-tray[hidden] { display: none; }
+.dock .dk-tray-ico { width: 30px; padding: 0; }
+.dock .dk-tray-ico img { width: 16px; height: 16px; image-rendering: auto; pointer-events: none; }

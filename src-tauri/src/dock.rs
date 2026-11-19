@@ -497,6 +497,8 @@ pub fn dock_show(app: AppHandle, on: bool, w: f64, h: f64, centre: f64) {
     *CENTRE.lock().unwrap() = if centre.is_finite() { centre } else { -1.0 };
     std::thread::spawn(move || {
         if !on {
+            // No taskbar: Explorer's has the tray to itself again.
+            crate::trayhost::stop();
             if let Some(win) = app.get_webview_window(LABEL) {
                 let _ = win.destroy();
             }
@@ -786,6 +788,7 @@ pub fn dock_autohide(_on: bool) -> bool {
 
 /// Island is quitting: Windows' taskbar comes back if Island hid it.
 pub fn quit(_app: &AppHandle) {
+    crate::trayhost::stop();
     #[cfg(windows)]
     if HID_WINDOWS_BAR.swap(false, Ordering::SeqCst) {
         set_autohide(false);

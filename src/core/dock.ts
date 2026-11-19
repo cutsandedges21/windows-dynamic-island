@@ -11,7 +11,7 @@
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tauri-apps/api/menu';
 import { duration } from './format';
 import { applyGlass } from './glass';
-import { isTauri, native, on, sendTo, type DockIconRect, type InstalledApp, type LiveWindow } from './native';
+import { isTauri, native, on, sendTo, type DockIconRect, type InstalledApp, type LiveWindow, type TrayIcon } from './native';
 import { BAR_SCALE, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
 
 /** One app on the dock. */
@@ -114,6 +114,7 @@ export const DOCK_LABELS: Record<DockItem, string> = {
   music: 'Now playing',
   timer: 'Timer',
   claude: 'Claude usage',
+  tray: 'Tray icons',
   battery: 'Battery',
   wifi: 'Wi-Fi',
   sound: 'Sound',
@@ -824,6 +825,54 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   claude.append(claudeText);
   claude.addEventListener('click', () => send({ kind: 'claude' }));
   const sepB = el('i', 'dk-sep');
+  // The notification area's icons (trayhost.rs reads them while this shows): Island's own, OneDrive,
+  // Discord… A click goes to the app as Windows' taskbar sends it; right-click opens its menu.
+  const trayBox = el('div', 'dk-tray');
+  let trayList: TrayIcon[] = [];
+  let trayOn = false;
+  const drawTray = () => {
+    const kids = trayList.map((t) => {
+      const b = el('button', 'dk-tray-ico');
+      b.title = t.tip || 'Tray icon';
+      if (t.icon && /^data:image\/(png|svg\+xml);/.test(t.icon)) {
+        const img = document.createElement('img');
+        img.src = t.icon;
+        img.alt = '';
+        img.draggable = false;
+        b.append(img);
+      }
+      const at = () => {
+        const r = b.getBoundingClientRect();
+        const k = window.devicePixelRatio || 1;
+        return [(window.screenX + r.left + r.width / 2) * k, (window.screenY + r.top + r.height / 2) * k] as const;
+      };
+      b.addEventListener('click', () => void native.trayClick(t.key, 'left', ...at()));
+      b.addEventListener('dblclick', () => void native.trayClick(t.key, 'double', ...at()));
+      b.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void native.trayClick(t.key, 'right', ...at());
+      });
+      return b;
+    });
+    trayBox.replaceChildren(...kids);
+  };
+  /** Reads the tray only while its icons are on the taskbar. */
+  const trayWanted = async (on: boolean) => {
+    if (on === trayOn || !isTauri) return;
+    trayOn = on;
+    await native.trayHost(on);
+    if (on) {
+      trayList = await native.trayIcons();
+      drawTray();
+    }
+  };
+  await on<TrayIcon[]>('tray-icons', (list) => {
+    trayList = Array.isArray(list) ? list : [];
+    drawTray();
+    squeezeToFit();
+    void fit();
+  });
   const battery = el('button', 'dk-batt');
   const battBody = el('i', 'dk-bbody');
   const battFill = el('i', 'dk-bfill');
@@ -848,7 +897,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   bell.addEventListener('click', () => send({ kind: 'notifications' }));
   // Takes the room when the bar is stretched longer than what it holds (Edit position).
   const fillEl = el('i', 'dk-fill');
-  bar.append(start, appsBox, fillEl, gapEl, sepA, musicPrev, music, musicNext, timer, claude, sepB, battery, wifi, sound, clock, bell);
+  bar.append(start, appsBox, fillEl, gapEl, sepA, musicPrev, music, musicNext, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell);
 
   // Over the bar, coming up from behind it: the Apps card (the arrow) and when S/W reset (pointing at them).
   const above = el('div', 'dk-above');
@@ -1473,13 +1522,13 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   /** The island is open in the gap (the top bar splits round it). */
   let islandOpen = false;
   /** What the island's frame shows, before any squeezing. */
-  const want = { start: true, apps: true, music: false, timer: false, claude: false, battery: false, wifi: true, sound: true, clock: true, bell: true };
+  const want = { start: true, apps: true, music: false, timer: false, claude: false, tray: true, battery: false, wifi: true, sound: true, clock: true, bell: true };
   /**
    * What goes first when the bar runs off the screen (an open island in the middle of a top bar, or a
    * small screen), one at a time until it fits; what is left at the end is the apps (Moss: "the
    * taskbar CANNOT go off the screen ... only keep tabs and time (if there is space)").
    */
-  const DROP = ['claude', 'timer', 'battery', 'sound', 'wifi', 'bell', 'music', 'start', 'clock'] as const;
+  const DROP = ['tray', 'claude', 'timer', 'battery', 'sound', 'wifi', 'bell', 'music', 'start', 'clock'] as const;
   /** Shows what `want` says, less the first `n` of DROP. */
   const showItems = (n: number) => {
     const gone = new Set<string>(DROP.slice(0, n));
@@ -1489,6 +1538,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     music.hidden = musicPrev.hidden = musicNext.hidden = !keep('music');
     timer.hidden = !keep('timer');
     claude.hidden = !keep('claude');
+    trayBox.hidden = !keep('tray') || !trayList.length;
     battery.hidden = !keep('battery');
     wifi.hidden = !keep('wifi');
     sound.hidden = !keep('sound');
@@ -1768,6 +1818,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       battery.title = `Battery ${pct}%${b.charging ? ', charging' : ''}`;
     }
     // Wi-Fi and sound.
+    want.tray = !off.has('tray');
+    void trayWanted(want.tray);
     want.wifi = !off.has('wifi');
     const wk = f.wifi === false ? 'off' : 'on';
     if (wifi.dataset.k !== wk) {

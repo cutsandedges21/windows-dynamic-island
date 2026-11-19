@@ -75,7 +75,7 @@ export interface ItemLook {
 }
 
 /** What the taskbar can show, in its order (Settings › Widgets › Show on the taskbar, or its right-click menu). */
-export const DOCK_ITEMS = ['arrow', 'apps', 'music', 'timer', 'claude', 'battery', 'wifi', 'sound', 'clock', 'notifications'] as const;
+export const DOCK_ITEMS = ['arrow', 'apps', 'music', 'timer', 'claude', 'tray', 'battery', 'wifi', 'sound', 'clock', 'notifications'] as const;
 export type DockItem = (typeof DOCK_ITEMS)[number];
 
 /** The taskbar's size (right-click, or Settings › Widgets); Medium is the size it was first built at. */
