@@ -144,6 +144,9 @@ export function withBack(c: { owner: string; view: SheetView }): { owner: string
   return { ...c, view: { ...c.view, blocks } };
 }
 
+/** The open island's bar, blended into the top or bottom, is at least this wide (CSS px): room for Control Center's card under it. */
+const FLUSH_MIN_W = 360;
+
 export class Island {
   settings!: Settings;
   private area: Area = { width: 1280, height: 720 };
@@ -1010,6 +1013,15 @@ export class Island {
     // Left/right pills stand vertical; an inline input needs a horizontal pill to type in.
     const build = (orient: Orientation) => {
       let size = pillSize(this.area, s.widths, level, s.edge, s.size, orient);
+      // Blended into the top or bottom, the open island's bar is at least as wide as Control Center's
+      // card, which hangs exactly as wide as the bar: one shape, no bump either side (Moss, 11-19).
+      if (this.open && this.view === 'main' && orient === 'horizontal' && this.flush) {
+        const w = Math.min(this.area.width - 32, Math.max(size.w, FLUSH_MIN_W));
+        size = { ...size, w, main: w };
+      }
+      // An even width centres on a whole pixel, as the card under it does: an odd one left the card
+      // half a pixel off the bar, a sliver of bump on one side.
+      if (orient === 'horizontal' && this.flush && size.w % 2) size = { ...size, w: size.w - 1, main: size.w - 1 };
       const pad = innerPadding(size.cross);
       let inner = Math.max(40, size.main - pad * 2);
       const crossMax = orient === 'vertical' ? Math.max(16, size.cross - 14) : size.h;
@@ -1571,11 +1583,10 @@ export class Island {
   private gridGeometry(pillW: number): { cols: number; rows: number; cell: number; width: number } {
     const scale = SIZE_SCALE[this.settings.island.size] ?? 1;
     // pillW is already scaled by the size (layout.ts levelWidth); the bounds are scaled here.
-    const s = this.settings.island;
     // Blended into the top or bottom, the open island's card hangs flush from the bar as one shape:
     // exactly the bar's width (Moss: no bump where a wider card stuck out past it); its cells fit it.
-    const flush = s.blend && (s.anchor === 'top' || s.anchor === 'bottom');
-    const want = flush ? Math.max(360, pillW) : Math.max(460 * scale, Math.min(pillW, 760 * scale));
+    const flush = this.flush;
+    const want = flush ? pillW : Math.max(460 * scale, Math.min(pillW, 760 * scale));
     const width = Math.round(Math.min(this.area.width - 32, flush ? want : Math.max(GRID_MIN_W, want)));
     return { cols: GRID_COLS, rows: GRID_ROWS, cell: gridCell(width, CELL_PX[this.settings.island.size] ?? CELL_PX.medium), width };
   }
@@ -1796,6 +1807,12 @@ export class Island {
    * it): Small cards are Small, not Medium's (Moss, 11-18). Their content scales with it too
    * (island.css, :root[data-island-size]).
    */
+  /** The pill is blended into the top or bottom: cards hang flush from it, as wide as it. */
+  private get flush(): boolean {
+    const s = this.settings.island;
+    return s.blend && (s.anchor === 'top' || s.anchor === 'bottom');
+  }
+
   private sheetWidth(view: SheetView | null, orient: Orientation, pillW: number): number {
     const W = this.area.width;
     const k = SIZE_SCALE[this.settings.island.size] ?? 1;
@@ -1803,6 +1820,8 @@ export class Island {
     // Music's player: as wide as an iPhone's against the island's size, and never narrower than the pill it covers.
     if (view?.morph) return Math.min(W - 24, Math.max(pillW, Math.round(MORPH_W * k)));
     if (orient === 'vertical') return Math.min(W - 120, Math.round((view?.wide ? 440 : 380) * k));
+    // Hanging flush from a bar blended into the top or bottom: exactly the bar's width (no bump).
+    if (this.flush) return Math.round(Math.min(pillW, W - 32));
     const want = view?.wide ? Math.max(460 * k, Math.min(pillW, 760 * k)) : Math.max(340 * k, Math.min(pillW, 560 * k));
     return Math.round(Math.min(want, W - 32));
   }
