@@ -32,9 +32,11 @@ pub struct LiveWindow {
     /// The monitor it's on (GDI device name, like monitors_list's id).
     pub monitor: String,
     pub dpi: u32,
-    /// The window's own app id (a Chrome or Edge web app's is `Chrome._crx_<id>`): what the
-    /// taskbar groups it under instead of its program. Empty when it has none.
+    /// The window's own app id (a Chrome or Edge web app's is `Chrome._crx_<id>`, a Store app's
+    /// `Package!App`): what the taskbar groups it under instead of its program. Empty when it has none.
     pub app_id: String,
+    /// A Store app's name as Start shows it ("Calculator", not its program's "CalculatorApp"); else empty.
+    pub app_name: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -129,18 +131,72 @@ mod win {
         crate::monitors::info_for(hmon).map(|m| m.id).unwrap_or_default()
     }
 
-    /// A browser window's app id, when it is a web app's (Chrome, Edge: class Chrome_WidgetWin_1).
-    fn web_app_id(hwnd: HWND, class_name: &str) -> String {
+    /// A window's System.AppUserModel.ID, '' when it has none.
+    fn aumid(hwnd: HWND) -> String {
         use windows::core::GUID;
         use windows::Win32::Foundation::PROPERTYKEY;
         use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow};
+        let key = PROPERTYKEY { fmtid: GUID::from_u128(0x9F4C2855_9F79_4B39_A8D0_E1D42DE1D5F3), pid: 5 };
+        unsafe { SHGetPropertyStoreForWindow::<IPropertyStore>(hwnd).and_then(|s| s.GetValue(&key)).map(|v| v.to_string()).unwrap_or_default() }
+    }
+
+    /// A browser window's app id, when it is a web app's (Chrome, Edge: class Chrome_WidgetWin_1).
+    fn web_app_id(hwnd: HWND, class_name: &str) -> String {
         if class_name != "Chrome_WidgetWin_1" {
             return String::new();
         }
-        // System.AppUserModel.ID
-        let key = PROPERTYKEY { fmtid: GUID::from_u128(0x9F4C2855_9F79_4B39_A8D0_E1D42DE1D5F3), pid: 5 };
-        let id = unsafe { SHGetPropertyStoreForWindow::<IPropertyStore>(hwnd).and_then(|s| s.GetValue(&key)).map(|v| v.to_string()).unwrap_or_default() };
+        let id = aumid(hwnd);
         if super::super::launch::is_web_app(&id) { id } else { String::new() }
+    }
+
+    /// A Store app's id (Package!App), from its frame window or the app's own window in it; its icon
+    /// and name come from Start by it, as Windows' taskbar's do (its program has no icon of its own).
+    fn store_app_id(hwnd: HWND, class_name: &str, exe: &str) -> String {
+        if class_name != "ApplicationFrameWindow" && !exe.to_ascii_lowercase().contains("\\windowsapps\\") {
+            return String::new();
+        }
+        let mut id = aumid(hwnd);
+        if !id.contains('!') && class_name == "ApplicationFrameWindow" {
+            let core: Vec<u16> = "Windows.UI.Core.CoreWindow\0".encode_utf16().collect();
+            if let Ok(child) = unsafe { FindWindowExW(Some(hwnd), None, windows::core::PCWSTR(core.as_ptr()), windows::core::PCWSTR::null()) } {
+                if !child.0.is_null() {
+                    id = aumid(child);
+                }
+            }
+        }
+        if id.contains('!') { id } else { String::new() }
+    }
+
+    /// Start's name for an app id, looked up once each.
+    fn app_name_of(id: &str) -> String {
+        use std::collections::HashMap;
+        use std::sync::{Mutex, OnceLock};
+        use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromParsingName, SIGDN_NORMALDISPLAY};
+        static NAMES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+        let names = NAMES.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Some(n) = names.lock().unwrap().get(id) {
+            return n.clone();
+        }
+        let path: Vec<u16> = format!("shell:AppsFolder\\{id}\0").encode_utf16().collect();
+        // The shell needs COM on this thread (the window list runs on a plain worker thread).
+        let com = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED) }.is_ok();
+        let name = unsafe {
+            SHCreateItemFromParsingName::<_, _, IShellItem>(windows::core::PCWSTR(path.as_ptr()), None)
+                .and_then(|item| item.GetDisplayName(SIGDN_NORMALDISPLAY))
+                .map(|p| {
+                    let s = p.to_string().unwrap_or_default();
+                    windows::Win32::System::Com::CoTaskMemFree(Some(p.0 as *const _));
+                    s
+                })
+                .unwrap_or_default()
+        };
+        if com {
+            unsafe { windows::Win32::System::Com::CoUninitialize() };
+        }
+        if !name.is_empty() {
+            names.lock().unwrap().insert(id.to_string(), name.clone());
+        }
+        name
     }
 
     unsafe extern "system" fn collect(hwnd: HWND, data: LPARAM) -> BOOL {
@@ -203,7 +259,14 @@ mod win {
             } else {
                 MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
             };
-            let app_id = web_app_id(hwnd, &class_name);
+            let web = web_app_id(hwnd, &class_name);
+            let (app_id, app_name) = if web.is_empty() {
+                let id = store_app_id(hwnd, &class_name, &exe);
+                let name = if id.is_empty() { String::new() } else { app_name_of(&id) };
+                (id, name)
+            } else {
+                (web, String::new())
+            };
             Some(LiveWindow {
                 hwnd: hwnd.0 as isize,
                 pid,
@@ -215,6 +278,7 @@ mod win {
                 monitor: monitor_id(hmon),
                 dpi: GetDpiForWindow(hwnd),
                 app_id,
+                app_name,
             })
         }
     }
@@ -326,5 +390,21 @@ pub async fn ws_place(places: Vec<Place>) -> Result<Vec<Placed>, String> {
     {
         let _ = places;
         Err("Window layouts come to the Mac later.".into())
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    /// Prints this PC's windows as the taskbar sees them (cargo test --lib windows_now -- --ignored --nocapture).
+    #[test]
+    #[ignore]
+    fn windows_now() {
+        for w in super::list_now() {
+            println!("{} | {} | id={} | name={}", w.title, w.exe, w.app_id, w.app_name);
+            if !w.app_id.is_empty() {
+                let icon = crate::shelf::shell_image(&format!("shell:AppsFolder\\{}", w.app_id), 48, true).unwrap_or_default();
+                println!("icon: {} chars, {}", icon.len(), &icon[..icon.len().min(30)]);
+            }
+        }
     }
 }

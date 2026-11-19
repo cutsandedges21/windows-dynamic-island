@@ -184,7 +184,8 @@ export function dockApps(pinned: readonly InstalledApp[], windows: readonly Live
     return i < 0 ? Number.MAX_SAFE_INTEGER : i;
   };
   const rest = [...byExe].sort((a, b) => rank(a[0]) - rank(b[0]));
-  for (const [key, wins] of rest) out.push(app(key, wins[0].appId ? wins[0].title : nameOf(wins[0].exe), false));
+  // A Store app by Start's name for it (Calculator, not CalculatorApp), a web app by its title.
+  for (const [key, wins] of rest) out.push(app(key, wins[0].appName || (wins[0].appId ? wins[0].title : nameOf(wins[0].exe)), false));
   return out.slice(0, DOCK_MAX);
 }
 

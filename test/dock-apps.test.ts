@@ -76,6 +76,15 @@ describe('taskbar apps', () => {
     expect(dockApps([], [music, chrome], 1, new Map()).map((a) => a.name)).toEqual(['YouTube Music', 'chrome']);
   });
 
+  it("shows a Store app by Start's name and icon, and matches its pin", () => {
+    const calc = { hwnd: 5, pid: 5, className: 'ApplicationFrameWindow', rect: { x: 0, y: 0, width: 10, height: 10 }, state: 'normal' as const, monitor: 'm', dpi: 96, exe: 'C:\\Program Files\\WindowsApps\\Microsoft.WindowsCalculator_1\\CalculatorApp.exe', title: 'Calculator', appId: 'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App', appName: 'Calculator' };
+    const key = 'shell:appsfolder\\microsoft.windowscalculator_8wekyb3d8bbwe!app';
+    const icons = new Map([[key, 'data:image/png;base64,x']]);
+    expect(dockApps([], [calc], 5, icons).map((a) => [a.key, a.name, a.icon])).toEqual([[key, 'Calculator', 'data:image/png;base64,x']]);
+    const pins = [{ name: 'Calculator', target: 'shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App' }];
+    expect(dockApps(pins, [calc], 5, icons).map((a) => [a.name, a.pinned, a.windows])).toEqual([['Calculator', true, [5]]]);
+  });
+
   it('rises most under the pointer and not at all two icons away', () => {
     expect(riseAt(0)).toBe(1);
     expect(riseAt(-48)).toBeCloseTo(0.5, 5);

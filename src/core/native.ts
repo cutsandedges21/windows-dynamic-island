@@ -652,8 +652,10 @@ export interface LiveWindow {
   state: 'normal' | 'maximized' | 'minimized';
   monitor: string;
   dpi: number;
-  /** A Chrome or Edge web app's own id (Chrome._crx_…); '' for any other window. */
+  /** A Chrome or Edge web app's own id (Chrome._crx_…), or a Store app's (Package!App); '' for any other window. */
   appId: string;
+  /** A Store app's name as Start shows it ("Calculator"); '' otherwise (older builds: missing). */
+  appName?: string;
 }
 export interface WinPlaced {
   hwnd: number;
