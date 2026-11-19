@@ -185,7 +185,7 @@ export class AppsActivity extends BaseActivity {
         const rows: SheetRow[] = found.map((a) => ({ key: a.target, icon: 'plus', title: a.name, action: 'add', arg: a.target, tip: `Add ${a.name}` }));
         blocks.push({ t: 'rows', key: 'found', items: rows });
       } else if (this.query.trim()) {
-        blocks.push({ t: 'text', key: 'nothing', text: this.installed ? 'No app with that name in Start.' : 'Reading your apps…', tone: 'muted', size: 'sm' });
+        blocks.push({ t: 'text', key: 'nothing', text: this.installed ? 'No app with that name on this PC.' : 'Reading your apps…', tone: 'muted', size: 'sm' });
       }
     }
     return { key: 'apps', wide: true, blocks };

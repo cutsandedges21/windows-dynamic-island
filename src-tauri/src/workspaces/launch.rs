@@ -181,7 +181,7 @@ mod win {
     use windows::Win32::System::Threading::{GetProcessId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows::Win32::UI::Shell::{
         IEnumShellItems, IShellItem, IShellLinkW, SHGetKnownFolderItem, SHGetKnownFolderPath, ShellExecuteExW, ShellLink, BHID_EnumItems,
-        FOLDERID_AppsFolder, KF_FLAG_DEFAULT, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+        FOLDERID_AppsFolder, FOLDERID_Desktop, FOLDERID_PublicDesktop, KF_FLAG_DEFAULT, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
         SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING, SLGP_RAWPATH,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -500,11 +500,36 @@ mod win {
                     let path = if id.starts_with('{') { known_folder_path(&id) } else { Some(PathBuf::from(&id)) };
                     match path {
                         Some(p) if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) && p.is_file() => p.display().to_string(),
+                        // An app id (AppUserModelID: Chrome, Discord, Office…), not a path: most desktop
+                        // apps are listed this way, and Start opens them by it (Moss, 11-19: every app).
+                        _ if super::is_app_id(&id) && !super::not_an_app(&name) => format!("shell:AppsFolder\\{id}"),
                         // Help files, web links and uninstallers listed in Start are not apps.
                         _ => continue,
                     }
                 };
                 out.push(InstalledApp { name, target });
+            }
+        }
+        // Shortcuts on the desktop to apps Start doesn't list.
+        for folder in [&FOLDERID_Desktop, &FOLDERID_PublicDesktop] {
+            let dir = unsafe {
+                let Ok(p) = SHGetKnownFolderPath(folder, KF_FLAG_DEFAULT, None) else { continue };
+                let s = p.to_string().ok();
+                CoTaskMemFree(Some(p.0 as *const _));
+                s
+            };
+            let Some(dir) = dir else { continue };
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("lnk")) {
+                    continue;
+                }
+                let name = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                if name.is_empty() || super::not_an_app(&name) || out.iter().any(|a| a.name.eq_ignore_ascii_case(&name)) {
+                    continue;
+                }
+                out.push(InstalledApp { name, target: p.display().to_string() });
             }
         }
         out.sort_by_key(|a| a.name.to_lowercase());
@@ -602,6 +627,45 @@ mod mac {
 #[cfg(windows)]
 pub fn program_path(pid: u32) -> Option<String> {
     win::image_path(pid)
+}
+
+/// Start's id for an app that is not a path: an AppUserModelID ("Chrome", "com.squirrel.Discord.Discord").
+pub(crate) fn is_app_id(id: &str) -> bool {
+    !id.is_empty() && !id.contains('\\') && !id.contains('/') && !id.contains(':') && !id.starts_with('{')
+}
+
+/// Start lists these beside apps; they are not apps to open.
+pub(crate) fn not_an_app(name: &str) -> bool {
+    let n = name.to_lowercase();
+    ["uninstall", "readme", "read me", "release notes", "documentation", "help", "website", "license", "manual"]
+        .iter()
+        .any(|w| n.starts_with(w) || n.contains(&format!(" {w}")))
+}
+
+#[cfg(test)]
+mod app_list_tests {
+    #[test]
+    fn app_ids_and_non_apps() {
+        assert!(super::is_app_id("Chrome"));
+        assert!(super::is_app_id("com.squirrel.Discord.Discord"));
+        assert!(!super::is_app_id(r"C:\Tools\x.exe"));
+        assert!(!super::is_app_id(r"{6D809377-6AF0-444B-8957-A3773F02200E}\Code.exe"));
+        assert!(super::not_an_app("Uninstall Zoom"));
+        assert!(super::not_an_app("Python 3.12 Documentation"));
+        assert!(!super::not_an_app("Discord"));
+        assert!(!super::not_an_app("Notion"));
+    }
+
+    /// Prints what this PC lists (cargo test --lib list_this_pc -- --ignored --nocapture).
+    #[test]
+    #[ignore]
+    fn list_this_pc() {
+        let all = super::ws_apps_now();
+        println!("{} apps", all.len());
+        for a in &all {
+            println!("{} => {}", a.name, a.target);
+        }
+    }
 }
 
 #[cfg(windows)]
