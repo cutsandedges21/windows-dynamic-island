@@ -29,6 +29,8 @@ export const NOTCH_MELT = { out: 44, up: 30 };
 /** Tucked, a notch is the same notch, as long, only this thick from the screen's edge (CSS px): it
  *  widens out of the border as one shape when pointed at (Moss: not a bump of its own). */
 export const TAB = { thick: 13 };
+/** How small a tucked notch is: TAB.thick of its thickness, the rest of it in proportion. */
+const restK = (n: { thick: number }): number => (n.thick > 0 ? Math.min(1, TAB.thick / n.thick) : 1);
 /** The light's path is drawn again this long after the last shape moved, ms. */
 const GLOW_SETTLE_MS = 60;
 /** The light round an expanded notch: its ring's width and the halo's, CSS px; the room for it past
@@ -513,7 +515,7 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
       n.top = notchTop(c.corner, screen.height, n.len, before);
       // Its body's top (the feet reach above and below it).
       n.el.style.top = `${Math.round(n.top + NOTCH_MELT.out * z)}px`;
-      // Tucked: the same notch, as long, only TAB.thick of it out of the edge.
+      // Tucked: the whole notch made small, in proportion, TAB.thick of it out of the edge.
       n.el.style.setProperty('--nk', String(Math.min(1, TAB.thick / n.thick)));
       // Its light: a ring round it as it is out, the cone turning about the screen's middle.
       const ringMasks = [NOTCH_RING.halo, NOTCH_RING.core].map((rw) => notchRing(side, body, n.thick, 18 * z, { out: NOTCH_MELT.out * z, up: NOTCH_MELT.up * z }, w, NOTCH_RING.room, rw));
@@ -539,10 +541,10 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
         const x = n.side === 'left' ? 0 : screen.width - n.thick - 10;
         rects.push([x, top, n.thick + 10, n.len]);
       } else {
-        // The slim notch, and a little beyond it, so the pointer finds it on its way to the edge.
+        // The small notch, and a little beyond it, so the pointer finds it on its way to the edge.
         const reach = Math.max(w, TAB.thick) + 8;
-        const foot = NOTCH_MELT.out * n.zoom;
-        rects.push([n.side === 'left' ? 0 : screen.width - reach, top + foot / 2, reach, n.len - foot]);
+        const long = n.len * restK(n) + 16;
+        rects.push([n.side === 'left' ? 0 : screen.width - reach, top + (n.len - long) / 2, reach, long]);
       }
     }
     const json = JSON.stringify(rects.map((q) => q.map((v) => Math.round(v))));
@@ -600,9 +602,11 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
     // this ring's part round it), so a notch coming out never makes this path change.
     for (const n of notches) {
       if (n.el.hidden) continue;
-      const k = Math.min(1, TAB.thick / n.thick);
-      const x = n.side === 'left' ? 0 : screen.width - TAB.thick;
-      part({ rect: [x + o.x, n.top + NOTCH_MELT.out * n.zoom + o.y, TAB.thick, n.len - 2 * NOTCH_MELT.out * n.zoom], side: n.side, zoom: n.zoom, melt: NOTCH_MELT, thick: NOTCH_T, radius: 18, squash: k });
+      // The whole notch at restK of its size, about the middle of where it meets the edge.
+      const k = restK(n);
+      const body = (n.len - 2 * NOTCH_MELT.out * n.zoom) * k;
+      const x = n.side === 'left' ? 0 : screen.width - n.thick * k;
+      part({ rect: [x + o.x, n.top + n.len / 2 - body / 2 + o.y, n.thick * k, body], side: n.side, zoom: n.zoom * k, melt: NOTCH_MELT, thick: NOTCH_T, radius: 18 });
     }
     return all;
   };

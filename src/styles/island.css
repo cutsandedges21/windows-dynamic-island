@@ -2678,10 +2678,13 @@ html.frame-window.fr-full :is(.fr-border, .notch, .fr-glow, .fr-label) { opacity
 .notch { position: absolute; left: 0; pointer-events: auto; transition: opacity 0.24s ease; color: var(--fg); font-family: var(--font); user-select: none; --nk: 0.3; }
 .notch[data-side='right'] { left: auto; right: 0; }
 .notch[hidden] { display: none; }
-.notch-in { position: relative; display: flex; flex-direction: column; align-items: center; width: 52px; padding: 10px 0; box-sizing: border-box; isolation: isolate; }
-/* Tucked it is the same notch, as long, only --nk of its thickness out of the edge; pointed at, it widens
-   out of the border as one shape (its masks stretch with it), and its icons come in once it is out. */
-.notch-bg { position: absolute; left: 0; width: calc(100% * var(--nk)); top: calc(-1 * var(--nt-end) + 18px); bottom: calc(-1 * var(--nt-end) + 18px); background: var(--pill); z-index: -1; -webkit-mask: var(--nt-fill); mask: var(--nt-fill); transition: width 0.46s cubic-bezier(0.22, 1, 0.36, 1); }
+.notch-in { position: relative; display: flex; flex-direction: column; align-items: center; width: 52px; padding: 10px 0; box-sizing: border-box; isolation: isolate; transform: scale(var(--nk)); transform-origin: 0 50%; transition: transform 0.46s cubic-bezier(0.22, 1, 0.36, 1); }
+.notch[data-side='right'] .notch-in { transform-origin: 100% 50%; }
+.notch.out .notch-in, .notch.drop .notch-in { transform: none; }
+/* Tucked it is the whole notch made small, every part in proportion (--nk of it, from where it meets the
+   edge; Moss, 11-19: not squashed thin and stretched long, like the Settings preview's); pointed at, it
+   grows out of the border into the whole notch as one shape, and its icons come in once it is out. */
+.notch-bg { position: absolute; left: 0; width: 100%; top: calc(-1 * var(--nt-end) + 18px); bottom: calc(-1 * var(--nt-end) + 18px); background: var(--pill); z-index: -1; -webkit-mask: var(--nt-fill); mask: var(--nt-fill); }
 .notch[data-side='right'] .notch-bg { left: auto; right: 0; }
 .notch.out .notch-bg, .notch.drop .notch-bg { width: 100%; }
 .nt-items { opacity: 0; transform: translateX(-8px); transition: opacity 0.16s ease, transform 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
@@ -2692,7 +2695,7 @@ html.frame-window.fr-full :is(.fr-border, .notch, .fr-glow, .fr-label) { opacity
 /* Its light grows out of the border WITH it (Moss, 11-19: no delay, "move as one"): squeezed to the tucked
    notch's thickness (--nk) from the screen's edge, it opens to the whole ring on the same curve as the
    notch's background; it comes on at once and goes once the notch is back in. */
-.nt-ring { position: absolute; left: 0; pointer-events: none; opacity: 0; transform: scaleX(var(--nk)); transform-origin: 0 50%; transition: opacity 0.12s ease 0.34s, transform 0.46s cubic-bezier(0.22, 1, 0.36, 1); mix-blend-mode: screen; }
+.nt-ring { position: absolute; left: 0; pointer-events: none; opacity: 0; transform: scale(var(--nk)); transform-origin: 0 50%; transition: opacity 0.12s ease 0.34s, transform 0.46s cubic-bezier(0.22, 1, 0.36, 1); mix-blend-mode: screen; }
 .notch[data-side='right'] .nt-ring { left: auto; right: 0; transform-origin: 100% 50%; }
 html.fr-lit .notch.out .nt-ring, html.fr-lit .notch.drop .nt-ring { opacity: 1; transform: none; transition: opacity 0.08s ease, transform 0.46s cubic-bezier(0.22, 1, 0.36, 1); }
 html[data-pill='white'] .nt-ring, html[data-pill='matte-white'] .nt-ring { mix-blend-mode: normal; }
