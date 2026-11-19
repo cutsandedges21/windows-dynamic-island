@@ -211,6 +211,20 @@ export function dockApps(pinned: readonly InstalledApp[], windows: readonly Live
   return out.slice(0, DOCK_MAX);
 }
 
+/**
+ * The name an app goes by in Start (Google Chrome, Claude) when the one it has is only its program's
+ * file name (chrome, claude): Start's entry for the same program, else the only one with that file
+ * name (Claude's pin points into a versioned folder, Start's at its launcher).
+ */
+export function startName(name: string, key: string, start: readonly InstalledApp[]): string {
+  const file = nameOf(key).toLowerCase();
+  if (name.toLowerCase() !== file) return name;
+  const exact = start.find((s) => keyOf(s.target) === key);
+  if (exact) return exact.name;
+  const same = start.filter((s) => !/^shell:/i.test(s.target) && nameOf(s.target).toLowerCase() === file);
+  return same.length === 1 ? same[0].name : name;
+}
+
 /** The programs with a window, in the order they opened: `seen` plus newly opened ones, less closed ones. */
 export function openOrder(seen: readonly string[], windows: readonly LiveWindow[]): string[] {
   const open: string[] = [];
@@ -318,6 +332,8 @@ export class DockHost {
   private apps: DockApp[] = [];
   /** The windows the apps were made from (an open app's own target, to start another of it). */
   private live: LiveWindow[] = [];
+  /** Start's apps (read once), for the names apps go by there: Google Chrome, not chrome. */
+  private startApps: InstalledApp[] | null = null;
   /** Programs with a window, in the order they opened (their places on the dock). */
   private seen: string[] = [];
   private readonly icons = new Map<string, string | null>();
@@ -406,7 +422,15 @@ export class DockHost {
         want.forEach((t, i) => this.icons.set(keyOf(t), got[i] ?? null));
       }
       this.seen = openOrder(this.seen, live);
-      this.apps = dockApps(pinned, live, front, this.icons, this.seen);
+      if (!this.startApps) {
+        this.startApps = [];
+        void native.wsApps().then((list) => {
+          this.startApps = list;
+          void this.tick();
+        });
+      }
+      const start = this.startApps;
+      this.apps = dockApps(pinned, live, front, this.icons, this.seen).map((a) => ({ ...a, name: startName(a.name, a.key, start) }));
       this.live = live;
       const frame: DockFrame = {
         apps: this.apps,
@@ -523,6 +547,9 @@ const SVG = {
   up: '<svg viewBox="0 0 24 24" class="line"><path d="M6.5 14.5 12 9l5.5 5.5"/></svg>',
   plus: '<svg viewBox="0 0 24 24" class="line"><path d="M12 6v12M6 12h12"/></svg>',
   x: '<svg viewBox="0 0 24 24" class="line"><path d="M7 7l10 10M17 7 7 17"/></svg>',
+  // A pushpin, and the same struck through (an app's menu: Pin to / Unpin from taskbar).
+  pin: '<svg viewBox="0 0 24 24" class="line"><path d="M9.5 3.5h5l-.8 6 3.3 3.5H7l3.3-3.5z"/><path d="M12 13v7.5"/></svg>',
+  unpin: '<svg viewBox="0 0 24 24" class="line"><path d="M9.5 3.5h5l-.8 6 3.3 3.5H7l3.3-3.5z"/><path d="M12 13v7.5M4 4l16 16"/></svg>',
   go: '<svg viewBox="0 0 24 24" class="line"><path d="M7 17 17 7M9 7h8v8"/></svg>',
   play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
   pause: '<svg viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1"/><rect x="13.5" y="5" width="4" height="14" rx="1"/></svg>',
@@ -588,18 +615,6 @@ async function dockMenu(f: DockFrame, pref: (p: DockPref) => void, edit: { on: b
   await menu.popup();
 }
 
-/** An app's right-click menu, as Windows' taskbar's: its name opens another (a new window), Pin or Unpin, and Close its windows. */
-async function appMenu(a: DockApp, act: (x: DockAct) => void, rect: () => DockIconRect): Promise<void> {
-  const n = a.windows.length;
-  const items = [
-    await MenuItem.new({ text: a.name, action: () => act({ kind: 'launch', key: a.key }) }),
-    await PredefinedMenuItem.new({ item: 'Separator' }),
-    await MenuItem.new({ text: a.pinned ? 'Unpin from taskbar' : 'Pin to taskbar', action: () => act({ kind: 'pin', key: a.key, on: !a.pinned }) }),
-  ];
-  if (n) items.push(await MenuItem.new({ text: n === 1 ? 'Close window' : `Close all ${n} windows`, action: () => act({ kind: 'close', key: a.key, rect: rect() }) }));
-  const menu = await Menu.new({ items });
-  await menu.popup();
-}
 
 // Rise is Windhawk's Taskbar Dock Animation with Justin's settings (11-19), in CSS px for its pixels.
 /** How far from the pointer an app still grows, CSS px (Effect radius 100). */
@@ -1024,6 +1039,13 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const tip = el('div', 'dk-pop dk-tip');
   card.hidden = tip.hidden = true;
   above.append(card, tip);
+  // An app's right-click menu, over its icon (drawn here in Island's look: Windows' own menu was a
+  // plain grey list).
+  const menu = el('div', 'dk-pop dk-menu');
+  menu.hidden = true;
+  above.append(menu);
+  /** The app whose menu is up. */
+  let menuOn: string | null = null;
 
   let cardOn = false;
   let wasEditing = false;
@@ -1052,6 +1074,75 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       }, POP_MS),
     );
   };
+
+  /** The app's menu goes back down; the taskbar gives the keyboard back. */
+  const closeMenu = () => {
+    if (menuOn === null) return;
+    menuOn = null;
+    hidePop(menu);
+    if (!cardOn) void native.dockTyping(false);
+  };
+  /** An app's right-click menu, as on Windows' taskbar: its name opens another window, Pin or Unpin, Close. */
+  const openMenu = (b: HTMLElement, a: DockApp) => {
+    setCard(false);
+    closePeek();
+    hidePop(tip);
+    label.classList.remove('on');
+    const row = (cls: string, icon: string | HTMLElement, text: string, act: DockAct) => {
+      const r = el('button', `dk-mi ${cls}`);
+      const ico = el('span', 'dk-mi-ico');
+      if (typeof icon === 'string') ico.innerHTML = icon;
+      else ico.append(icon);
+      const t = el('span', 'dk-mi-text');
+      t.textContent = text;
+      r.append(ico, t);
+      r.addEventListener('click', () => {
+        closeMenu();
+        send(act);
+      });
+      return r;
+    };
+    let face: string | HTMLElement = SVG.app;
+    if (a.icon) {
+      const img = document.createElement('img');
+      img.src = a.icon;
+      img.alt = '';
+      img.draggable = false;
+      face = img;
+    }
+    const n = a.windows.length;
+    const rows: HTMLElement[] = [
+      row('dk-mi-app', face, a.name, { kind: 'launch', key: a.key }),
+      el('i', 'dk-mi-sep'),
+      row('', a.pinned ? SVG.unpin : SVG.pin, a.pinned ? 'Unpin from taskbar' : 'Pin to taskbar', { kind: 'pin', key: a.key, on: !a.pinned }),
+    ];
+    if (n) rows.push(row('', SVG.x, n === 1 ? 'Close window' : `Close all ${n} windows`, { kind: 'close', key: a.key, rect: iconRect(b) }));
+    menu.replaceChildren(...rows);
+    menuOn = a.key;
+    menu.hidden = false;
+    // Over the icon, inside the window (as the S/W tip).
+    const r = b.getBoundingClientRect();
+    if (upright()) {
+      const h = menu.offsetHeight;
+      menu.style.left = '';
+      menu.style.top = `${Math.round(Math.max(8, Math.min(window.innerHeight - h - 8, r.top + r.height / 2 - h / 2)))}px`;
+    } else {
+      const w = menu.offsetWidth;
+      menu.style.top = '';
+      menu.style.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2)))}px`;
+    }
+    showPop(menu);
+    // The keyboard (Esc), and a click anywhere else is noticed as the taskbar losing it.
+    void native.dockTyping(true);
+  };
+  window.addEventListener('blur', () => closeMenu());
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeMenu();
+  });
+  window.addEventListener('pointerdown', (e) => {
+    if (menuOn !== null && !menu.contains(e.target as Node)) closeMenu();
+  });
+
   const setCard = (on: boolean) => {
     if (on === cardOn) return;
     cardOn = on;
@@ -1060,6 +1151,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // The card's search field needs the keyboard: the taskbar can be the active window meanwhile.
     void native.dockTyping(on);
     if (on) {
+      closeMenu();
       hidePop(tip);
       closePeek();
       // Type straight away: the search opens any app (MacDock's Launchpad search).
@@ -1338,8 +1430,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const rest = new PeekRest();
   let restOn: HTMLElement | null = null;
   const peekRest = (b: HTMLElement, e: PointerEvent) => {
-    // Its own previews are up already.
-    if (peekKey === b.dataset.key && !peek.hidden) return;
+    // Its own previews are up already; none while an app's menu is.
+    if ((peekKey === b.dataset.key && !peek.hidden) || menuOn !== null) return;
     const due = rest.move(e.clientX, e.clientY, performance.now(), peekKey !== null);
     if (due === null) return;
     window.clearTimeout(peekWait);
@@ -1894,7 +1986,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       const e = editBox.getBoundingClientRect();
       rects.push([e.left - 6, e.top - 6, e.width + 12, e.height + 12]);
     }
-    for (const pop of [card, peek]) {
+    for (const pop of [card, peek, menu]) {
       if (pop.hidden) continue;
       // The card where it stands when up (its slide is a transform, which offsets leave out).
       const a = above.getBoundingClientRect();
@@ -2214,8 +2306,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     e.preventDefault();
     const b = (e.target as HTMLElement).closest<HTMLElement>('.dk-app');
     const a = b ? appOf(b.dataset.key ?? '') : null;
-    if (isTauri && b && a) {
-      void appMenu(a, send, () => iconRect(b)).catch((err) => void native.log(`taskbar app menu: ${String(err)}`));
+    if (b && a) {
+      openMenu(b, a);
       return;
     }
     if (isTauri && frame) void dockMenu(frame, (p) => void sendTo('island', 'dock-pref', p), { on: editing, set: setEditing }).catch((err) => void native.log(`taskbar menu: ${String(err)}`));

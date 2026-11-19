@@ -2393,6 +2393,18 @@ html.dock-melt[data-pill='glass'] .dock-bg { box-shadow: inset 0 -10px 16px -12p
 html.dock-melt[data-pill='glass'] .dock-bg::before { border-top-color: transparent; box-shadow: inset 0 10px 14px -10px rgba(255, 255, 255, 0.1); }
 
 .dk-tip { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px 11px; white-space: nowrap; pointer-events: none; }
+/* An app's right-click menu (dock.ts openMenu): the app (a new window), Pin, Close, in the bar's look. */
+.dk-menu { display: flex; flex-direction: column; gap: 2px; min-width: 220px; padding: 6px; border-radius: 16px; }
+.dk-pop .dk-mi { display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 14px 0 10px; border-radius: 10px; font: 500 13px/1 var(--font); white-space: nowrap; transition: background-color 0.12s ease; }
+.dk-pop .dk-mi:hover { background: rgba(var(--ink), 0.1); }
+.dk-pop .dk-mi:active { background: rgba(var(--ink), 0.16); }
+.dk-pop .dk-mi.dk-mi-app { font-weight: 650; }
+.dk-mi-ico { display: grid; place-items: center; width: 22px; height: 22px; flex: none; }
+.dk-mi-ico img { width: 22px; height: 22px; object-fit: contain; }
+.dk-mi-ico svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: 0.8; }
+.dk-mi-app .dk-mi-ico svg { width: 20px; height: 20px; }
+.dk-mi-text { overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+.dk-mi-sep { height: 1px; margin: 3px 10px; background: rgba(var(--ink), 0.1); }
 .dk-tip-head { font: 600 10px/1 var(--font); letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.5; }
 .dk-tip-row { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; }
 .dk-tip-row b { font: 650 13px/1.2 var(--font); font-variant-numeric: tabular-nums; }

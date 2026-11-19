@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dockApps } from '../src/core/dock';
+import { dockApps, startName } from '../src/core/dock';
 import { packageFamily, storeTargets } from '../src/core/store-app';
 
 const TERMINAL_EXE = 'c:\\program files\\windowsapps\\microsoft.windowsterminal_1.25.3131.0_x64__8wekyb3d8bbwe\\windowsterminal.exe';
@@ -54,5 +54,19 @@ describe('Store apps and File Explorer on the taskbar', () => {
     const apps = dockApps(pins, wins, 0, new Map());
     // One place, the pinned one, with the window: not a second icon beside it.
     expect(apps.map((a) => [a.pinned, a.windows])).toEqual([[true, [7]]]);
+  });
+
+  it('names an app as Start does when all it has is its file name', () => {
+    const chrome = String.raw`c:\program files\google\chrome\application\chrome.exe`;
+    const start = [
+      { name: 'Google Chrome', target: String.raw`C:\Program Files\Google\Chrome\Application\chrome.exe` },
+      { name: 'Claude', target: String.raw`C:\Users\me\AppData\Local\AnthropicClaude\claude.exe` },
+    ];
+    expect(startName('chrome', chrome, start)).toBe('Google Chrome');
+    // Its pin points into a versioned folder: the only Start entry with that file name.
+    expect(startName('claude', String.raw`c:\users\me\appdata\local\anthropicclaude\app-6.6395.0\claude.exe`, start)).toBe('Claude');
+    // A name of its own stays; one Start doesn't know stays.
+    expect(startName('My browser', chrome, start)).toBe('My browser');
+    expect(startName('netbeans64', String.raw`c:\x\netbeans64.exe`, start)).toBe('netbeans64');
   });
 });
