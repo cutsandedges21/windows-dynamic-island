@@ -1336,4 +1336,59 @@ describe("seeing an offer, and a note's chat (Justin, 2026-11-18)", () => {
     await act.action('note-chat', 'in-b');
     expect(h.native.landAnswer).not.toHaveBeenCalledWith('in-b', true);
   });
+
+  it('pointing at the pill while an offer waits shows the offer, as a kept note does; the click is unchanged', async () => {
+    const { act } = await boot();
+    expect(act.sheet(sheetEnv('hover'))).toBeNull();
+    emit('land-transfer', offer());
+    const card = act.sheet(sheetEnv('hover'))!;
+    expect(card.key).toBe('ask/in-o');
+    expect(block(card, 'rows', 'files')!.items.map((r) => r.title)).toEqual(['a.png', 'b.png', 'c.png']);
+    expect(act.render(env('maximum')).find((s) => s.key === 'who')).toMatchObject({ action: 'offer', arg: 'in-o' });
+    // A note still asking shows its own card there too.
+    emit('land-transfer', offer({ state: 'declined', error: 'Declined.', expires: null }));
+    emit('land-transfer', transfer({ id: 'in-t', dir: 'in', state: 'asking', count: 0, total: 0, items: [], text: 'hey', expires: T0 + 120_000 }));
+    expect(act.sheet(sheetEnv('hover'))!.key).toBe('ask/in-t');
+    await act.action('note-accept', 'in-t');
+    emit('land-transfer', transfer({ id: 'in-t', dir: 'in', state: 'done', count: 0, total: 0, items: [], text: 'hey' }));
+    expect(act.sheet(sheetEnv('hover'))).toBeNull();
+  });
+
+  it('a note from a computer nearby that is not a friend has Add friend; once they say yes it has Open chat', async () => {
+    let answer: (v: unknown) => void = () => {};
+    h.native.landFriendAddNearby = vi.fn(() => new Promise((r) => (answer = r)));
+    const { act } = await boot();
+    // LAB announced its friend key (Friends on other networks is on there).
+    emit('land-peers', [{ ...LAB, anywhere: FRIEND.id }]);
+    emit('land-transfer', transfer({ id: 'in-f', dir: 'in', peer: LAB, state: 'asking', count: 0, total: 0, items: [], text: 'hi', expires: T0 + 120_000 }));
+    const card = act.sheet(sheetEnv('urgent'))!;
+    expect(block(card, 'buttons', 'chat')).toBeUndefined();
+    expect(block(card, 'buttons', 'friend')!.items).toEqual([expect.objectContaining({ label: 'Add friend', icon: 'plus', action: 'befriend', arg: LAB.id })]);
+    const pending = act.action('befriend', LAB.id);
+    expect(h.native.landFriendAddNearby).toHaveBeenCalledWith(LAB.id);
+    expect(block(act.sheet(sheetEnv('urgent'))!, 'buttons', 'friend')!.items[0]).toMatchObject({ label: 'Asked LAB-DESKTOP-07…', disabled: true });
+    answer({ ok: true, value: { id: FRIEND.id, name: 'LAB-DESKTOP-07', added: T0 } });
+    await pending;
+    const after = act.sheet(sheetEnv('urgent'))!;
+    expect(block(after, 'buttons', 'friend')).toBeUndefined();
+    expect(block(after, 'buttons', 'chat')!.items[0]).toMatchObject({ action: 'note-chat', arg: 'in-f' });
+    expect(block(after, 'text', 'note')).toMatchObject({ tone: 'good' });
+  });
+
+  it('no Add friend for a computer that announced no friend key, or for a phone; a refusal says why', async () => {
+    h.native.landFriendAddNearby = vi.fn(async () => ({ ok: false, error: 'Turn on Friends on other networks first.' }));
+    const { act } = await boot();
+    emit('land-peers', [LAB]);
+    emit('land-transfer', transfer({ id: 'in-x', dir: 'in', peer: LAB, state: 'asking', count: 0, total: 0, items: [], text: 'hi', expires: T0 + 120_000 }));
+    expect(block(act.sheet(sheetEnv('urgent'))!, 'buttons', 'friend')).toBeUndefined();
+    await act.action('note-accept', 'in-x');
+    emit('land-transfer', transfer({ id: 'in-x', dir: 'in', peer: LAB, state: 'done', count: 0, total: 0, items: [], text: 'hi' }));
+    act.fromPhone({ kind: 'text', phone: 'p1', from: 'iPhone', text: 'from my phone' } as never);
+    expect(act.sheet(sheetEnv('urgent'))!.key).toMatch(/^note\/phone-in/);
+    expect(block(act.sheet(sheetEnv('urgent'))!, 'buttons', 'friend')).toBeUndefined();
+    emit('land-peers', [{ ...LAB, anywhere: FRIEND.id }]);
+    emit('land-transfer', transfer({ id: 'in-y', dir: 'in', peer: LAB, state: 'asking', count: 0, total: 0, items: [], text: 'again', expires: T0 + 120_000 }));
+    await act.action('befriend', LAB.id);
+    expect(block(act.sheet(sheetEnv('urgent'))!, 'text', 'note')).toMatchObject({ text: 'Turn on Friends on other networks first.', tone: 'bad' });
+  });
 });

@@ -812,8 +812,11 @@ export class LandActivity extends BaseActivity {
       return kept ? this.keptCard(kept, env) : null;
     }
     if (env.reason === 'open') return this.card(env);
-    // Tapped away, a kept note waits on the pill: pointing at it brings its card back.
+    // Tapped away, an offer or a kept note waits on the pill: pointing at it brings its card back
+    // (Justin: an offer too, to see what is being sent). A click still does what it did.
     if (env.reason === 'hover') {
+      const ask = this.asking();
+      if (ask) return this.askCard(ask, env);
       const kept = this.keptNote();
       if (kept) return this.keptCard(kept, env);
     }
@@ -897,11 +900,24 @@ export class LandActivity extends BaseActivity {
 
   /**
    * Open chat under a friend's note: the conversation with them, this note in it (Justin: from a
-   * note he replied to, a way to the chat with that person). Only friends have a chat (land/history.rs).
+   * note he replied to, a way to the chat with that person). Only friends have a chat (land/history.rs),
+   * so a computer nearby that is not one has Add friend instead (Justin), when it announced the key
+   * a friend request needs (land/mod.rs befriend); once they say yes, Open chat takes its place.
    */
   private chatButton(id: string, peer: LandPeer): Block[] {
-    if (!this.friendOf(peer)) return [];
-    return [{ t: 'buttons', key: 'chat', align: 'fill', items: [{ key: 'chat', label: `Open chat with ${clip(peer.name, 22)}`, icon: 'chat', action: 'note-chat', arg: id, style: 'secondary', tip: `Your conversation with ${peer.name}` }] }];
+    if (this.friendOf(peer)) {
+      return [{ t: 'buttons', key: 'chat', align: 'fill', items: [{ key: 'chat', label: `Open chat with ${clip(peer.name, 22)}`, icon: 'chat', action: 'note-chat', arg: id, style: 'secondary', tip: `Your conversation with ${peer.name}` }] }];
+    }
+    if (isPhone(peer.id) || !this.peers.find((p) => p.id === peer.id)?.anywhere) return [];
+    const asking = this.befriending.has(peer.id);
+    return [
+      {
+        t: 'buttons',
+        key: 'friend',
+        align: 'fill',
+        items: [{ key: 'friend', label: asking ? `Asked ${clip(peer.name, 22)}…` : 'Add friend', icon: 'plus', action: 'befriend', arg: peer.id, style: 'secondary', disabled: asking, tip: `Ask ${peer.name} to be friends: then you have a chat, and can send from anywhere` }],
+      },
+    ];
   }
 
   /** The newest note kept on the island (asks still waiting show their own card first). */
