@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dockApps, startName } from '../src/core/dock';
+import { dockApps, multiWindow, startName } from '../src/core/dock';
 import { packageFamily, storeTargets } from '../src/core/store-app';
 
 const TERMINAL_EXE = 'c:\\program files\\windowsapps\\microsoft.windowsterminal_1.25.3131.0_x64__8wekyb3d8bbwe\\windowsterminal.exe';
@@ -54,6 +54,19 @@ describe('Store apps and File Explorer on the taskbar', () => {
     const apps = dockApps(pins, wins, 0, new Map());
     // One place, the pinned one, with the window: not a second icon beside it.
     expect(apps.map((a) => [a.pinned, a.windows])).toEqual([[true, [7]]]);
+  });
+
+  it('offers New window only for apps that can have more than one window', () => {
+    const none = new Set<string>();
+    const spotify = 'shell:appsfolder\\spotifyab.spotifymusic_zpdnekdrzrea0!spotify';
+    expect(multiWindow(String.raw`c:\program files\google\chrome\application\chrome.exe`, 1, none)).toBe(true);
+    expect(multiWindow('shell:appsfolder\\microsoft.windows.explorer', 0, none)).toBe(true);
+    expect(multiWindow('shell:appsfolder\\microsoft.windowsterminal_8wekyb3d8bbwe!app', 1, none)).toBe(true);
+    expect(multiWindow('shell:appsfolder\\chrome._crx_cinhimbnkkghhklpknlkffjgod', 1, none)).toBe(true);
+    // One that keeps to one window: no, unless it was seen with two (now, or before).
+    expect(multiWindow(spotify, 1, none)).toBe(false);
+    expect(multiWindow(spotify, 2, none)).toBe(true);
+    expect(multiWindow(spotify, 0, new Set([spotify]))).toBe(true);
   });
 
   it('names an app as Start does when all it has is its file name', () => {

@@ -211,6 +211,23 @@ export function dockApps(pinned: readonly InstalledApp[], windows: readonly Live
   return out.slice(0, DOCK_MAX);
 }
 
+/** Where the taskbar keeps the apps it has seen with two windows open (multiWindow). */
+const MULTI_KEY = 'island.dock.multiWindow';
+/** Programs known to open as many windows as asked for: browsers, File Explorer, terminals, editors, Office. */
+const MULTI_EXE = /\\(chrome|msedge|firefox|brave|opera|vivaldi|arc|explorer|notepad|notepad\+\+|code|cursor|windowsterminal|wt|winword|excel|powerpnt|devenv|idea64|pycharm64|netbeans64|sublime_text)\.exe$/i;
+/** The same as Store apps (their package family) and Start ids. */
+const MULTI_ID = /^shell:appsfolder\\(microsoft\.windows\.explorer$|microsoft\.windowsterminal_|microsoft\.windowsnotepad_|(chrome|msedge)\._crx_)/i;
+
+/**
+ * Whether an app's menu offers New window: it can have more than one window open. True for one with
+ * two open now or once (`seen`), and for the kinds known to (browsers and their web apps, File
+ * Explorer, terminals, editors); an app that keeps to one window (Spotify, Discord) would only come
+ * forward, so it isn't offered.
+ */
+export function multiWindow(key: string, open: number, seen: ReadonlySet<string>): boolean {
+  return open >= 2 || seen.has(key) || MULTI_EXE.test(key) || MULTI_ID.test(key);
+}
+
 /**
  * The name an app goes by in Start (Google Chrome, Claude) when the one it has is only its program's
  * file name (chrome, claude): Start's entry for the same program, else the only one with that file
@@ -547,6 +564,8 @@ const SVG = {
   up: '<svg viewBox="0 0 24 24" class="line"><path d="M6.5 14.5 12 9l5.5 5.5"/></svg>',
   plus: '<svg viewBox="0 0 24 24" class="line"><path d="M12 6v12M6 12h12"/></svg>',
   x: '<svg viewBox="0 0 24 24" class="line"><path d="M7 7l10 10M17 7 7 17"/></svg>',
+  // A window with a plus at its corner (an app's menu: New window).
+  newWin: '<svg viewBox="0 0 24 24" class="line"><path d="M13 4.5H7A2.5 2.5 0 0 0 4.5 7v10A2.5 2.5 0 0 0 7 19.5h10a2.5 2.5 0 0 0 2.5-2.5v-6"/><path d="M4.5 9h8.5M18.5 3v6M15.5 6h6"/></svg>',
   // A pushpin, and the same struck through (an app's menu: Pin to / Unpin from taskbar).
   pin: '<svg viewBox="0 0 24 24" class="line"><path d="M9.5 3.5h5l-.8 6 3.3 3.5H7l3.3-3.5z"/><path d="M12 13v7.5"/></svg>',
   unpin: '<svg viewBox="0 0 24 24" class="line"><path d="M9.5 3.5h5l-.8 6 3.3 3.5H7l3.3-3.5z"/><path d="M12 13v7.5M4 4l16 16"/></svg>',
@@ -1046,6 +1065,24 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   above.append(menu);
   /** The app whose menu is up. */
   let menuOn: string | null = null;
+  /** Apps seen with two windows open or more, remembered: they get New window in their menu. */
+  const multiSeen = new Set<string>();
+  try {
+    const kept: unknown = JSON.parse(localStorage.getItem(MULTI_KEY) ?? '[]');
+    if (Array.isArray(kept)) for (const k of kept) if (typeof k === 'string') multiSeen.add(k);
+  } catch {
+    // Nothing kept, or it can't be read: only what this run sees.
+  }
+  const learnMulti = (apps: readonly DockApp[]) => {
+    const before = multiSeen.size;
+    for (const a of apps) if (a.windows.length >= 2) multiSeen.add(a.key);
+    if (multiSeen.size === before) return;
+    try {
+      localStorage.setItem(MULTI_KEY, JSON.stringify([...multiSeen].slice(-200)));
+    } catch {
+      // Not kept: it is learned again next time.
+    }
+  };
 
   let cardOn = false;
   let wasEditing = false;
@@ -1113,6 +1150,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const n = a.windows.length;
     const rows: HTMLElement[] = [
       row('dk-mi-app', face, a.name, { kind: 'launch', key: a.key }),
+      // Only for an app that can have more than one window open (Spotify would just come forward).
+      ...(multiWindow(a.key, n, multiSeen) ? [row('', SVG.newWin, 'New window', { kind: 'launch', key: a.key })] : []),
       el('i', 'dk-mi-sep'),
       row('', a.pinned ? SVG.unpin : SVG.pin, a.pinned ? 'Unpin from taskbar' : 'Pin to taskbar', { kind: 'pin', key: a.key, on: !a.pinned }),
     ];
@@ -2300,6 +2339,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   });
   await on<DockFrame>('dock-frame', (f) => {
     frame = f;
+    learnMulti(f.apps);
     draw();
   });
   window.addEventListener('contextmenu', (e) => {
