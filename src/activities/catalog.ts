@@ -78,6 +78,13 @@ export const CATALOG: ActivityMeta[] = [
     options: [
       { key: 'showDone', type: 'toggle', label: 'Pop up when a session finishes', help: 'Shows the island for a moment when a session is done or fails. One that needs you (orange) always opens it, until you answer or tap away.', default: true },
       { key: 'glowInFront', type: 'toggle', label: 'Running glow in front of everything', help: 'While a session runs (blue), the blue glow stays on round the island even when music or another activity is in front, over that activity’s own glow. Something that needs you, like a low battery, still shows over it. Off: the blue glow shows only when Claude is in front, or when nothing in front has a glow.', default: true },
+      {
+        key: 'showShells',
+        type: 'toggle',
+        label: 'Background shells',
+        help: "A purple row (and a purple dot on the pill) for each session's commands Claude left running in the background, like a dev server. Off: they're not shown. The session's own dot stays as it is.",
+        default: true,
+      },
       { key: 'orangeMark', type: 'toggle', label: 'Claude icon always orange', help: "Off, the Claude icon takes your accent colour (Settings › Appearance › Accent), like the rest of the island. On, it stays Claude's own orange.", default: false },
       { key: 'code', type: 'heading', label: 'Claude Code', help: 'What Island does for Claude Code chats: it can answer them, and type into them.' },
       { key: 'permissions', type: 'toggle', label: 'Allow and Deny', help: "Permission prompts wait in the island with Allow and Deny, the full command, and a box to tell Claude what to do instead. Off: they go straight to the chat. Needs Claude Code's hooks (below).", default: true },

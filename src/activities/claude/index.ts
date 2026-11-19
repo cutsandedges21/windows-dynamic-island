@@ -53,6 +53,8 @@ interface Options {
   phone: boolean;
   showLimits: boolean;
   showDesktop: boolean;
+  /** "Background shells": the purple rows of commands Claude left running. */
+  showShells: boolean;
   finishedSeconds: number;
   /** A chat that finishes while the user is looking at it does not pop the island open. */
   onlyOtherChats: boolean;
@@ -240,6 +242,7 @@ export class ClaudeActivity extends BaseActivity {
       phone: o.phone !== false,
       showLimits: o.showLimits !== false,
       showDesktop: o.showDesktop !== false,
+      showShells: o.showShells !== false,
       finishedSeconds: Number(o.finishedSeconds) || 8,
       onlyOtherChats: o.onlyOtherChats === true,
       replyWindowSeconds: Math.max(0, Math.min(240, Number(o.replyWindowSeconds ?? 0) || 0)),
@@ -383,6 +386,8 @@ export class ClaudeActivity extends BaseActivity {
       this.rowsBusy = false;
     }
     if (!this.alive) return;
+    // "Background shells" off: no purple rows, so no purple dot on the pill either.
+    if (!this.opts().showShells) rows = rows.filter((r) => r.state !== 'shell');
     this.onRows(rows);
   }
 
