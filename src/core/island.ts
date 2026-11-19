@@ -2438,6 +2438,12 @@ export class Island {
       case 'island:shelf-close':
         this.open = false;
         this.shelfPinned = false;
+        // The x closes the island to its pill (Justin), not into a hover card: the pointer is still
+        // over the card it just clicked, and that hover would grow the pill's hover card in its place.
+        // As after a tap outside, a hover counts again once the pointer comes back onto the pill.
+        clearTimeout(this.hoverTimer);
+        this.hover = false;
+        this.hoverKey = null;
         break;
       default:
         break;
