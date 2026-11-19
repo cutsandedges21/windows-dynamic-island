@@ -218,13 +218,14 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
     ...(t.on
       ? [
           dockPicker(host),
-          ...(t.hidden.includes('start')
+          // Search follows Start: Island's Start with its search field, or Windows' search.
+          ...(t.hidden.includes('start') && t.hidden.includes('search')
             ? []
             : [
                 sub(
                   row(
                     'Start opens',
-                    "Island's own Start: your pinned apps, every app, your recent files, search and the power menu, in the taskbar's look.",
+                    "Island's own Start: your pinned apps, every app, your recent files, search and the power menu, in the taskbar's look. Search opens the same one, ready to type in.",
                     segmented(
                       t.startOpens,
                       [
@@ -239,7 +240,7 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
                     ),
                   ),
                 ),
-                ...(t.startOpens === 'island'
+                ...(t.startOpens === 'island' && !t.hidden.includes('start')
                   ? [
                       sub(
                         row(

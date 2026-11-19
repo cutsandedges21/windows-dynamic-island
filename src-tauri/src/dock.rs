@@ -724,8 +724,8 @@ pub fn dock_at(app: AppHandle, window: WebviewWindow, x: f64, done: bool) {
     let _ = app.emit_to(crate::overlay::LABEL, "dock-moved", serde_json::json!({ "centre": centre }));
 }
 
-/// The panels Windows opens from its own taskbar: Start (Win), Quick Settings (Win+A, Wi-Fi and
-/// sound) and the notifications (Win+N).
+/// The panels Windows opens from its own taskbar: Start (Win), Search (Win+S), Quick Settings (Win+A,
+/// Wi-Fi and sound) and the notifications (Win+N).
 #[cfg(windows)]
 #[tauri::command]
 pub fn dock_panel(which: String) -> bool {
@@ -736,6 +736,7 @@ pub fn dock_panel(which: String) -> bool {
     };
     let letter = match which.as_str() {
         "start" => None,
+        "search" => Some(VIRTUAL_KEY(0x53)),
         "quick" => Some(VIRTUAL_KEY(0x41)),
         "notifications" => Some(VIRTUAL_KEY(0x4E)),
         _ => return false,

@@ -74,8 +74,11 @@ export interface ItemLook {
   glass: number;
 }
 
-/** What the taskbar can show, in its order (Settings › Widgets › Show on the taskbar, or its right-click menu). */
-export const DOCK_ITEMS = ['start', 'arrow', 'apps', 'music', 'timer', 'claude', 'tray', 'battery', 'wifi', 'sound', 'clock', 'notifications'] as const;
+/**
+ * What the taskbar can show, in its order (Settings › Widgets › Show on the taskbar, or its right-click menu).
+ * `hidden` lists the ones taken off, so an item added here shows on saved settings too.
+ */
+export const DOCK_ITEMS = ['start', 'search', 'arrow', 'apps', 'music', 'timer', 'claude', 'tray', 'battery', 'wifi', 'sound', 'clock', 'notifications'] as const;
 export type DockItem = (typeof DOCK_ITEMS)[number];
 
 /** The taskbar's size (right-click, or Settings › Widgets); Medium is the size it was first built at. */

@@ -15,6 +15,15 @@ describe('taskbar items', () => {
     expect(s.island.taskbar.hidden).toEqual(['battery', 'clock']);
   });
 
+  it('puts Start and Search on saved taskbars, and keeps them off once taken off', () => {
+    const before = migrate({ version: 8, island: { taskbar: { on: true, hidden: ['clock'] } } });
+    expect(before.island.taskbar.hidden).toEqual(['clock']);
+    expect(DOCK_ITEMS.slice(0, 2)).toEqual(['start', 'search']);
+    const off = migrate({ version: 8, island: { taskbar: { on: true, hidden: ['search', 'start'] } } });
+    expect(off.island.taskbar.hidden).toEqual(['start', 'search']);
+    expect(toggleDockItem(off.island.taskbar.hidden, 'search')).toEqual(['start']);
+  });
+
   it('toggles an item off and back on', () => {
     const off = toggleDockItem([], 'wifi');
     expect(off).toEqual(['wifi']);

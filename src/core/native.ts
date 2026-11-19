@@ -871,7 +871,7 @@ export const native = {
   /** Dragging the taskbar: its left edge to `x` physical px; `done` keeps the place (x negative with done: back to the middle). */
   dockAt: (x: number, done: boolean) => call('dock_at', { x, done }, undefined),
   /** Windows' own panels: Start, Quick Settings (Wi-Fi, sound), notifications. */
-  dockPanel: (which: 'start' | 'quick' | 'notifications') => call<boolean>('dock_panel', { which }, false),
+  dockPanel: (which: 'start' | 'search' | 'quick' | 'notifications') => call<boolean>('dock_panel', { which }, false),
   /** Windows' taskbar hides itself (Automatically hide the taskbar); answers whether it does now. */
   dockAutohide: (on: boolean) => call<boolean>('dock_autohide', { on }, false),
   /** A taskbar icon's window comes back out of the icon (`icon`: x, y, w, h CSS px in the taskbar), or just forward if it isn't minimized (src-tauri/src/dockfx.rs). */

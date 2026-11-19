@@ -113,6 +113,7 @@ export interface DockPref {
 /** Each item's name, for the right-click menu and Settings. */
 export const DOCK_LABELS: Record<DockItem, string> = {
   start: 'Start',
+  search: 'Search',
   arrow: 'Apps arrow',
   apps: 'Apps',
   music: 'Now playing',
@@ -150,7 +151,7 @@ export type DockAct =
   | { kind: 'window' | 'closewin'; key: string; hwnd: number; rect?: DockIconRect }
   /** Dragged to place `to` in the row (its index once dropped). */
   | { kind: 'move'; key: string; to: number }
-  | { kind: 'start' | 'quick' | 'notifications' | 'music' | 'timer' | 'claude' }
+  | { kind: 'start' | 'search' | 'quick' | 'notifications' | 'music' | 'timer' | 'claude' }
   /** Now playing's buttons beside the song: the next one, or back to the one before. */
   | { kind: 'skip'; dir: 'next' | 'prev' }
   /** The arrow opened or closed the Apps card. */
@@ -443,7 +444,7 @@ export class DockHost {
 
   private async act(a: DockAct): Promise<void> {
     if (!a || typeof a !== 'object') return;
-    if (a.kind === 'start' || a.kind === 'quick' || a.kind === 'notifications') {
+    if (a.kind === 'start' || a.kind === 'search' || a.kind === 'quick' || a.kind === 'notifications') {
       void native.dockPanel(a.kind);
       return;
     }
@@ -509,6 +510,8 @@ const SVG = {
   sound: '<svg viewBox="0 0 24 24" class="line"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>',
   mute: '<svg viewBox="0 0 24 24" class="line"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>',
   bell: '<svg viewBox="0 0 24 24" class="line"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>',
+  // As Island's Start menu's search field (startmenu.ts).
+  search: '<svg viewBox="0 0 24 24" class="line"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>',
   app: '<svg viewBox="0 0 24 24" class="line"><rect x="4" y="4" width="16" height="16" rx="4"/></svg>',
   bolt: '<svg viewBox="0 0 24 24"><path d="M13 2 5 13.5h5.5L10 22l8-11.5h-5.5z"/></svg>',
   note: '<svg viewBox="0 0 24 24"><path d="M9 17.5a3 3 0 1 1-2-2.83V5l11-2v12.5a3 3 0 1 1-2-2.83V6.4l-7 1.3z"/></svg>',
@@ -920,8 +923,9 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   // Start: Island's own menu (startmenu.ts) or Windows', as Settings › Taskbar says.
   const winStart = el('button', 'dk-btn dk-winstart', '<svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7.6" height="7.6" rx="1.6"/><rect x="12.9" y="3.5" width="7.6" height="7.6" rx="1.6"/><rect x="3.5" y="12.9" width="7.6" height="7.6" rx="1.6"/><rect x="12.9" y="12.9" width="7.6" height="7.6" rx="1.6"/></svg>');
   winStart.title = 'Start';
-  const tellStart = () => {
-    const b = winStart.getBoundingClientRect();
+  /** Island's Start grows out of the button that opened it (Start, or Search). */
+  const tellStart = (from: HTMLElement) => {
+    const b = from.getBoundingClientRect();
     const r = bar.getBoundingClientRect();
     void native.startAnchor([b.left, b.top, b.width, b.height], [r.left, r.top, r.width, r.height], side());
   };
@@ -930,11 +934,23 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       send({ kind: 'start' });
       return;
     }
-    tellStart();
+    tellStart(winStart);
+    void native.startToggle();
+  });
+  // Search, beside Start as on Windows 11: Island's Start opens with its search field ready (it takes
+  // the keyboard on opening), or Windows' search (Win+S) when Start opens Windows'.
+  const search = el('button', 'dk-btn dk-search', SVG.search);
+  search.title = 'Search';
+  search.addEventListener('click', () => {
+    if (frame?.startOpens === 'windows') {
+      send({ kind: 'search' });
+      return;
+    }
+    tellStart(search);
     void native.startToggle();
   });
   let startPrepared: string | null = null;
-  bar.append(winStart, start, appsBox, fillEl, gapEl, sepA, musicPrev, music, musicNext, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell);
+  bar.append(winStart, search, start, appsBox, fillEl, gapEl, sepA, musicPrev, music, musicNext, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell);
 
   // Over the bar, coming up from behind it: the Apps card (the arrow) and when S/W reset (pointing at them).
   const above = el('div', 'dk-above');
@@ -1567,19 +1583,20 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   /** The island is open in the gap (the top bar splits round it). */
   let islandOpen = false;
   /** What the island's frame shows, before any squeezing. */
-  const want = { winStart: true, start: true, apps: true, music: false, timer: false, claude: false, tray: true, battery: false, wifi: true, sound: true, clock: true, bell: true };
+  const want = { winStart: true, search: true, start: true, apps: true, music: false, timer: false, claude: false, tray: true, battery: false, wifi: true, sound: true, clock: true, bell: true };
   /**
    * What goes first when the bar runs off the screen (an open island in the middle of a top bar, or a
    * small screen), one at a time until it fits; what is left at the end is the apps (Moss: "the
    * taskbar CANNOT go off the screen ... only keep tabs and time (if there is space)").
    */
-  const DROP = ['tray', 'claude', 'timer', 'battery', 'sound', 'wifi', 'bell', 'music', 'start', 'winStart', 'clock'] as const;
+  const DROP = ['tray', 'claude', 'timer', 'battery', 'sound', 'wifi', 'bell', 'music', 'search', 'start', 'winStart', 'clock'] as const;
   /** Shows what `want` says, less the first `n` of DROP. */
   const showItems = (n: number) => {
     const gone = new Set<string>(DROP.slice(0, n));
     const keep = (k: (typeof DROP)[number]) => want[k] && !gone.has(k);
     start.hidden = !keep('start');
     winStart.hidden = !keep('winStart');
+    search.hidden = !keep('search');
     appsBox.hidden = !want.apps;
     music.hidden = musicPrev.hidden = musicNext.hidden = !keep('music');
     timer.hidden = !keep('timer');
@@ -1866,13 +1883,16 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // Wi-Fi and sound.
     want.tray = !off.has('tray');
     want.winStart = !off.has('start');
-    // Island's Start ready ahead (so it opens at once), and the Windows key while asked for.
-    const startSig = `${want.winStart && f.startOpens !== 'windows'}|${f.startKey === true}`;
+    want.search = !off.has('search');
+    // Island's Start ready ahead (so it opens at once) while Start or Search opens it, and the Windows
+    // key while asked for (only with Start on the bar).
+    const mine = (want.winStart || want.search) && f.startOpens !== 'windows';
+    const keys = mine && want.winStart && f.startKey === true;
+    const startSig = `${mine}|${keys}`;
     if (isTauri && startSig !== startPrepared) {
       startPrepared = startSig;
-      const mine = want.winStart && f.startOpens !== 'windows';
       void native.startPrepare(mine);
-      void native.startKeys(mine && f.startKey === true);
+      void native.startKeys(keys);
     }
     void trayWanted(want.tray);
     want.wifi = !off.has('wifi');
