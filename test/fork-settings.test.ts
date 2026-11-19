@@ -72,8 +72,9 @@ describe("Moss's 0.4.2 settings file", () => {
     expect(s.activities.order[0]).toBe('claude');
     expect(s.activities.config.claude).toMatchObject({
       enabled: true, priority: 'high', persistent: true, interrupt: true,
-      options: { resetAlerts: true, sessionHotkeys: true, notifications: true, phone: true, showLimits: true, showDesktop: true, finishedSeconds: 8, onlyOtherChats: false, replyWindowSeconds: 0, requireHello: false },
+      options: { resetAlerts: true, sessionHotkeys: true, notifications: true, phone: true, showLimits: true, showDesktop: true, finishedSeconds: 8, onlyOtherChats: true, replyWindowSeconds: 0, requireHello: false },
     });
+    // His saved "Only pop up for other chats" (off, its old default) came on with settings version 7.
     // His saved 45 s Reply window (Claude Code's old default) went off once, with settings version 6.
     expect(s.activities.config.claude.options).toMatchObject({ showDone: true, glowInFront: true, permissions: true, questions: true, replyBox: true });
     // The heading over Claude Code's options holds no value.

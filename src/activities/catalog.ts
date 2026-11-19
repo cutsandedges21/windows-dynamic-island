@@ -77,6 +77,15 @@ export const CATALOG: ActivityMeta[] = [
     behavior: B(true, true, true, true),
     options: [
       { key: 'showDone', type: 'toggle', label: 'Pop up when a session finishes', help: 'Shows the island for a moment when a session is done or fails. One that needs you (orange) always opens it, until you answer or tap away.', default: true },
+      // Right under the pop-up it quiets, so the label reads as its exception. Claude Code chats only:
+      // they are the ones Island can tie to a window.
+      {
+        key: 'onlyOtherChats',
+        type: 'toggle',
+        label: 'Not when its window is in front',
+        help: "When a Claude Code chat finishes in the window you're looking at, the island stays small: you already have Claude's answer in front of you. Its dot still turns green. In Windows Terminal it counts only when that chat's tab is the one showing. When Island can't tell which window a chat is in, it pops up as usual. Off: every finished chat pops up.",
+        default: true,
+      },
       { key: 'glowInFront', type: 'toggle', label: 'Running glow in front of everything', help: 'While a session runs (blue), the blue glow stays on round the island even when music or another activity is in front, over that activity’s own glow. Something that needs you, like a low battery, still shows over it. Off: the blue glow shows only when Claude is in front, or when nothing in front has a glow.', default: true },
       {
         key: 'showShells',
@@ -100,13 +109,6 @@ export const CATALOG: ActivityMeta[] = [
         min: 0,
         max: 240,
         unit: 's',
-      },
-      {
-        key: 'onlyOtherChats',
-        type: 'toggle',
-        label: 'Only pop up for other chats',
-        help: "When a chat finishes in the window you're in, the island stays small. It opens with Claude's answer only for chats you're not looking at.",
-        default: false,
       },
       { key: 'showLimits', type: 'toggle', label: 'Limits in the island', help: 'Session and weekly limit bars in the expanded island, and in its Control Center tile.', default: true },
       { key: 'resetAlerts', type: 'toggle', label: 'Limit reset alerts', help: 'Tell me when the session or weekly limit resets.', default: true },

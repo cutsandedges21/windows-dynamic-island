@@ -44,6 +44,26 @@ export function selectTerminalWindow(windows: WindowRow[], ownerName: (pid: numb
 }
 
 /**
+ * The chats a window's title names. A terminal's title is its showing tab's, and Claude Code
+ * titles its tab with the chat's title after a status mark ("✳ Fix the parser"). Only the longest
+ * title found counts, so a chat called "Island" is not taken for one called "Island plan B".
+ */
+export function chatsShownIn<T extends { title: string | null; name: string }>(windowTitle: string, chats: T[]): T[] {
+  const hay = windowTitle.toLowerCase();
+  let best = 0;
+  let shown: T[] = [];
+  for (const chat of chats) {
+    const found = [chat.title, chat.name].map((t) => String(t || '').trim().toLowerCase()).filter((t) => t.length >= MIN_TERMINAL_TITLE && hay.includes(t));
+    const len = Math.max(0, ...found.map((t) => t.length));
+    if (!len || len < best) continue;
+    if (len > best) shown = [];
+    best = len;
+    shown.push(chat);
+  }
+  return shown;
+}
+
+/**
  * The Claude Code extension's own deep link. With `prompt`, the chat opens
  * with that prompt (how Continue Session reaches editor chats).
  */

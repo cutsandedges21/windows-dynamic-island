@@ -40,6 +40,7 @@ function resetNative() {
     claudeEnv: vi.fn(async () => null),
     hookReply: vi.fn(async () => true),
     foregroundPid: vi.fn(async () => 0),
+    foreground: vi.fn(async () => 0),
     procSnapshot: vi.fn(async () => []),
     clipboardSetText: vi.fn(async () => true),
     claudeInject: vi.fn(async () => ({ ok: true })),
@@ -97,10 +98,10 @@ const session = (over: Partial<SessionView>): SessionView => ({
  * Sessions plus their process chains: `chains[pid]` lists the ancestors of a
  * Claude Code process, nearest first (its terminal or editor, then the rest).
  */
-function stubTracker(act: ClaudeActivity, sessions: SessionView[], chains: Record<number, number[]>) {
+function stubTracker(act: ClaudeActivity, sessions: SessionView[], chains: Record<number, number[]>, names: Record<number, string> = {}) {
   const probe = {
     table: new Map<number, unknown>(Object.keys(chains).map((k) => [Number(k), {}])),
-    ancestors: (pid: number) => (chains[pid] ?? []).map((p) => ({ pid: p, name: 'host.exe' })),
+    ancestors: (pid: number) => (chains[pid] ?? []).map((p) => ({ pid: p, name: names[p] ?? 'host.exe' })),
     load: vi.fn(),
   };
   (act as unknown as { tracker: unknown }).tracker = {
@@ -1173,6 +1174,71 @@ describe('one pop-up per moment', () => {
     act.onRows([row({ state: 'done', word: 'done' })]);
     await tick(0);
     expect(told(calls).surfaces).toEqual([]);
+  });
+
+  describe('"Not when its window is in front" (on by default)', () => {
+    // Two chats in tabs of one Windows Terminal window (pid 50), launched from Explorer (pid 10).
+    const WT = { 50: 'windowsterminal.exe', 10: 'explorer.exe' };
+    const tabs = (act: ClaudeActivity) =>
+      stubTracker(act, [session({ id: 'S1', sessionId: 'S1', pid: 100, title: 'Fix the parser' }), session({ id: 'S2', sessionId: 'S2', pid: 200, title: 'Fix the parser tests' })], { 100: [60, 50, 10], 200: [70, 50, 10] }, WT);
+    const inFront = (pid: number, title: string) => {
+      h.native.foregroundPid.mockResolvedValue(pid);
+      h.native.foreground.mockResolvedValue(7);
+      h.native.winEnum.mockResolvedValue([{ hwnd: 7, pid, title }]);
+    };
+    const finish = async (sid: string) => {
+      emit('hook', { hook_event_name: 'Stop', session_id: sid, last_assistant_message: 'Done.' });
+      await tick(0);
+    };
+
+    it("the chat whose tab is showing finishes quietly; the other tab's pops up, even though it was prompted last", async () => {
+      const { act, calls } = await boot();
+      tabs(act);
+      emit('hook', { hook_event_name: 'UserPromptSubmit', session_id: 'S1' });
+      await tick(1000);
+      emit('hook', { hook_event_name: 'UserPromptSubmit', session_id: 'S2' });
+      await tick(1000);
+      // Claude Code titles its tab "✳ <chat title>"; the window shows the tab in front's title.
+      inFront(50, '✳ Fix the parser');
+      await finish('S1');
+      expect(told(calls).surfaces).toEqual([]);
+      await finish('S2');
+      expect(told(calls).surfaces.map((s) => s.key)).toEqual(['done:S2']);
+    });
+
+    it('a chat called like the start of another is not taken for it', async () => {
+      const { act, calls } = await boot();
+      tabs(act);
+      inFront(50, '✳ Fix the parser tests');
+      await finish('S1');
+      expect(told(calls).surfaces.map((s) => s.key)).toEqual(['done:S1']);
+      await finish('S2');
+      expect(told(calls).surfaces.map((s) => s.key)).toEqual(['done:S1']);
+    });
+
+    it('a terminal tab that names no chat (a plain shell in front) is not looking at any', async () => {
+      const { act, calls } = await boot();
+      tabs(act);
+      inFront(50, 'Windows PowerShell');
+      await finish('S1');
+      expect(told(calls).surfaces.map((s) => s.key)).toEqual(['done:S1']);
+    });
+
+    it("Explorer in front (the desktop, the taskbar, a folder) is not the chat's window", async () => {
+      const { act, calls } = await boot();
+      tabs(act);
+      inFront(10, 'Downloads');
+      await finish('S1');
+      expect(told(calls).surfaces.map((s) => s.key)).toEqual(['done:S1']);
+    });
+
+    it('off: the chat in front pops up too', async () => {
+      const { act, calls } = await boot({ onlyOtherChats: false });
+      tabs(act);
+      inFront(50, '✳ Fix the parser');
+      await finish('S1');
+      expect(told(calls).surfaces.map((s) => s.key)).toEqual(['done:S1']);
+    });
   });
 
   it("pointing at a finished chat's reply box holds its pop-up; leaving it untouched lets it go soon", async () => {

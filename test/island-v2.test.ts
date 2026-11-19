@@ -29,6 +29,18 @@ describe('settings v2', () => {
     expect(again.activities.config.claude.persistent).toBe(true);
   });
 
+  it('v7: a Claude chat finishing in the window in front stops popping up, once, also where it was saved off', () => {
+    const old = defaultSettings() as unknown as Record<string, any>;
+    old.version = 6;
+    old.activities.config.claude.options.onlyOtherChats = false;
+    const s = migrate(old);
+    expect(s.activities.config.claude.options.onlyOtherChats).toBe(true);
+    // Turned off again after the migration: kept.
+    s.activities.config.claude.options.onlyOtherChats = false;
+    expect(migrate(JSON.parse(JSON.stringify(s))).activities.config.claude.options.onlyOtherChats).toBe(false);
+    expect(defaultSettings().activities.config.claude.options.onlyOtherChats).toBe(true);
+  });
+
   it('keeps a well-formed grid layout and drops the rest', () => {
     const raw = defaultSettings() as unknown as Record<string, any>;
     raw.island.grid = {

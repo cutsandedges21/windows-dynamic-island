@@ -22,12 +22,12 @@ import { BaseActivity, chime } from '../base';
 import { sessionCount, SHOW_MS, statusRows, statusSegments, statusSub, toneOf, waitingRows } from '../claude-status';
 import { StatusEngine, type StatusRow, type StatusState } from '../claude-status/engine';
 import { chatUrl, DesktopChats, type DesktopChat } from './desktop';
-import { afterModifiersReleased, deepLink, focusSession, selectWindow } from './focus';
+import { afterModifiersReleased, chatsShownIn, deepLink, focusSession, selectWindow } from './focus';
 import { HookState, questionsOf, type HookEvent, type PermissionCard, type ReplyHold } from './hooks';
 import { MomentGate } from './moments';
 import { markSlept, sleepDue, sleptFor, SLEEP_COUNTDOWN_MS, type SleepDue } from './sleepguard';
 import { claudeArgs, oneLine, recentFolders, routeFor, routeHint, sameText, terminalFor, type ChatPane, type ChatRoute } from './phonechat';
-import { EDITOR_HOSTS } from './procinfo';
+import { EDITOR_HOSTS, IGNORED_ANCESTOR_NAMES, TERMINAL_HOSTS } from './procinfo';
 import { askText, permissionText, PushGate, pushFor, type PushKind } from './pushes';
 import { describeTool, joinPath, projectName } from './status';
 import { ClosedHistory, findTranscript, SessionTracker, type ClosedView, type SessionView, type TrackerEvent } from './tracker';
@@ -56,7 +56,7 @@ interface Options {
   /** "Background shells": the purple rows of commands Claude left running. */
   showShells: boolean;
   finishedSeconds: number;
-  /** A chat that finishes while the user is looking at it does not pop the island open. */
+  /** "Not when its window is in front": a chat that finishes while the user is looking at it does not pop the island open. */
   onlyOtherChats: boolean;
   replyWindowSeconds: number;
   requireHello: boolean;
@@ -244,7 +244,7 @@ export class ClaudeActivity extends BaseActivity {
       showDesktop: o.showDesktop !== false,
       showShells: o.showShells !== false,
       finishedSeconds: Number(o.finishedSeconds) || 8,
-      onlyOtherChats: o.onlyOtherChats === true,
+      onlyOtherChats: o.onlyOtherChats !== false,
       replyWindowSeconds: Math.max(0, Math.min(240, Number(o.replyWindowSeconds ?? 0) || 0)),
       requireHello: o.requireHello === true,
       resetAlerts: o.resetAlerts !== false,
@@ -783,9 +783,23 @@ export class ClaudeActivity extends BaseActivity {
   }
 
   /**
-   * Is the user looking at this chat? Its window must be in front. Several
-   * chats can share one window (editor tabs, terminal tabs): then the one the
-   * user last sent a prompt to is the one they are in.
+   * The processes whose window could be this chat's: itself, then its shell, terminal or editor.
+   * Explorer is left out: it is the desktop and the taskbar (and often the terminal's parent),
+   * never the chat's own window.
+   */
+  private windowChainOf(pid: number): number[] {
+    const probe = this.tracker?.probe;
+    if (!probe || !pid) return pid ? [pid] : [];
+    return [pid, ...probe.ancestors(pid).filter((a) => !IGNORED_ANCESTOR_NAMES.has(a.name)).map((a) => a.pid)];
+  }
+
+  /**
+   * Is the user looking at this chat? Its window must be in front. Several chats can share one
+   * window (Windows Terminal tabs, editor tabs). A terminal titles itself after the tab showing,
+   * and Claude Code titles its tab with the chat's title, so the window's title names the chat in
+   * front. When it names none of them: a tabbed terminal is on some other tab (or a chat that does
+   * not title its tab), so nobody is looking; an editor (whose title is a file) falls back to the
+   * chat the user last sent a prompt to.
    */
   private async isLookingAt(sid: string, ev?: HookEvent): Promise<boolean> {
     const fg = await native.foregroundPid();
@@ -795,12 +809,30 @@ export class ClaudeActivity extends BaseActivity {
     const pid = pidOf(sid) || Number(ev?.hook_ppid) || 0;
     if (!pid) return false;
     if (!probe.table.has(pid)) probe.load(await native.procSnapshot());
-    if (!this.chainOf(pid).includes(fg)) return false;
-    const sharing = this.sessions.filter((s) => s.alive && s.pid && this.chainOf(s.pid).includes(fg));
-    if (sharing.length <= 1) return true;
+    if (!this.windowChainOf(pid).includes(fg)) return false;
+    const sharing = this.sessions.filter((s) => s.alive && s.pid && this.windowChainOf(s.pid).includes(fg));
     const lastPrompt = (s: SessionView) => this.hooks.turnStart.get(s.id) ?? s.turnStartMs ?? 0;
-    const current = sharing.reduce((a, b) => (lastPrompt(b) > lastPrompt(a) ? b : a));
-    return current.id === sid;
+    const latest = (list: SessionView[]) => list.reduce((a, b) => (lastPrompt(b) > lastPrompt(a) ? b : a));
+    const title = await this.foregroundTitle();
+    if (title !== null) {
+      const shown = chatsShownIn(title, sharing);
+      if (shown.length) return latest(shown).id === sid;
+      const owner = probe.ancestors(pid).find((a) => a.pid === fg)?.name ?? '';
+      if (TERMINAL_HOSTS.has(owner)) return false;
+    }
+    if (sharing.length <= 1) return true;
+    return latest(sharing).id === sid;
+  }
+
+  /** The title of the window in front, or null when it can't be read. */
+  private async foregroundTitle(): Promise<string | null> {
+    try {
+      const hwnd = await native.foreground();
+      if (!hwnd) return null;
+      return (await native.winEnum()).find((w) => w.hwnd === hwnd)?.title ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private onForeground(pid: number): void {
@@ -808,12 +840,12 @@ export class ClaudeActivity extends BaseActivity {
     for (const h of [...this.hooks.holds]) {
       if (h.held) continue;
       const s = this.sessions.find((x) => x.id === h.sessionId);
-      if (s && this.chainOf(s.pid).includes(pid)) this.release(h, 'switched to the chat');
+      if (s && this.windowChainOf(s.pid).includes(pid)) this.release(h, 'switched to the chat');
     }
     // A held question goes to its chat once the user is there: Claude Code asks it as usual.
     for (const c of this.hooks.cards.filter((x) => x.early)) {
       const s = this.sessions.find((x) => x.id === c.sessionId);
-      if (!s || !this.chainOf(s.pid).includes(pid)) continue;
+      if (!s || !this.windowChainOf(s.pid).includes(pid)) continue;
       this.hooks.take(c.requestId);
       this.picks.delete(c.requestId);
       this.answeredFor(c.sessionId);
@@ -986,7 +1018,7 @@ export class ClaudeActivity extends BaseActivity {
 
   /**
    * A Claude Code turn ended (its Stop hook, the tracker, or its row turning green or red).
-   * "Only pop up for other chats" keeps a chat the user is looking at from popping up.
+   * "Not when its window is in front" keeps a chat the user is looking at from popping up.
    */
   private markFinished(id: string, ev?: HookEvent, failed = false): void {
     if (this.moments.has(id, 'end')) return;
@@ -994,7 +1026,7 @@ export class ClaudeActivity extends BaseActivity {
     else this.endOfTurn(id, failed, ev);
   }
 
-  /** "Only pop up for other chats": a chat the user is looking at finishes quietly. */
+  /** "Not when its window is in front": a chat the user is looking at finishes quietly. */
   private async endUnlessLooking(id: string, ev: HookEvent | undefined, failed: boolean): Promise<void> {
     let looking = this.looking.has(id);
     if (!looking) {
