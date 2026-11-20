@@ -121,6 +121,19 @@ pub fn shown_by_tip(key: &str, was: Option<&str>, shown: Option<&[String]>) -> O
     if key.is_empty() { None } else { Some(false) }
 }
 
+/// What Windows' taskbar shows now (`now`) with what it showed before the apps were asked for their icons
+/// again (`before`) added back where it was: an app sending its icon again is off it for a while.
+pub fn with_before(now: Vec<String>, before: Option<&[String]>) -> Vec<String> {
+    let Some(before) = before else { return now };
+    let mut out = now;
+    for (i, k) in before.iter().enumerate() {
+        if !out.contains(k) {
+            out.insert(i.min(out.len()), k.clone());
+        }
+    }
+    out
+}
+
 /// What Explorer sends an app's callback for a click, by the version the app asked for:
 /// version 4 gets (MAKEWPARAM(x, y), MAKELPARAM(msg, id)), older ones (id, msg).
 pub fn callback_params(version: u32, uid: u32, msg: u32, x: i32, y: i32) -> (usize, isize) {
@@ -154,7 +167,7 @@ mod imp {
         SWP_NOACTIVATE, WM_CLOSE, WM_COMMAND, WM_COPYDATA, WM_DESTROY, WM_TIMER, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
 
-    use super::{callback_params, is_pinned, key_of, shown_by_tip, tip_key, IconSetting, TrayIcon};
+    use super::{callback_params, is_pinned, key_of, shown_by_tip, tip_key, with_before, IconSetting, TrayIcon};
 
     const NIM_ADD: u32 = 0;
     const NIM_MODIFY: u32 = 1;
@@ -218,6 +231,8 @@ mod imp {
     /// None until read, or when it can't be. Windows' settings alone miss some (an app's second icon, its
     /// own update icon), so this is what decides; the settings only when it can't be read (Justin, 11-19).
     static SHOWN: Mutex<Option<Vec<String>>> = Mutex::new(None);
+    /// How long after the apps are asked for their icons what Windows' taskbar showed before still counts.
+    const SETTLE: Duration = Duration::from_secs(30);
 
     /// The names of the icons on Windows' taskbar (not in its overflow): its NotifyItemIcon buttons.
     fn read_shown() -> Option<Vec<String>> {
@@ -630,22 +645,34 @@ mod imp {
             OURS.store(hwnd.0 as isize, Ordering::SeqCst);
             keep_on_top(hwnd);
             let _ = SetTimer(Some(hwnd), 1, 1000, None);
+            // What Windows' own taskbar shows, read beside it (UI Automation can take a moment). Read once
+            // before the apps are asked for their icons: asking makes them send them to Windows' taskbar
+            // again too, and some (the usage widget) are off it for up to 15 s while they do (Justin,
+            // 11-19). For SETTLE after that, what it showed before still counts.
+            let (first_tx, first_rx) = std::sync::mpsc::channel::<()>();
+            std::thread::spawn(move || {
+                let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
+                let before = read_shown();
+                if before.is_some() {
+                    *SHOWN.lock().unwrap() = before.clone();
+                }
+                let _ = first_tx.send(());
+                let since = Instant::now();
+                while OURS.load(Ordering::SeqCst) != 0 {
+                    std::thread::sleep(Duration::from_secs(2));
+                    let now = read_shown();
+                    let now = if since.elapsed() < SETTLE { now.map(|n| with_before(n, before.as_deref())) } else { now };
+                    *SHOWN.lock().unwrap() = now;
+                }
+                // Kept for the next start: until it is read again, the last list is nearer than the settings.
+            });
+            let _ = first_rx.recv_timeout(Duration::from_secs(3));
             // Running apps send their icons again (as when Explorer restarts).
             let created = RegisterWindowMessageW(w!("TaskbarCreated"));
             if created != 0 {
                 let _ = SendNotifyMessageW(HWND_BROADCAST, created, WPARAM(0), LPARAM(0));
             }
             crate::log::line("tray: reading the notification area");
-            // What Windows' own taskbar shows, read beside it (UI Automation can take a moment).
-            std::thread::spawn(|| {
-                let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
-                while OURS.load(Ordering::SeqCst) != 0 {
-                    let now = read_shown();
-                    *SHOWN.lock().unwrap() = now;
-                    std::thread::sleep(Duration::from_secs(2));
-                }
-                // Kept for the next start: until it is read again, the last list is nearer than the settings.
-            });
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 let _ = TranslateMessage(&msg);
@@ -734,6 +761,19 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::{callback_params, is_pinned, key_of, tip_key, IconSetting};
+
+    #[test]
+    fn what_windows_showed_before_the_apps_sent_their_icons_again_still_counts() {
+        use super::with_before;
+        let k = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let before = k(&["island", "session: %", "weekly: %"]);
+        // The widget's icons off Windows' taskbar while it sends them again: still there, in their place.
+        assert_eq!(with_before(k(&["island", "update"]), Some(&before)), k(&["island", "session: %", "weekly: %", "update"]));
+        // What shows now keeps its order; a new one (Island's own, sent again) in it.
+        assert_eq!(with_before(k(&["update", "island"]), Some(&k(&["old", "session: %"]))), k(&["old", "session: %", "update", "island"]));
+        // Nothing read before: what it shows now.
+        assert_eq!(with_before(k(&["island"]), None), k(&["island"]));
+    }
 
     #[test]
     fn an_icon_sent_again_with_another_tip_stays_where_windows_still_shows_it() {
