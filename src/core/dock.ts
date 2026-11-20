@@ -734,9 +734,10 @@ const RISE_OTHERS = '.dk-winstart, .dk-search, .dk-start, .dk-music, .dk-skip, .
 const HEADROOM = 20;
 /** An app's place on the bar, CSS px (island.css .dk-app). */
 const APP_W = 40;
-/** Room the window keeps at each end for the bar to widen into while it spreads (CSS px before its
- *  size's zoom): the window never resizes under the pointer. */
-const RISE_ROOM = 36;
+/** Room the apps' row always keeps at each end while Rise spreads it, CSS px: the apps part into it, so
+ *  the bar never widens and nothing else on it moves (Justin, 11-19: the bar grew a bit on every app
+ *  and shrank back after; "always a bit extended on the sides"). The most they part by is about 14 px. */
+const RISE_SLACK = 8;
 
 /** The bar's zoom: its own height when stretched in Edit position, else its size's. */
 export const zoomOf = (f: Pick<DockFrame, 'size' | 'scale'> | null): number => (f ? (f.scale ?? DOCK_ZOOM[f.size] ?? 1) : 1);
@@ -1714,7 +1715,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   // Windhawk's"; Justin, 11-19: Rise with Glide was "rly messed up" next to his Windows taskbar). Each
   // app's whole place (its highlight and dot with it) grows from the bar's edge, most under the pointer;
   // along a bar across the screen (not split round the island) its neighbours slide apart to make half
-  // that room and the bar widens from its middle, into room its window keeps at each end (RISE_ROOM).
+  // that room, into room the apps' row always keeps at its ends (RISE_SLACK), so the bar stays put.
   // It follows the pointer at once (RISE_FOLLOW) and fades in and out with it (RISE_FADE_MS); left
   // still a moment, the item under the pointer bobs (RISE_BOB_*). `scale` and `translate` grow and bob
   // an item, a margin each side makes its room; its `transform` (a drag along the row) stays as it is.
@@ -1731,8 +1732,13 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   let bobFrom = 0;
   let raf = 0;
   let lastT = 0;
-  /** How much wider the spread makes the bar now (CSS px before the zoom). */
-  let riseExtra = 0;
+  /** The apps' row is parted now (its items off where they rest). */
+  let parted = false;
+  /** The room the apps' row keeps at each end while Rise spreads it, less what the parting `used`. */
+  const keepSlack = (used: number) => {
+    const pad = spreads() ? Math.max(0, RISE_SLACK - used / 2) : 0;
+    appsBox.style.paddingInline = pad ? `${pad.toFixed(2)}px` : '';
+  };
   let solidAt = 0;
   const spreads = () => has('rise') && !upright() && gapEl.hidden;
   /** -1 where away from the screen's edge is up or left (a bar at the bottom or on the right). */
@@ -1754,7 +1760,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     );
     // Where each one's middle is with nothing spread (measured while nothing is): the pointer is
     // measured against those, so the spreading never moves the item it is on away from it.
-    if (!riseExtra) for (const b of els) restMid.set(b, alongOf(b.getBoundingClientRect()));
+    if (!parted) for (const b of els) restMid.set(b, alongOf(b.getBoundingClientRect()));
     const on = pointerX !== null && !move?.moved && has('rise');
     const dist = els.map((b) => {
       if (!on) return Infinity;
@@ -1788,7 +1794,10 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // move", then "they push the big boxes").
     const widths = els.map((b) => (b.classList.contains('dk-app') ? APP_W : b.offsetWidth));
     const rooms = els.map((b, i) => (spread && b.classList.contains('dk-app') ? RISE_GROW * levels[i] * APP_W * RISE_SPACING : 0));
-    const total = rooms.reduce((a, r) => a + r, 0);
+    // Never more than the room kept for it at the row's ends.
+    const all = rooms.reduce((a, r) => a + r, 0);
+    if (all > 2 * RISE_SLACK) rooms.forEach((r, i) => (rooms[i] = (r * 2 * RISE_SLACK) / all));
+    const total = Math.min(all, 2 * RISE_SLACK);
     const spaced = new Set<HTMLElement>();
     els.forEach((b, i) => {
       const bobs = i === nearest ? bob : 0;
@@ -1816,9 +1825,9 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // One that left the bar (a tray icon gone) keeps no rise.
     for (const b of rise.keys()) if (!b.isConnected) rise.delete(b);
     for (const b of restMid.keys()) if (!b.isConnected) restMid.delete(b);
-    // Wider from its middle: half of it to each side, as room the apps' row keeps at its ends.
-    riseExtra = total > 0.05 ? total : 0;
-    bar.style.translate = riseExtra ? `${(-riseExtra / 2).toFixed(2)}px 0` : '';
+    // Out of the room the row keeps at its ends, half from each: the row stays as wide, so the bar does.
+    parted = total > 0.05;
+    keepSlack(total);
     if (placeGlow(dt)) busy = true;
     raf = busy ? requestAnimationFrame(animateRise) : 0;
     // Where it takes clicks follows the widened bar, now and then while it moves, and when it stops.
@@ -2072,7 +2081,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       const after = Math.max(0, (up ? r.bottom : r.right) - mid + ends - len / 2);
       return { apps: before, any: Math.max(before, after) };
     }
-    const over = Math.max(0, (up ? r.height : r.width) - riseExtra * zoom + 2 * ends - len);
+    const over = Math.max(0, (up ? r.height : r.width) + 2 * ends - len);
     return { apps: over, any: over };
   };
   /** The bar squeezed until it fits on the screen: DROP's items go one by one, then the apps furthest
@@ -2112,11 +2121,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const up = upright();
     // 12px at each end; the melted ends grow with the bar's size, as the bar does.
     const zoom = zoomOf(frame);
-    // Rise spreading: room at each end for the bar to widen into (and its width without the spread).
-    const spreadRoom = spreads() ? RISE_ROOM * zoom : 0;
-    document.documentElement.style.setProperty('--dk-room', `${spreadRoom}px`);
-    const restLen = (up ? r.height : r.width) - riseExtra * zoom;
-    const len = Math.ceil(restLen + 24 + 2 * spreadRoom + (frame?.edge && frame.melt ? 2 * MELT.out * zoom : 0));
+    const restLen = up ? r.height : r.width;
+    const len = Math.ceil(restLen + 24 + (frame?.edge && frame.melt ? 2 * MELT.out * zoom : 0));
     const thick = up ? r.width : r.height;
     const barArea = Math.ceil(thick + 16 + HEADROOM);
     // Beside an upright bar the card stands out sideways, as tall as the bar lets it.
@@ -2228,6 +2234,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     setGap(side() === 'top' && f.gap ? f.gap : 0);
     applyGlass(root, f.glass);
     for (const k of DOCK_STYLES) root.classList.toggle(`dk-${k}`, (f.styles ?? ['rise']).includes(k));
+    if (!raf) keepSlack(0);
     root.dataset.nameFont = f.names?.font ?? 'system';
     root.dataset.nameLook = f.names?.look ?? 'bubble';
     root.classList.toggle('dk-name-bold', f.names?.bold === true);
@@ -2510,6 +2517,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (typeof g === 'object' && g) islandOpen = g.open === true;
     if (!frame || side() !== 'top' || !frame.gap || typeof w !== 'number' || !Number.isFinite(w)) return;
     setGap(w);
+    if (!raf) keepSlack(0);
     squeezeToFit();
     void fit();
     placeSpot();

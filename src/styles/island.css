@@ -2139,8 +2139,7 @@ html[data-pill='glass'] .sb-tiles.editing ~ .sb-buttons {
 .dock {
   position: absolute;
   /* The bar's zoom (its Size) would scale these too: --dk-z (dock.ts) divides it back out. */
-  /* (+ --dk-room: room for the bar to widen into while Rise spreads its icons, dock.ts RISE_ROOM) */
-  left: calc((12px + var(--dk-room, 0px)) / var(--dk-z, 1));
+  left: calc(12px / var(--dk-z, 1));
   /* 12px over the window's bottom (BAR_BELOW in dock.rs). The window is 4px plus room for icons
      rising under the pointer (HEADROOM in dock.ts) taller than that, more while a card is up. */
   bottom: calc(12px / var(--dk-z, 1));
