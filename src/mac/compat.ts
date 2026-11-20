@@ -2,6 +2,9 @@
 // Only the Mac build loads this (vite.config.ts puts it in front of each page's code); each piece is
 // added only where the engine doesn't have it, so a newer Mac keeps its own.
 
+// color-mix() where the engine lacks it (Safari before 16.2): a module of its own, switched on there only.
+import './colormix';
+
 type Indexed<T> = { readonly length: number; readonly [i: number]: T };
 
 function at<T>(this: Indexed<T>, index: number): T | undefined {
