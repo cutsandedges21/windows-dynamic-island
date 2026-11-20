@@ -10,6 +10,7 @@ pub mod claude;
 pub mod osa;
 pub mod input;
 pub mod keys;
+pub mod notify;
 pub mod sys;
 
 /// What a Mac twin answers for a feature that comes in a later part.

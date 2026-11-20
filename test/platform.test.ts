@@ -27,10 +27,13 @@ describe('platform', () => {
     expect(ctrlKey('macos')).toBe('Control');
   });
 
-  it('a Mac is not offered the Windows-only options, like Calendar reading Windows accounts', () => {
+  it('a Mac is not offered the Windows-only options, like Num Lock', () => {
+    const num = CATALOG_BY_ID.get('system-controls')!.options.find((o) => o.key === 'num')!;
+    expect(optionHere(num, 'windows')).toBe(true);
+    expect(optionHere(num, 'macos')).toBe(false);
+    // Calendar reads the Mac's own calendars (EventKit) as it reads Windows' accounts.
     const source = CATALOG_BY_ID.get('calendar')!.options.find((o) => o.key === 'source')!;
-    expect(optionHere(source, 'windows')).toBe(true);
-    expect(optionHere(source, 'macos')).toBe(false);
+    expect(optionHere(source, 'macos')).toBe(true);
     const link = CATALOG_BY_ID.get('calendar')!.options.find((o) => o.key === 'ics')!;
     expect(optionHere(link, 'macos')).toBe(true);
   });

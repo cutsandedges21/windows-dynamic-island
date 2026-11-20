@@ -565,8 +565,6 @@ export const CATALOG: ActivityMeta[] = [
         key: 'source',
         type: 'choice',
         label: 'Where events come from',
-        // A Mac reads the link only (calendar.ts), so there is nothing to choose.
-        mac: 'never',
         default: 'windows',
         choices: [
           { value: 'windows', label: 'My Windows accounts' },

@@ -24,7 +24,8 @@ function macCompat(): Plugin {
     name: 'island-mac-compat',
     enforce: 'pre',
     transform(code, id) {
-      if (pages.test(id)) return `import './mac/compat';\n${code}`;
+      // Safari 15's gaps first, then the Activities page in a Mac's words (src/mac/words.ts).
+      if (pages.test(id)) return `import './mac/compat';\nimport './mac/words';\n${code}`;
       if (code.includes(lonePipe)) {
         return code.split(lonePipe).join('(globalThis as unknown as { __islandBeforeLonePipe(s: string): string }).__islandBeforeLonePipe(c)');
       }

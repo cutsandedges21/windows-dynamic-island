@@ -4,7 +4,7 @@
 // island sends the whole list each time it changes; this makes Windows' schedule match it (stale
 // ones out, new or changed ones in) and says which ids Windows holds, so the island doesn't show
 // a second notification for those. The toast stays on screen until dismissed (the reminder
-// scenario). On a Mac nothing is scheduled and the island notifies by itself, as before.
+// scenario). On a Mac the Notification Center holds them the same way (mac/notify.rs).
 
 use serde::Deserialize;
 
@@ -205,7 +205,16 @@ mod imp {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod imp {
+    use super::Upcoming;
+
+    pub fn sync(_app_id: &str, group: &str, items: &[Upcoming]) -> Result<Vec<String>, String> {
+        crate::mac::notify::sync(group, items)
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod imp {
     use super::Upcoming;
 
