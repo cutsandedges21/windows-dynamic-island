@@ -6,9 +6,10 @@
 // Explorer and the power menu. The island sends its look and pins ('start-frame').
 
 import '../styles/start.css';
+import { cleanFolders, dockSlots, foldApps, FOLD_MS, FOLD_ZONE, FOLDER_NAME, folderKey, glideFrom, moveSlot, popIn, sinkInto, staggerIn, unfoldApp, type DockApp, type DockSlot } from './dock';
 import { applyGlass } from './glass';
 import { isTauri, native, on, sendTo, type InstalledApp } from './native';
-import type { PillColor } from './settings';
+import type { DockFolder, PillColor } from './settings';
 
 /** What the island tells the menu. */
 export interface StartFrame {
@@ -16,7 +17,14 @@ export interface StartFrame {
   glass?: number;
   accent: string;
   pins: InstalledApp[];
+  /** Pinned apps dropped onto one another (as the taskbar's: dock.ts dockSlots). */
+  folders?: DockFolder[];
 }
+
+/** A drag on a pinned app starts once the pointer has moved this far (CSS px); less is a click. */
+const DRAG_PX = 5;
+/** Pinned places Start shows (three rows of six). */
+const PINNED_MAX = 18;
 
 /** What Rust says when it opens: the side the taskbar is on, the menu's box in the window, and the
  *  point it grows out of (the Start button). */
@@ -90,6 +98,11 @@ const SVG = {
   app: '<svg viewBox="0 0 24 24" class="line"><rect x="4.5" y="4.5" width="15" height="15" rx="4"/></svg>',
 };
 
+/** The pins as the taskbar's folder functions take them (dock.ts): each one pinned, by its lower-case target. */
+export function startApps(pins: readonly InstalledApp[]): DockApp[] {
+  return pins.map((p) => ({ key: p.target.toLowerCase(), name: p.name, icon: null, windows: [], front: false, pinned: true }));
+}
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, html?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
   e.className = cls;
@@ -151,11 +164,24 @@ export async function runStart(stage: HTMLElement): Promise<void> {
     void native.wsLaunch({ kind: 'app', path: a.target, args: '', cwd: '' }, '');
   };
   const pins = () => frame?.pins ?? [];
-  const setPins = (list: InstalledApp[]) => {
-    if (frame) frame.pins = list;
-    void sendTo('island', 'start-pins', list);
+  const folders = () => frame?.folders ?? [];
+  /** The pins and folders changed (either null: as they are); each folder keeps to pinned apps. */
+  const setLayout = (list: InstalledApp[] | null, fs: DockFolder[] | null) => {
+    const p = list ?? pins();
+    const before = JSON.stringify(folders());
+    const f = cleanFolders(fs ?? folders(), p);
+    if (frame) {
+      frame.pins = p;
+      frame.folders = f;
+    }
+    // The folders first: the pins' change makes the island send its frame, which should have them.
+    if (JSON.stringify(f) !== before) void sendTo('island', 'start-folders', f);
+    if (list) void sendTo('island', 'start-pins', p);
     draw();
   };
+  const setPins = (list: InstalledApp[]) => setLayout(list, null);
+  const pinOf = (key: string) => pins().find((p) => p.target.toLowerCase() === key) ?? null;
+  const folderOf = (key: string) => folders().find((f) => f.apps.includes(key)) ?? null;
   const appMenu = async (a: InstalledApp) => {
     if (!isTauri) return;
     const { Menu, MenuItem, PredefinedMenuItem } = await import('@tauri-apps/api/menu');
@@ -167,7 +193,15 @@ export async function runStart(stage: HTMLElement): Promise<void> {
         action: () => setPins(at >= 0 ? pins().filter((_, i) => i !== at) : [...pins(), a]),
       }),
     ];
-    if (at > 0) items.push(await MenuItem.new({ text: 'Move to front', action: () => setPins([a, ...pins().filter((_, i) => i !== at)]) }));
+    const inFolder = folderOf(a.target.toLowerCase());
+    if (at > 0 && !inFolder) items.push(await MenuItem.new({ text: 'Move to front', action: () => setPins([a, ...pins().filter((_, i) => i !== at)]) }));
+    if (inFolder) {
+      const out = () => {
+        const c = unfoldApp(pins(), folders(), a.target.toLowerCase());
+        if (c) setLayout(c.pins, c.folders ?? null);
+      };
+      items.push(await MenuItem.new({ text: 'Remove from folder', action: out }));
+    }
     if (/\.exe$/i.test(a.target)) {
       items.push(
         (await PredefinedMenuItem.new({ item: 'Separator' })) as never,
@@ -182,7 +216,9 @@ export async function runStart(stage: HTMLElement): Promise<void> {
     b.title = a.name;
     b.append(iconOf(a.target), el('span', 'sm-name'));
     b.querySelector('.sm-name')!.textContent = a.name;
-    b.addEventListener('click', () => launch(a));
+    b.addEventListener('click', () => {
+      if (!swallowClick) launch(a);
+    });
     b.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       void appMenu(a);
@@ -226,11 +262,274 @@ export async function runStart(stage: HTMLElement): Promise<void> {
     body.replaceChildren(list);
   };
 
+  // Folders (Moss, 11-20: "like it does on windows ... the same way that folders on the taskbar do"):
+  // a pinned app held a moment on another makes a folder of the two, or goes into a folder held on; a
+  // click opens it over Start, its name at the top (click it to rename); dragged out of it, an app is
+  // back among the pins. Pinned apps drag to new places too, the others making room.
+  let swallowClick = false;
+  /** A pinned app is being dragged: Start isn't drawn again under it (an icon arriving) until it is dropped. */
+  let homeDrag = false;
+  const swallow = () => {
+    swallowClick = true;
+    window.setTimeout(() => (swallowClick = false), 0);
+  };
+  /** A folder's place among the pins: up to four of its apps' icons in a rounded square, its name. */
+  const folderButton = (s: Extract<DockSlot, { kind: 'folder' }>) => {
+    const b = el('button', 'sm-tile sm-folder');
+    b.title = s.folder.name;
+    const ico = el('span', 'sm-ico');
+    const g = el('span', 'sm-fgrid');
+    for (const a of s.apps.slice(0, 4)) {
+      const got = icons.get(a.key);
+      if (got) {
+        const img = document.createElement('img');
+        img.src = got;
+        img.alt = '';
+        img.draggable = false;
+        g.append(img);
+      } else g.append(el('i', 'sm-fblank'));
+    }
+    ico.append(g);
+    const n = el('span', 'sm-name');
+    n.textContent = s.folder.name;
+    b.append(ico, n);
+    b.addEventListener('click', () => {
+      if (!swallowClick) openFolder(s.folder.id);
+    });
+    b.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      void folderMenu(s.folder);
+    });
+    return b;
+  };
+  const slotButton = (s: DockSlot) => {
+    const b = s.kind === 'folder' ? folderButton(s) : appButton(pinOf(s.key) ?? { name: s.app.name, target: s.key }, 'sm-tile');
+    b.dataset.key = s.key;
+    return b;
+  };
+  const folderMenu = async (f: DockFolder) => {
+    if (!isTauri) return;
+    const { Menu, MenuItem, PredefinedMenuItem } = await import('@tauri-apps/api/menu');
+    const items = [
+      await MenuItem.new({ text: 'Open folder', action: () => openFolder(f.id) }),
+      await MenuItem.new({ text: 'Rename folder', action: () => openFolder(f.id, true) }),
+      (await PredefinedMenuItem.new({ item: 'Separator' })) as never,
+      await MenuItem.new({ text: 'Ungroup', action: () => setLayout(null, folders().filter((x) => x.id !== f.id)) }),
+    ];
+    await (await Menu.new({ items })).popup();
+  };
+
+  /** Pinned places dragged in `grid`: to a new place or onto another (a folder); in an open folder, out of it. */
+  const wireDrag = (grid: HTMLElement, inFolder: boolean) => {
+    type Drag = { t: HTMLElement; id: number; x0: number; y0: number; gx: number; gy: number; moved: boolean; from: number; over: HTMLElement | null; armed: boolean; wait: number };
+    let d: Drag | null = null;
+    const tiles = () => [...grid.querySelectorAll<HTMLElement>(':scope > .sm-tile')];
+    const unarm = (m: Drag) => {
+      window.clearTimeout(m.wait);
+      m.over?.classList.remove('sm-fold-on');
+      m.over = null;
+      m.armed = false;
+    };
+    /** The dragged tile under the pointer, wherever its place in the grid is now. */
+    const follow = (m: Drag, e: PointerEvent) => {
+      const g = grid.getBoundingClientRect();
+      m.t.style.transform = `translate(${e.clientX - g.left - m.gx - m.t.offsetLeft}px, ${e.clientY - g.top - m.gy - m.t.offsetTop}px)`;
+    };
+    grid.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const t = (e.target as HTMLElement).closest<HTMLElement>('.sm-tile');
+      if (!t || t.parentElement !== grid || !t.dataset.key) return;
+      const g = grid.getBoundingClientRect();
+      d = { t, id: e.pointerId, x0: e.clientX, y0: e.clientY, gx: e.clientX - g.left - t.offsetLeft, gy: e.clientY - g.top - t.offsetTop, moved: false, from: tiles().indexOf(t), over: null, armed: false, wait: 0 };
+    });
+    grid.addEventListener('pointermove', (e) => {
+      const m = d;
+      if (!m || e.pointerId !== m.id) return;
+      if (!m.moved) {
+        if (Math.hypot(e.clientX - m.x0, e.clientY - m.y0) < DRAG_PX) return;
+        m.moved = true;
+        grid.setPointerCapture(e.pointerId);
+        m.t.classList.add('moving');
+        grid.classList.add('sm-dragging');
+        if (!inFolder) homeDrag = true;
+      }
+      follow(m, e);
+      if (inFolder) {
+        // Out past the folder's edge: let go, and it is out of the folder.
+        const r = fpanel.getBoundingClientRect();
+        fpanel.classList.toggle('sm-dropping', e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom);
+        return;
+      }
+      const g = grid.getBoundingClientRect();
+      const px = e.clientX - g.left;
+      const py = e.clientY - g.top;
+      const others = tiles().filter((k) => k !== m.t);
+      const o = others.find((k) => px >= k.offsetLeft && px <= k.offsetLeft + k.offsetWidth && py >= k.offsetTop && py <= k.offsetTop + k.offsetHeight);
+      if (!o) return unarm(m);
+      const cx = o.offsetLeft + o.offsetWidth / 2;
+      const cy = o.offsetTop + o.offsetHeight / 2;
+      // Over its middle (an app dragged, not a folder): held there, it folds in.
+      if (!m.t.classList.contains('sm-folder') && Math.abs(px - cx) < o.offsetWidth * FOLD_ZONE && Math.abs(py - cy) < o.offsetHeight * 0.32) {
+        if (m.over === o) return;
+        unarm(m);
+        m.over = o;
+        m.wait = window.setTimeout(() => {
+          if (d !== m || m.over !== o) return;
+          m.armed = true;
+          o.classList.add('sm-fold-on');
+        }, FOLD_MS);
+        return;
+      }
+      unarm(m);
+      // Else between: before it or after it, the others sliding over to make room.
+      const at = others.indexOf(o) + (px > cx ? 1 : 0);
+      if (tiles().indexOf(m.t) === at) return;
+      const was = new Map(others.map((k) => [k, [k.offsetLeft, k.offsetTop]] as const));
+      grid.insertBefore(m.t, others[at] ?? null);
+      for (const k of others) {
+        const [x, y] = was.get(k)!;
+        const dx = x - k.offsetLeft;
+        const dy = y - k.offsetTop;
+        if (!dx && !dy) continue;
+        k.style.transition = 'none';
+        k.style.transform = `translate(${dx}px, ${dy}px)`;
+        void k.offsetWidth;
+        k.style.transition = '';
+        k.style.transform = '';
+      }
+      follow(m, e);
+    });
+    const end = async (e: PointerEvent) => {
+      const m = d;
+      if (!m || e.pointerId !== m.id) return;
+      const target = m.armed && m.over && e.type === 'pointerup' ? m.over : null;
+      const onto = target?.dataset.key;
+      unarm(m);
+      d = null;
+      if (!m.moved) return;
+      swallow();
+      // Where it was let go, for it to glide on from there.
+      const was = m.t.querySelector('.sm-ico')!.getBoundingClientRect();
+      m.t.classList.remove('moving');
+      m.t.style.transform = '';
+      grid.classList.remove('sm-dragging');
+      const key = m.t.dataset.key!;
+      if (inFolder) {
+        const out = fpanel.classList.contains('sm-dropping');
+        fpanel.classList.remove('sm-dropping');
+        const c = out && e.type === 'pointerup' ? unfoldApp(pins(), folders(), key) : null;
+        if (c) setLayout(c.pins, c.folders ?? null);
+        else drawFolder(true);
+        settle(key, was);
+        return;
+      }
+      const apps = startApps(pins());
+      const c = onto ? foldApps(pins(), apps, folders(), key, onto, Date.now().toString(36)) : moveSlot(pins(), apps, folders(), key, tiles().indexOf(m.t));
+      if (c && onto && target) await sinkInto(m.t, was, target.querySelector('.sm-ico')!.getBoundingClientRect());
+      homeDrag = false;
+      if (c?.pins || c?.folders) setLayout(c.pins, c.folders ?? null);
+      else draw();
+      if (!onto) settle(key, was);
+    };
+    grid.addEventListener('pointerup', end);
+    grid.addEventListener('pointercancel', end);
+  };
+
+  // An open folder: over Start, the rest dimmed behind it; a click there closes it.
+  const fback = el('div', 'sm-fback');
+  const fpanel = el('div', 'sm-fpanel');
+  const fname = el('input', 'sm-fname');
+  fname.maxLength = 40;
+  fname.spellcheck = false;
+  fname.placeholder = FOLDER_NAME;
+  fname.title = 'Rename';
+  const fgrid = el('div', 'sm-fgrid-box');
+  fpanel.append(fname, fgrid);
+  fback.append(fpanel);
+  menu.append(fback);
+  wireDrag(fgrid, true);
+  let folderOn: string | null = null;
+  fback.addEventListener('pointerdown', (e) => {
+    if (e.target === fback) closeFolder();
+  });
+  const renameFolder = () => {
+    const f = folders().find((x) => x.id === folderOn);
+    const v = fname.value.trim() || FOLDER_NAME;
+    if (!f || v === f.name) return;
+    setLayout(null, folders().map((x) => (x === f ? { ...x, name: v } : x)));
+  };
+  fname.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') fname.blur();
+    else if (e.key === 'Escape') {
+      e.stopPropagation();
+      fname.value = folders().find((x) => x.id === folderOn)?.name ?? '';
+      fname.blur();
+    }
+  });
+  fname.addEventListener('blur', renameFolder);
+  const openFolder = (id: string, rename = false) => {
+    folderOn = id;
+    drawFolder(true);
+    // It grows out of the folder's own place (and goes back into it).
+    const from = [...body.querySelectorAll<HTMLElement>('.sm-grid > .sm-folder')].find((x) => x.dataset.key === folderKey(id));
+    if (from) {
+      const f = from.getBoundingClientRect();
+      const box = fback.getBoundingClientRect();
+      fpanel.style.transformOrigin = `${f.left + f.width / 2 - box.left - fpanel.offsetLeft}px ${f.top + f.height / 2 - box.top - fpanel.offsetTop}px`;
+    } else fpanel.style.transformOrigin = '';
+    fback.classList.add('on');
+    staggerIn([...fgrid.children]);
+    if (rename)
+      window.setTimeout(() => {
+        fname.focus();
+        fname.select();
+      }, 60);
+  };
+  function closeFolder(): void {
+    if (folderOn === null) return;
+    if (document.activeElement === fname) fname.blur();
+    folderOn = null;
+    fback.classList.remove('on');
+  }
+  /** The open folder's apps (and its name, unless it is being typed in); `force`: drawn again even mid-drag. */
+  function drawFolder(force = false): void {
+    if (folderOn === null) return;
+    const s = dockSlots(startApps(pins()), folders()).find((x) => x.key === folderKey(folderOn!));
+    if (!s || s.kind !== 'folder') return closeFolder();
+    if (document.activeElement !== fname) fname.value = s.folder.name;
+    if (!force && fgrid.querySelector('.moving')) return;
+    wantIcons(s.apps.map((a) => pinOf(a.key)?.target ?? a.key));
+    fgrid.style.setProperty('--sm-fcols', String(Math.min(4, Math.max(2, Math.ceil(Math.sqrt(s.apps.length))))));
+    fgrid.replaceChildren(...s.apps.map((a) => slotButton({ kind: 'app', key: a.key, app: a })));
+  }
+
+  /** The pinned place `key`, just drawn again, glides from `was` (where its icon was let go) into it. */
+  const settle = (key: string, was: DOMRect) => {
+    const t = [...body.querySelectorAll<HTMLElement>('.sm-grid > .sm-tile')].find((x) => x.dataset.key === key);
+    const ico = t?.querySelector('.sm-ico');
+    if (!ico) return;
+    const now = ico.getBoundingClientRect();
+    glideFrom(t!, was.left - now.left, was.top - now.top);
+  };
+  /** What each pinned place showed last time (a folder: its apps), so a new one, or a folder that
+   *  gained or lost an app, pops in; null until Pinned was drawn once. */
+  let homeSigs: Map<string, string> | null = null;
+  const sigOf = (s: DockSlot) => (s.kind === 'folder' ? s.apps.map((a) => a.key).join('|') : '');
+
   const drawHome = () => {
+    if (homeDrag) return;
     const shown = pins();
     wantIcons(shown.map((a) => a.target));
     const grid = el('div', 'sm-grid');
-    grid.append(...shown.slice(0, 18).map((a) => appButton(a, 'sm-tile')));
+    const slots = dockSlots(startApps(shown), folders()).slice(0, PINNED_MAX);
+    const tiles = slots.map(slotButton);
+    grid.append(...tiles);
+    wireDrag(grid, false);
+    const was = homeSigs;
+    homeSigs = new Map(slots.map((s) => [s.key, sigOf(s)]));
+    if (was) slots.forEach((s, i) => {
+      if (was.get(s.key) !== sigOf(s)) popIn(tiles[i].querySelector('.sm-ico')!);
+    });
     if (!shown.length) grid.append(el('p', 'sm-empty', 'Right-click an app in All apps and pick Pin to Start.'));
     const rec = el('div', 'sm-recent');
     for (const f of recent.slice(0, 6)) {
@@ -328,6 +627,8 @@ export async function runStart(stage: HTMLElement): Promise<void> {
     if (query.trim()) drawSearch();
     else if (view === 'all') drawAll();
     else drawHome();
+    if (query.trim() || view !== 'home') closeFolder();
+    else drawFolder();
   };
 
   field.addEventListener('input', () => {
@@ -336,7 +637,9 @@ export async function runStart(stage: HTMLElement): Promise<void> {
     draw();
   });
   window.addEventListener('keydown', (e) => {
+    if (document.activeElement === fname) return;
     if (e.key === 'Escape') {
+      if (folderOn !== null) return closeFolder();
       if (query) {
         field.value = query = '';
         draw();
@@ -365,6 +668,7 @@ export async function runStart(stage: HTMLElement): Promise<void> {
     root.dataset.side = o.side;
     view = 'home';
     field.value = query = '';
+    closeFolder();
     draw();
     menu.classList.remove('up');
     void menu.offsetWidth;

@@ -14,7 +14,7 @@ import { packageFamily } from './store-app';
 import { applyGlass } from './glass';
 import { artColour, barColour } from './artcolor';
 import { isTauri, native, on, sendTo, type DockIconRect, type InstalledApp, type LiveWindow, type TrayIcon } from './native';
-import { BAR_TALL_MAX, barOrder, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
+import { BAR_TALL_MAX, barOrder, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockFolder, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
 
 /** One app on the dock. */
 export interface DockApp {
@@ -63,6 +63,8 @@ export interface DockFrame {
   styles?: DockStyle[];
   /** Its items in the order dragged to in Settings; unset: DOCK_ITEMS'. */
   order?: DockItem[];
+  /** The folders apps were dropped into (each shown where the first of its apps would be). */
+  folders?: DockFolder[];
   /** How the names over the bar look (style Names): font, bubble/plain/outline, bold. */
   names?: NameStyle;
   /** The Start button opens Island's Start menu (else Windows'); the Windows key too. */
@@ -236,8 +238,15 @@ export type DockAct =
   | { kind: 'close'; key: string; rect?: DockIconRect }
   /** A window's preview over the icon: bring that one forward, or close it. */
   | { kind: 'window' | 'closewin'; key: string; hwnd: number; rect?: DockIconRect }
-  /** Dragged to place `to` in the row (its index once dropped). */
+  /** Dragged to place `to` in the row (its index once dropped); `key` an app's, or a folder's folderKey. */
   | { kind: 'move'; key: string; to: number }
+  /** An app dropped onto another (a new folder) or onto a folder (`onto` its folderKey). */
+  | { kind: 'fold'; key: string; onto: string }
+  /** An app taken out of its folder. */
+  | { kind: 'unfold'; key: string }
+  /** A folder renamed, or undone (its apps back on the bar where it was). */
+  | { kind: 'folder-name'; id: string; name: string }
+  | { kind: 'ungroup'; id: string }
   | { kind: 'start' | 'search' | 'quick' | 'notifications' | 'music' | 'timer' | 'claude' }
   /** Now playing's buttons beside the song: the next one, or back to the one before. */
   | { kind: 'skip'; dir: 'next' | 'prev' }
@@ -277,7 +286,7 @@ const nameOf = (path: string) => (path.split(/[\\/]/).pop() ?? path).replace(/\.
  * with a window, each keeping its place: in `seen`'s order (the order they opened in), new ones at
  * the end. `front` is the window in front now.
  */
-export function dockApps(pinned: readonly InstalledApp[], windows: readonly LiveWindow[], front: number, icons: ReadonlyMap<string, string | null>, seen: readonly string[] = []): DockApp[] {
+export function dockApps(pinned: readonly InstalledApp[], windows: readonly LiveWindow[], front: number, icons: ReadonlyMap<string, string | null>, seen: readonly string[] = [], max = DOCK_MAX): DockApp[] {
   const byExe = new Map<string, LiveWindow[]>();
   for (const w of windows) {
     if (!onDock(w)) continue;
@@ -302,7 +311,7 @@ export function dockApps(pinned: readonly InstalledApp[], windows: readonly Live
   const rest = [...byExe].sort((a, b) => rank(a[0]) - rank(b[0]));
   // A Store app by Start's name for it (Calculator, not CalculatorApp), a web app by its title.
   for (const [key, wins] of rest) out.push(app(key, wins[0].appName || (wins[0].appId ? wins[0].title : nameOf(wins[0].exe)), false));
-  return out.slice(0, DOCK_MAX);
+  return out.slice(0, max);
 }
 
 /** The browser a program is, by its file name: its private window's name and switch, its data folder. */
@@ -400,24 +409,143 @@ export function pinToggle(pins: readonly InstalledApp[], app: Pick<DockApp, 'key
 
 /**
  * The pinned list after `key` was dragged to place `to` in the row `apps`. A pinned app moves among
- * the pins; an open app dropped among them (or right after the last) gets pinned there; one
- * dropped among the other open apps changes nothing (they follow the order they were used in).
- * Null when nothing changes.
+ * the pins; an open app dropped between them gets pinned there (moveSlot's
+ * pins, without folders). Null when the pins don't change.
  */
 export function movePins(pins: readonly InstalledApp[], apps: readonly DockApp[], key: string, to: number): InstalledApp[] | null {
-  const dragged = apps.find((a) => a.key === key);
-  if (!dragged) return null;
-  const row = apps.filter((a) => a.key !== key);
+  return moveSlot(pins, apps, [], key, to).pins;
+}
+
+/** A folder on the taskbar (Moss, 11-19): apps dropped onto one another, under a name. Its apps are
+ *  pinned ones (keys as DockApp's); it sits where the first of them would. */
+export type { DockFolder };
+
+/** The key a folder goes by in the bar's row (its button's data-key). */
+export const folderKey = (id: string) => `folder:${id}`;
+export const FOLDER_NAME = 'Folder';
+
+/** One place in the bar's row of apps: an app, or a folder with its apps on the dock. */
+export type DockSlot = { kind: 'app'; key: string; app: DockApp } | { kind: 'folder'; key: string; folder: DockFolder; apps: DockApp[] };
+
+/**
+ * The row as the bar shows it: each folder at the place of the first of its apps on the dock, its
+ * apps (pinned ones only, in the folder's order) inside it; a folder with none on the dock isn't shown.
+ */
+export function dockSlots(apps: readonly DockApp[], folders: readonly DockFolder[] = []): DockSlot[] {
+  const byKey = new Map(apps.map((a) => [a.key, a] as const));
+  const home = new Map<string, DockFolder>();
+  for (const f of folders) for (const k of f.apps) if (byKey.get(k)?.pinned && !home.has(k)) home.set(k, f);
+  const out: DockSlot[] = [];
+  const placed = new Set<string>();
+  for (const a of apps) {
+    const f = home.get(a.key);
+    if (!f) {
+      out.push({ kind: 'app', key: a.key, app: a });
+      continue;
+    }
+    if (placed.has(f.id)) continue;
+    placed.add(f.id);
+    out.push({ kind: 'folder', key: folderKey(f.id), folder: f, apps: f.apps.filter((k) => home.get(k) === f).map((k) => byKey.get(k)!) });
+  }
+  return out;
+}
+
+/** The folders as they should be kept: only pinned apps, each in one folder, none left empty. */
+export function cleanFolders(folders: readonly DockFolder[], pins: readonly InstalledApp[]): DockFolder[] {
+  const pinned = new Set(pins.map((p) => keyOf(p.target)));
+  const taken = new Set<string>();
+  const out: DockFolder[] = [];
+  for (const f of folders) {
+    const apps = f.apps.filter((k) => pinned.has(k) && !taken.has(k));
+    for (const k of apps) taken.add(k);
+    if (apps.length) out.push({ ...f, apps });
+  }
+  return out;
+}
+
+/** What a drag on the taskbar changes: the pinned list, the order of the open apps that aren't pinned,
+ *  the folders. Each null when it doesn't change. */
+export interface DockChange {
+  pins: InstalledApp[] | null;
+  open?: string[] | null;
+  folders?: DockFolder[] | null;
+}
+
+const samePins = (a: readonly InstalledApp[], b: readonly InstalledApp[]) => a.length === b.length && a.every((n, i) => keyOf(n.target) === keyOf(b[i].target));
+
+/**
+ * After the place `key` (an app, or a folder's folderKey) was dragged to `to` in the bar's row. A
+ * pinned app or a folder moves among the pins; an open app dropped between pinned ones gets pinned
+ * there; one dropped anywhere after them moves among the open ones (`open`: their order).
+ */
+export function moveSlot(pins: readonly InstalledApp[], apps: readonly DockApp[], folders: readonly DockFolder[], key: string, to: number): DockChange {
+  const slots = dockSlots(apps, folders);
+  const dragged = slots.find((s) => s.key === key);
+  if (!dragged) return { pins: null };
+  const isPinned = (s: DockSlot) => s.kind === 'folder' || s.app.pinned;
+  const row = slots.filter((s) => s !== dragged);
   const at = Math.max(0, Math.min(row.length, Math.round(to)));
   row.splice(at, 0, dragged);
-  const pinnedBefore = row.slice(0, at).filter((a) => a.pinned).length;
-  if (!dragged.pinned && pinnedBefore < at) return null;
+  // An open app gets pinned only dropped between pinned ones; right after the last it is the first open one.
+  if (!isPinned(dragged) && !row.slice(at + 1).some(isPinned)) {
+    const open = row.filter((s) => !isPinned(s)).map((s) => s.key);
+    const was = slots.filter((s) => !isPinned(s)).map((s) => s.key);
+    return { pins: null, open: open.join('\n') === was.join('\n') ? null : open };
+  }
   const byKey = new Map(pins.map((p) => [keyOf(p.target), p] as const));
-  const next = row.filter((a) => a.pinned || a.key === key).map((a) => byKey.get(a.key) ?? { name: a.name, target: a.key });
+  const keys = row.flatMap((s) => (s.kind === 'folder' ? s.apps.map((a) => a.key) : s.app.pinned || s === dragged ? [s.key] : []));
+  const next = keys.map((k) => byKey.get(k) ?? { name: apps.find((a) => a.key === k)?.name ?? k, target: k });
   // Pins whose program isn't on the dock right now (more than DOCK_MAX) keep their place at the end.
   for (const p of pins) if (!next.some((n) => keyOf(n.target) === keyOf(p.target))) next.push(p);
-  const same = next.length === pins.length && next.every((n, i) => keyOf(n.target) === keyOf(pins[i].target));
-  return same ? null : next;
+  return { pins: samePins(next, pins) ? null : next };
+}
+
+/**
+ * `key` dropped onto `onto` (an app, or a folder's folderKey): into that folder, or both into a new one
+ * (`id`) where `onto` is. Both end up pinned, the dropped one's pin right after the folder's last, so
+ * the folder keeps its place. Null when it can't (onto itself, a folder onto something).
+ */
+export function foldApps(pins: readonly InstalledApp[], apps: readonly DockApp[], folders: readonly DockFolder[], key: string, onto: string, id: string): DockChange | null {
+  const a = apps.find((x) => x.key === key);
+  if (!a || key === onto) return null;
+  const target = onto.startsWith('folder:') ? folders.find((f) => folderKey(f.id) === onto) : undefined;
+  const b = target ? undefined : apps.find((x) => x.key === onto);
+  if (!target && !b) return null;
+  if (target?.apps.includes(key)) return null;
+  let list = pins.filter((p) => keyOf(p.target) !== key);
+  if (b && !list.some((p) => keyOf(p.target) === b.key)) {
+    // An open app not pinned yet: pinned after the pins, about where it was.
+    list = [...list, { name: b.name, target: b.key }];
+  }
+  const members = target ? target.apps : [b!.key];
+  const last = Math.max(...members.map((k) => list.findIndex((p) => keyOf(p.target) === k)));
+  const mine = pins.find((p) => keyOf(p.target) === key) ?? { name: a.name, target: a.key };
+  list.splice(last < 0 ? list.length : last + 1, 0, mine);
+  // Out of the folder it was in.
+  let next = folders.map((f) => (f.apps.includes(key) ? { ...f, apps: f.apps.filter((k) => k !== key) } : f));
+  if (target) next = next.map((f) => (f.id === target.id ? { ...f, apps: [...f.apps, key] } : f));
+  else next = [...next, { id, name: FOLDER_NAME, apps: [b!.key, key] }];
+  return { pins: list, folders: dissolve(next) };
+}
+
+/** Folders left with one app (or none) aren't folders any more. */
+const dissolve = (folders: readonly DockFolder[]) => folders.filter((f) => f.apps.length > 1);
+
+/** `key` taken out of its folder: it stays pinned, right after the folder; a folder left with one app is undone. */
+export function unfoldApp(pins: readonly InstalledApp[], folders: readonly DockFolder[], key: string): DockChange | null {
+  const from = folders.find((f) => f.apps.includes(key));
+  if (!from) return null;
+  const rest = from.apps.filter((k) => k !== key);
+  const mine = pins.find((p) => keyOf(p.target) === key);
+  let list: InstalledApp[] | null = null;
+  if (mine && rest.length) {
+    const others = pins.filter((p) => p !== mine);
+    const idx = (k: string) => others.findIndex((p) => keyOf(p.target) === k);
+    const last = Math.max(...rest.map(idx));
+    others.splice(last < 0 ? others.length : last + 1, 0, mine);
+    if (!samePins(others, pins)) list = others;
+  }
+  return { pins: list, folders: dissolve(folders.map((f) => (f === from ? { ...f, apps: rest } : f))) };
 }
 
 // ------------------------------------------------------------------ the island's side
@@ -426,6 +554,9 @@ export interface DockHooks {
   pinned(): InstalledApp[];
   /** The pinned list changed on the taskbar (pinned, unpinned, moved). */
   setPinned(apps: InstalledApp[]): void;
+  /** The taskbar's folders. */
+  folders(): DockFolder[];
+  setFolders(folders: DockFolder[]): void;
   music(): DockFrame['music'];
   timer(): string | null;
   claude(): DockFrame['claude'];
@@ -601,6 +732,10 @@ export class DockHost {
         want.forEach((t, i) => this.icons.set(keyOf(t), got[i] ?? null));
       }
       this.seen = openOrder(this.seen, live);
+      // Folders keep to pinned apps (an app unpinned, here or on the Apps tile, leaves its folder).
+      // Read now: a drop may have changed both while the icons were read.
+      const folders = cleanFolders(this.hooks.folders(), this.hooks.pinned());
+      if (JSON.stringify(folders) !== JSON.stringify(this.hooks.folders())) this.hooks.setFolders(folders);
       if (!this.startApps) {
         this.startApps = [];
         void native.wsApps().then((list) => {
@@ -609,7 +744,9 @@ export class DockHost {
         });
       }
       const start = this.startApps;
-      this.apps = dockApps(pinned, live, front, this.icons, this.seen).map((a) => ({ ...a, name: startName(a.name, a.key, start) }));
+      // Apps inside folders take no place on the bar of their own.
+      const inside = folders.reduce((n, f) => n + f.apps.length - 1, 0);
+      this.apps = dockApps(pinned, live, front, this.icons, this.seen, DOCK_MAX + inside).map((a) => ({ ...a, name: startName(a.name, a.key, start) }));
       this.live = live;
       const frame: DockFrame = {
         apps: this.apps,
@@ -623,6 +760,7 @@ export class DockHost {
         wifi: this.hooks.wifi(),
         hidden: this.hooks.hidden(),
         order: this.hooks.order(),
+        folders,
         ...this.hooks.look(),
         scale: this.hooks.scale(),
         minLen: this.hooks.minLen(),
@@ -697,15 +835,38 @@ export class DockHost {
     if (a.kind === 'skip') return this.hooks.act(a.dir === 'prev' ? 'act:music:prev' : 'act:music:next');
     if (a.kind === 'timer') return this.hooks.open('timer');
     if (a.kind === 'claude') return this.hooks.claudeCard();
+    if (a.kind === 'folder-name' || a.kind === 'ungroup') {
+      if (typeof a.id !== 'string') return;
+      const name = a.kind === 'folder-name' && typeof a.name === 'string' ? a.name.trim().slice(0, 40) || FOLDER_NAME : null;
+      const folders = this.hooks.folders();
+      this.hooks.setFolders(name === null ? folders.filter((f) => f.id !== a.id) : folders.map((f) => (f.id === a.id ? { ...f, name } : f)));
+      return this.tick();
+    }
+    if (a.kind === 'move' || a.kind === 'fold' || a.kind === 'unfold') {
+      if (typeof a.key !== 'string') return;
+      const pins = this.hooks.pinned();
+      const folders = this.hooks.folders();
+      const c =
+        a.kind === 'move'
+          ? moveSlot(pins, this.apps, folders, a.key, Number(a.to))
+          : a.kind === 'fold'
+            ? typeof a.onto === 'string'
+              ? foldApps(pins, this.apps, folders, a.key, a.onto, Date.now().toString(36))
+              : null
+            : unfoldApp(pins, folders, a.key);
+      if (!c) return;
+      if (c.open) this.seen = [...c.open, ...this.seen.filter((k) => !c.open!.includes(k))];
+      // The folders first: the pins' change makes a frame, which should have them.
+      if (c.folders) this.hooks.setFolders(c.folders);
+      if (c.pins) this.hooks.setPinned(c.pins);
+      return this.tick();
+    }
     if (typeof (a as { key?: unknown }).key !== 'string') return;
     const app = this.apps.find((x) => x.key === (a as { key: string }).key);
     if (!app) return;
     const rect = 'rect' in a && validRect(a.rect) ? a.rect : null;
     if (a.kind === 'pin') {
       const next = pinToggle(this.hooks.pinned(), app, a.on === true);
-      if (next) this.hooks.setPinned(next);
-    } else if (a.kind === 'move') {
-      const next = movePins(this.hooks.pinned(), this.apps, app.key, Number(a.to));
       if (next) this.hooks.setPinned(next);
     } else if (a.kind === 'launch') {
       // Another of it (a new window), as the app's name in Windows' taskbar menu does: what it is
@@ -758,6 +919,11 @@ const SVG = {
   pin: '<svg viewBox="0 0 24 24" class="line"><path d="M9.5 3.5h5l-.8 6 3.3 3.5H7l3.3-3.5z"/><path d="M12 13v7.5"/></svg>',
   unpin: '<svg viewBox="0 0 24 24" class="line"><path d="M9.5 3.5h5l-.8 6 3.3 3.5H7l3.3-3.5z"/><path d="M12 13v7.5M4 4l16 16"/></svg>',
   go: '<svg viewBox="0 0 24 24" class="line"><path d="M7 17 17 7M9 7h8v8"/></svg>',
+  // A folder's menu: open it, rename it (a pencil), undo it (its four squares apart); an app out of one.
+  folder: '<svg viewBox="0 0 24 24" class="line"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>',
+  rename: '<svg viewBox="0 0 24 24" class="line"><path d="M4.5 19.5h4l10-10a2.8 2.8 0 0 0-4-4l-10 10z"/><path d="M13 7l4 4"/></svg>',
+  ungroup: '<svg viewBox="0 0 24 24" class="line"><rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1.6"/><rect x="14" y="3.5" width="6.5" height="6.5" rx="1.6"/><rect x="3.5" y="14" width="6.5" height="6.5" rx="1.6"/><rect x="14" y="14" width="6.5" height="6.5" rx="1.6"/></svg>',
+  unfold: '<svg viewBox="0 0 24 24" class="line"><path d="M13.5 4.5h-7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7"/><path d="M12 12l8-8M14.5 4h5.5v5.5"/></svg>',
   play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
   pause: '<svg viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1"/><rect x="13.5" y="5" width="4" height="14" rx="1"/></svg>',
   timer: '<svg viewBox="0 0 24 24" class="line"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M10 2.5h4"/></svg>',
@@ -777,6 +943,49 @@ const SVG = {
   prev: '<svg viewBox="0 0 24 24" class="line"><path d="M18 6l-9 6 9 6z" fill="currentColor"/><path d="M6 6v12" stroke-width="2.4"/></svg>',
   next: '<svg viewBox="0 0 24 24" class="line"><path d="M6 6l9 6-9 6z" fill="currentColor"/><path d="M18 6v12" stroke-width="2.4"/></svg>',
 };
+
+/** Motion is wanted (Windows' "Animation effects" on). */
+const moving = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
+/** `node` glides from `dx`,`dy` away to where it is now (a dropped icon settling into its place). */
+export function glideFrom(node: Element, dx: number, dy: number): void {
+  if (!moving() || (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5)) return;
+  node.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 260, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+}
+/** `node` pops in: from small and clear, a touch past its size, then settles. */
+export function popIn(node: Element, delay = 0): void {
+  if (!moving()) return;
+  node.animate(
+    [
+      { transform: 'scale(0.5)', opacity: 0 },
+      { transform: 'scale(1.06)', opacity: 1, offset: 0.65 },
+      { transform: 'none', opacity: 1 },
+    ],
+    { duration: 320, delay, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'backwards' },
+  );
+}
+/** `node` (laid out where it rests, drawn `from` there) shrinks into `into` and fades: dropped into a folder. */
+export function sinkInto(node: HTMLElement, from: DOMRect, into: DOMRect): Promise<void> {
+  const rest = node.getBoundingClientRect();
+  const at = (r: DOMRect) => [r.left + r.width / 2 - (rest.left + rest.width / 2), r.top + r.height / 2 - (rest.top + rest.height / 2)];
+  const [fx, fy] = at(from);
+  const [tx, ty] = at(into);
+  if (!moving()) return Promise.resolve();
+  const a = node.animate(
+    [
+      { transform: `translate(${fx}px, ${fy}px)`, opacity: 1 },
+      { transform: `translate(${tx}px, ${ty}px) scale(0.3)`, opacity: 0 },
+    ],
+    { duration: 200, easing: 'cubic-bezier(0.4, 0, 0.9, 0.6)', fill: 'forwards' },
+  );
+  return a.finished.then(() => undefined).catch(() => undefined);
+}
+/** The tiles of a box that just opened come in one after another. */
+export function staggerIn(tiles: readonly Element[]): void {
+  if (!moving()) return;
+  tiles.forEach((t, i) =>
+    t.animate([{ transform: 'translateY(8px) scale(0.92)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 280, delay: 60 + i * 28, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'backwards' }),
+  );
+}
 
 function el(tag: string, cls: string, html?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -1054,6 +1263,10 @@ export function keepBefore(parent: Pick<Node, 'insertBefore'>, node: Pick<Node, 
 
 /** A drag along the bottom starts once the pointer has moved this far (CSS px); a shorter press is a click. */
 const DRAG_PX = 5;
+/** An app dragged within this share of a place's width of its middle is over it (not between two)… */
+export const FOLD_ZONE = 0.28;
+/** …and held there this long (ms), it is dropped into it: a folder (the Start menu's too). */
+export const FOLD_MS = 380;
 
 /**
  * This window is the dock: it draws what the island sends (keeping its elements, so a click
@@ -1346,6 +1559,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   above.append(menu);
   /** The app whose menu is up. */
   let menuOn: string | null = null;
+  /** The folder whose apps are up over it (a click on it closes them, not the window's pointerdown). */
+  let folderAnchor: HTMLElement | null = null;
   /** Apps seen with two windows open or more, remembered: they get New window in their menu. */
   const multiSeen = new Set<string>();
   try {
@@ -1397,6 +1612,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const closeMenu = () => {
     if (menuOn === null) return;
     menuOn = null;
+    folderAnchor = null;
     trayKeep = false;
     trayMore.classList.remove('on');
     hidePop(menu);
@@ -1409,6 +1625,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     hidePop(tip);
     label.classList.remove('on');
     menu.classList.toggle('dk-trayfly', cls === 'dk-trayfly');
+    menu.classList.toggle('dk-folderpop', cls === 'dk-folderpop');
+    folderAnchor = cls === 'dk-folderpop' ? b : null;
     menu.replaceChildren(...rows);
     menuOn = key;
     menu.hidden = false;
@@ -1442,22 +1660,26 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (!icons.length) return closeMenu();
     menu.replaceChildren(...icons.map(trayButton));
   };
+  /** One of a menu's rows: its icon and words; a click closes the menu and sends `act` (or runs it). */
+  const row = (cls: string, icon: string | HTMLElement, text: string, act: DockAct | (() => void)) => {
+    const r = el('button', `dk-mi ${cls}`);
+    const ico = el('span', 'dk-mi-ico');
+    if (typeof icon === 'string') ico.innerHTML = icon;
+    else ico.append(icon);
+    const t = el('span', 'dk-mi-text');
+    t.textContent = text;
+    r.append(ico, t);
+    r.addEventListener('click', () => {
+      closeMenu();
+      if (typeof act === 'function') act();
+      else send(act);
+    });
+    return r;
+  };
+  /** The folder `key` is in, if any. */
+  const folderOf = (key: string) => frame?.folders?.find((f) => f.apps.includes(key)) ?? null;
   /** An app's right-click menu, as on Windows' taskbar: its name opens another window, Pin or Unpin, Close. */
   const openMenu = (b: HTMLElement, a: DockApp) => {
-    const row =(cls: string, icon: string | HTMLElement, text: string, act: DockAct) => {
-      const r = el('button', `dk-mi ${cls}`);
-      const ico = el('span', 'dk-mi-ico');
-      if (typeof icon === 'string') ico.innerHTML = icon;
-      else ico.append(icon);
-      const t = el('span', 'dk-mi-text');
-      t.textContent = text;
-      r.append(ico, t);
-      r.addEventListener('click', () => {
-        closeMenu();
-        send(act);
-      });
-      return r;
-    };
     let face: string | HTMLElement = SVG.app;
     if (a.icon) {
       const img = document.createElement('img');
@@ -1475,9 +1697,160 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       ...(privateLabel(a.key) ? [row('', SVG.incognito, privateLabel(a.key)!, { kind: 'launch', key: a.key, mode: 'private' })] : []),
       el('i', 'dk-mi-sep'),
       row('', a.pinned ? SVG.unpin : SVG.pin, a.pinned ? 'Unpin from taskbar' : 'Pin to taskbar', { kind: 'pin', key: a.key, on: !a.pinned }),
+      ...(folderOf(a.key) ? [row('', SVG.unfold, 'Remove from folder', { kind: 'unfold', key: a.key })] : []),
     ];
     if (n) rows.push(row('', SVG.x, n === 1 ? 'Close window' : `Close all ${n} windows`, { kind: 'close', key: a.key, rect: iconRect(b) }));
     showMenu(b, a.key, rows, '');
+  };
+  // A folder (Moss, 11-19): a click opens its apps over it, under its name (click the name to rename
+  // it). A click on one opens it as on the bar; dragged out of the folder, it is back on the bar.
+  /** A folder's apps as the bar shows them (pinned ones on the dock), and the folder. */
+  const folderSlot = (key: string) => {
+    const s = frame ? dockSlots(frame.apps, frame.folders).find((x) => x.key === key) : undefined;
+    return s?.kind === 'folder' ? s : null;
+  };
+  const folderTile = (a: DockApp, b: HTMLElement) => {
+    const t = el('button', 'dk-ftile');
+    t.dataset.key = a.key;
+    t.classList.toggle('open', a.windows.length > 0);
+    t.classList.toggle('front', a.front);
+    const ico = el('span', 'dk-ico');
+    if (a.icon) {
+      const img = document.createElement('img');
+      img.src = a.icon;
+      img.alt = '';
+      img.draggable = false;
+      ico.append(img);
+    } else ico.innerHTML = SVG.app;
+    const name = el('span', 'dk-ftile-name');
+    name.textContent = a.name;
+    t.append(ico, name, el('i', 'dk-dot'));
+    t.addEventListener('click', () => {
+      if (swallowClick) return;
+      closeMenu();
+      if (!a.windows.length) bounce(b);
+      send({ kind: 'app', key: a.key, rect: iconRect(b) });
+    });
+    // Dragged out of the folder's box: out of the folder.
+    let drag: { id: number; x: number; y: number; moved: boolean } | null = null;
+    t.addEventListener('pointerdown', (e) => {
+      if (e.button === 0) drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+    });
+    t.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dx = e.clientX - drag.x;
+      const dy = e.clientY - drag.y;
+      if (!drag.moved) {
+        if (Math.hypot(dx, dy) < DRAG_PX) return;
+        drag.moved = true;
+        t.setPointerCapture(e.pointerId);
+        t.classList.add('moving');
+      }
+      t.style.transform = `translate(${dx}px, ${dy}px)`;
+      const r = menu.getBoundingClientRect();
+      const out = e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+      menu.classList.toggle('dk-dropping', out);
+    });
+    const end = (e: PointerEvent) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const was = drag;
+      drag = null;
+      if (!was.moved) return;
+      swallowClick = true;
+      window.setTimeout(() => (swallowClick = false), 0);
+      const out = menu.classList.contains('dk-dropping');
+      menu.classList.remove('dk-dropping');
+      t.classList.remove('moving');
+      t.style.transform = '';
+      if (out && e.type === 'pointerup') {
+        closeMenu();
+        send({ kind: 'unfold', key: a.key });
+      }
+    };
+    t.addEventListener('pointerup', end);
+    t.addEventListener('pointercancel', end);
+    return t;
+  };
+  /** The folder's box: its name (an input) over its apps. */
+  const folderBox = (b: HTMLElement, key: string): HTMLElement[] | null => {
+    const s = folderSlot(key);
+    if (!s) return null;
+    const name = document.createElement('input');
+    name.className = 'dk-fname';
+    name.value = s.folder.name;
+    name.placeholder = FOLDER_NAME;
+    name.maxLength = 40;
+    name.spellcheck = false;
+    name.title = 'Rename';
+    const id = s.folder.id;
+    let was = s.folder.name;
+    const commit = () => {
+      const v = name.value.trim() || FOLDER_NAME;
+      if (v !== was) {
+        was = v;
+        b.dataset.tip = v;
+        send({ kind: 'folder-name', id, name: v });
+      }
+    };
+    name.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') name.blur();
+      else if (e.key === 'Escape') name.value = was;
+    });
+    name.addEventListener('blur', commit);
+    name.addEventListener('change', commit);
+    const grid = el('div', 'dk-fgrid-box');
+    fillFolder(grid, s.apps, b);
+    return [name, grid];
+  };
+  const fillFolder = (grid: HTMLElement, apps: DockApp[], b: HTMLElement) => {
+    grid.dataset.sig = JSON.stringify(apps.map((a) => [a.key, a.icon, a.windows.length, a.front, a.name]));
+    // Two across for two to four, three for five to nine, then four.
+    grid.style.setProperty('--dk-fcols', String(Math.min(4, Math.max(2, Math.ceil(Math.sqrt(apps.length))))));
+    grid.replaceChildren(...apps.map((a) => folderTile(a, b)));
+  };
+  /** Opens the folder on the bar (`rename`: its name ready to type), or closes it when it is open. */
+  const toggleFolder = (b: HTMLElement, rename = false) => {
+    const key = b.dataset.key!;
+    if (menuOn === key && !rename) return closeMenu();
+    const rows = folderBox(b, key);
+    if (!rows) return;
+    showMenu(b, key, rows, 'dk-folderpop');
+    staggerIn([...rows[1].children]);
+    if (rename) {
+      const input = rows[0] as HTMLInputElement;
+      window.setTimeout(() => {
+        input.focus();
+        input.select();
+      }, 60);
+    }
+  };
+  /** The open folder's apps again when the frame changes (one opened, closed, taken out), not its name while it is typed in. */
+  const folderRedraw = () => {
+    if (!menuOn?.startsWith('folder:') || !folderAnchor) return;
+    const s = folderSlot(menuOn);
+    if (!s) return closeMenu();
+    const grid = menu.querySelector<HTMLElement>('.dk-fgrid-box');
+    const input = menu.querySelector<HTMLInputElement>('.dk-fname');
+    if (input && document.activeElement !== input && input.value !== s.folder.name) input.value = s.folder.name;
+    const sig = JSON.stringify(s.apps.map((a) => [a.key, a.icon, a.windows.length, a.front, a.name]));
+    if (!grid || grid.dataset.sig === sig || grid.querySelector('.moving')) return;
+    fillFolder(grid, s.apps, folderAnchor);
+  };
+  /** A folder's right-click menu: open it, rename it, undo it. */
+  const openFolderMenu = (b: HTMLElement) => {
+    const s = folderSlot(b.dataset.key ?? '');
+    if (!s) return;
+    showMenu(
+      b,
+      `menu:${s.key}`,
+      [
+        row('dk-mi-app', SVG.folder, s.folder.name, () => toggleFolder(b)),
+        row('', SVG.rename, 'Rename folder', () => toggleFolder(b, true)),
+        el('i', 'dk-mi-sep'),
+        row('', SVG.ungroup, 'Ungroup', { kind: 'ungroup', id: s.folder.id }),
+      ],
+      '',
+    );
   };
   window.addEventListener('blur', () => {
     if (menuOn === TRAY_FLY && trayKeep) return;
@@ -1488,7 +1861,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   });
   window.addEventListener('pointerdown', (e) => {
     // Not the arrow: its click opens or closes the hidden icons itself.
-    if (menuOn !== null && !menu.contains(e.target as Node) && !trayMore.contains(e.target as Node)) closeMenu();
+    if (menuOn !== null && !menu.contains(e.target as Node) && !trayMore.contains(e.target as Node) && !folderAnchor?.contains(e.target as Node)) closeMenu();
   });
 
   const setCard = (on: boolean) => {
@@ -1653,6 +2026,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   });
 
   const appEls = new Map<string, HTMLElement>();
+  /** The row was drawn once: places added later pop in. */
+  let slotsDrawn = false;
   const appOf = (key: string) => frame?.apps.find((x) => x.key === key) ?? null;
   /** Where an app's icon is in this window (CSS px), for its window to fly out of or into. */
   const iconRect = (b: HTMLElement): DockIconRect => {
@@ -1836,7 +2211,15 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   };
 
   // Dragging an icon along the row to a new place; the others make room.
-  let move: { b: HTMLElement; id: number; x0: number; moved: boolean; slots: number[]; from: number; to: number } | null = null;
+  // Held a moment over another app (FOLD_MS), not between two: dropped there, the two make a folder;
+  // over a folder, it goes in (Moss, 11-19).
+  let move: { b: HTMLElement; id: number; x0: number; moved: boolean; slots: number[]; from: number; to: number; over: number | null; armed: boolean; wait: number } | null = null;
+  const unarm = (m: NonNullable<typeof move>) => {
+    window.clearTimeout(m.wait);
+    if (m.over !== null) (appsBox.children[m.over] as HTMLElement | undefined)?.classList.remove('dk-fold-on');
+    m.over = null;
+    m.armed = false;
+  };
   let swallowClick = false;
   const wireApp = (b: HTMLElement) => {
     b.addEventListener('pointerenter', (e) => peekEnter(b, e));
@@ -1848,6 +2231,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       closePeek();
       if (swallowClick) return;
       const key = b.dataset.key!;
+      if (key.startsWith('folder:')) return toggleFolder(b);
       const a = appOf(key);
       if (a && !a.windows.length) bounce(b);
       send({ kind: 'app', key, rect: iconRect(b) });
@@ -1856,7 +2240,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       if (e.button !== 0) return;
       const kids = [...appsBox.children] as HTMLElement[];
       const slots = kids.map((k) => alongOf(k.getBoundingClientRect()));
-      move = { b, id: e.pointerId, x0: along(e), moved: false, slots, from: kids.indexOf(b), to: kids.indexOf(b) };
+      move = { b, id: e.pointerId, x0: along(e), moved: false, slots, from: kids.indexOf(b), to: kids.indexOf(b), over: null, armed: false, wait: 0 };
     });
     b.addEventListener('pointermove', (e) => {
       const m = move;
@@ -1871,13 +2255,30 @@ export async function runDock(stage: HTMLElement): Promise<void> {
         b.classList.add('moving');
       }
       const x = m.slots[m.from] + dx;
+      const kids = [...appsBox.children] as HTMLElement[];
+      const step = kids.length > 1 ? (m.slots[m.slots.length - 1] - m.slots[0]) / (kids.length - 1) : 0;
+      // Where each other place shows now (slid aside or not), and the one the icon is over the middle of.
+      const shown = (i: number) => m.slots[i] + (m.from < m.to && i > m.from && i <= m.to ? -step : m.from > m.to && i >= m.to && i < m.from ? step : 0);
+      const over = b.dataset.key!.startsWith('folder:') ? -1 : m.slots.findIndex((_, i) => i !== m.from && Math.abs(x - shown(i)) < step * FOLD_ZONE);
+      if (over >= 0) {
+        b.style.transform = slide(dx);
+        if (m.over !== over) {
+          unarm(m);
+          m.over = over;
+          m.wait = window.setTimeout(() => {
+            if (move !== m || m.over !== over) return;
+            m.armed = true;
+            kids[over].classList.add('dk-fold-on');
+          }, FOLD_MS);
+        }
+        return;
+      }
+      unarm(m);
       let to = 0;
       m.slots.forEach((c, i) => {
         if (i !== m.from && x > c) to++;
       });
       m.to = to;
-      const kids = [...appsBox.children] as HTMLElement[];
-      const step = kids.length > 1 ? (m.slots[m.slots.length - 1] - m.slots[0]) / (kids.length - 1) : 0;
       kids.forEach((k, i) => {
         if (k === b) k.style.transform = slide(dx);
         else if (m.from < to && i > m.from && i <= to) k.style.transform = slide(-step);
@@ -1889,18 +2290,33 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       const m = move;
       if (!m || m.b !== b || e.pointerId !== m.id) return;
       move = null;
+      const onto = m.armed && m.over !== null && e.type === 'pointerup' ? (appsBox.children[m.over] as HTMLElement | undefined)?.dataset.key : undefined;
+      unarm(m);
       if (!m.moved) return;
       swallowClick = true;
       window.setTimeout(() => (swallowClick = false), 0);
+      // Where it was let go, for it to glide on from there.
+      const was = b.getBoundingClientRect();
+      const target = onto ? appEls.get(onto) : undefined;
+      const into = target?.getBoundingClientRect();
       bar.classList.remove('reordering');
       b.classList.remove('moving');
       for (const k of appsBox.children) (k as HTMLElement).style.transform = '';
+      if (onto && into) {
+        // Into what it was dropped on, shrinking; the island's next frame draws the folder.
+        b.classList.add('dk-folding');
+        void sinkInto(b, was, into);
+        send({ kind: 'fold', key: b.dataset.key!, onto });
+        return;
+      }
       if (m.to !== m.from) {
         // Its new place at once; the island's next frame confirms it (or puts it back).
         const kids = [...appsBox.children].filter((k) => k !== b);
         appsBox.insertBefore(b, kids[m.to] ?? null);
         send({ kind: 'move', key: b.dataset.key!, to: m.to });
       }
+      const now = b.getBoundingClientRect();
+      glideFrom(b, was.left - now.left, was.top - now.top);
     };
     b.addEventListener('pointerup', end);
     b.addEventListener('pointercancel', end);
@@ -2043,12 +2459,16 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const x = along(e);
     if (pointerX === null || Math.abs(x - pointerX) > 0.5) stillSince = performance.now();
     pointerX = x;
-    pointerIn = true;
+    if (!pointerIn) {
+      pointerIn = true;
+      solid();
+    }
     kickRise();
   });
   bar.addEventListener('pointerleave', () => {
     // It shrinks back where it is as the pointer leaves, not toward where the pointer went.
     pointerIn = false;
+    solid();
     kickRise();
   });
 
@@ -2454,13 +2874,14 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   let solidSent = '';
   const solid = () => {
     const r = bar.getBoundingClientRect();
-    const H = HEADROOM;
-    // The bar, and the room its icons rise into on its inner side.
+    // Just the bar (Moss, 11-20: a window right beside it couldn't be clicked); the room its icons rise
+    // into on its inner side only while the pointer is on it and Rise is on, so a grown icon stays clickable.
+    const H = pointerIn && has('rise') ? HEADROOM : 0;
     const box = {
-      bottom: [r.left - 4, r.top - H, r.width + 8, r.height + H + 4],
-      top: [r.left - 4, r.top - 4, r.width + 8, r.height + H + 4],
-      left: [r.left - 4, r.top - 4, r.width + H + 4, r.height + 8],
-      right: [r.left - H, r.top - 4, r.width + H + 4, r.height + 8],
+      bottom: [r.left, r.top - H, r.width, r.height + H],
+      top: [r.left, r.top, r.width, r.height + H],
+      left: [r.left, r.top, r.width + H, r.height],
+      right: [r.left - H, r.top, r.width + H, r.height],
     }[side()];
     const rects: number[][] = [];
     if (gapEl.hidden) rects.push(box);
@@ -2489,10 +2910,12 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     }
     for (const pop of [card, peek, menu]) {
       if (pop.hidden) continue;
-      // The card where it stands when up (its slide is a transform, which offsets leave out).
+      // The card where it stands when up (its slide is a transform, which offsets leave out), reaching
+      // across the gap to the bar only, so the pointer can go from one to the other.
       const a = above.getBoundingClientRect();
-      const m = POP_GAP + 4;
-      rects.push([a.left + pop.offsetLeft - m, a.top + pop.offsetTop - m, pop.offsetWidth + 2 * m, pop.offsetHeight + 2 * m]);
+      const [x, y, w, h] = [a.left + pop.offsetLeft, a.top + pop.offsetTop, pop.offsetWidth, pop.offsetHeight];
+      const g = POP_GAP + 2;
+      rects.push({ bottom: [x, y, w, h + g], top: [x, y - g, w, h + g], left: [x - g, y, w + g, h], right: [x, y, w + g, h] }[side()]);
     }
     const json = JSON.stringify(rects.map((q) => q.map((n) => Math.round(n))));
     if (json === solidSent) return;
@@ -2541,18 +2964,56 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (fullNow()) bar.style.minWidth = `${(fullLen() / zoomOf(f)).toFixed(2)}px`;
     else if (!stretching) bar.style.minWidth = !upright() && f.minLen ? `${f.minLen}px` : '';
     const off = new Set(f.hidden ?? []);
-    // Apps, kept by key.
+    // Apps and folders, kept by key.
     const seen = new Set<string>();
-    f.apps.forEach((a, i) => {
-      seen.add(a.key);
-      let b = appEls.get(a.key);
+    const slots = dockSlots(f.apps, f.folders);
+    const pinnedSlot = (s: DockSlot | undefined) => s?.kind === 'folder' || s?.app.pinned === true;
+    slots.forEach((s, i) => {
+      seen.add(s.key);
+      let b = appEls.get(s.key);
       if (!b) {
         b = el('button', 'dk-app');
-        b.dataset.key = a.key;
+        b.dataset.key = s.key;
         b.append(el('span', 'dk-ico'), el('i', 'dk-dot'));
         wireApp(b);
-        appEls.set(a.key, b);
+        appEls.set(s.key, b);
+        if (slotsDrawn) popIn(b.querySelector('.dk-ico')!);
       }
+      if (b.classList.contains('dk-folding')) {
+        // A drop that didn't fold (the island said no): back as it was.
+        for (const an of b.getAnimations()) an.cancel();
+        b.classList.remove('dk-folding');
+      }
+      b.classList.toggle('dk-folder', s.kind === 'folder');
+      b.classList.toggle('dk-after-pins', !pinnedSlot(s) && i > 0 && pinnedSlot(slots[i - 1]));
+      if (appsBox.children[i] !== b) appsBox.insertBefore(b, appsBox.children[i] ?? null);
+      if (s.kind === 'folder') {
+        // Its name over the bar (Names) and up to four of its apps' icons, small, in a rounded square.
+        b.dataset.tip = s.folder.name;
+        b.removeAttribute('title');
+        b.classList.toggle('open', s.apps.some((a) => a.windows.length > 0));
+        b.classList.toggle('front', s.apps.some((a) => a.front));
+        const ico = b.querySelector<HTMLElement>('.dk-ico')!;
+        const sig = 'f|' + s.apps.slice(0, 4).map((a) => a.icon ?? '').join('|');
+        if (ico.dataset.src !== sig) {
+          const changed = Boolean(ico.dataset.src);
+          ico.dataset.src = sig;
+          if (changed) window.requestAnimationFrame(() => popIn(ico));
+          const grid = el('span', 'dk-fgrid');
+          for (const a of s.apps.slice(0, 4)) {
+            if (a.icon) {
+              const img = document.createElement('img');
+              img.src = a.icon;
+              img.alt = '';
+              img.draggable = false;
+              grid.append(img);
+            } else grid.append(el('i', 'dk-fgrid-blank'));
+          }
+          ico.replaceChildren(grid);
+        }
+        return;
+      }
+      const a = s.app;
       // With windows open the previews over it carry its name: Windows' tooltip would cover them.
       if (a.windows.length) {
         b.removeAttribute('title');
@@ -2572,8 +3033,6 @@ export async function runDock(stage: HTMLElement): Promise<void> {
           ico.replaceChildren(img);
         } else ico.innerHTML = SVG.app;
       }
-      if (appsBox.children[i] !== b) appsBox.insertBefore(b, appsBox.children[i] ?? null);
-      b.classList.toggle('dk-after-pins', !a.pinned && i > 0 && f.apps[i - 1].pinned);
     });
     for (const [key, b] of appEls) {
       if (!seen.has(key)) {
@@ -2581,6 +3040,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
         appEls.delete(key);
       }
     }
+    slotsDrawn = true;
     want.start = !off.has('arrow');
     want.apps = !off.has('apps');
     // What is playing, and the timer.
@@ -2864,13 +3324,16 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     frame = f;
     learnMulti(f.apps);
     draw();
+    folderRedraw();
   });
   window.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    const b = (e.target as HTMLElement).closest<HTMLElement>('.dk-app');
+    const b = (e.target as HTMLElement).closest<HTMLElement>('.dk-app, .dk-ftile');
+    if (b?.classList.contains('dk-folder')) return openFolderMenu(b);
     const a = b ? appOf(b.dataset.key ?? '') : null;
     if (b && a) {
-      openMenu(b, a);
+      // An app in an open folder: its menu over the folder.
+      openMenu(b.classList.contains('dk-ftile') ? (folderAnchor ?? b) : b, a);
       return;
     }
     if (isTauri && frame) void dockMenu(frame, (p) => void sendTo('island', 'dock-pref', p), { on: editing, set: setEditing }).catch((err) => void native.log(`taskbar menu: ${String(err)}`));

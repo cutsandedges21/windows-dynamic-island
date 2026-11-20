@@ -277,6 +277,28 @@ export function cleanPins(v: unknown): Array<{ name: string; target: string }> |
     .map((a) => ({ name: a.name.slice(0, 200), target: a.target }));
 }
 
+/** A folder of apps on the taskbar (dock.ts DockFolder): its apps by their keys (lower-case targets). */
+export interface DockFolder {
+  id: string;
+  name: string;
+  apps: string[];
+}
+
+/** The taskbar's folders as saved: each with an id (the first of a repeated one kept), a name, its apps. */
+export function cleanDockFolders(v: unknown): DockFolder[] {
+  if (!Array.isArray(v)) return [];
+  const ids = new Set<string>();
+  const out: DockFolder[] = [];
+  for (const f of v.slice(0, 30)) {
+    if (!isObj(f) || typeof f.id !== 'string' || !f.id || f.id.length > 64 || ids.has(f.id) || !Array.isArray(f.apps)) continue;
+    ids.add(f.id);
+    const name = typeof f.name === 'string' ? f.name.trim().slice(0, 40) : '';
+    const apps = f.apps.filter((k): k is string => typeof k === 'string' && k.length > 0 && k.length < 1000).map((k) => k.toLowerCase());
+    out.push({ id: f.id, name: name || 'Folder', apps: [...new Set(apps)].slice(0, 30) });
+  }
+  return out;
+}
+
 export function cleanNames(v: unknown): NameStyle {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
   return {
@@ -393,7 +415,7 @@ export interface Settings {
      * its ends curve out into the edge instead of going straight down; `styles`: the ones on, together;
      * `autoHide`: it waits faint on its edge until the pointer comes to it (as under a full-screen app).
      */
-    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; scale: number | null; minLen: number; tall: number; hidden: DockItem[]; order: DockItem[]; size: DockSize; styles: DockStyle[]; edge: boolean; melt: boolean; side: DockSide; autoHide: boolean; names: NameStyle; startOpens: 'island' | 'windows'; startKey: boolean; startPins: Array<{ name: string; target: string }> | null; accentBorder: boolean; keepClear: boolean; fill: boolean; square: boolean; songOpens: 'app' | 'tile'; songTint: boolean; barTint: boolean };
+    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; scale: number | null; minLen: number; tall: number; hidden: DockItem[]; order: DockItem[]; size: DockSize; styles: DockStyle[]; edge: boolean; melt: boolean; side: DockSide; autoHide: boolean; names: NameStyle; startOpens: 'island' | 'windows'; startKey: boolean; startPins: Array<{ name: string; target: string }> | null; accentBorder: boolean; keepClear: boolean; fill: boolean; square: boolean; songOpens: 'app' | 'tile'; songTint: boolean; barTint: boolean; folders: DockFolder[]; startFolders: DockFolder[] };
     /** The screen border and its notches (Settings › Widgets › Screen border). */
     frame: FrameConfig;
     /** The Websites notch's sites, in order. */
@@ -532,7 +554,7 @@ export function defaultSettings(): Settings {
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       widgets: { on: false, items: [], look: { color: 'island', glass: GLASS_DEFAULT } },
-      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, scale: null, minLen: 0, tall: 0, hidden: [], order: [...DOCK_ITEMS], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom', autoHide: false, names: { font: 'system', look: 'bubble', bold: false }, startOpens: 'island', startKey: false, startPins: null, accentBorder: false, keepClear: false, fill: false, square: false, songOpens: 'app', songTint: true, barTint: false },
+      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, scale: null, minLen: 0, tall: 0, hidden: [], order: [...DOCK_ITEMS], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom', autoHide: false, names: { font: 'system', look: 'bubble', bold: false }, startOpens: 'island', startKey: false, startPins: null, accentBorder: false, keepClear: false, fill: false, square: false, songOpens: 'app', songTint: true, barTint: false, folders: [], startFolders: [] },
       frame: { on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small', at: null, free: false }, shelf: { on: false, corner: 'bottom-right', size: 'small', at: null, free: false }, look: { color: 'island', glass: GLASS_DEFAULT }, autoHide: false, melt: true, blend: true },
       sites: [],
       hiddenUntil: 0,
@@ -689,7 +711,7 @@ export function migrate(saved: unknown): Settings {
   const savedBar = isObj(saved.island) && isObj(saved.island.taskbar) ? saved.island.taskbar : {};
   const centre = typeof savedBar.centre === 'number' && savedBar.centre >= 0 && savedBar.centre <= 1 ? savedBar.centre : -1;
   const barHidden = Array.isArray(savedBar.hidden) ? DOCK_ITEMS.filter((k) => (savedBar.hidden as unknown[]).includes(k)) : [];
-  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), scale: barScale(savedBar.scale), minLen: barMinLen(savedBar.minLen), tall: barTall(savedBar.tall), hidden: barHidden, order: barOrder(savedBar.order), size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium', styles: barStyles(savedBar), edge: savedBar.edge === true, melt: savedBar.melt === true, side: (DOCK_SIDES as readonly unknown[]).includes(savedBar.side) ? (savedBar.side as DockSide) : 'bottom', autoHide: savedBar.autoHide === true, names: cleanNames(savedBar.names), startOpens: savedBar.startOpens === 'windows' ? 'windows' : 'island', startKey: savedBar.startKey === true, startPins: cleanPins(savedBar.startPins), accentBorder: savedBar.accentBorder === true, keepClear: savedBar.keepClear === true, fill: savedBar.fill === true, square: savedBar.square === true, songOpens: savedBar.songOpens === 'tile' ? 'tile' : 'app', songTint: savedBar.songTint !== false, barTint: savedBar.barTint === true };
+  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), scale: barScale(savedBar.scale), minLen: barMinLen(savedBar.minLen), tall: barTall(savedBar.tall), hidden: barHidden, order: barOrder(savedBar.order), size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium', styles: barStyles(savedBar), edge: savedBar.edge === true, melt: savedBar.melt === true, side: (DOCK_SIDES as readonly unknown[]).includes(savedBar.side) ? (savedBar.side as DockSide) : 'bottom', autoHide: savedBar.autoHide === true, names: cleanNames(savedBar.names), startOpens: savedBar.startOpens === 'windows' ? 'windows' : 'island', startKey: savedBar.startKey === true, startPins: cleanPins(savedBar.startPins), accentBorder: savedBar.accentBorder === true, keepClear: savedBar.keepClear === true, fill: savedBar.fill === true, square: savedBar.square === true, songOpens: savedBar.songOpens === 'tile' ? 'tile' : 'app', songTint: savedBar.songTint !== false, barTint: savedBar.barTint === true, folders: cleanDockFolders(savedBar.folders), startFolders: cleanDockFolders(savedBar.startFolders) };
   const savedFrame = isObj(saved.island) && isObj(saved.island.frame) ? saved.island.frame : {};
   out.island.frame = {
     on: savedFrame.on === true,

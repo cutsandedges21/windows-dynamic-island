@@ -32,7 +32,7 @@ import { fadeSegments, fadeSheet } from './fade-menu';
 import { quietMoon } from './quiet';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { applyGlass } from './glass';
-import { accentColor, backAt, barAutoHide, barFill, barSquare, cleanAt, cleanPins, barEdge, barMinLen, barNeedsHidden, barScale, barTall, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
+import { accentColor, backAt, barAutoHide, barFill, barSquare, cleanAt, cleanDockFolders, cleanPins, barEdge, barMinLen, barNeedsHidden, barScale, barTall, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { CARD_RADIUS, mapActions, SheetRenderer, type Block, type DropZone, type SheetButton, type SheetChip, type SheetView, type Tile } from './sheet';
 import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
@@ -364,6 +364,10 @@ export class Island {
       this.settings.island.taskbar.startPins = cleanPins(list);
       this.saveSettings();
     });
+    await on<unknown>('start-folders', (list) => {
+      this.settings.island.taskbar.startFolders = cleanDockFolders(list);
+      this.saveSettings();
+    });
     // A right click on the faded island (Rust let go of the hold): its menu, where Fade says Show.
     await on('hold-menu', () => {
       this.holdOn = false;
@@ -432,6 +436,11 @@ export class Island {
             cfg.options = { ...cfg.options, apps };
             this.saveSettings();
           }
+        },
+        folders: () => this.settings.island.taskbar.folders,
+        setFolders: (folders) => {
+          this.settings.island.taskbar.folders = folders;
+          this.saveSettings();
         },
         music: () => this.dockMusic(),
         timer: () => this.dockTimer(),
@@ -2102,12 +2111,12 @@ export class Island {
     if (tinted) pill.style.setProperty('--card-tint', card.style.getPropertyValue('--card-tint'));
   }
 
-  /** What Island's Start menu shows: the taskbar's look, and its pins (the taskbar's until set). */
+  /** What Island's Start menu shows: the taskbar's look, its pins (the taskbar's until set) and folders. */
   private sendStart(): void {
     const i = this.settings.island;
     const saved = this.settings.activities.config.apps?.options.apps;
     const taskbarPins = Array.isArray(saved) ? (saved as Array<{ name: string; target: string }>).filter((a) => a && typeof a.target === 'string') : [];
-    void sendTo('start', 'start-frame', { ...lookOf(i.taskbar.look, i), accent: accentColor(i), pins: i.taskbar.startPins ?? taskbarPins });
+    void sendTo('start', 'start-frame', { ...lookOf(i.taskbar.look, i), accent: accentColor(i), pins: i.taskbar.startPins ?? taskbarPins, folders: i.taskbar.startFolders });
   }
 
   /** The pill's width (CSS px), for the taskbar on the top edge that leaves a gap for it. */

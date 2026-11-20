@@ -76,3 +76,33 @@ html.start-window[data-side='right'] #stage { mask-image: linear-gradient(to lef
 .sm-power { position: absolute; right: 16px; bottom: 58px; display: none; flex-direction: column; gap: 2px; min-width: 170px; padding: 6px; border-radius: 14px; background: var(--pill); box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.12), 0 14px 30px -12px rgba(0, 0, 0, 0.7); }
 .sm-power.on { display: flex; }
 .sm-prow { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 12px; border-radius: 9px; font-size: 13px; }
+
+/* Pinned apps dragged to new places (startmenu.ts wireDrag): the others slide over to make room. */
+.sm-grid, .sm-fgrid-box { position: relative; }
+.sm-dragging .sm-tile:not(.moving) { transition: transform 0.18s ease, background-color 0.12s ease; }
+.sm-tile.moving { position: relative; z-index: 3; background: transparent !important; pointer-events: none; }
+.sm-tile .sm-ico { transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), filter 0.18s ease; }
+.sm-tile.moving .sm-ico { transform: scale(1.1); filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.45)); }
+.sm-tile.sm-fold-on .sm-ico { transform: scale(0.9); }
+.sm-dragging, .sm-dragging * { cursor: grabbing !important; user-select: none; }
+/* Folders (Moss, 11-20): up to four of its apps' icons, small, in a rounded square. */
+.sm-fgrid { display: grid; grid-template-columns: repeat(2, 13px); grid-auto-rows: 13px; gap: 3px; place-content: center; width: 34px; height: 34px; box-sizing: border-box; border-radius: 10px; background: rgba(var(--ink), 0.12); box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.08); }
+.sm-ico .sm-fgrid img { width: 13px; height: 13px; object-fit: contain; }
+.sm-fblank { width: 13px; height: 13px; border-radius: 4px; background: rgba(var(--ink), 0.25); }
+/* An app held over another (or a folder): what it would fold into gets a ring. */
+.sm-tile { position: relative; }
+.sm-tile::before { content: ''; position: absolute; left: 50%; top: 6px; width: 46px; height: 46px; margin-left: -23px; border-radius: 14px; background: rgba(var(--ink), 0.14); box-shadow: inset 0 0 0 1.5px var(--accent); opacity: 0; transform: scale(0.8); transition: opacity 0.16s ease, transform 0.2s cubic-bezier(0.3, 1.4, 0.5, 1); pointer-events: none; }
+.sm-tile.sm-fold-on::before { opacity: 1; transform: scale(1.06); }
+/* An open folder, over Start; the rest dimmed behind it. */
+.sm-fback { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: rgba(0, 0, 0, 0.35); opacity: 0; visibility: hidden; transition: opacity 0.18s ease, visibility 0s linear 0.18s; }
+.sm-fback.on { opacity: 1; visibility: visible; transition: opacity 0.18s ease; }
+.sm-fpanel { display: flex; flex-direction: column; gap: 8px; padding: 14px 14px 12px; border-radius: 20px; background: var(--pill); box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.12), 0 20px 50px -16px rgba(0, 0, 0, 0.75); opacity: 0; transform: scale(0.3); transition: transform 0.22s cubic-bezier(0.5, 0, 0.9, 0.6), opacity 0.18s ease, box-shadow 0.15s ease; }
+/* Open: it grows out of the folder's place with a little overshoot; closed, it goes back quicker. */
+.sm-fback.on .sm-fpanel { opacity: 1; transform: none; transition: transform 0.36s cubic-bezier(0.22, 1.2, 0.36, 1), opacity 0.2s ease, box-shadow 0.15s ease; }
+.sm-fname { all: unset; box-sizing: border-box; width: 100%; padding: 6px 10px; border-radius: 9px; font: 650 14px/1.3 var(--font); text-align: center; color: var(--fg); cursor: text; }
+.sm-fname:hover { background: rgba(var(--ink), 0.07); }
+.sm-fname:focus { background: rgba(var(--ink), 0.1); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.sm-fgrid-box { display: grid; grid-template-columns: repeat(var(--sm-fcols, 3), 84px); gap: 4px; }
+/* An app dragged out past the folder's edge: let go, and it is out. */
+.sm-fpanel.sm-dropping { box-shadow: inset 0 0 0 1.5px var(--accent), 0 20px 50px -16px rgba(0, 0, 0, 0.75); }
+.sm-tile.moving .sm-name { opacity: 0; }

@@ -33,11 +33,11 @@ describe('taskbar apps', () => {
     expect(movePins(pins, row, 'b', 1)).toBeNull();
   });
 
-  it('pins an open app dropped among the pins or right after them, not further along', () => {
+  it('pins an open app dropped between the pins, not after them', () => {
     const pins = [pin('a'), pin('b')];
     const row = [app('a', true), app('b', true), app('x', false, [1]), app('y', false, [2])];
     expect(keys(movePins(pins, row, 'y', 1))).toEqual(['a', 'y', 'b']);
-    expect(keys(movePins(pins, row, 'y', 2))).toEqual(['a', 'b', 'y']);
+    expect(movePins(pins, row, 'y', 2)).toBeNull();
     expect(movePins(pins, row, 'x', 3)).toBeNull();
     expect(movePins(pins, row, 'nope', 0)).toBeNull();
   });

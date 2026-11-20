@@ -4,18 +4,28 @@
 // styles on; &edge=1 blends it into the bottom, &melt=1 melts its ends; &side=left (right, top) moves
 // it; &border=1 draws the screen border round the page; &gap=180 leaves room for a 180px island on top.
 
-import type { DockFrame } from '../core/dock';
-import type { emitLocal as EmitLocal } from '../core/native';
+import { foldApps, moveSlot, unfoldApp, type DockAct, type DockFrame } from '../core/dock';
+import { on, type emitLocal as EmitLocal } from '../core/native';
 import { barOrder, cleanNames, DOCK_ITEMS, DOCK_STYLES, FRAME_W, type DockItem, type DockSide, type DockSize, type DockStyle, type PillColor } from '../core/settings';
 
 export function dockPreview(emitLocal: typeof EmitLocal): void {
   const q = new URLSearchParams(location.search);
   const mode = q.get('dock') ?? '';
   const hide = (q.get('hide') ?? '').split(',').filter((k): k is DockItem => (DOCK_ITEMS as readonly string[]).includes(k));
-  const app = (key: string, name: string, open: boolean, front = false) => ({ key, name, icon: null, windows: open ? [1] : [], front, pinned: true });
+  // Each app a coloured square with its initial, as an icon.
+  const ico = (c: string, t: string) => `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><rect width='48' height='48' rx='11' fill='${c}'/><text x='24' y='32' font-family='Segoe UI,sans-serif' font-size='24' font-weight='700' fill='#fff' text-anchor='middle'>${t}</text></svg>`)}`;
+  const app = (key: string, name: string, open: boolean, front = false, c = '#666') => ({ key, name, icon: q.get('icons') === '0' ? null : ico(c, name[0]), windows: open ? [1] : [], front, pinned: true });
   const frame: DockFrame = {
-    // &unpinned=2: the last two open but not pinned (a short line before them).
-    apps: [app('code', 'Visual Studio Code', true, true), app('chrome', 'Chrome', true), app('spotify', 'Spotify', true), app('explorer', 'File Explorer', false)].map((a, i, all) => ({ ...a, pinned: i < all.length - Number(q.get('unpinned') ?? 0) })),
+    // &unpinned=2: the last two open but not pinned (a short line before them). &more=1: four more apps.
+    apps: [
+      app('code', 'Visual Studio Code', true, true, '#2f80ed'),
+      app('chrome', 'Chrome', true, false, '#e0a526'),
+      app('spotify', 'Spotify', true, false, '#1db954'),
+      app('explorer', 'File Explorer', false, false, '#d9a441'),
+      ...(q.get('more') === '1' ? [app('discord', 'Discord', false, false, '#5865f2'), app('notion', 'Notion', false, false, '#333'), app('figma', 'Figma', true, false, '#a259ff'), app('slack', 'Slack', false, false, '#4a154b')] : []),
+    ].map((a, i, all) => ({ ...a, pinned: i < all.length - Number(q.get('unpinned') ?? 0) })),
+    // &folder=1: Chrome and Spotify in a folder named Fun.
+    folders: q.get('folder') === '1' ? [{ id: 'f1', name: 'Fun', apps: ['chrome', 'spotify'] }] : [],
     music: { title: 'Blinding Lights', artist: 'The Weeknd', playing: mode !== 'paused', art: q.get('art') },
     timer: '4:32',
     claude: { session: 42, week: 18 },
@@ -75,6 +85,27 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
       bar.style.transform = 'none';
     }, 200);
   }
+  // What the island does with a drag, a fold, a rename: the same functions, on this made-up frame.
+  void on<DockAct>('dock-act', (a) => {
+    const pins = frame.apps.filter((x) => x.pinned).map((x) => ({ name: x.name, target: x.key }));
+    const folders = frame.folders ?? [];
+    const c =
+      a.kind === 'move' ? moveSlot(pins, frame.apps, folders, a.key, a.to)
+      : a.kind === 'fold' ? foldApps(pins, frame.apps, folders, a.key, a.onto, `f${Date.now()}`)
+      : a.kind === 'unfold' ? unfoldApp(pins, folders, a.key)
+      : a.kind === 'folder-name' ? { pins: null, folders: folders.map((f) => (f.id === a.id ? { ...f, name: a.name } : f)) }
+      : a.kind === 'ungroup' ? { pins: null, folders: folders.filter((f) => f.id !== a.id) }
+      : null;
+    if (!c) return;
+    const byKey = new Map(frame.apps.map((x) => [x.key, x] as const));
+    if (c.pins) {
+      const pinned = c.pins.map((p) => ({ ...byKey.get(p.target)!, pinned: true }));
+      frame.apps = [...pinned, ...frame.apps.filter((x) => !c.pins!.some((p) => p.target === x.key)).map((x) => ({ ...x, pinned: false }))];
+    }
+    if (c.open) frame.apps = [...frame.apps.filter((x) => x.pinned), ...c.open.map((k) => byKey.get(k)!)];
+    if (c.folders) frame.folders = c.folders;
+    emitLocal('dock-frame', { ...frame });
+  });
   // The dock window asks for its frame once it is ready; send it then, and again in case it was early.
   setTimeout(() => emitLocal('dock-frame', frame), 300);
   setTimeout(() => emitLocal('dock-frame', frame), 1200);

@@ -704,12 +704,13 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
       if (n.el.hidden) continue;
       const top = n.top;
       if (n.out) {
-        const x = n.side === 'left' ? 0 : screen.width - n.thick - 10;
-        rects.push([x, top, n.thick + 10, n.len]);
+        const x = n.side === 'left' ? 0 : screen.width - n.thick - 2;
+        rects.push([x, top, n.thick + 2, n.len]);
       } else {
-        // The small notch, and a little beyond it, so the pointer finds it on its way to the edge.
-        const reach = Math.max(w, restThick(n.zoom)) + 8;
-        const long = (slides() ? n.len : n.len * restK(n)) + 16;
+        // Only the small notch as drawn (Moss, 11-20: a margin beyond it took the clicks meant for a
+        // window's scrollbar there); the screen's edge stops the pointer on it anyway.
+        const reach = Math.max(w, restThick(n.zoom));
+        const long = slides() ? n.len : n.len * restK(n);
         rects.push([n.side === 'left' ? 0 : screen.width - reach, top + (n.len - long) / 2, reach, long]);
       }
     }
