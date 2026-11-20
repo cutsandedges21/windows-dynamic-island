@@ -24,7 +24,8 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
     volume: 0.5,
     wifi: true,
     hidden: hide,
-    accent: '#6aa6e8',
+    // &accent=43c2c0: its accent colour (hex, no #).
+    accent: q.has('accent') ? `#${q.get('accent')}` : '#6aa6e8',
     color: (q.get('look') as PillColor | null) ?? 'black',
     glass: 50,
     // &scale=1.2 its own height, &minlen=900 stretched longer (Edit position); &edit=1 starts editing.
