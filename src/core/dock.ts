@@ -13,7 +13,7 @@ import { duration } from './format';
 import { packageFamily } from './store-app';
 import { applyGlass } from './glass';
 import { isTauri, native, on, sendTo, type DockIconRect, type InstalledApp, type LiveWindow, type TrayIcon } from './native';
-import { BAR_TALL_MAX, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
+import { BAR_TALL_MAX, barOrder, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
 
 /** One app on the dock. */
 export interface DockApp {
@@ -60,6 +60,8 @@ export interface DockFrame {
   size: DockSize;
   /** Rise, Spotlight, Glide, Names: the ones on (Settings › Taskbar › Styles). */
   styles?: DockStyle[];
+  /** Its items in the order dragged to in Settings; unset: DOCK_ITEMS'. */
+  order?: DockItem[];
   /** How the names over the bar look (style Names): font, bubble/plain/outline, bold. */
   names?: NameStyle;
   /** The Start button opens Island's Start menu (else Windows'); the Windows key too. */
@@ -131,7 +133,28 @@ export const DOCK_LABELS: Record<DockItem, string> = {
   sound: 'Sound',
   clock: 'Time and date',
   notifications: 'Notifications',
+  settings: 'Settings',
 };
+
+/** Which kind each item is: Start and the apps, what plays and counts, the tray to the clock. */
+const ZONE: Record<DockItem, 0 | 1 | 2> = { start: 0, search: 0, arrow: 0, apps: 0, music: 1, timer: 1, claude: 1, tray: 2, battery: 2, wifi: 2, sound: 2, clock: 2, notifications: 2, settings: 2 };
+
+/**
+ * The bar's row: the items `shown`, in `order`, with a line where one kind gives way to another and
+ * after the song (it reads as one with the timer or S/W otherwise). Split round the island, no line
+ * beside the apps: the island parts them.
+ */
+export function dockRow(order: readonly DockItem[], shown: ReadonlySet<DockItem>, split = false): Array<DockItem | 'sep'> {
+  const out: Array<DockItem | 'sep'> = [];
+  let prev: DockItem | null = null;
+  for (const k of order) {
+    if (!shown.has(k)) continue;
+    if (prev && (ZONE[prev] !== ZONE[k] || prev === 'music') && !(split && (prev === 'apps' || k === 'apps'))) out.push('sep');
+    out.push(k);
+    prev = k;
+  }
+  return out;
+}
 
 /** The taskbar's hidden items with `item` shown again, or hidden. */
 export function toggleDockItem(hidden: readonly DockItem[], item: DockItem): DockItem[] {
@@ -380,6 +403,7 @@ export interface DockHooks {
   volume(): number | null;
   wifi(): boolean | null;
   hidden(): DockItem[];
+  order(): DockItem[];
   setHidden(items: DockItem[]): void;
   look(): { accent: string; color: PillColor; glass?: number };
   /** One of an activity's actions (`act:music:toggle`). */
@@ -552,6 +576,7 @@ export class DockHost {
         volume: this.hooks.volume(),
         wifi: this.hooks.wifi(),
         hidden: this.hooks.hidden(),
+        order: this.hooks.order(),
         ...this.hooks.look(),
         scale: this.hooks.scale(),
         minLen: this.hooks.minLen(),
@@ -685,6 +710,8 @@ const SVG = {
   sound: '<svg viewBox="0 0 24 24" class="line"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>',
   mute: '<svg viewBox="0 0 24 24" class="line"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>',
   bell: '<svg viewBox="0 0 24 24" class="line"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>',
+  // As Settings' own gear (icons.ts settings).
+  gear: '<svg viewBox="0 0 24 24" class="line"><path d="M9.34 5.2L10.42 2.53L13.58 2.53L14.66 5.2L14.93 5.31L17.58 4.19L19.81 6.42L18.69 9.07L18.8 9.34L21.47 10.42L21.47 13.58L18.8 14.66L18.69 14.93L19.81 17.58L17.58 19.81L14.93 18.69L14.66 18.8L13.58 21.47L10.42 21.47L9.34 18.8L9.07 18.69L6.42 19.81L4.19 17.58L5.31 14.93L5.2 14.66L2.53 13.58L2.53 10.42L5.2 9.34L5.31 9.07L4.19 6.42L6.42 4.19L9.07 5.31Z" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.1"/></svg>',
   // As Island's Start menu's search field (startmenu.ts).
   search: '<svg viewBox="0 0 24 24" class="line"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>',
   app: '<svg viewBox="0 0 24 24" class="line"><rect x="4" y="4" width="16" height="16" rx="4"/></svg>',
@@ -706,7 +733,7 @@ function el(tag: string, cls: string, html?: string): HTMLElement {
 async function dockMenu(f: DockFrame, pref: (p: DockPref) => void, edit: { on: boolean; set(on: boolean): void }): Promise<void> {
   const show = await Submenu.new({
     text: 'Show on the taskbar',
-    items: await Promise.all(DOCK_ITEMS.map((k) => CheckMenuItem.new({ text: DOCK_LABELS[k], checked: !(f.hidden ?? []).includes(k), action: () => pref({ toggle: k }) }))),
+    items: await Promise.all(barOrder(f.order).map((k) => CheckMenuItem.new({ text: DOCK_LABELS[k], checked: !(f.hidden ?? []).includes(k), action: () => pref({ toggle: k }) }))),
   });
   const sizes = await Submenu.new({
     text: 'Size',
@@ -762,7 +789,7 @@ const RISE_BOB_GROW = 0.05;
 /** With Rise on, the Glide highlight eases onto the item it moves to with this time constant, ms. */
 const GLIDE_EASE_MS = 70;
 /** The bar's other items, which rise with the apps (all of them, Justin 11-19). */
-const RISE_OTHERS = '.dk-winstart, .dk-search, .dk-start, .dk-music, .dk-skip, .dk-timer, .dk-claude, .dk-tray .dk-tray-ico, .dk-batt, .dk-wifi, .dk-sound, .dk-clock, .dk-bell';
+const RISE_OTHERS = '.dk-winstart, .dk-search, .dk-start, .dk-music, .dk-skip, .dk-timer, .dk-claude, .dk-tray .dk-tray-ico, .dk-batt, .dk-wifi, .dk-sound, .dk-clock, .dk-bell, .dk-gear';
 /** Room above the bar for grown (and bobbing) apps, CSS px. */
 const HEADROOM = 20;
 /** An app's place on the bar, CSS px (island.css .dk-app). */
@@ -1150,6 +1177,10 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const bell = el('button', 'dk-btn dk-bell', SVG.bell);
   bell.title = 'Notifications';
   bell.addEventListener('click', () => send({ kind: 'notifications' }));
+  // Settings › Taskbar & border, from the bar itself (Justin, 11-19).
+  const gear = el('button', 'dk-btn dk-gear', SVG.gear);
+  gear.title = 'Taskbar settings';
+  gear.addEventListener('click', () => void native.openApp('taskbar'));
   // Takes the room when the bar is stretched longer than what it holds (Edit position).
   const fillEl = el('i', 'dk-fill');
   // Start: Island's own menu (startmenu.ts) or Windows', as Settings › Taskbar says.
@@ -1182,7 +1213,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     void native.startToggle();
   });
   let startPrepared: string | null = null;
-  bar.append(winStart, search, start, appsBox, fillEl, gapEl, sepA, music, musicPrev, musicPP, musicNext, sepM, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell);
+  bar.append(winStart, search, start, appsBox, fillEl, gapEl, sepA, music, musicPrev, musicPP, musicNext, sepM, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell, gear);
 
   // Over the bar, coming up from behind it: the Apps card (the arrow) and when S/W reset (pointing at them).
   const above = el('div', 'dk-above');
@@ -2068,13 +2099,13 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   /** The island is open in the gap (the top bar splits round it). */
   let islandOpen = false;
   /** What the island's frame shows, before any squeezing. */
-  const want = { winStart: true, search: true, start: true, apps: true, music: false, timer: false, claude: false, tray: true, battery: false, wifi: true, sound: true, clock: true, bell: true };
+  const want = { winStart: true, search: true, start: true, apps: true, music: false, timer: false, claude: false, tray: true, battery: false, wifi: true, sound: true, clock: true, bell: true, gear: true };
   /**
    * What goes first when the bar runs off the screen (an open island in the middle of a top bar, or a
    * small screen), one at a time until it fits; what is left at the end is the apps (Moss: "the
    * taskbar CANNOT go off the screen ... only keep tabs and time (if there is space)").
    */
-  const DROP = ['tray', 'claude', 'timer', 'battery', 'sound', 'wifi', 'bell', 'music', 'search', 'start', 'winStart', 'clock'] as const;
+  const DROP = ['gear', 'tray', 'claude', 'timer', 'battery', 'sound', 'wifi', 'bell', 'music', 'search', 'start', 'winStart', 'clock'] as const;
   /** Shows what `want` says, less the first `n` of DROP. */
   const showItems = (n: number) => {
     const gone = new Set<string>(DROP.slice(0, n));
@@ -2092,14 +2123,54 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     sound.hidden = !keep('sound');
     bell.hidden = !keep('bell');
     clock.hidden = !keep('clock');
-    const split = !gapEl.hidden;
-    const middle = !music.hidden || !timer.hidden || !claude.hidden;
-    // Beside the island's gap a line is one too many: the island parts them.
-    sepA.hidden = !middle || split;
-    sepM.hidden = music.hidden || (timer.hidden && claude.hidden);
-    const leftShown = !start.hidden || !appsBox.hidden || middle;
-    const rightShown = !battery.hidden || !wifi.hidden || !sound.hidden || !clock.hidden || !bell.hidden;
-    sepB.hidden = !leftShown || !rightShown || (split && !middle);
+    gear.hidden = !keep('gear');
+    arrange();
+  };
+  /** Each item's pieces on the bar, in the order they sit. */
+  const pieces: Record<DockItem, HTMLElement[]> = {
+    start: [winStart],
+    search: [search],
+    arrow: [start],
+    apps: [appsBox, fillEl, gapEl],
+    music: [music, musicPrev, musicPP, musicNext],
+    timer: [timer],
+    claude: [claude],
+    tray: [trayBox],
+    battery: [battery],
+    wifi: [wifi],
+    sound: [sound],
+    clock: [clock],
+    notifications: [bell],
+    settings: [gear],
+  };
+  const seps = [sepA, sepM, sepB];
+  let rowSig = '';
+  /** The items in the order dragged to in Settings, a line between kinds (dockRow); hidden ones keep their place. */
+  const arrange = () => {
+    const order = barOrder(frame?.order);
+    const shown = new Set(order.filter((k) => !pieces[k][0].hidden));
+    const row = dockRow(order, shown, !gapEl.hidden);
+    const sig = `${order.join()}|${row.join()}`;
+    if (sig === rowSig) return;
+    rowSig = sig;
+    const lined = new Set(row.filter((_, n) => row[n - 1] === 'sep') as DockItem[]);
+    const seq: HTMLElement[] = [];
+    let used = 0;
+    for (const k of order) {
+      if (lined.has(k)) {
+        const line = seps[used] ?? seps[seps.push(el('i', 'dk-sep')) - 1];
+        line.hidden = false;
+        seq.push(line);
+        used++;
+      }
+      seq.push(...pieces[k]);
+    }
+    for (const line of seps.slice(used)) line.hidden = true;
+    let at = bar.querySelector('.dock-bg')?.nextSibling ?? null;
+    for (const e of seq) {
+      if (e !== at) bar.insertBefore(e, at);
+      at = e.nextSibling;
+    }
   };
   /** The screen's length along the bar (CSS px): its work area's (the window is only the bar's size);
    *  in the browser preview, the page's. */
@@ -2395,6 +2466,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     }
     want.clock = !off.has('clock');
     want.bell = !off.has('notifications');
+    want.gear = !off.has('settings');
     tickClock();
     squeezeToFit();
     if (cardOn && f.card) {

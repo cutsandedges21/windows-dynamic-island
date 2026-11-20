@@ -5,10 +5,11 @@
 import { section, row, segmented, toggle } from './controls';
 import { icon, type IconName } from './core/icons';
 import { sendTo } from './core/native';
-import { DOCK_LABELS, DOCK_SIZE_LABELS, DOCK_STYLE_LABELS, toggleDockItem, toggleStyle } from './core/dock';
+import { DOCK_LABELS, DOCK_SIZE_LABELS, DOCK_STYLE_LABELS, dockRow, toggleDockItem, toggleStyle } from './core/dock';
 import {
   barNeedsHidden,
-  DOCK_ITEMS,
+  barOrder,
+  type DockItem,
   DOCK_SIDES,
   DOCK_SIZES,
   DOCK_STYLES,
@@ -103,30 +104,156 @@ function lookPicker(look: ItemLook, host: WidgetsPageHost, followLabel = 'Like t
 }
 
 /** What the taskbar shows: a chip per item, ticked when it is on the taskbar. */
+/** Each taskbar item's icon in Settings. */
+const DOCK_ICONS: Record<DockItem, IconName> = {
+  start: 'grid',
+  search: 'search',
+  arrow: 'chevron-up',
+  apps: 'window',
+  music: 'music',
+  timer: 'timer',
+  claude: 'claude',
+  tray: 'more',
+  battery: 'battery',
+  wifi: 'wifi',
+  sound: 'speaker',
+  clock: 'clock',
+  notifications: 'bell',
+  settings: 'settings',
+};
+
+/**
+ * What the taskbar shows, as the right-click menu's editor (Justin, 11-19): the bar as it will read,
+ * then its items to drag into order (by the handle, or along the bar itself) and turn on or off.
+ * Settings' gear opens this page; it comes last, but can move like the rest.
+ */
 function dockPicker(host: WidgetsPageHost): HTMLElement {
   const t = host.settings().island.taskbar;
-  const chips = h(
-    'div',
-    { class: 'dockpick' },
-    DOCK_ITEMS.map((k) => {
-      const on = !t.hidden.includes(k);
-      return h(
-        'button',
-        {
-          class: `dpi${on ? ' on' : ''}`,
-          'aria-pressed': String(on),
-          title: on ? `Take ${DOCK_LABELS[k]} off the taskbar` : `Put ${DOCK_LABELS[k]} on the taskbar`,
-          onclick: () => {
+  let order = barOrder(t.order);
+  const stage = h('div', { class: 'tb-stage', 'aria-label': 'Preview of the taskbar' });
+  const list = h('div', { class: 'menu-editor', role: 'list' });
+  /** The bar: the items on, in order, a line between kinds as the taskbar draws them. */
+  const paint = (dragged: DockItem | null = null) => {
+    const on = new Set(order.filter((k) => !t.hidden.includes(k)));
+    stage.replaceChildren(
+      ...dockRow(order, on).map((k) =>
+        k === 'sep'
+          ? h('i', { class: 'tb-sep' })
+          : h('span', { class: `tb-item${k === dragged ? ' ghost' : ''}`, title: DOCK_LABELS[k], 'data-id': k, html: icon(DOCK_ICONS[k]) }),
+      ),
+    );
+  };
+  const commit = () => {
+    t.order = [...order];
+    host.save(true);
+    paint();
+  };
+  const fill = () => {
+    list.replaceChildren(
+      ...order.map((k) => {
+        const on = !t.hidden.includes(k);
+        const grip = h('button', { class: 'me-grip', title: 'Drag to move, or drag it along the bar above (or Up / Down arrow keys)', 'aria-label': `Move ${DOCK_LABELS[k]}`, html: icon('grip') });
+        const r = h('div', { class: `me-row${on ? '' : ' off'}`, role: 'listitem', 'data-id': k }, [
+          grip,
+          h('span', { class: 'me-ico', html: icon(DOCK_ICONS[k]) }),
+          h('span', { class: 'me-name', text: DOCK_LABELS[k] }),
+          toggle(on, () => {
             t.hidden = toggleDockItem(t.hidden, k);
+            r.classList.toggle('off', t.hidden.includes(k));
             host.save(true);
-            host.render();
-          },
-        },
-        [h('span', { html: on ? icon('check') : icon('plus') }), h('span', { text: DOCK_LABELS[k] })],
-      );
-    }),
-  );
-  const r = row('Show on the taskbar', 'Pick what it shows. The battery only shows on a PC that has one.', chips);
+            paint();
+          }, `Show ${DOCK_LABELS[k]}`),
+        ]);
+        grip.addEventListener('keydown', (e) => {
+          if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+          e.preventDefault();
+          const i = order.indexOf(k);
+          const j = i + (e.key === 'ArrowUp' ? -1 : 1);
+          if (j < 0 || j >= order.length) return;
+          order.splice(i, 1);
+          order.splice(j, 0, k);
+          fill();
+          commit();
+          (list.querySelector(`[data-id="${k}"] .me-grip`) as HTMLElement | null)?.focus();
+        });
+        // Along the list: pointer events, so a mouse, a touchpad and a finger all work.
+        grip.addEventListener('pointerdown', (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          r.classList.add('dragging');
+          const start = order.join();
+          const onMove = (ev: PointerEvent) => {
+            for (const other of [...list.children] as HTMLElement[]) {
+              if (other === r) continue;
+              const box = other.getBoundingClientRect();
+              const mid = box.top + box.height / 2;
+              const before = (r.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
+              if (before && ev.clientY < mid) {
+                list.insertBefore(r, other);
+                break;
+              }
+              if (!before && ev.clientY > mid) list.insertBefore(r, other.nextSibling);
+            }
+            order = barOrder([...list.children].map((x) => (x as HTMLElement).dataset.id));
+            paint(k);
+          };
+          const onUp = () => {
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onUp);
+            r.classList.remove('dragging');
+            if (order.join() !== start) commit();
+            else paint();
+          };
+          window.addEventListener('pointermove', onMove);
+          window.addEventListener('pointerup', onUp);
+          window.addEventListener('pointercancel', onUp);
+        });
+        return r;
+      }),
+    );
+  };
+  // Along the bar: an item dragged past another's middle takes its place.
+  stage.addEventListener('pointerdown', (e) => {
+    const item = (e.target as HTMLElement).closest<HTMLElement>('.tb-item[data-id]');
+    if (e.button !== 0 || !item) return;
+    e.preventDefault();
+    const k = item.dataset.id as DockItem;
+    const start = order.join();
+    const x0 = e.clientX;
+    let moving = false;
+    const onMove = (ev: PointerEvent) => {
+      if (!moving && Math.abs(ev.clientX - x0) < 4) return;
+      moving = true;
+      const shown = [...stage.querySelectorAll<HTMLElement>('.tb-item[data-id]')].filter((x) => x.dataset.id !== k);
+      const before = shown.find((x) => {
+        const b = x.getBoundingClientRect();
+        return ev.clientX < b.left + b.width / 2;
+      });
+      const rest = order.filter((x) => x !== k);
+      const at = before ? rest.indexOf(before.dataset.id as DockItem) : rest.length;
+      const next = [...rest.slice(0, at), k, ...rest.slice(at)];
+      if (next.join() !== order.join()) {
+        order = next;
+        paint(k);
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      if (order.join() !== start) {
+        fill();
+        commit();
+      } else paint();
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  });
+  fill();
+  paint();
+  const r = row('Show on the taskbar', 'Drag the handles to put them in order, or drag one along the bar; turn off what you never use. The battery only shows on a PC that has one; the gear opens these settings.', h('div', { class: 'menu-edit-wrap' }, [h('div', { class: 'tb-stage-wrap' }, [stage]), list]));
   r.classList.add('stack');
   return r;
 }

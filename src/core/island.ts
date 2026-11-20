@@ -443,6 +443,7 @@ export class Island {
         volume: () => this.dockVolume,
         wifi: () => this.dockWifi,
         hidden: () => this.settings.island.taskbar.hidden,
+        order: () => this.settings.island.taskbar.order,
         setHidden: (items) => {
           this.settings.island.taskbar.hidden = items;
           this.saveSettings();

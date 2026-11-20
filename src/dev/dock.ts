@@ -6,7 +6,7 @@
 
 import type { DockFrame } from '../core/dock';
 import type { emitLocal as EmitLocal } from '../core/native';
-import { cleanNames, DOCK_ITEMS, DOCK_STYLES, FRAME_W, type DockItem, type DockSide, type DockSize, type DockStyle, type PillColor } from '../core/settings';
+import { barOrder, cleanNames, DOCK_ITEMS, DOCK_STYLES, FRAME_W, type DockItem, type DockSide, type DockSize, type DockStyle, type PillColor } from '../core/settings';
 
 export function dockPreview(emitLocal: typeof EmitLocal): void {
   const q = new URLSearchParams(location.search);
@@ -29,6 +29,8 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
     // &scale=1.2 its own height, &minlen=900 stretched longer (Edit position); &edit=1 starts editing.
     scale: q.has('scale') ? Number(q.get('scale')) : null,
     minLen: Number(q.get('minlen') ?? 0),
+    // &order=clock,apps,...: its items in that order (the rest after, as Settings keeps them).
+    order: q.has('order') ? barOrder((q.get('order') ?? '').split(',')) : undefined,
     // &tall=20: stretched taller by its top (Edit position).
     tall: Number(q.get('tall') ?? 0),
     size: (q.get('size') as DockSize | null) ?? 'medium',

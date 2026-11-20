@@ -34,7 +34,7 @@ describe('the right-click menu', () => {
       'menu/dnd', 'menu/hide', 'menu/fade', 'menu/reminders', 'menu/workspaces', 'menu/activities', 'menu/settings',
     ]);
     expect(defaultSettings().island.menu).toEqual(FULL_MENU);
-    expect(MENU_ITEMS.map((m) => m.id)).toEqual(['position', 'quiet', 'hide', 'fade', 'reminders', 'workspaces', 'activities']);
+    expect(MENU_ITEMS.map((m) => m.id)).toEqual(['position', 'quiet', 'hide', 'fade', 'reminders', 'workspaces', 'activities', 'settings']);
   });
 
   it('drops Position as a whole: its label, its four buttons and the line after them', () => {
@@ -54,6 +54,20 @@ describe('the right-click menu', () => {
     const none = without('position', 'quiet', 'hide', 'fade', 'reminders', 'workspaces', 'activities');
     expect(keys(menuSegments(none, st))).toEqual(['menu/settings']);
     for (const m of MENU_ITEMS) expect(keys(menuSegments(without(m.id), st))).toContain('menu/settings');
+  });
+
+  it('puts Settings where it was moved to, last by default, its gear bare unless its name was asked for', () => {
+    const order = normalizeMenuOrder(['settings', 'position']);
+    expect(order[0]).toBe('settings');
+    expect(normalizeMenuOrder(['position', 'quiet']).at(-1)).toBe('settings');
+    const segs = menuSegments(FULL_MENU, st, { order, iconOnly: DEFAULT_ICON_ONLY });
+    expect(keys(segs)[0]).toBe('menu/settings');
+    expect(segs[0]).not.toHaveProperty('label');
+    expect((segs[0] as { side?: string }).side).toBeUndefined();
+    const named = menuSegments(FULL_MENU, st, { order: DEFAULT_MENU_ORDER, iconOnly: { ...DEFAULT_ICON_ONLY, settings: false } });
+    expect(named.at(-1)).toMatchObject({ key: 'menu/settings', label: 'Settings', side: 'end' });
+    // Saved before it was an item: the old choice still counts.
+    expect(menuSegments(FULL_MENU, st, { order: DEFAULT_MENU_ORDER, iconOnly: { ...DEFAULT_ICON_ONLY, settings: undefined } as unknown as MenuIconOnly, settingsIconOnly: false }).at(-1)).toMatchObject({ label: 'Settings' });
   });
 
   it('takes out only the item turned off', () => {
@@ -264,7 +278,7 @@ describe('the right-click menu, arranged in Settings', () => {
 
   it('a saved arrangement loads back; unknown or repeated ids are dropped and missing ones come back', () => {
     const s = migrate({ version: 6, island: { menuOrder: ['hide', 'nope', 'hide', 'quiet', 4], menuIconOnly: { hide: true, quiet: 'yes' } } });
-    expect(s.island.menuOrder).toEqual(['hide', 'fade', 'quiet', 'position', 'reminders', 'workspaces', 'activities']);
+    expect(s.island.menuOrder).toEqual(['hide', 'fade', 'quiet', 'position', 'reminders', 'workspaces', 'activities', 'settings']);
     expect(s.island.menuIconOnly).toEqual({ ...DEFAULT_ICON_ONLY, hide: true });
     expect(normalizeMenuOrder(null)).toEqual(DEFAULT_MENU_ORDER);
   });

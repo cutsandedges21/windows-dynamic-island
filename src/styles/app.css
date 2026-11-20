@@ -562,3 +562,13 @@ button.me-grip:hover, button.me-grip:focus-visible { background: rgba(255, 255, 
 .site-add-field { flex: 1; min-width: 0; }
 .site-note:empty { display: none; }
 .site-note { font-size: 12px; }
+
+/* Settings, Taskbar & border: the taskbar's items as it will show them, to drag along it (widgets-page.ts dockPicker). */
+.tb-stage-wrap { display: flex; justify-content: center; }
+.tb-stage { display: flex; align-items: center; gap: 4px; max-width: 100%; flex-wrap: wrap; justify-content: center; min-height: 44px; padding: 0 10px; border-radius: 14px; background: #1b1b1d; color: #f3f2ee; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08); }
+.tb-stage .tb-item { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; cursor: grab; touch-action: none; user-select: none; transition: background-color 0.12s ease; }
+.tb-stage .tb-item:hover { background: rgba(255, 255, 255, 0.1); }
+.tb-stage .tb-item .ico { width: 18px; height: 18px; }
+.tb-stage .tb-item.ghost { outline: 1.5px solid var(--accent); outline-offset: -1px; background: rgba(255, 255, 255, 0.08); }
+.tb-stage .tb-sep { width: 1px; height: 20px; margin: 0 4px; background: rgba(255, 255, 255, 0.18); }
+.me-always { font-size: 12px; white-space: nowrap; }

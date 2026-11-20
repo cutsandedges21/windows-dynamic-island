@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
-import { clickPlan, dockApps, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, riseShifts, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
-import { barAutoHide, barEdge, barStyles, barTall, BAR_TALL_MAX, cleanNames } from '../src/core/settings';
+import { clickPlan, dockApps, dockRow, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, riseShifts, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
+import { barAutoHide, barEdge, barOrder, barStyles, barTall, BAR_TALL_MAX, cleanNames, DOCK_ITEMS, type DockItem } from '../src/core/settings';
 
 const app = (key: string, pinned: boolean, windows: number[] = [], front = false): DockApp => ({ key, name: key.toUpperCase(), icon: null, windows, front, pinned });
 const pin = (key: string) => ({ name: key.toUpperCase(), target: key });
@@ -62,6 +62,24 @@ describe('taskbar apps', () => {
     seen = openOrder(seen, [win(2, 'C:\\code.exe')]);
     seen = openOrder(seen, [win(3, 'C:\\chrome.exe'), win(2, 'C:\\code.exe')]);
     expect(seen).toEqual(['c:\\code.exe', 'c:\\chrome.exe']);
+  });
+
+  it('keeps the items in the order dragged to, Settings last by default', () => {
+    expect(barOrder(null)).toEqual([...DOCK_ITEMS]);
+    expect(barOrder(null).at(-1)).toBe('settings');
+    const saved = barOrder(['clock', 'nope', 'clock', 'apps']);
+    expect(saved.slice(0, 2)).toEqual(['clock', 'apps']);
+    expect(saved).toHaveLength(DOCK_ITEMS.length);
+    expect(saved.at(-1)).toBe('settings');
+  });
+
+  it('draws a line where one kind of item gives way to another, and after the song', () => {
+    const all = new Set<DockItem>(DOCK_ITEMS);
+    expect(dockRow(DOCK_ITEMS, all).join(' ')).toBe('start search arrow apps sep music sep timer claude sep tray battery wifi sound clock notifications settings');
+    expect(dockRow(['clock', 'settings', 'start', 'apps', 'music'], all).join(' ')).toBe('clock settings sep start apps sep music');
+    // Only what shows; split round the island, no line beside the apps.
+    expect(dockRow(DOCK_ITEMS, new Set<DockItem>(['apps', 'timer', 'clock']), true).join(' ')).toBe('apps timer sep clock');
+    expect(dockRow(DOCK_ITEMS, new Set<DockItem>(['apps', 'clock']), true).join(' ')).toBe('apps clock');
   });
 
   it('keeps how much taller the bar was stretched, within its bounds', () => {

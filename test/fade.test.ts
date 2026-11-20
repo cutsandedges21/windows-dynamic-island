@@ -63,8 +63,8 @@ describe('the menu\'s Fade', () => {
   });
 
   it('comes in after Hide in a menu arranged before it existed, wherever Hide was moved', () => {
-    expect(normalizeMenuOrder(['position', 'quiet', 'hide', 'reminders', 'workspaces', 'activities'])).toEqual(['position', 'quiet', 'hide', 'fade', 'reminders', 'workspaces', 'activities']);
-    expect(normalizeMenuOrder(['activities', 'hide', 'quiet', 'workspaces', 'reminders', 'position'])).toEqual(['activities', 'hide', 'fade', 'quiet', 'workspaces', 'reminders', 'position']);
+    expect(normalizeMenuOrder(['position', 'quiet', 'hide', 'reminders', 'workspaces', 'activities'])).toEqual(['position', 'quiet', 'hide', 'fade', 'reminders', 'workspaces', 'activities', 'settings']);
+    expect(normalizeMenuOrder(['activities', 'hide', 'quiet', 'workspaces', 'reminders', 'position'])).toEqual(['activities', 'hide', 'fade', 'quiet', 'workspaces', 'reminders', 'position', 'settings']);
     // Where the user put it, it stays.
     expect(normalizeMenuOrder(['fade', 'position', 'quiet', 'hide', 'reminders', 'workspaces', 'activities'])[0]).toBe('fade');
     const old = migrate({ version: 6, island: { menu: { position: true, quiet: true, hide: false, reminders: true, workspaces: true, activities: true }, menuOrder: ['hide', 'quiet', 'position'], menuIconOnly: { hide: true } } });

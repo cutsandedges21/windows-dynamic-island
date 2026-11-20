@@ -1687,7 +1687,7 @@ function menuRow(i: Settings['island']): HTMLElement {
     if (id === 'hide' && !was) render();
   };
   const label = (id: MenuItemId) => MENU_ITEMS.find((m) => m.id === id)?.label ?? id;
-  const iconOf: Record<MenuItemId, IconName> = { position: 'pos-top', quiet: 'moon', hide: 'eye-off', fade: 'fade', reminders: 'bell', workspaces: 'grid', activities: 'pulse' };
+  const iconOf: Record<MenuItemId, IconName> = { position: 'pos-top', quiet: 'moon', hide: 'eye-off', fade: 'fade', reminders: 'bell', workspaces: 'grid', activities: 'pulse', settings: 'settings' };
   const commit = () => {
     i.menuOrder = listOrder();
     paint();
@@ -1707,18 +1707,20 @@ function menuRow(i: Settings['island']): HTMLElement {
       grip.innerHTML = icon('grip');
       const look = segmented(i.menuIconOnly[id] ? 'icon' : 'both', [['both', 'Icon and name'], ['icon', 'Icon only']], (v) => {
         i.menuIconOnly[id] = v === 'icon';
+        if (id === 'settings') i.menuSettingsIconOnly = v === 'icon';
         for (const b of look.querySelectorAll('button')) b.classList.toggle('on', b.textContent === (v === 'icon' ? 'Icon only' : 'Icon and name'));
         paint();
         save(true);
       });
       const ico = h('span', { class: 'me-ico' });
       ico.innerHTML = icon(iconOf[id]);
-      const r = h('div', { class: `me-row${i.menu[id] ? '' : ' off'}`, role: 'listitem' }, [
+      // Settings can move but never goes: it leads back here.
+      const r: HTMLElement = h('div', { class: `me-row${id === 'settings' || i.menu[id] ? '' : ' off'}`, role: 'listitem' }, [
         grip,
         ico,
         h('span', { class: 'me-name', text: label(id) }),
         look,
-        toggle(i.menu[id], (on) => {
+        id === 'settings' ? h('span', { class: 'muted me-always', text: 'Always on' }) : toggle(i.menu[id], (on) => {
           i.menu[id] = on;
           r.classList.toggle('off', !on);
           paint();
@@ -1779,16 +1781,6 @@ function menuRow(i: Settings['island']): HTMLElement {
       });
       list.append(r);
     }
-    // Settings: always there and always last, so it cannot be moved or hidden; its name can show.
-    const gear = h('span', { class: 'me-ico' });
-    gear.innerHTML = icon('settings');
-    const gearLook = segmented(i.menuSettingsIconOnly ? 'icon' : 'both', [['both', 'Icon and name'], ['icon', 'Icon only']], (v) => {
-      i.menuSettingsIconOnly = v === 'icon';
-      for (const b of gearLook.querySelectorAll('button')) b.classList.toggle('on', b.textContent === (v === 'icon' ? 'Icon only' : 'Icon and name'));
-      paint();
-      save(true);
-    });
-    list.append(h('div', { class: 'me-row fixed', role: 'listitem' }, [h('span', { class: 'me-grip' }), gear, h('span', { class: 'me-name', text: 'Settings' }), gearLook, h('span', { class: 'muted', text: 'Always last' })]));
   };
   // An item on the preview moves along it: let go and it stays there; let go off it and nothing changes.
   preview.addEventListener('pointerdown', (e) => {
@@ -1826,7 +1818,7 @@ function menuRow(i: Settings['island']): HTMLElement {
   });
   fill();
   paint();
-  return stacked(row('Right-click menu', 'What the island shows when you right-click it, as it will look and as big as it is. Drag the handles to reorder, or drag an item straight onto the island; turn off what you never use and the menu gets shorter by that much. Settings always stays.', h('div', { class: 'menu-edit-wrap' }, [stage, list])));
+  return stacked(row('Right-click menu', 'What the island shows when you right-click it, as it will look and as big as it is. Drag the handles to reorder, or drag an item straight onto the island; turn off what you never use and the menu gets shorter by that much. Settings always stays, last unless you move it.', h('div', { class: 'menu-edit-wrap' }, [stage, list])));
 }
 
 /** Hide the island for a while, or, while it is hidden, say until when and bring it back. */

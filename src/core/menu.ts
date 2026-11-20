@@ -6,8 +6,9 @@ import type { IconName } from './icons';
 import type { Anchor } from './layout';
 import { measureText, naturalRun, verticalRun, type Measure, type Seg } from './segments';
 
-/** What the menu can hold besides Settings, which always stays: it leads back to this choice. */
-export type MenuItemId = 'position' | 'quiet' | 'hide' | 'fade' | 'reminders' | 'workspaces' | 'activities';
+/** What the menu can hold. Settings always stays (it leads back to this choice), last unless moved
+ *  (Justin, 11-19: no longer always last). */
+export type MenuItemId = 'position' | 'quiet' | 'hide' | 'fade' | 'reminders' | 'workspaces' | 'activities' | 'settings';
 
 /** Which of them the menu shows. */
 export type MenuShown = Record<MenuItemId, boolean>;
@@ -21,16 +22,17 @@ export const MENU_ITEMS: ReadonlyArray<{ id: MenuItemId; label: string }> = [
   { id: 'reminders', label: 'Reminders' },
   { id: 'workspaces', label: 'Workspaces' },
   { id: 'activities', label: 'Activities' },
+  { id: 'settings', label: 'Settings' },
 ];
 
 /** The whole menu, as it comes. */
-export const FULL_MENU: MenuShown = { position: true, quiet: true, hide: true, fade: true, reminders: true, workspaces: true, activities: true };
+export const FULL_MENU: MenuShown = { position: true, quiet: true, hide: true, fade: true, reminders: true, workspaces: true, activities: true, settings: true };
 
 /** Which items show just their icon (the name in a tip on hover) instead of icon and name. */
 export type MenuIconOnly = Record<MenuItemId, boolean>;
 
-/** As the menu always came: only Activities is a bare icon. */
-export const DEFAULT_ICON_ONLY: MenuIconOnly = { position: false, quiet: false, hide: false, fade: false, reminders: false, workspaces: false, activities: true };
+/** As the menu always came: only Activities and Settings' gear are bare icons. */
+export const DEFAULT_ICON_ONLY: MenuIconOnly = { position: false, quiet: false, hide: false, fade: false, reminders: false, workspaces: false, activities: true, settings: true };
 
 /** As the menu always came: MENU_ITEMS' order. */
 export const DEFAULT_MENU_ORDER: MenuItemId[] = MENU_ITEMS.map((m) => m.id);
@@ -39,7 +41,7 @@ export const DEFAULT_MENU_ORDER: MenuItemId[] = MENU_ITEMS.map((m) => m.id);
 export interface MenuLook {
   order: readonly MenuItemId[];
   iconOnly: MenuIconOnly;
-  /** Settings' gear without its name (it is always there and always last; only this can change). */
+  /** Settings' gear without its name (Settings keeps it as iconOnly.settings too); unset: iconOnly.settings. */
   settingsIconOnly?: boolean;
 }
 
@@ -76,7 +78,7 @@ export function normalizeIconOnly(saved: unknown): MenuIconOnly {
 }
 
 /** Items that sit on the menu's far end (with Settings) when nothing but their own kind follows them. */
-const END_KIND: ReadonlySet<MenuItemId> = new Set(['reminders', 'workspaces', 'activities']);
+const END_KIND: ReadonlySet<MenuItemId> = new Set(['reminders', 'workspaces', 'activities', 'settings']);
 
 export interface MenuState {
   anchor: Anchor;
@@ -90,8 +92,8 @@ export interface MenuState {
 }
 
 /**
- * The menu's segments: the items `shown` keeps, in `look`'s order, each as icon and name or icon only,
- * and Settings last. Reminders, Workspaces and Activities go to the far end with Settings when only
+ * The menu's segments: the items `shown` keeps (Settings always), in `look`'s order, each as icon and
+ * name or icon only. Reminders, Workspaces and Activities go to the far end with Settings when only
  * their own kind follows them (as they come); moved in front of the others they stay where they are put.
  */
 export function menuSegments(shown: MenuShown, st: MenuState, look: MenuLook = DEFAULT_MENU_LOOK): Seg[] {
@@ -105,13 +107,13 @@ export function menuSegments(shown: MenuShown, st: MenuState, look: MenuLook = D
     tip,
     prio: 1,
   });
-  const order = normalizeMenuOrder(look.order).filter((id) => shown[id] && (id !== 'reminders' || st.reminders));
+  const order = normalizeMenuOrder(look.order).filter((id) => (id === 'settings' || shown[id]) && (id !== 'reminders' || st.reminders));
   // The far end: the trailing run of Reminders / Workspaces / Activities.
   let firstEnd = order.length;
   while (firstEnd > 0 && END_KIND.has(order[firstEnd - 1])) firstEnd--;
   const segs: Seg[] = [];
   order.forEach((id, n) => {
-    const bare = look.iconOnly[id];
+    const bare = id === 'settings' ? (look.settingsIconOnly ?? look.iconOnly.settings ?? true) : look.iconOnly[id];
     const side = n >= firstEnd ? ('end' as const) : undefined;
     /** A button's name: shown beside its icon, or only in the tip when it is a bare icon. */
     const named = (name: string, tip?: string) => (bare ? { tip: tip ?? name } : { label: name, ...(tip ? { tip } : {}) });
@@ -151,10 +153,11 @@ export function menuSegments(shown: MenuShown, st: MenuState, look: MenuLook = D
       case 'activities':
         segs.push({ t: 'button', key: 'menu/activities', icon: 'pulse', ...named('Activities'), action: 'island:app', arg: 'activities', side, style: 'ghost', prio: 1 });
         break;
+      case 'settings':
+        segs.push({ t: 'button', key: 'menu/settings', icon: 'settings', ...(bare ? {} : { label: 'Settings' }), action: 'island:app', arg: 'settings', side, style: 'ghost', tip: 'Settings', prio: 1 });
+        break;
     }
   });
-  const gearOnly = look.settingsIconOnly !== false;
-  segs.push({ t: 'button', key: 'menu/settings', icon: 'settings', ...(gearOnly ? {} : { label: 'Settings' }), action: 'island:app', arg: 'settings', side: 'end', style: 'ghost', tip: 'Settings', prio: 1 });
   return segs;
 }
 
