@@ -16,7 +16,7 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
   const frame: DockFrame = {
     // &unpinned=2: the last two open but not pinned (a short line before them).
     apps: [app('code', 'Visual Studio Code', true, true), app('chrome', 'Chrome', true), app('spotify', 'Spotify', true), app('explorer', 'File Explorer', false)].map((a, i, all) => ({ ...a, pinned: i < all.length - Number(q.get('unpinned') ?? 0) })),
-    music: { title: 'Blinding Lights', artist: 'The Weeknd', playing: mode !== 'paused', art: null },
+    music: { title: 'Blinding Lights', artist: 'The Weeknd', playing: mode !== 'paused', art: q.get('art') },
     timer: '4:32',
     claude: { session: 42, week: 18 },
     battery: { percent: mode === 'low' ? 9 : 76, charging: mode === 'charging' },
@@ -44,6 +44,7 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
     square: q.get('square') === '1',
     // &border=1 is the screen border's; &accentborder=1: Accent's black line round each icon.
     accentBorder: q.get('accentborder') === '1',
+    songTint: q.get('songtint') !== '0',
     edge: q.get('edge') === '1',
     melt: q.get('melt') === '1',
     side: (q.get('side') as DockSide | null) ?? 'bottom',

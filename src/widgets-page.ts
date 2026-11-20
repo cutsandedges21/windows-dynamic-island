@@ -401,8 +401,19 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
                       (v) => {
                         t.songOpens = v;
                         host.save(true);
+                        host.render();
                       },
                     ),
+                  ),
+                ),
+                sub(
+                  row(
+                    "In the album's colour",
+                    "The song's box takes its album art's colour. Grey art keeps the taskbar's.",
+                    toggle(t.songTint, (v) => {
+                      t.songTint = v;
+                      host.save(true);
+                    }),
                   ),
                 ),
               ]),

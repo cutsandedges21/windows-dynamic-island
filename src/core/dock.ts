@@ -12,6 +12,7 @@ import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tau
 import { duration } from './format';
 import { packageFamily } from './store-app';
 import { applyGlass } from './glass';
+import { artColour } from './artcolor';
 import { isTauri, native, on, sendTo, type DockIconRect, type InstalledApp, type LiveWindow, type TrayIcon } from './native';
 import { BAR_TALL_MAX, barOrder, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
 
@@ -69,6 +70,8 @@ export interface DockFrame {
   startKey?: boolean;
   /** With Accent: a thin black line round each of its icons. */
   accentBorder?: boolean;
+  /** The song's box in its album art's colour. */
+  songTint?: boolean;
   /** Fill the width (barFill): the bar runs the screen's whole width, Start, search and the apps in the
    *  middle, the rest at the ends, search a box with its word. */
   fill?: boolean;
@@ -151,6 +154,11 @@ const ZONE: Record<DockItem, 0 | 1 | 2> = { start: 0, search: 0, arrow: 0, apps:
  * after the song (it reads as one with the timer or S/W otherwise). Split round the island, no line
  * beside the apps: the island parts them.
  */
+/** The song's box colour from its art's (artcolor.ts): the art's hue, deep enough for white writing. */
+export function songBg([h, s]: [number, number, number]): string {
+  return `hsl(${Math.round(h)} ${Math.round(Math.max(0.4, Math.min(0.75, s)) * 100)}% 40%)`;
+}
+
 /**
  * Filling the width, in the order dragged to in Settings: the middle starts with the apps and what is
  * next to them of their kind (Start, search, the arrow) and runs on to the tray's kind (the song, timer,
@@ -457,6 +465,7 @@ export interface DockHooks {
   /** A click on the song: the app playing it forward, or its tile in the island (as the timer's). */
   songOpens(): 'app' | 'tile';
   accentBorder(): boolean;
+  songTint(): boolean;
   edge(): boolean;
   setEdge(on: boolean): void;
   melt(): boolean;
@@ -623,6 +632,7 @@ export class DockHost {
         startOpens: this.hooks.startOpens(),
         startKey: this.hooks.startKey(),
         accentBorder: this.hooks.accentBorder(),
+        songTint: this.hooks.songTint(),
         fill: this.hooks.fill(),
         square: this.hooks.square(),
         edge: this.hooks.edge(),
@@ -1107,6 +1117,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   // then back, play/pause and next (Justin, 11-19). A click on the song brings the app playing it
   // forward, as the island's art does.
   const music = el('button', 'dk-music');
+  let songTintFor: string | null = null;
   const musicCover = el('span', 'dk-cover');
   const musicArt = document.createElement('img');
   musicArt.alt = '';
@@ -2571,6 +2582,19 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       musicArt.hidden = !m.art;
       musicNote.hidden = Boolean(m.art);
       if (m.art && musicArt.src !== m.art) musicArt.src = m.art;
+      // Its box in the album's colour (Justin, 11-20), deep enough for white writing on it; grey art
+      // (no colour of its own) keeps the bar's.
+      const tintArt = f.songTint === true && m.art ? m.art : null;
+      if (tintArt !== songTintFor) {
+        songTintFor = tintArt;
+        if (!tintArt) music.classList.remove('dk-tint');
+        else
+          void artColour(tintArt).then((c) => {
+            if (songTintFor !== tintArt) return;
+            if (c) music.style.setProperty('--song', songBg(c));
+            music.classList.toggle('dk-tint', Boolean(c));
+          });
+      }
       musicTitle.textContent = m.title || 'Playing';
       musicArtist.textContent = m.artist;
       musicArtist.hidden = !m.artist;
