@@ -661,6 +661,7 @@ fn watch_pointer(app: AppHandle) {
             std::thread::sleep(std::time::Duration::from_millis(20));
             let Some(win) = app.get_webview_window(LABEL) else {
                 POINTER_WATCH.store(false, Ordering::SeqCst);
+                crate::overlay::DOCK_HOT.store(false, Ordering::Relaxed);
                 return;
             };
             let Ok(h) = win.hwnd() else { continue };
@@ -688,6 +689,7 @@ fn watch_pointer(app: AppHandle) {
             };
             let (x, y) = ((p.x - r.left) as f64 / scale, (p.y - r.top) as f64 / scale);
             let over = solid_at(&SOLID.lock().unwrap(), x, y);
+            crate::overlay::DOCK_HOT.store(over, Ordering::Relaxed);
             if pressed && !over {
                 // A press off the bar and its cards: the page may close what stays up through an app's
                 // own menu (the tray's hidden icons), which a lost focus can't tell.

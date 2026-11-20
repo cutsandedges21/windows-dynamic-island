@@ -164,7 +164,37 @@ mod win {
                 }
             }
         }
+        if !id.contains('!') && exe.to_ascii_lowercase().contains("\\windowsapps\\") {
+            id = process_app_id(pid_of(hwnd));
+        }
         if id.contains('!') { id } else { String::new() }
+    }
+
+    /// A packaged program's own app id (Package!App), as Windows' taskbar groups and draws it: Store
+    /// programs like Photos, Spotify and Notepad put none on their windows (Justin, 11-19: Photos on
+    /// the taskbar had its program's plain icon, not Start's).
+    fn process_app_id(pid: u32) -> String {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetApplicationUserModelId(process: *mut std::ffi::c_void, len: *mut u32, id: *mut u16) -> i32;
+        }
+        if pid == 0 {
+            return String::new();
+        }
+        let Ok(h) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }) else { return String::new() };
+        let mut buf = [0u16; 260];
+        let mut len = buf.len() as u32;
+        let rc = unsafe { GetApplicationUserModelId(h.0, &mut len, buf.as_mut_ptr()) };
+        unsafe {
+            let _ = CloseHandle(h);
+        }
+        if rc != 0 {
+            return String::new();
+        }
+        let n = buf.iter().take(len as usize).position(|&c| c == 0).unwrap_or((len as usize).min(buf.len()));
+        String::from_utf16_lossy(&buf[..n])
     }
 
     /// Start's name for an app id, looked up once each.

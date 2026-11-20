@@ -137,6 +137,19 @@ export function toggleDockItem(hidden: readonly DockItem[], item: DockItem): Doc
 }
 
 /** The battery's colour: green while charging, red when low, else the text's. */
+/** The battery icon's inside at a full charge (its viewBox units), and the icon: Windows 11's, measured
+ *  off Justin's 11-19 screenshot of his taskbar at 125 %. */
+const BATTERY_FULL = 17.6;
+const BATTERY_BOLT = 'M12.4 0H14.4L13.5 3.9H15.9L12 11.8L12.6 6.5H9.8Z';
+const BATTERY_SVG =
+  '<svg viewBox="0 0 25 17" aria-hidden="true">' +
+  '<mask id="dk-bcut" maskUnits="userSpaceOnUse" x="0" y="0" width="25" height="17"><rect width="25" height="17" fill="#fff"/>' +
+  `<path class="dk-bcut" d="${BATTERY_BOLT}" fill="#000" stroke="#000" stroke-width="2.4" stroke-linejoin="round"/></mask>` +
+  '<g mask="url(#dk-bcut)"><rect class="dk-bline" x="1.6" y="4.1" width="21.2" height="11" rx="3"/>' +
+  '<rect class="dk-bnub" x="23.3" y="7.9" width="1.3" height="3.4" rx="0.6"/>' +
+  `<rect class="dk-bfill" x="3.4" y="6.4" width="${BATTERY_FULL}" height="7.2" rx="1.4"/></g>` +
+  `<path class="dk-bbolt" d="${BATTERY_BOLT}"/></svg>`;
+
 export function batteryTone(b: { percent: number; charging: boolean }): 'low' | 'charging' | '' {
   if (b.charging) return 'charging';
   return b.percent <= 15 ? 'low' : '';
@@ -157,6 +170,8 @@ export type DockAct =
   | { kind: 'start' | 'search' | 'quick' | 'notifications' | 'music' | 'timer' | 'claude' }
   /** Now playing's buttons beside the song: the next one, or back to the one before. */
   | { kind: 'skip'; dir: 'next' | 'prev' }
+  /** The song on the taskbar clicked: the app playing it comes forward (act:music:open). */
+  | { kind: 'music-open' }
   /** The arrow opened or closed the Apps card. */
   | { kind: 'card'; open: boolean }
   /** One of the Apps card's actions (the Apps activity's: open, edit, find, add, remove). */
@@ -564,6 +579,7 @@ export class DockHost {
       return this.tick();
     }
     if (a.kind === 'music') return this.hooks.act('act:music:toggle');
+    if (a.kind === 'music-open') return this.hooks.act('act:music:open');
     if (a.kind === 'skip') return this.hooks.act(a.dir === 'prev' ? 'act:music:prev' : 'act:music:next');
     if (a.kind === 'timer') return this.hooks.open('timer');
     if (a.kind === 'claude') return this.hooks.claudeCard();
@@ -712,13 +728,12 @@ const RISE_BOB_LIFT = 4;
 const RISE_BOB_GROW = 0.05;
 /** With Rise on, the Glide highlight eases onto the item it moves to with this time constant, ms. */
 const GLIDE_EASE_MS = 70;
-/** The bar's other icons that rise with the apps (not the wide ones: now playing, S/W, the clock). */
-const RISE_OTHERS = '.dk-winstart, .dk-search, .dk-start, .dk-skip, .dk-tray .dk-tray-ico, .dk-wifi, .dk-sound, .dk-bell';
+/** The bar's other items, which rise with the apps (all of them, Justin 11-19). */
+const RISE_OTHERS = '.dk-winstart, .dk-search, .dk-start, .dk-music, .dk-skip, .dk-timer, .dk-claude, .dk-tray .dk-tray-ico, .dk-batt, .dk-wifi, .dk-sound, .dk-clock, .dk-bell';
 /** Room above the bar for grown (and bobbing) apps, CSS px. */
 const HEADROOM = 20;
-/** An app's place on the bar and the gap between places, CSS px (island.css .dk-app, .dk-apps). */
+/** An app's place on the bar, CSS px (island.css .dk-app). */
 const APP_W = 40;
-const APP_GAP = 2;
 /** Room the window keeps at each end for the bar to widen into while it spreads (CSS px before its
  *  size's zoom): the window never resizes under the pointer. */
 const RISE_ROOM = 36;
@@ -957,23 +972,24 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const gapEl = el('i', 'dk-gap');
   gapEl.hidden = true;
   const sepA = el('i', 'dk-sep');
-  // What is playing: its cover (play/pause over it when pointed at or paused), the title over the
-  // artist, the size of the clock's time over its date.
+  // What is playing: its cover, the title over the artist (the size of the clock's time over its date),
+  // then back, play/pause and next (Justin, 11-19). A click on the song brings the app playing it
+  // forward, as the island's art does.
   const music = el('button', 'dk-music');
   const musicCover = el('span', 'dk-cover');
   const musicArt = document.createElement('img');
   musicArt.alt = '';
   musicArt.draggable = false;
   const musicNote = el('span', 'dk-note', SVG.note);
-  const musicPP = el('span', 'dk-pp');
-  musicCover.append(musicArt, musicNote, musicPP);
+  musicCover.append(musicArt, musicNote);
   const musicTitle = el('b', '');
   const musicArtist = el('span', '');
   const musicText = el('span', 'dk-mtext');
   musicText.append(musicTitle, musicArtist);
   music.append(musicCover, musicText);
-  music.addEventListener('click', () => send({ kind: 'music' }));
-  // Either side of the song: back to the one before, on to the next.
+  music.addEventListener('click', () => send({ kind: 'music-open' }));
+  const musicPP = el('button', 'dk-btn dk-skip dk-play');
+  musicPP.addEventListener('click', () => send({ kind: 'music' }));
   const musicPrev = el('button', 'dk-btn dk-skip dk-prev', SVG.prev);
   musicPrev.title = 'Previous';
   musicPrev.addEventListener('click', () => send({ kind: 'skip', dir: 'prev' }));
@@ -1067,9 +1083,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     void fit();
   });
   const battery = el('button', 'dk-batt');
-  const battBody = el('i', 'dk-bbody');
-  const battFill = el('i', 'dk-bfill');
-  battBody.append(battFill, el('i', 'dk-bbolt', SVG.bolt));
+  // Drawn as Windows 11's taskbar draws it (Justin, 11-19: "look how different it is"): a white outline
+  // with its nub on the right wall, filled to its charge (pale green while charging, pale red when low),
+  // and while charging a bolt through its top edge, cut out of what is under it.
+  const battBody = el('i', 'dk-bbody', BATTERY_SVG);
+  const battFill = battBody.querySelector('.dk-bfill') as SVGRectElement;
   const battText = el('span', '');
   battery.append(battBody, battText);
   battery.addEventListener('click', () => send({ kind: 'quick' }));
@@ -1120,7 +1138,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     void native.startToggle();
   });
   let startPrepared: string | null = null;
-  bar.append(winStart, search, start, appsBox, fillEl, gapEl, sepA, musicPrev, music, musicNext, sepM, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell);
+  bar.append(winStart, search, start, appsBox, fillEl, gapEl, sepA, music, musicPrev, musicPP, musicNext, sepM, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell);
 
   // Over the bar, coming up from behind it: the Apps card (the arrow) and when S/W reset (pointing at them).
   const above = el('div', 'dk-above');
@@ -1698,11 +1716,14 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   // along a bar across the screen (not split round the island) its neighbours slide apart to make half
   // that room and the bar widens from its middle, into room its window keeps at each end (RISE_ROOM).
   // It follows the pointer at once (RISE_FOLLOW) and fades in and out with it (RISE_FADE_MS); left
-  // still a moment, the app under the pointer bobs (RISE_BOB_*). Only `scale` and `translate` move a
-  // place: its layout and its `transform` (a drag along the row) stay as they are.
+  // still a moment, the item under the pointer bobs (RISE_BOB_*). `scale` and `translate` grow and bob
+  // an item, a margin each side makes its room; its `transform` (a drag along the row) stays as it is.
   const rise = new Map<HTMLElement, number>();
   /** Each place's grow and shifts now, for the Glide highlight to sit on it. */
   const placed = new Map<HTMLElement, { s: number; along: number; out: number }>();
+  /** Each item's middle along the bar while nothing is spread; and the items given room now. */
+  const restMid = new Map<HTMLElement, number>();
+  let marginsOn = new Set<HTMLElement>();
   let pointerX: number | null = null;
   let pointerIn = false;
   let intensity = 0;
@@ -1726,20 +1747,18 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const spread = spreads();
     const up = upright();
     const z = Number(bar.style.zoom) || 1;
-    const places = [...appsBox.children].filter((c): c is HTMLElement => c instanceof HTMLElement && c.classList.contains('dk-app') && !c.hidden && !c.classList.contains('dk-cut'));
-    // The bar's other icons rise too (Start, Search, the tray's, Wi-Fi, sound...), in place: only the
-    // apps make room (Justin, 11-19: "search doesn't rise").
-    const others = [...bar.querySelectorAll<HTMLElement>(RISE_OTHERS)].filter((b) => !b.hidden && b.offsetWidth > 0 && !b.closest('[hidden]'));
-    const els = [...places, ...others];
-    // Where each place's middle is with nothing spread: the pointer is measured against those, so the
-    // spreading never moves the icon it is on away from it.
-    const box = appsBox.getBoundingClientRect();
-    const start0 = (up ? box.top : box.left) + (riseExtra / 2) * z;
+    // Every item on the bar rises, in the bar's order: the apps, Start, Search, the song and its buttons,
+    // S/W, the tray's, the battery, the clock... (Justin, 11-19: "search doesn't rise", then "no not all").
+    const els = [...bar.querySelectorAll<HTMLElement>(`.dk-apps > .dk-app, ${RISE_OTHERS}`)].filter(
+      (b) => !b.hidden && !b.classList.contains('dk-cut') && b.offsetWidth > 0 && !b.closest('[hidden]'),
+    );
+    // Where each one's middle is with nothing spread (measured while nothing is): the pointer is
+    // measured against those, so the spreading never moves the item it is on away from it.
+    if (!riseExtra) for (const b of els) restMid.set(b, alongOf(b.getBoundingClientRect()));
     const on = pointerX !== null && !move?.moved && has('rise');
-    const dist = els.map((b, i) => {
+    const dist = els.map((b) => {
       if (!on) return Infinity;
-      const mid = i < places.length ? start0 + (i * (APP_W + APP_GAP) + APP_W / 2) * z : alongOf(b.getBoundingClientRect());
-      return (pointerX! - mid) / z;
+      return (pointerX! - (restMid.get(b) ?? alongOf(b.getBoundingClientRect()))) / z;
     });
     const levels = els.map((b, i) => {
       const want = on ? riseAt(dist[i]) * intensity : 0;
@@ -1749,39 +1768,55 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       rise.set(b, now);
       return now;
     });
-    // The bob: the icon nearest the pointer, once the pointer has been still a while.
+    // The bob: the item nearest the pointer, once the pointer has been still a while.
     let nearest = -1;
     dist.forEach((d, i) => {
       if (Math.abs(d) < RISE_REACH / 2 && (nearest < 0 || Math.abs(d) < Math.abs(dist[nearest]))) nearest = i;
     });
     let bob = 0;
-    // Kept going while the pointer is on an icon, for the bob to start once it has been still long enough.
+    // Kept going while the pointer is on an item, for the bob to start once it has been still long enough.
     if (on && pointerIn && nearest >= 0) busy = true;
     if (on && pointerIn && nearest >= 0 && t - stillSince > RISE_BOB_AFTER) {
       if (!bobFrom) bobFrom = t;
       bob = Math.sin((((t - bobFrom) % RISE_BOB_MS) / RISE_BOB_MS) * Math.PI);
     } else bobFrom = 0;
-    const appLevels = levels.slice(0, places.length);
-    const { shifts, total } = riseShifts(spread ? appLevels : appLevels.map(() => 0));
+    // Each one makes room for what it grows by as a margin each side: an icon for half of it (Windhawk's
+    // spacing; its place has room round the icon), a wide one (the song, S/W, the clock) for all of it, or
+    // it would grow over its neighbours. Everything after it moves on, the bar widens by the total and
+    // slides back by half of it, so the bar parts round the pointer.
+    const rooms = els.map((b, i) => {
+      if (!spread) return 0;
+      const w = b.classList.contains('dk-app') ? APP_W : b.offsetWidth;
+      return RISE_GROW * levels[i] * w * (w > APP_W * 1.25 ? 1 : RISE_SPACING);
+    });
+    const total = rooms.reduce((a, r) => a + r, 0);
+    const spaced = new Set<HTMLElement>();
     els.forEach((b, i) => {
       const bobs = i === nearest ? bob : 0;
       const s = (1 + RISE_GROW * levels[i]) * (1 + RISE_BOB_GROW * bobs);
-      const along = i < places.length ? shifts[i] : 0;
+      const room = rooms[i];
       const out = RISE_BOB_LIFT * bobs;
-      placed.set(b, { s, along, out });
-      if (Math.abs(s - 1) < 0.0005 && Math.abs(along) < 0.01 && out < 0.01) {
+      placed.set(b, { s, along: 0, out });
+      if (room > 0.01) {
+        b.style.marginInline = `${(room / 2).toFixed(2)}px`;
+        spaced.add(b);
+      } else if (b.style.marginInline) b.style.marginInline = '';
+      if (Math.abs(s - 1) < 0.0005 && out < 0.01) {
         b.style.scale = b.style.translate = '';
         return;
       }
       b.style.scale = s.toFixed(4);
-      const [x, y] = up ? [outSign() * out, along] : [along, outSign() * out];
+      const [x, y] = up ? [outSign() * out, 0] : [0, outSign() * out];
       b.style.translate = `${x.toFixed(2)}px ${y.toFixed(2)}px`;
     });
+    // One no longer rising (hidden, cut, gone from the tray) keeps no room.
+    for (const b of marginsOn) if (!spaced.has(b)) b.style.marginInline = '';
+    marginsOn = spaced;
     // One that left the bar (a tray icon gone) keeps no rise.
     for (const b of rise.keys()) if (!b.isConnected) rise.delete(b);
+    for (const b of restMid.keys()) if (!b.isConnected) restMid.delete(b);
     // Wider from its middle: half of it to each side, as room the apps' row keeps at its ends.
     riseExtra = total > 0.05 ? total : 0;
-    appsBox.style.paddingInline = riseExtra ? `${(riseExtra / 2).toFixed(2)}px` : '';
     bar.style.translate = riseExtra ? `${(-riseExtra / 2).toFixed(2)}px 0` : '';
     if (placeGlow(dt)) busy = true;
     raf = busy ? requestAnimationFrame(animateRise) : 0;
@@ -1994,7 +2029,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     winStart.hidden = !keep('winStart');
     search.hidden = !keep('search');
     appsBox.hidden = !want.apps;
-    music.hidden = musicPrev.hidden = musicNext.hidden = !keep('music');
+    music.hidden = musicPrev.hidden = musicPP.hidden = musicNext.hidden = !keep('music');
     timer.hidden = !keep('timer');
     claude.hidden = !keep('claude');
     trayBox.hidden = !keep('tray') || !trayList.length;
@@ -2245,8 +2280,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const m = off.has('music') ? null : f.music;
     want.music = Boolean(m);
     if (m) {
-      music.title = `${m.playing ? 'Pause' : 'Play'}: ${m.title}${m.artist ? ` · ${m.artist}` : ''}`;
-      music.classList.toggle('paused', !m.playing);
+      music.title = `${m.title}${m.artist ? ` · ${m.artist}` : ''}`;
+      musicPP.title = m.playing ? 'Pause' : 'Play';
       musicArt.hidden = !m.art;
       musicNote.hidden = Boolean(m.art);
       if (m.art && musicArt.src !== m.art) musicArt.src = m.art;
@@ -2272,7 +2307,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     want.battery = Boolean(b);
     if (b) {
       const pct = Math.max(0, Math.min(100, Math.round(b.percent)));
-      battFill.style.width = `${pct}%`;
+      battFill.setAttribute('width', (BATTERY_FULL * pct / 100).toFixed(2));
       battText.textContent = `${pct}%`;
       battery.dataset.tone = batteryTone(b);
       battery.title = `Battery ${pct}%${b.charging ? ', charging' : ''}`;

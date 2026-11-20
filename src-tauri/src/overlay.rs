@@ -435,6 +435,9 @@ const PEEK_TAP: Duration = Duration::from_millis(600);
 /// Taps of Ctrl alone counted so far (with the peek setting on and the island not typing), wherever the
 /// pointer was: the taskbar peeks too when one comes with the pointer on it (dock.rs watch_pointer).
 pub static CTRL_TAPS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// The pointer is on Moss's taskbar (dock.rs sets it): the loop polls fast there too, or a quick Ctrl tap
+/// falls between two 100 ms polls and never counts (Justin, 11-19: "sometimes u have to click ctrl twice").
+pub static DOCK_HOT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 // ------------------------------------------------------------------ Ctrl+V on Land's icon
 
@@ -615,7 +618,7 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
 
             // How far the pointer is from the island, and whether it is on it.
             let (on_island, gap) = hit(&state.rects.lock().unwrap(), x, y);
-            period = Duration::from_millis(if gap <= NEAR_PX { NEAR_POLL_MS } else { FAR_POLL_MS });
+            period = Duration::from_millis(if gap <= NEAR_PX || DOCK_HOT.load(Ordering::Relaxed) { NEAR_POLL_MS } else { FAR_POLL_MS });
 
             // Near the island the bot watches the pointer; once it leaves, one null says so.
             if gap <= NEAR_PX {

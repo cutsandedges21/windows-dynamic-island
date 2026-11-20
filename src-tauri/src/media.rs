@@ -17,7 +17,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationSelectionItemPattern, TreeScope_Descendants,
+    CUIAutomation, IUIAutomation, IUIAutomationCondition, IUIAutomationElement, IUIAutomationSelectionItemPattern, TreeScope_Descendants,
     UIA_ControlTypePropertyId, UIA_SelectionItemPatternId, UIA_TabItemControlTypeId,
 };
 use windows::Win32::UI::Shell::{ApplicationActivationManager, IApplicationActivationManager, AO_NONE};
@@ -220,11 +220,18 @@ pub async fn media_control(action: String, value: Option<f64>) -> bool {
             "next" => s.TrySkipNextAsync()?.get()?,
             "prev" => s.TrySkipPreviousAsync()?.get()?,
             "seek" => s.TryChangePlaybackPositionAsync((value.unwrap_or(0.0) * 10_000_000.0) as i64)?.get()?,
+            // Clicked again while what it brought forward is still in front: put things back instead.
+            "focus" if undo_focus() => true,
             "focus" => {
                 let props = s.TryGetMediaPropertiesAsync()?.get()?;
                 let text = |h: windows::core::Result<HSTRING>| h.map(|h| h.to_string()).unwrap_or_default();
                 let aumid = text(s.SourceAppUserModelId());
-                focus(&aumid, &text(props.Title()), &text(props.Artist()), &text(props.AlbumTitle()))
+                let before = crate::procs::foreground();
+                let mut back = Back { before, player: 0, minimized: false, tab: None };
+                let ok = focus(&aumid, &text(props.Title()), &text(props.Artist()), &text(props.AlbumTitle()), &mut back);
+                back.player = crate::procs::foreground();
+                *BACK.lock().unwrap() = (ok && back.player != 0 && back.player != before).then_some(back);
+                ok
             }
             _ => false,
         };
@@ -240,37 +247,77 @@ pub async fn media_control(action: String, value: Option<f64>) -> bool {
 pub(crate) const BROWSERS: [(&str, &str); 6] =
     [("Chrome", "chrome.exe"), ("Edge", "msedge.exe"), ("Brave", "brave.exe"), ("Opera", "opera.exe"), ("Arc", "arc.exe"), ("Firefox", "firefox.exe")];
 
+/// What bringing the song forward changed, for a second click to put back (Justin, 11-19: "make it back
+/// to how it was before i clicked it"): the window that was in front, the one brought forward, whether
+/// that one was minimized, and the browser tab it was showing before the song's.
+struct Back {
+    before: isize,
+    player: isize,
+    minimized: bool,
+    tab: Option<String>,
+}
+static BACK: std::sync::Mutex<Option<Back>> = std::sync::Mutex::new(None);
+
+/// The last `focus` undone, if what it brought forward is still in front: the tab it showed, minimized
+/// again if it was, and the window that was in front back in front. False when there is nothing to undo.
+fn undo_focus() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindow, ShowWindow, SW_MINIMIZE};
+    let Some(b) = BACK.lock().unwrap().take() else { return false };
+    if crate::procs::foreground() != b.player {
+        return false;
+    }
+    if let Some(name) = &b.tab {
+        reselect_tab(b.player, name);
+    }
+    if b.minimized {
+        unsafe {
+            let _ = ShowWindow(HWND(b.player as *mut _), SW_MINIMIZE);
+        }
+    }
+    if b.before != 0 && unsafe { IsWindow(Some(HWND(b.before as *mut _))) }.as_bool() {
+        crate::procs::activate(b.before);
+    }
+    true
+}
+
 /// Brings forward whatever is playing: the browser tab it's in, else the app's window
-/// (found by its process, or for a Store app like Netflix, by activating it).
-fn focus(aumid: &str, title: &str, artist: &str, album: &str) -> bool {
+/// (found by its process, or for a Store app like Netflix, by activating it). Notes in `back` what
+/// it changed.
+fn focus(aumid: &str, title: &str, artist: &str, album: &str, back: &mut Back) -> bool {
+    let bring = |hwnd: isize, back: &mut Back| {
+        back.minimized = unsafe { windows::Win32::UI::WindowsAndMessaging::IsIconic(HWND(hwnd as *mut _)) }.as_bool();
+        crate::procs::activate(hwnd)
+    };
     let app = friendly_app(aumid);
     let exes: HashMap<u32, String> = crate::procs::snapshot(false).into_iter().map(|r| (r.0, r.2.to_lowercase())).collect();
     let windows = crate::procs::windows();
     if let Some((_, exe)) = BROWSERS.iter().find(|(name, _)| *name == app) {
         let mine: Vec<&WindowRow> = windows.iter().filter(|w| exes.get(&w.pid).is_some_and(|e| e == exe)).collect();
-        if let Some(hwnd) = select_tab(&mine, title, artist, album) {
-            return crate::procs::activate(hwnd);
+        if let Some((hwnd, was)) = select_tab(&mine, title, artist, album) {
+            back.tab = was;
+            return bring(hwnd, back);
         }
         // No tab matched: the window showing it, else the frontmost one.
         let t = title.to_lowercase();
         let pick = mine.iter().find(|w| !t.is_empty() && w.title.to_lowercase().contains(&t)).or(mine.first());
-        return pick.is_some_and(|w| crate::procs::activate(w.hwnd));
+        return pick.is_some_and(|w| bring(w.hwnd, back));
     }
     // "Spotify.exe", or Spotify from the Store (whose id only names its package).
     let exe = aumid.rsplit(['\\', '/']).next().unwrap_or(aumid).to_lowercase();
     let stem = app.to_lowercase();
     let own = windows.iter().find(|w| exes.get(&w.pid).is_some_and(|e| *e == exe || e.trim_end_matches(".exe") == stem));
     if let Some(w) = own {
-        return crate::procs::activate(w.hwnd);
+        return bring(w.hwnd, back);
     }
     aumid.contains('!') && activate_package(aumid)
 }
 
-/// Switches to the browser tab that's playing and returns its window. Tabs only show
+/// Switches to the browser tab that's playing and returns its window, with the name of the tab that
+/// window was showing before (None: it was showing that one already). Tabs only show
 /// their names to UI Automation, so the playing one is the one named after the title
 /// (Chrome also adds "Audio playing" to it, which breaks ties and finds Netflix's
 /// tabs, which are all just "Netflix").
-fn select_tab(windows: &[&WindowRow], title: &str, artist: &str, album: &str) -> Option<isize> {
+fn select_tab(windows: &[&WindowRow], title: &str, artist: &str, album: &str) -> Option<(isize, Option<String>)> {
     unsafe {
         let a: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
         let is_tab = a.CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(UIA_TabItemControlTypeId.0)).ok()?;
@@ -288,10 +335,45 @@ fn select_tab(windows: &[&WindowRow], title: &str, artist: &str, album: &str) ->
             }
         }
         let (_, hwnd, tab) = best?;
+        let mut was = None;
         if let Ok(pick) = tab.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId) {
+            if !pick.CurrentIsSelected().is_ok_and(|b| b.as_bool()) {
+                was = shown_tab(&a, &is_tab, hwnd);
+            }
             let _ = pick.Select();
         }
-        Some(hwnd)
+        Some((hwnd, was))
+    }
+}
+
+/// The name of the tab a browser window is showing.
+unsafe fn shown_tab(a: &IUIAutomation, is_tab: &IUIAutomationCondition, hwnd: isize) -> Option<String> {
+    let tabs = a.ElementFromHandle(HWND(hwnd as *mut _)).ok()?.FindAll(TreeScope_Descendants, is_tab).ok()?;
+    for i in 0..tabs.Length().unwrap_or(0) {
+        let Ok(tab) = tabs.GetElement(i) else { continue };
+        let Ok(p) = tab.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId) else { continue };
+        if p.CurrentIsSelected().is_ok_and(|b| b.as_bool()) {
+            return tab.CurrentName().ok().map(|b| b.to_string());
+        }
+    }
+    None
+}
+
+/// Shows the tab named `name` in a browser window again.
+fn reselect_tab(hwnd: isize, name: &str) {
+    unsafe {
+        let Ok(a) = CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER) else { return };
+        let Ok(is_tab) = a.CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(UIA_TabItemControlTypeId.0)) else { return };
+        let Ok(tabs) = a.ElementFromHandle(HWND(hwnd as *mut _)).and_then(|r| r.FindAll(TreeScope_Descendants, &is_tab)) else { return };
+        for i in 0..tabs.Length().unwrap_or(0) {
+            let Ok(tab) = tabs.GetElement(i) else { continue };
+            if tab.CurrentName().is_ok_and(|n| n.to_string() == name) {
+                if let Ok(p) = tab.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId) {
+                    let _ = p.Select();
+                }
+                return;
+            }
+        }
     }
 }
 

@@ -2422,7 +2422,7 @@ html[data-pill='glass'] .dk-menu {
 /* Grows from the bar's edge as the pointer passes, its highlight and dot with it (dock.ts riseAt). */
 .dock .dk-app { position: relative; width: 40px; padding: 0; flex: none; transform-origin: 50% 100%; }
 /* The bar's other icons rise in place with them (dock.ts RISE_OTHERS). */
-.dock :is(.dk-winstart, .dk-search, .dk-start, .dk-skip, .dk-tray-ico, .dk-wifi, .dk-sound, .dk-bell) { transform-origin: 50% 100%; }
+.dock :is(.dk-winstart, .dk-search, .dk-start, .dk-music, .dk-skip, .dk-timer, .dk-claude, .dk-tray-ico, .dk-batt, .dk-wifi, .dk-sound, .dk-clock, .dk-bell) { transform-origin: 50% 100%; }
 .dock .dk-app:hover, .dock .dk-app:active { background: transparent; }
 .dock .dk-ico { display: grid; place-items: center; width: 26px; height: 26px; }
 /* Dragging one along the row: the others slide aside for it. */
@@ -2446,14 +2446,13 @@ html[data-pill='glass'] .dk-menu {
 .dock .dk-cover { position: relative; flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; overflow: hidden; background: rgba(var(--ink), 0.1); color: var(--muted); }
 .dock .dk-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .dock .dk-cover .dk-note svg { width: 15px; height: 15px; }
-.dock .dk-cover .dk-pp { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); color: #fff; opacity: 0; transition: opacity 0.14s ease; }
-.dock .dk-cover .dk-pp svg { width: 15px; height: 15px; }
-.dock .dk-music:hover .dk-pp, .dock .dk-music.paused .dk-pp { opacity: 1; }
 .dock .dk-music { padding-right: 6px; }
 /* Now playing's previous and next, either side of the song: small, quiet until pointed at */
 .dock .dk-skip { width: 26px; height: 30px; padding: 0; border-radius: 9px; color: var(--muted); }
 .dock .dk-skip:hover { color: var(--fg); }
 .dock .dk-skip svg { width: 13px; height: 13px; }
+.dock .dk-play { color: var(--fg); }
+.dock .dk-play svg { width: 15px; height: 15px; }
 html.dk-upright .dock .dk-skip { width: 34px; height: 26px; min-height: 26px; padding: 0; }
 /* squeezed off the end so the bar stays on the screen (dock.ts squeezeToFit) */
 .dock .dk-app.dk-cut { display: none; }
@@ -2482,16 +2481,20 @@ html.dk-upright .dock .dk-skip { width: 34px; height: 26px; min-height: 26px; pa
 .dock .dk-mtext span { font: 500 11px/1 var(--font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* the battery: small, a body filled to its charge with the percent beside it */
 .dock .dk-batt { gap: 5px; padding: 0 6px; }
-.dock .dk-batt > span { font: 600 11px/1 var(--font); color: var(--muted); font-variant-numeric: tabular-nums; }
-.dock .dk-bbody { position: relative; display: block; width: 19px; height: 10px; border-radius: 3px; box-shadow: inset 0 0 0 1.4px rgba(var(--ink), 0.5); padding: 2px; box-sizing: border-box; }
-.dock .dk-bbody::after { content: ''; position: absolute; right: -3px; top: 3px; width: 2px; height: 4px; border-radius: 0 1px 1px 0; background: rgba(var(--ink), 0.5); }
-.dock .dk-bfill { display: block; height: 100%; max-width: 100%; border-radius: 1.5px; background: var(--fg); }
-.dock .dk-bbolt { position: absolute; inset: 0; display: none; place-items: center; }
-.dock .dk-bbolt svg { width: 9px; height: 9px; fill: var(--fg); filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.6)); }
-.dock .dk-batt[data-tone='charging'] .dk-bfill { background: #34c759; }
-.dock .dk-batt[data-tone='charging'] .dk-bbolt { display: grid; }
-.dock .dk-batt[data-tone='low'] .dk-bfill { background: #ff453a; }
-.dock .dk-batt[data-tone='low'] > span { color: #ff453a; }
+/* Windows 11's battery (Justin, 11-19): white outline and percent, pale green fill and a bolt while charging. */
+.dock .dk-batt { --bt-fill: var(--fg); --bt-charge: #9fd89f; --bt-low: #ff99a4; }
+html[data-pill='white'] .dock .dk-batt, html[data-pill='matte-white'] .dock .dk-batt { --bt-charge: #0f7b0f; --bt-low: #c42b1c; }
+.dock .dk-batt > span { font: 400 12px/1 var(--font); color: var(--fg); font-variant-numeric: tabular-nums; }
+.dock .dk-bbody { display: block; width: 20px; height: 13.6px; }
+.dock .dk-bbody svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.dock .dk-bline { fill: none; stroke: var(--fg); stroke-width: 1.3; }
+.dock .dk-bnub { fill: var(--fg); }
+.dock .dk-bfill { fill: var(--bt-fill); }
+.dock .dk-bbolt { fill: var(--fg); display: none; }
+.dock .dk-bcut { display: none; }
+.dock .dk-batt[data-tone='charging'] .dk-bfill { fill: var(--bt-charge); }
+.dock .dk-batt[data-tone='charging'] :is(.dk-bbolt, .dk-bcut) { display: inline; }
+.dock .dk-batt[data-tone='low'] .dk-bfill { fill: var(--bt-low); }
 .dock .dk-wifi, .dock .dk-sound { width: 34px; padding: 0; }
 .dock .dk-timer span { font: 600 15px/1 var(--font); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
 .dock .dk-claude { padding: 0 10px; }
@@ -2658,9 +2661,9 @@ html.dk-upright .dock .dk-clock { gap: 3px; }
 html.dk-upright .dock .dk-clock b { font-size: 12.5px; }
 html.dk-upright .dock .dk-clock span { font-size: 10px; }
 /* each icon rises away from the screen's edge */
-html[data-side='top'] .dock :is(.dk-app, .dk-winstart, .dk-search, .dk-start, .dk-skip, .dk-tray-ico, .dk-wifi, .dk-sound, .dk-bell) { transform-origin: 50% 0; }
-html[data-side='left'] .dock :is(.dk-app, .dk-winstart, .dk-search, .dk-start, .dk-skip, .dk-tray-ico, .dk-wifi, .dk-sound, .dk-bell) { transform-origin: 0 50%; }
-html[data-side='right'] .dock :is(.dk-app, .dk-winstart, .dk-search, .dk-start, .dk-skip, .dk-tray-ico, .dk-wifi, .dk-sound, .dk-bell) { transform-origin: 100% 50%; }
+html[data-side='top'] .dock :is(.dk-app, .dk-winstart, .dk-search, .dk-start, .dk-music, .dk-skip, .dk-timer, .dk-claude, .dk-tray-ico, .dk-batt, .dk-wifi, .dk-sound, .dk-clock, .dk-bell) { transform-origin: 50% 0; }
+html[data-side='left'] .dock :is(.dk-app, .dk-winstart, .dk-search, .dk-start, .dk-music, .dk-skip, .dk-timer, .dk-claude, .dk-tray-ico, .dk-batt, .dk-wifi, .dk-sound, .dk-clock, .dk-bell) { transform-origin: 0 50%; }
+html[data-side='right'] .dock :is(.dk-app, .dk-winstart, .dk-search, .dk-start, .dk-music, .dk-skip, .dk-timer, .dk-claude, .dk-tray-ico, .dk-batt, .dk-wifi, .dk-sound, .dk-clock, .dk-bell) { transform-origin: 100% 50%; }
 /* the running dot on the edge side of the icon */
 html[data-side='top'] .dock .dk-dot { bottom: auto; top: 2px; }
 html.dk-upright .dock .dk-dot { bottom: auto; left: 2px; top: 50%; width: 3px; height: 5px; margin: -2.5px 0 0 0; transition: height 0.18s ease, margin 0.18s ease, opacity 0.18s ease; }
