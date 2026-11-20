@@ -28,6 +28,7 @@ const PHRASES: Array<[string, string]> = [
   ['this PC', 'this Mac'],
   ['This PC', 'This Mac'],
   ['the PC', 'the Mac'],
+  [' · taskbar ', ' · Dock '],
 ];
 
 /** A sentence in a Mac's words. */
@@ -49,4 +50,38 @@ export function macCatalog(): void {
   }
 }
 
+/** Words worth a second look: a text without any of them is left alone. */
+const HINT = /Windows|PC\b|Alt\+|Ctrl\+|Snipping| · taskbar /;
+
+/**
+ * The Settings window's own text in a Mac's words, as its pages are drawn (they are built in code,
+ * after this runs): each new text and placeholder goes through macWords once. The island's own
+ * window (where chats and notes are shown) is left as it is.
+ */
+export function macPages(doc: Document): void {
+  const fix = (n: Node): void => {
+    if (n.nodeType === Node.TEXT_NODE) {
+      const t = n.nodeValue ?? '';
+      if (HINT.test(t)) {
+        const m = macWords(t);
+        if (m !== t) n.nodeValue = m;
+      }
+      return;
+    }
+    if (!(n instanceof Element)) return;
+    for (const attr of ['placeholder', 'title', 'aria-label']) {
+      const v = n.getAttribute(attr);
+      if (v && HINT.test(v)) n.setAttribute(attr, macWords(v));
+    }
+    for (const child of Array.from(n.childNodes)) fix(child);
+  };
+  new MutationObserver((list) => {
+    for (const m of list) {
+      if (m.type === 'characterData') fix(m.target);
+      else m.addedNodes.forEach(fix);
+    }
+  }).observe(doc.documentElement, { childList: true, subtree: true, characterData: true });
+}
+
 macCatalog();
+if (typeof document !== 'undefined' && /app\.html$/.test(location.pathname)) macPages(document);
