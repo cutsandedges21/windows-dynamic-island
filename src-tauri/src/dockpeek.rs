@@ -95,8 +95,32 @@ mod imp {
 
     static LIVE: Mutex<Option<Lifted>> = Mutex::new(None);
 
+    /// A window you can see over `of` (its rect): shown, not cloaked (another desktop's, or a Store app's
+    /// hidden frame, which sit at the very top), not minimized, not always on top, and overlapping it.
+    /// Put back under one of those, it is where it was to the eye; under a cloaked one at the top it
+    /// stayed in front (Justin, 11-20: the window stayed open after the pointer left its picture).
+    fn seen_over(x: HWND, of: &RECT) -> bool {
+        use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GetWindowRect, IsIconic, IsWindowVisible, GWL_EXSTYLE, WS_EX_TOPMOST};
+        let ex = unsafe { GetWindowLongPtrW(x, GWL_EXSTYLE) } as u32;
+        if ex & WS_EX_TOPMOST.0 != 0 || !unsafe { IsWindowVisible(x) }.as_bool() || unsafe { IsIconic(x) }.as_bool() {
+            return false;
+        }
+        let mut cloak: u32 = 0;
+        if unsafe { DwmGetWindowAttribute(x, DWMWA_CLOAKED, &mut cloak as *mut u32 as *mut _, 4) }.is_ok() && cloak != 0 {
+            return false;
+        }
+        let mut r = RECT::default();
+        if unsafe { GetWindowRect(x, &mut r) }.is_err() || r.right <= r.left || r.bottom <= r.top {
+            return false;
+        }
+        r.left < of.right && of.left < r.right && r.top < of.bottom && of.top < r.bottom
+    }
+
     fn above(h: HWND) -> Vec<isize> {
-        use windows::Win32::UI::WindowsAndMessaging::{GetWindow, GetWindowLongPtrW, IsWindowVisible, GWL_EXSTYLE, GW_HWNDPREV, WS_EX_TOPMOST};
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindow, GetWindowRect, GW_HWNDPREV};
+        let mut of = RECT::default();
+        let _ = unsafe { GetWindowRect(h, &mut of) };
         let mut out = Vec::new();
         let mut w = unsafe { GetWindow(h, GW_HWNDPREV) }.ok();
         let mut steps = 0;
@@ -105,8 +129,7 @@ mod imp {
             if steps > 2000 || out.len() >= 16 {
                 break;
             }
-            let ex = unsafe { GetWindowLongPtrW(x, GWL_EXSTYLE) } as u32;
-            if ex & WS_EX_TOPMOST.0 == 0 && unsafe { IsWindowVisible(x) }.as_bool() {
+            if seen_over(x, &of) {
                 out.push(x.0 as isize);
             }
             w = unsafe { GetWindow(x, GW_HWNDPREV) }.ok();
@@ -173,6 +196,10 @@ mod imp {
             let want = std::env::var("PEEK").unwrap_or_default().to_lowercase();
             let w = crate::workspaces::layout::list_now().into_iter().find(|w| w.title.to_lowercase().contains(&want)).expect("no such window");
             println!("peek {} ({}) minimized {}", w.title, w.hwnd, unsafe { windows::Win32::UI::WindowsAndMessaging::IsIconic(windows::Win32::Foundation::HWND(w.hwnd as *mut _)) }.as_bool());
+            for o in super::above(windows::Win32::Foundation::HWND(w.hwnd as *mut _)) {
+                let t = crate::workspaces::layout::list_now().into_iter().find(|l| l.hwnd as isize == o).map(|l| l.title).unwrap_or_default();
+                println!("  over it: {o} {t}");
+            }
             println!("on: {}", super::live(Some(w.hwnd as isize), false));
             std::thread::sleep(std::time::Duration::from_millis(2500));
             println!("off: {}", super::live(None, false));
