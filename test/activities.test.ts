@@ -289,6 +289,19 @@ describe('timer', () => {
     ]);
   });
 
+  it('opened on its own (the taskbar), its tile is its card: the dial\'s Start when none runs, the time when one does', async () => {
+    const { act } = await boot(new TimerActivity(), { timerSeconds: 300 });
+    const open = { reason: 'open' as const, now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null };
+    const idle = act.sheet(open)!;
+    expect(idle).toMatchObject({ key: 'tile-card' });
+    const buttons = idle.blocks.find((b) => b.t === 'buttons');
+    expect(buttons?.t === 'buttons' && buttons.items[0]).toMatchObject({ action: 'start-secs', arg: 300 });
+    act.action('start-secs', 300);
+    expect(act.sheet({ ...open, now: Date.now() })).toMatchObject({ key: 'tile-card' });
+    // The hover card is still only for a stopwatch's laps.
+    expect(act.sheet({ ...open, reason: 'hover' })).toBeNull();
+  });
+
   it('a stopwatch laps while running and resets while paused', async () => {
     const { act } = await boot(new TimerActivity());
     const sheetEnv = (reason: 'hover' | 'open' = 'hover') => ({ reason, now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null });

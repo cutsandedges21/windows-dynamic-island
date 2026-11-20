@@ -262,6 +262,13 @@ export class TimerActivity extends BaseActivity {
   /** Pointed at, a stopwatch with laps: its tile's card, then the laps, newest first. */
   sheet(env: SheetEnv): SheetView | null {
     const t = this.t;
+    // Opened on its own (the taskbar's timer): its tile as a card, the dial to start one when none runs.
+    if (env.reason === 'open') {
+      const tile = this.tile(env);
+      if (!tile) return null;
+      const laps: SheetRow[] = t?.mode === 'stopwatch' ? t.laps.map((at, i) => ({ key: `lap${i + 1}`, title: `Lap ${i + 1}`, badge: lapClock(at - (t.laps[i - 1] ?? 0)) })) : [];
+      return { key: 'tile-card', blocks: [...tileCard(tile, 'Timer', 'timer'), ...(laps.length ? [{ t: 'rows' as const, key: 'laps', items: laps.reverse().slice(0, SHOWN_LAPS) }] : [])] };
+    }
     if (env.reason !== 'hover' || t?.mode !== 'stopwatch' || !t.laps.length) return null;
     const tile = this.tile(env);
     if (!tile) return null;

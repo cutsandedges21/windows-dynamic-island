@@ -506,8 +506,16 @@ export class Island {
         border: () => (frameOn(this.settings.island) ? FRAME_W : 0),
         gap: () => (this.dockSplits() ? this.pillWidth : null),
         open: (id) => {
+          // A second tap closes it, as Claude's card (the press already closed it, or it is still open).
+          const c = this.closedCard;
+          if (id && c?.id === id && Date.now() - c.at < RETAP_MS) return;
+          if (id && this.open && this.cardFor === id) return this.dismiss();
           this.view = 'main';
-          if (id && this.running.has(id)) this.pick(id, Date.now());
+          // Its own card (the timer: its Control Center tile, as a card; Justin, 11-19), else Control Center.
+          if (id && this.running.has(id)) {
+            this.pick(id, Date.now());
+            this.cardFor = id;
+          }
           this.open = true;
           this.schedule();
         },
