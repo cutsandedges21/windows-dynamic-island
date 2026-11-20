@@ -724,6 +724,15 @@ mod tests {
         assert_eq!(os_label("Windows 10 Pro", "", "19045", None), "Windows 10 Pro (build 19045)");
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn this_mac_reports_its_basics() {
+        let info = device_info();
+        assert!(info.os.starts_with("macOS"), "{}", info.os);
+        assert!(!info.cpu.is_empty() && info.threads > 0 && info.uptime_secs > 0, "{info:?}");
+    }
+
+    #[cfg(windows)]
     #[test]
     fn this_pc_reports_its_basics() {
         let info = device_info();

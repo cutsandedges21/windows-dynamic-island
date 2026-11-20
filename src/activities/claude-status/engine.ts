@@ -87,7 +87,7 @@ export const DONE_DIM_AFTER = 10 * 60;
 /** Inactive rows (done, failed, idle) leave after this, as if dismissed. */
 const AUTO_DISMISS_AFTER = 20 * 60;
 const WORKFLOW_STALE_MS = 15 * 60_000;
-const SHELL_EXES = new Set(['bash.exe', 'sh.exe', 'zsh.exe', 'cmd.exe', 'powershell.exe', 'pwsh.exe']);
+const SHELL_EXES = new Set(['bash.exe', 'sh.exe', 'zsh.exe', 'cmd.exe', 'powershell.exe', 'pwsh.exe', 'bash', 'sh', 'zsh', 'fish']);
 /** Quicker commands never change the dot. */
 const SHELL_MIN_AGE = 3;
 
@@ -98,17 +98,25 @@ const HOSTS = new Map([
   ['pycharm64.exe', 'PyCharm'], ['webstorm64.exe', 'WebStorm'], ['rider64.exe', 'Rider'], ['clion64.exe', 'CLion'],
   ['goland64.exe', 'GoLand'], ['phpstorm64.exe', 'PhpStorm'], ['studio64.exe', 'Android Studio'], ['mintty.exe', 'Git Bash'],
   ['java.exe', 'Java IDE'], ['javaw.exe', 'Java IDE'],
+  // A Mac (mac/procs.rs names an app and its helpers after the app's bundle).
+  ['terminal.app', 'Terminal'], ['iterm.app', 'iTerm'], ['warp.app', 'Warp'], ['ghostty.app', 'Ghostty'], ['wezterm.app', 'WezTerm'],
+  ['alacritty.app', 'Alacritty'], ['kitty.app', 'kitty'], ['visual studio code.app', 'VS Code'], ['visual studio code - insiders.app', 'VS Code'],
+  ['cursor.app', 'Cursor'], ['windsurf.app', 'Windsurf'], ['zed.app', 'Zed'], ['xcode.app', 'Xcode'], ['intellij idea.app', 'IntelliJ'],
+  ['intellij idea ce.app', 'IntelliJ'], ['pycharm.app', 'PyCharm'], ['pycharm ce.app', 'PyCharm'], ['webstorm.app', 'WebStorm'],
+  ['android studio.app', 'Android Studio'],
 ]);
 const PASS_THROUGH = new Set([
   'python.exe', 'pythonw.exe', 'py.exe', 'bash.exe', 'sh.exe', 'zsh.exe', 'cmd.exe', 'powershell.exe', 'pwsh.exe', 'conhost.exe',
   'openconsole.exe', 'node.exe', 'winpty-agent.exe', 'wsl.exe', 'wslhost.exe', 'uv.exe', 'bun.exe', 'git.exe',
+  // A Mac.
+  'zsh', 'bash', 'sh', 'fish', 'login', 'node', 'bun', 'python3', 'python', 'uv', 'git', 'sudo', 'tmux', 'screen', 'caffeinate', 'env',
 ]);
 
 export function hostOf(ancestors: string[], kind: string): string {
   if (kind === 'bg') return 'Background';
   for (const exe of ancestors) {
-    if (exe === 'claude.exe') return 'Claude App'; // the desktop app's Code tab
-    if (exe === 'explorer.exe') return 'Console';
+    if (exe === 'claude.exe' || exe === 'claude.app') return 'Claude App'; // the desktop app's Code tab
+    if (exe === 'explorer.exe' || exe === 'launchd') return 'Console';
     const h = HOSTS.get(exe);
     if (h) return h;
     if (!PASS_THROUGH.has(exe)) return exe.replace(/\.exe$/, '').replace(/^./, (c) => c.toUpperCase());

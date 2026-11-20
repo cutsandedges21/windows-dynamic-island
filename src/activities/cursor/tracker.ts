@@ -29,6 +29,8 @@ const READS_PER_POLL = 8;
 /** Transcripts past this size aren't read (Island would only show their last lines anyway). */
 const READ_MAX = 4 * 1024 * 1024;
 const CURSOR_EXE = 'cursor.exe';
+/** A Mac: Cursor's processes carry its bundle's name (mac/procs.rs). */
+const CURSOR_APP = 'cursor.app';
 
 /** The events Island's Cursor hooks send (Cursor's own names). */
 export type CursorEvent = 'sessionStart' | 'sessionEnd' | 'beforeSubmitPrompt' | 'afterAgentResponse' | 'stop' | 'beforeShellExecution' | 'beforeMCPExecution';
@@ -156,7 +158,7 @@ export class CursorTracker implements AgentTracker {
     this.probe.load(await native.procSnapshot());
     for (const l of this.live.values()) l.pid = l.candidates.find((pid) => this.isCursor(pid)) ?? l.pid;
     await this.readFiles(now);
-    const cursorRuns = [...this.probe.table.values()].some((p) => p.name.toLowerCase() === CURSOR_EXE);
+    const cursorRuns = [...this.probe.table.values()].some((p) => p.name.toLowerCase() === CURSOR_EXE || p.name.toLowerCase() === CURSOR_APP);
     const sessions: SessionView[] = [];
     const closed: ClosedView[] = [];
     for (const id of new Set([...this.live.keys(), ...this.files.keys()])) {
@@ -276,7 +278,8 @@ export class CursorTracker implements AgentTracker {
 
   /** Is this a Cursor.exe Island knows? */
   isCursor(pid: number): boolean {
-    return (this.probe.processName(pid) ?? '').toLowerCase() === CURSOR_EXE;
+    const name = (this.probe.processName(pid) ?? '').toLowerCase();
+    return name === CURSOR_EXE || name === CURSOR_APP;
   }
 
   /** The Cursor program, for bringing a folder's window up. */

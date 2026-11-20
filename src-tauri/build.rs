@@ -8,7 +8,9 @@ fn main() {
 /// `cargo check` on a fresh clone) an empty file goes in and Island falls back
 /// to looking for island-hook.exe on disk.
 fn embed_hook() {
-    let src = std::path::Path::new("bin").join("island-hook.exe");
+    // A Mac's relay has no .exe (macos.yml builds it into bin/ first).
+    let name = if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") { "island-hook" } else { "island-hook.exe" };
+    let src = std::path::Path::new("bin").join(name);
     println!("cargo:rerun-if-changed={}", src.display());
     let out = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("island-hook.exe");
     let bytes = std::fs::read(&src).unwrap_or_default();

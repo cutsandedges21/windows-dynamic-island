@@ -2555,7 +2555,7 @@ export class Island {
         term: this.settings ? termAllowed(this.settings) : false,
         screen: this.screen,
         folders: this.recentFolders(),
-        power: platform === 'windows',
+        power: platform === 'windows' || platform === 'macos',
       }),
       guarded: () => (['claude', 'codex', 'cursor', 'antigravity'] as const).filter((id) => this.settings?.activities.config[id]?.options.requireHello === true).map((id) => `act:${id}:allow`),
       fromPhone: (item) => this.fromPhone(item),

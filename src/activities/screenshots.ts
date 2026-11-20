@@ -4,6 +4,7 @@
 import type { ActivityStatus, RenderEnv, SheetEnv } from '../core/activity';
 import { agoText, baseName } from '../core/format';
 import { native } from '../core/native';
+import { platform } from '../core/platform';
 import type { Seg, Tone } from '../core/segments';
 import type { SheetButton, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
@@ -69,9 +70,12 @@ export class ScreenshotsActivity extends BaseActivity {
   }
 
   private onChange(e: FsChange): void {
-    if (!e.id.startsWith('shots-') || e.kind !== 'create') return;
+    // A Mac writes a screenshot under a hidden name and then renames it: that rename is the new file.
+    const macRename = platform === 'macos' && e.kind === 'rename';
+    if (!e.id.startsWith('shots-') || (e.kind !== 'create' && !macRename)) return;
     for (const path of e.paths) {
       if (!IMAGE.test(path)) continue;
+      if (platform === 'macos' && /[\\/]\.[^\\/]*$/.test(path)) continue;
       const now = Date.now();
       if (now - (this.seen.get(path) ?? 0) < 3000) continue; // some writers report a create twice
       this.seen.set(path, now);

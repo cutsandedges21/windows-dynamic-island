@@ -3,6 +3,7 @@
 // focus.js; the Win32 calls go through the Rust bridge instead of koffi.
 
 import { native, type WindowRow } from '../../core/native';
+import { platform } from '../../core/platform';
 import { IGNORED_ANCESTOR_NAMES, TERMINAL_WINDOW_OWNERS, type ProcessProbe } from './procinfo';
 import { isUuid, projectName } from './status';
 
@@ -121,6 +122,9 @@ export async function focusSession(session: FocusTarget, probe: ProcessProbe, lo
     }
     return focused;
   }
+
+  // A Mac: the chat's Terminal or iTerm tab, found by the chat's terminal device.
+  if (platform === 'macos') return (await native.macFocusChat(session.pid)) || focused;
 
   // Windows Terminal shows only the active tab's title, so the session's tab
   // may be hidden behind another. Pick it by name (best effort).

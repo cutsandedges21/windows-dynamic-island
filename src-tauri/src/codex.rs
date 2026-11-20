@@ -74,6 +74,17 @@ pub fn find_codex_exe() -> Option<PathBuf> {
         let app_bins = PathBuf::from(local).join("OpenAI").join("Codex").join("bin");
         collect_named(&app_bins, CODEX_BIN, 1, &mut found);
     }
+    // A Mac: where Homebrew and npm put it (an app from the Dock has only the system's PATH), else
+    // the copy inside the Codex app.
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(p) = crate::mac::ai::program(CODEX_BIN) {
+            return Some(p);
+        }
+        if let Some(app) = crate::mac::ai::app_bundle("Codex") {
+            collect_named(&app.join("Contents").join("Resources"), CODEX_BIN, 3, &mut found);
+        }
+    }
     found.into_iter().max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
 }
 
@@ -147,10 +158,28 @@ pub fn codex_resume(session_id: String, cwd: String, prompt: Option<String>, min
     ok
 }
 
+/// A Mac: `codex resume <id> [prompt]` in a new Terminal window, minimized when the reply came from
+/// the island.
 #[cfg(not(windows))]
 #[tauri::command]
-pub fn codex_resume() -> bool {
-    false
+pub async fn codex_resume(session_id: String, cwd: String, prompt: Option<String>, minimized: bool) -> bool {
+    if !crate::claude::is_uuid(&session_id) || !crate::claude::cwd_ok(&cwd) {
+        crate::log::line(format!("codex resume refused id_ok={} cwd_ok={}", crate::claude::is_uuid(&session_id), crate::claude::cwd_ok(&cwd)));
+        return false;
+    }
+    let Some(exe) = find_codex_exe() else {
+        crate::log::line("codex resume: codex not found");
+        return false;
+    };
+    let prompt = prompt.map(|p| crate::claude::clean_prompt(&p)).filter(|p| !p.is_empty());
+    let quiet = minimized || prompt.is_some();
+    let mut argv = vec![exe.to_string_lossy().to_string(), "resume".to_string(), session_id.clone()];
+    if let Some(p) = prompt.clone() {
+        argv.push(p);
+    }
+    let ok = tauri::async_runtime::spawn_blocking(move || crate::mac::claude::run_in_terminal(&cwd, &argv, quiet)).await.unwrap_or(false);
+    crate::log::line(format!("codex resume {session_id} in Terminal prompt={} minimized={quiet} ok={ok}", prompt.is_some()));
+    ok
 }
 
 // ------------------------------------------------------------------ hooks.json

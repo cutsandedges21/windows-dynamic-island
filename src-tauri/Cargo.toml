@@ -69,8 +69,10 @@ windows-core = "0.61"
 [target.'cfg(target_os = "macos")'.dependencies]
 # API keys live in the macOS Keychain.
 keyring = { version = "3", features = ["apple-native"] }
-# sysctl, statfs, localtime_r (src/mac/sys.rs).
+# sysctl, statfs, localtime_r (src/mac/sys.rs), the process table (src/mac/procs.rs).
 libc = "0.2"
+# Cocoa calls (src/mac/cf.rs): the app in front, bringing an app forward. Already in the tree through Tauri.
+objc2 = "0.6"
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.61"

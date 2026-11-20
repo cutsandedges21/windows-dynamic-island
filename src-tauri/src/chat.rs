@@ -639,6 +639,25 @@ mod tests {
         assert_eq!(serde_json::to_value(Backends { claude_code: true, api: false }).unwrap(), json!({ "claudeCode": true, "api": false }));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_child_is_collected_and_a_slow_one_is_stopped_on_a_mac() {
+        let mut quick = Command::new("sh");
+        quick.args(["-c", "echo hello"]);
+        let done = run_hidden(quick, Duration::from_secs(20)).ok().expect("sh should run");
+        assert!(done.status.success());
+        assert!(done.stdout.contains("hello"));
+
+        let mut slow = Command::new("sleep");
+        slow.arg("30");
+        let started = Instant::now();
+        assert!(matches!(run_hidden(slow, Duration::from_millis(400)), Err(RunFailure::Timeout)));
+        assert!(started.elapsed() < Duration::from_secs(10));
+
+        assert!(matches!(run_hidden(Command::new("definitely-not-a-program-island"), Duration::from_secs(1)), Err(RunFailure::Start)));
+    }
+
+    #[cfg(windows)]
     #[test]
     fn a_hidden_child_is_collected_and_a_slow_one_is_stopped() {
         let mut quick = Command::new("cmd");

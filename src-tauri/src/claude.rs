@@ -46,8 +46,15 @@ pub fn config_dir() -> PathBuf {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn hook_exe_path() -> PathBuf {
     crate::log::data_dir().join("bin").join("island-hook.exe")
+}
+
+/// On a Mac the relay has no .exe: ~/Library/Application Support/Island/bin/island-hook.
+#[cfg(target_os = "macos")]
+pub fn hook_exe_path() -> PathBuf {
+    crate::log::data_dir().join("bin").join("island-hook")
 }
 
 fn find_claude_exe() -> Option<PathBuf> {
@@ -60,6 +67,10 @@ fn find_claude_exe() -> Option<PathBuf> {
         }
     }
     let local = home().join(".local").join("bin").join(CLAUDE_BIN);
+    #[cfg(target_os = "macos")]
+    if !local.is_file() {
+        return crate::mac::claude::find_program(CLAUDE_BIN);
+    }
     local.is_file().then_some(local)
 }
 
@@ -94,6 +105,8 @@ pub fn claude_env() -> ClaudeEnv {
                 .join("https_claude.ai_0.indexeddb.blob"),
         );
     }
+    #[cfg(target_os = "macos")]
+    blobs.push(home().join("Library").join("Application Support").join("Claude").join("IndexedDB").join("https_claude.ai_0.indexeddb.blob"));
     let usage_clip = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_default().join("Usage Clip").join("usage-cache.json");
     let hook = hook_exe_path();
     ClaudeEnv {
@@ -120,6 +133,11 @@ pub struct UsageFetch {
 
 /// Claude Code's own OAuth token, re-read on every poll; this app never refreshes it.
 fn read_token() -> Option<String> {
+    // A Mac keeps Claude Code's sign-in in the Keychain; the file is the fallback there too.
+    #[cfg(target_os = "macos")]
+    if let Some(token) = crate::mac::claude::keychain_token() {
+        return Some(token);
+    }
     let bytes = std::fs::read(config_dir().join(".credentials.json")).ok()?;
     let text = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
     let v: Value = serde_json::from_slice(text).ok()?;
@@ -212,7 +230,14 @@ async fn fallback_fetch(token: &str, ua: &str) -> UsageFetch {
             return res;
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let (token, ua) = (token.to_string(), ua.to_string());
+        if let Ok(Some((status, body))) = tauri::async_runtime::spawn_blocking(move || crate::mac::claude::curl_get(USAGE_URL, &token, &ua)).await {
+            return UsageFetch { status, retry_after: None, body, no_token: false };
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     let _ = (token, ua);
     crate::log::line("usage: no way to reach the limits API");
     NO_REPLY
@@ -468,24 +493,52 @@ pub async fn claude_select_wt_tab(title: String) -> Option<isize> {
     .flatten()
 }
 
-// Resuming, typing into a session and picking a terminal tab come to the Mac in part 2.
+// On a Mac: a chat reopens in Terminal (minimized when a reply was sent from the island, as Windows
+// minimizes its console), a reply is typed into the chat's Terminal or iTerm tab, and a tab is
+// picked by its title (mac/claude.rs).
 
 #[cfg(not(windows))]
 #[tauri::command]
-pub fn claude_resume() -> bool {
-    false
+pub async fn claude_resume(session_id: String, cwd: String, prompt: Option<String>, minimized: bool) -> bool {
+    if !is_uuid(&session_id) || !cwd_ok(&cwd) {
+        crate::log::line(format!("resume refused id_ok={} cwd_ok={}", is_uuid(&session_id), cwd_ok(&cwd)));
+        return false;
+    }
+    let prompt = prompt.map(|p| clean_prompt(&p)).filter(|p| !p.is_empty());
+    let exe = find_claude_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| CLAUDE_BIN.to_string());
+    let mut argv = vec![exe, "--resume".to_string(), session_id.clone()];
+    let quiet = minimized || prompt.is_some();
+    if let Some(p) = prompt.clone() {
+        argv.push(p);
+    }
+    let ok = tauri::async_runtime::spawn_blocking(move || crate::mac::claude::run_in_terminal(&cwd, &argv, quiet)).await.unwrap_or(false);
+    crate::log::line(format!("resume {session_id} in Terminal prompt={} minimized={quiet} ok={ok}", prompt.is_some()));
+    ok
 }
 
 #[cfg(not(windows))]
 #[tauri::command]
-pub async fn claude_inject() -> InjectResult {
-    InjectResult { ok: false, error: Some(crate::mac::NOT_YET.into()) }
+pub async fn claude_inject(pid: u32, text: String) -> InjectResult {
+    let text = clean_prompt(&text);
+    if pid == 0 || text.is_empty() {
+        return InjectResult { ok: false, error: Some("nothing to send".into()) };
+    }
+    let r = tauri::async_runtime::spawn_blocking(move || crate::mac::claude::type_into(pid, &text)).await.unwrap_or_else(|e| Err(e.to_string()));
+    crate::log::line(format!("inject pid={pid} ok={} {}", r.is_ok(), r.as_ref().err().cloned().unwrap_or_default()));
+    match r {
+        Ok(()) => InjectResult { ok: true, error: None },
+        Err(e) => InjectResult { ok: false, error: Some(e) },
+    }
 }
 
 #[cfg(not(windows))]
 #[tauri::command]
-pub async fn claude_select_wt_tab() -> Option<isize> {
-    None
+pub async fn claude_select_wt_tab(title: String) -> Option<isize> {
+    let needle = title.trim().to_string();
+    if needle.chars().count() < 3 {
+        return None;
+    }
+    tauri::async_runtime::spawn_blocking(move || crate::mac::claude::select_tab(&needle)).await.ok().flatten()
 }
 
 #[cfg(test)]

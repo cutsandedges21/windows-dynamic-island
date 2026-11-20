@@ -2,6 +2,10 @@
 // are not declared here: lib.rs swaps each one in with a `path` attribute on the
 // Windows module's own `mod` line.
 
+pub mod ai;
+pub mod cf;
+pub mod claude;
+pub mod osa;
 pub mod input;
 pub mod sys;
 

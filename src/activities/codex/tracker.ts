@@ -308,7 +308,9 @@ export class CodexTracker implements AgentTracker {
 
   /** Is this a codex.exe Island knows? */
   isCodex(pid: number): boolean {
-    return (this.probe.processName(pid) ?? '').toLowerCase() === CODEX_EXE;
+    const name = (this.probe.processName(pid) ?? '').toLowerCase();
+    // A Mac's codex has no .exe.
+    return name === CODEX_EXE || name === 'codex';
   }
 }
 

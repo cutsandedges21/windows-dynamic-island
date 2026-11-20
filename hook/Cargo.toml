@@ -13,6 +13,10 @@ path = "src/main.rs"
 [dependencies]
 serde_json = "1"
 
+# A Mac: the socket's peer and the process table (src/unix.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.61"
 features = [

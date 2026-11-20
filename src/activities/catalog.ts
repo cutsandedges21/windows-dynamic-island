@@ -64,7 +64,6 @@ export const CATALOG: ActivityMeta[] = [
     // activity since 2026-11. Its id stays Claude Code's, which phones and the hook pipe know it by;
     // what only Claude Code did are the options under the "Claude Code" heading.
     id: 'claude',
-    mac: 'soon',
     name: 'Claude Status',
     description:
       'Every Claude session at a glance: Claude Code, the Claude app and Chrome, with purple background shells, unread dots and progress bars for long runs. Claude Code chats are answered right in the island: permission prompts, questions and replies, plus your plan limits.',
@@ -128,7 +127,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'codex',
-    mac: 'soon',
     name: 'Codex',
     description: "OpenAI's Codex, the same way as Claude Code: shows up when a chat finishes or needs you, with its commands to allow or deny, replies right in the island, and your plan limits. Works with the Codex app, the command line and the editor extension.",
     icon: 'codex',
@@ -165,7 +163,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'cursor',
-    mac: 'soon',
     name: 'Cursor',
     description: "Cursor's agent, the same way as Claude Code: shows up when a chat finishes, with Cursor's answer and a reply box right in the island (the reply goes in as the chat's next message). Can also ask you here before Cursor runs a command. Install its hooks below.",
     icon: 'cursor',
@@ -207,7 +204,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'antigravity',
-    mac: 'soon',
     name: 'Antigravity',
     description: "Google's Antigravity agent (the app, the IDE and the CLI, on Gemini; it replaced Gemini CLI), the same way as Claude Code: shows up when a chat finishes, with its answer and a reply box right in the island. Can also ask you here before it runs a command. Install its hooks below.",
     icon: 'antigravity',
@@ -406,7 +402,6 @@ export const CATALOG: ActivityMeta[] = [
 
   {
     id: 'battery',
-    mac: 'soon',
     name: 'Battery',
     description: 'Plugging in, unplugging and low battery.',
     icon: 'battery',
@@ -442,7 +437,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'screenshots',
-    mac: 'soon',
     name: 'Screenshots',
     description: 'A new screenshot, with Copy, Open and Edit.',
     icon: 'screenshot',
@@ -479,7 +473,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'devices',
-    mac: 'soon',
     name: 'Devices',
     description: 'USB drives, and the battery of Bluetooth earbuds and headphones.',
     icon: 'usb',
@@ -491,7 +484,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'external',
-    mac: 'soon',
     name: 'Other apps',
     description: 'Activities sent by scripts and other programs through the Island activity API.',
     icon: 'stack',
@@ -503,7 +495,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'system',
-    mac: 'soon',
     name: 'System Stats',
     description: 'CPU, memory and GPU. Quiet until something spikes, unless you keep it on.',
     icon: 'cpu',
@@ -613,7 +604,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'clipboard',
-    mac: 'soon',
     name: 'Clipboard',
     description: 'What you just copied, with Open and clipboard history. Passwords from password managers are skipped.',
     icon: 'clipboard',
@@ -625,7 +615,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'network',
-    mac: 'soon',
     name: 'Network',
     description: 'Connection drops and reconnects; optionally live download and upload speed.',
     icon: 'wifi',
@@ -662,7 +651,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'servers',
-    mac: 'soon',
     name: 'Local Servers',
     description: 'Dev servers listening on localhost (Node, Python, Bun…), with Open in browser.',
     icon: 'server',

@@ -19,11 +19,19 @@
 
 use std::io::{Read, Write};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 
 use serde_json::{json, Value};
 
+#[cfg(windows)]
 mod win;
+// The Mac side (a Unix socket, the kernel's process table) answers to the same names.
+#[cfg(unix)]
+mod unix;
+#[cfg(unix)]
+use unix as win;
 
 /// Budget for getting a pipe connection. Beyond this Claude Code wins, always.
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
@@ -40,6 +48,7 @@ const ASK_BUDGET: Duration = Duration::from_secs(30 * 60);
 /// An ask carries this many buttons at most.
 const MAX_BUTTONS: usize = 3;
 /// ERROR_PIPE_BUSY: every instance is serving someone else; the one error worth retrying.
+#[cfg(windows)]
 const ERROR_PIPE_BUSY: i32 = 231;
 /// Pointless to forward and possibly enormous.
 const DROPPED_FIELDS: &[&str] = &["tool_response", "transcript"];
@@ -55,11 +64,13 @@ fn parse_agent(args: &[String]) -> (String, String) {
     }
 }
 
+#[cfg(windows)]
 fn pipe_path() -> String {
     let key = win::current_user_sid().unwrap_or_else(|| std::env::var("USERNAME").unwrap_or_else(|_| "user".into()));
     format!(r"\\.\pipe\island-{key}")
 }
 
+#[cfg(windows)]
 fn connect() -> Option<std::fs::File> {
     use std::os::windows::io::AsRawHandle;
     let path = pipe_path();
@@ -79,6 +90,11 @@ fn connect() -> Option<std::fs::File> {
             }
         }
     }
+}
+
+#[cfg(unix)]
+fn connect() -> Option<std::os::unix::net::UnixStream> {
+    win::connect(CONNECT_TIMEOUT)
 }
 
 fn main() {

@@ -916,6 +916,12 @@ pub fn known_folders() -> serde_json::Value {
             screenshots.push(p.to_string_lossy().to_string());
         }
     }
+    #[cfg(target_os = "macos")]
+    if let Some(dir) = mac_screenshot_folder(&home) {
+        if !screenshots.contains(&dir) {
+            screenshots.push(dir);
+        }
+    }
     serde_json::json!({
         "home": home,
         "downloads": Path::new(&home).join("Downloads").to_string_lossy(),
@@ -926,6 +932,24 @@ pub fn known_folders() -> serde_json::Value {
         "localAppData": std::env::var("LOCALAPPDATA").unwrap_or_default(),
         // Island's own folder (log, relay, models) on either system.
         "islandData": crate::log::data_dir().to_string_lossy(),
+    })
+}
+
+/// Where a Mac saves screenshots: the folder set in the screenshot toolbar's Options
+/// (`defaults read com.apple.screencapture location`), else the Desktop.
+#[cfg(target_os = "macos")]
+fn mac_screenshot_folder(home: &str) -> Option<String> {
+    let set = std::process::Command::new("/usr/bin/defaults")
+        .args(["read", "com.apple.screencapture", "location"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(|s| if let Some(rest) = s.strip_prefix('~') { format!("{home}{rest}") } else { s });
+    set.filter(|s| Path::new(s).is_dir()).or_else(|| {
+        let desktop = Path::new(home).join("Desktop");
+        desktop.is_dir().then(|| desktop.to_string_lossy().to_string())
     })
 }
 

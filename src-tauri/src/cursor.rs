@@ -36,7 +36,14 @@ pub fn hooks_path() -> PathBuf {
     cursor_home().join("hooks.json")
 }
 
+/// A Mac: the Cursor app bundle.
+#[cfg(target_os = "macos")]
+pub fn find_cursor_exe() -> Option<PathBuf> {
+    crate::mac::ai::app_bundle("Cursor")
+}
+
 /// Cursor.exe: the per-user install, else a machine-wide one, else the one whose `cursor` command is on PATH.
+#[cfg(not(target_os = "macos"))]
 pub fn find_cursor_exe() -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
@@ -97,7 +104,11 @@ pub fn cursor_open(folder: String) -> bool {
         crate::log::line("cursor open: Cursor.exe not found");
         return false;
     };
-    // Cursor.exe hands the folder to the Cursor that runs, which brings that window up.
+    // Cursor.exe hands the folder to the Cursor that runs, which brings that window up (a Mac: the
+    // app is opened with the folder, the same way).
+    #[cfg(target_os = "macos")]
+    let ok = crate::mac::ai::open_app(&exe, &[&folder]);
+    #[cfg(not(target_os = "macos"))]
     let ok = Command::new(&exe).arg(&folder).env_remove("ELECTRON_RUN_AS_NODE").spawn().is_ok();
     crate::log::line(format!("cursor open ok={ok}"));
     ok
@@ -147,6 +158,7 @@ pub fn cursor_transcripts(max_age_ms: f64) -> Vec<CursorTranscript> {
 /// Cursor names a project's folder after its path with every separator a dash
 /// ("c-Users-me-my-app"), so a dash may also be part of a name: the folder is found by
 /// walking down from the drive, taking the longest run of parts that exists at each step.
+#[cfg(not(target_os = "macos"))]
 fn slug_folder(slug: &str) -> Option<String> {
     let (drive, rest) = slug.split_once('-')?;
     if drive.len() != 1 || !drive.chars().all(|c| c.is_ascii_alphabetic()) {
@@ -154,6 +166,25 @@ fn slug_folder(slug: &str) -> Option<String> {
     }
     let parts: Vec<&str> = rest.split('-').collect();
     let mut at = PathBuf::from(format!("{}:\\", drive.to_ascii_uppercase()));
+    let mut i = 0;
+    while i < parts.len() {
+        let next = (i + 1..=parts.len()).rev().find_map(|j| {
+            ["-", " ", "."].iter().map(|sep| at.join(parts[i..j].join(sep))).find(|p| p.is_dir()).map(|p| (j, p))
+        })?;
+        i = next.0;
+        at = next.1;
+    }
+    Some(at.to_string_lossy().to_string())
+}
+
+/// The same on a Mac, where a path starts at / and the slug leaves it out ("Users-me-my-app").
+#[cfg(target_os = "macos")]
+fn slug_folder(slug: &str) -> Option<String> {
+    let parts: Vec<&str> = slug.split('-').filter(|p| !p.is_empty()).collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let mut at = PathBuf::from("/");
     let mut i = 0;
     while i < parts.len() {
         let next = (i + 1..=parts.len()).rev().find_map(|j| {
@@ -469,7 +500,13 @@ mod tests {
         let root = std::env::temp_dir().join(format!("island-slug-{}", std::process::id()));
         let deep = root.join("my-app").join("web site");
         std::fs::create_dir_all(&deep).unwrap();
-        let s = root.to_string_lossy().replace(":\\", "-").replace(['\\', ' '], "-");
+        let s = if cfg!(target_os = "macos") {
+            // /var/folders/… is var-folders-…; the temp folder is a link there (/var → /private/var).
+            root.canonicalize().unwrap().to_string_lossy().trim_start_matches('/').replace(['/', ' '], "-")
+        } else {
+            root.to_string_lossy().replace(":\\", "-").replace(['\\', ' '], "-")
+        };
+        let deep = if cfg!(target_os = "macos") { deep.canonicalize().unwrap() } else { deep };
         let slug = format!("{s}-my-app-web-site");
         assert_eq!(slug_folder(&slug).map(|p| p.to_lowercase()), Some(deep.to_string_lossy().to_lowercase()));
         assert_eq!(slug_folder("empty-window"), None);

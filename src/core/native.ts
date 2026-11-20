@@ -976,6 +976,8 @@ export const native = {
     call<boolean>('claude_resume', { sessionId, cwd, prompt, minimized }, false),
   claudeInject: (pid: number, text: string) => call<{ ok: boolean; error: string | null }>('claude_inject', { pid, text }, { ok: false, error: 'not available' }),
   selectTerminalTab: (title: string) => call<number | null>('claude_select_wt_tab', { title }, null),
+  /** A Mac: brings up the Terminal or iTerm tab a CLI chat runs in, found by its terminal device. */
+  macFocusChat: (pid: number) => call<boolean>('mac_focus_chat', { pid }, false),
   // Claude Status (claude_status.rs, fsx.rs): what the Claude Sessions widget read with Python and PowerShell.
   transcriptWork: (path: string, offset: number, open: string[]) => call<WorkScan | null>('claude_transcript_work', { path, offset, open }, null),
   claudeWorkflows: (projectsDir: string, sessions: string[], staleMs: number) =>

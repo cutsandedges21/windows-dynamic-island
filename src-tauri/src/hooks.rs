@@ -300,6 +300,13 @@ pub(crate) fn save_settings_at(path: &Path, next: &Value, what: &str) -> Result<
 /// The hook relay built into Island.exe (see build.rs); empty in a build made without it.
 const EMBEDDED_HOOK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/island-hook.exe"));
 
+/// The relay built into this Island (empty in a build made without it); a Mac writes it out itself
+/// (mac/pipe.rs), with the execute bit.
+#[cfg(target_os = "macos")]
+pub(crate) fn embedded_hook() -> &'static [u8] {
+    EMBEDDED_HOOK
+}
+
 /// Writes the embedded relay to `dest` unless it is already there. False when
 /// this build carries none or the write failed.
 pub(crate) fn write_embedded_hook(dest: &Path) -> bool {

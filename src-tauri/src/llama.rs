@@ -1089,6 +1089,7 @@ mod tests {
         stop().await;
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_zip_unpacks_with_windows_tar() {
         let dir = temp_dir("zip");

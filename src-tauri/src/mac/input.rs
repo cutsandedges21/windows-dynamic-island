@@ -17,6 +17,15 @@ extern "C" {
     fn CGEventSourceCounterForEventType(state: i32, event_type: u32) -> u32;
 }
 
+const SHIFT_MASK: u64 = 1 << 17; // kCGEventFlagMaskShift
+const OPTION_MASK: u64 = 1 << 19; // kCGEventFlagMaskAlternate
+const COMMAND_MASK: u64 = 1 << 20; // kCGEventFlagMaskCommand
+
+/// Shift, Control, Option or Command held down (what Windows checks as Shift, Ctrl, Alt, Win).
+pub fn modifiers_down() -> bool {
+    unsafe { CGEventSourceFlagsState(COMBINED_SESSION) & (SHIFT_MASK | CONTROL_MASK | OPTION_MASK | COMMAND_MASK) != 0 }
+}
+
 pub fn control_down() -> bool {
     unsafe { CGEventSourceFlagsState(COMBINED_SESSION) & CONTROL_MASK != 0 }
 }

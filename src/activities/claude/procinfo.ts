@@ -5,7 +5,7 @@
 import type { ProcRow } from '../../core/native';
 
 const IGNORED_CHILD_NAMES = new Set(['conhost.exe']);
-export const IGNORED_ANCESTOR_NAMES = new Set(['explorer.exe']);
+export const IGNORED_ANCESTOR_NAMES = new Set(['explorer.exe', 'launchd']);
 const HELPER_WINDOW_MS = 10000;
 const MAX_ANCESTOR_DEPTH = 15;
 const TICK_TOLERANCE_MS = 10000;
@@ -16,6 +16,12 @@ export const EDITOR_HOSTS = new Map([
   ['codium.exe', 'VSCodium'],
   ['cursor.exe', 'Cursor'],
   ['windsurf.exe', 'Windsurf'],
+  // A Mac (mac/procs.rs names an app and its helpers after the app's bundle).
+  ['visual studio code.app', 'VS Code'],
+  ['visual studio code - insiders.app', 'VS Code Insiders'],
+  ['vscodium.app', 'VSCodium'],
+  ['cursor.app', 'Cursor'],
+  ['windsurf.app', 'Windsurf'],
 ]);
 export const TERMINAL_HOSTS = new Map([
   ['windowsterminal.exe', 'Terminal'],
@@ -27,12 +33,27 @@ export const TERMINAL_HOSTS = new Map([
   ['warp.exe', 'Warp'],
   ['tabby.exe', 'Tabby'],
   ['mintty.exe', 'Terminal'],
+  // A Mac.
+  ['terminal.app', 'Terminal'],
+  ['iterm.app', 'iTerm'],
+  ['warp.app', 'Warp'],
+  ['ghostty.app', 'Ghostty'],
+  ['wezterm.app', 'WezTerm'],
+  ['alacritty.app', 'Alacritty'],
+  ['kitty.app', 'kitty'],
+  ['hyper.app', 'Hyper'],
+  ['tabby.app', 'Tabby'],
 ]);
 const SHELL_HOSTS = new Map([
   ['pwsh.exe', 'PowerShell'],
   ['powershell.exe', 'PowerShell'],
   ['cmd.exe', 'Command Prompt'],
   ['bash.exe', 'Git Bash'],
+  // A Mac.
+  ['zsh', 'zsh'],
+  ['bash', 'bash'],
+  ['fish', 'fish'],
+  ['sh', 'sh'],
 ]);
 const CONSOLE_HOST_NAMES = new Set(['conhost.exe', 'openconsole.exe']);
 export const TERMINAL_WINDOW_OWNERS = new Set([...TERMINAL_HOSTS.keys(), ...CONSOLE_HOST_NAMES]);

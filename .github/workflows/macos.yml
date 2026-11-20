@@ -19,8 +19,8 @@ jobs:
       - run: mkdir -p dist && echo '<!doctype html>' > dist/index.html
       - run: cargo check -p island --lib --locked
 
-  # Every native test on a Mac, the Mac twins' own included; the self-update one does it for real (a
-  # disk image made with hdiutil replaces a test Island.app).
+  # Every native test on a Mac, the Mac twins' own and the hook relay's included; the self-update one
+  # does it for real (a disk image made with hdiutil replaces a test Island.app).
   update-test:
     runs-on: macos-latest
     steps:
@@ -29,6 +29,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: mkdir -p dist && echo '<!doctype html>' > dist/index.html
       - run: cargo test -p island --lib --locked
+      - run: cargo test -p island-hook --locked
 
   build:
     needs: check
@@ -48,18 +49,43 @@ jobs:
       - run: npm run build:web
         env:
           ISLAND_MAC: '1'
+      # The hook relay the AIs run (hook/), for both kinds of Mac, built into Island (build.rs puts
+      # it in; Island writes it to ~/Library/Application Support/Island/bin on start).
+      - name: Hook relay
+        run: |
+          cargo build -p island-hook --release --locked --target aarch64-apple-darwin
+          cargo build -p island-hook --release --locked --target x86_64-apple-darwin
+          mkdir -p src-tauri/bin
+          lipo -create -output src-tauri/bin/island-hook target/aarch64-apple-darwin/release/island-hook target/x86_64-apple-darwin/release/island-hook
+          codesign --force -s - src-tauri/bin/island-hook
+          file src-tauri/bin/island-hook
       - run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+      # Island starts, the relay reaches it: Claude Code's events go over the socket exactly as
+      # Claude Code sends them, and a permission prompt waits in the island (seen in shot.png).
       - name: Smoke test
         run: |
           APP="target/universal-apple-darwin/release/bundle/macos/Island.app"
           "$APP/Contents/MacOS/island" > run.log 2>&1 &
           PID=$!
           sleep 25
+          HOOK="$HOME/Library/Application Support/Island/bin/island-hook"
+          ls -la "$HOOK" || true
+          SID=11111111-2222-4333-8444-555555555555
+          printf '{"session_id":"%s","hook_event_name":"UserPromptSubmit","prompt":"run the tests","cwd":"%s"}' "$SID" "$PWD" | "$HOOK" UserPromptSubmit || true
+          printf '{"session_id":"%s","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"npm test","description":"Run the tests"},"cwd":"%s"}' "$SID" "$PWD" | "$HOOK" PermissionRequest > perm.out 2>&1 &
+          sleep 5
           screencapture -x shot.png || echo "screencapture failed"
+          printf '{"id":"ci","title":"Hello from CI","text":"The activity API works","ms":8000}' | "$HOOK" activity || true
+          sleep 2
+          screencapture -x shot-activity.png || echo "screencapture failed"
           kill $PID || true
+          sleep 1
           cp "$HOME/Library/Application Support/Island/island.log" island.log || true
           cat island.log || true
           grep -q "island ready" island.log
+          grep -q "hook socket listening" island.log
+          grep -q "hook claude UserPromptSubmit" island.log
+          grep -q "hook claude PermissionRequest" island.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -67,5 +93,6 @@ jobs:
           path: |
             target/universal-apple-darwin/release/bundle/dmg/*.dmg
             shot.png
+            shot-activity.png
             island.log
             run.log

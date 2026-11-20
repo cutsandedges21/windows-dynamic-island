@@ -21,9 +21,12 @@ const HOOK_IDLE_MS = 30 * 60_000;
 const READS_PER_POLL = 8;
 const READ_MAX = 8 * 1024 * 1024;
 /** The processes that run Antigravity's agent: its language server (app, IDE) and the CLI. */
-const AGENT_NAMES = new Set(['language_server.exe', 'language_server_windows_x64.exe', 'agy.exe']);
+const AGENT_NAMES = new Set(['language_server.exe', 'language_server_windows_x64.exe', 'agy.exe', 'language_server_macos_arm', 'language_server_macos_x64', 'language_server_macos', 'agy']);
 const APP = 'antigravity.exe';
 const IDE = 'antigravity ide.exe';
+/** A Mac: the app and the IDE carry their bundles' names (mac/procs.rs). */
+const MAC_APP = 'antigravity.app';
+const MAC_IDE = 'antigravity ide.app';
 
 /** The events Island's Antigravity hooks send (Antigravity's names; the relay adds hook_event_name). */
 export type AgEvent = 'SessionStart' | 'PreInvocation' | 'PostToolUse' | 'PreToolUse' | 'Stop';
@@ -228,9 +231,9 @@ export class AntigravityTracker implements AgentTracker {
   private place(pid: number, product: Product | null): { host: string; hostKind: string; product: Product } {
     if (pid > 0 && this.probe.table.has(pid)) {
       const names = [this.probe.processName(pid) ?? '', ...this.probe.ancestors(pid).map((a) => a.name)].map((n) => n.toLowerCase());
-      if (names.includes(IDE)) return { host: 'Antigravity IDE', hostKind: 'editor', product: 'ide' };
-      if (names.includes(APP)) return { host: 'Antigravity', hostKind: 'app', product: 'app' };
-      if (names[0] === 'agy.exe') {
+      if (names.includes(IDE) || names.includes(MAC_IDE)) return { host: 'Antigravity IDE', hostKind: 'editor', product: 'ide' };
+      if (names.includes(APP) || names.includes(MAC_APP)) return { host: 'Antigravity', hostKind: 'app', product: 'app' };
+      if (names[0] === 'agy.exe' || names[0] === 'agy') {
         const cls = classifyAncestry(names.slice(1));
         return { host: cls.host ?? 'Terminal', hostKind: cls.hostKind ?? 'terminal', product: 'cli' };
       }

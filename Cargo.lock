@@ -2919,6 +2919,7 @@ dependencies = [
  "keyring",
  "libc",
  "notify",
+ "objc2",
  "png 0.17.16",
  "portable-pty",
  "qrcode",
@@ -2946,6 +2947,7 @@ dependencies = [
 name = "island-hook"
 version = "0.4.5"
 dependencies = [
+ "libc",
  "serde_json",
  "windows 0.61.3",
 ]

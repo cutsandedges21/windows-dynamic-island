@@ -264,6 +264,8 @@ pub fn run() {
             claude::claude_resume,
             claude::claude_inject,
             claude::claude_select_wt_tab,
+            #[cfg(target_os = "macos")]
+            mac::claude::mac_focus_chat,
             claude_status::claude_status_cmdlines,
             claude_status::claude_status_notifications,
             claude_status::claude_status_ui_scan,

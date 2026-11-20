@@ -3,6 +3,7 @@
 import type { ActivityStatus, RenderEnv, SheetEnv } from '../core/activity';
 import { clip } from '../core/format';
 import { native, type AudioState, type BtBattery, type DeviceEvent } from '../core/native';
+import { platform } from '../core/platform';
 import type { Seg } from '../core/segments';
 import type { SheetRow, Tile } from '../core/sheet';
 import { BaseActivity } from './base';
@@ -173,7 +174,7 @@ export class DevicesActivity extends BaseActivity {
     const ev = this.m?.ev;
     const drive = typeof arg === 'string' ? (this.drives.has(arg.toUpperCase()) ? arg : null) : ev?.action === 'arrived' ? ev.drive : null;
     if (!drive || !/^[A-Za-z]:$/.test(drive)) return;
-    void native.open(`${drive}\\`);
+    void native.open(platform === 'macos' ? `/Volumes/${drive}` : `${drive}\\`);
     this.m = null;
     this.ctx.close();
     this.ctx.update();

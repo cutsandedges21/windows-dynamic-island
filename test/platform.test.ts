@@ -15,7 +15,8 @@ describe('platform', () => {
   it('a Mac runs the OS-free activities and labels the rest', () => {
     for (const id of ['timer', 'weather', 'calendar', 'downloads', 'local', 'github', 'notion']) expect(availableHere(id, 'macos')).toBe(true);
     expect(unavailableReason('music', 'macos')).toBe('Coming to Mac');
-    expect(unavailableReason('claude', 'macos')).toBe('Coming to Mac');
+    // The AIs run on a Mac through its own hook relay (src-tauri/src/mac/pipe.rs).
+    for (const id of ['claude', 'codex', 'cursor', 'antigravity', 'external']) expect(availableHere(id, 'macos'), id).toBe(true);
     expect(unavailableReason('game', 'macos')).toBe('Windows only');
   });
 

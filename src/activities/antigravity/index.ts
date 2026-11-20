@@ -20,7 +20,7 @@ import { AntigravityTracker, type AgHook } from './tracker';
 import { chatMessages, folderOf, parseSteps } from './transcript';
 
 /** The windows a conversation can be brought up in, by product. */
-const WINDOW_EXES: Record<string, string[]> = { app: ['antigravity.exe'], ide: ['antigravity ide.exe'], cli: [] };
+const WINDOW_EXES: Record<string, string[]> = { app: ['antigravity.exe', 'antigravity.app'], ide: ['antigravity ide.exe', 'antigravity ide.app'], cli: [] };
 
 export class AntigravityActivity extends AgentActivity {
   readonly brand: AgentBrand = { id: 'antigravity', name: 'Antigravity', product: 'Antigravity', icon: 'antigravity', tone: 'antigravity', moments: { asks: 'claude-asks', done: 'claude-done', error: 'claude-error' } };

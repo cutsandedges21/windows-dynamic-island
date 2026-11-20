@@ -47,15 +47,34 @@ fn local_programs(rel: &[&str]) -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn app_exe() -> Option<PathBuf> {
     local_programs(&["Antigravity", "Antigravity.exe"])
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn ide_exe() -> Option<PathBuf> {
     local_programs(&["Antigravity IDE", "Antigravity IDE.exe"])
 }
 
+/// A Mac: the app and the IDE are app bundles, the CLI (`agy`) a tool on the usual paths.
+#[cfg(target_os = "macos")]
+pub fn app_exe() -> Option<PathBuf> {
+    crate::mac::ai::app_bundle("Antigravity")
+}
+
+#[cfg(target_os = "macos")]
+pub fn ide_exe() -> Option<PathBuf> {
+    crate::mac::ai::app_bundle("Antigravity IDE")
+}
+
+#[cfg(target_os = "macos")]
+pub fn cli_exe() -> Option<PathBuf> {
+    crate::mac::ai::program("agy")
+}
+
 /// agy.exe: where its installer puts it, else on PATH.
+#[cfg(not(target_os = "macos"))]
 pub fn cli_exe() -> Option<PathBuf> {
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
         let p = PathBuf::from(local).join("agy").join("bin").join("agy.exe");
@@ -129,11 +148,19 @@ pub fn antigravity_open(product: String, folder: String) -> bool {
         _ => app_exe(),
     };
     let Some(exe) = exe else { return false };
-    let mut cmd = Command::new(&exe);
-    if product == "ide" && crate::claude::cwd_ok(&folder) {
-        cmd.arg(&folder);
-    }
-    let ok = cmd.env_remove("ELECTRON_RUN_AS_NODE").spawn().is_ok();
+    #[cfg(target_os = "macos")]
+    let ok = {
+        let args: Vec<&str> = if product == "ide" && crate::claude::cwd_ok(&folder) { vec![folder.as_str()] } else { Vec::new() };
+        crate::mac::ai::open_app(&exe, &args)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let ok = {
+        let mut cmd = Command::new(&exe);
+        if product == "ide" && crate::claude::cwd_ok(&folder) {
+            cmd.arg(&folder);
+        }
+        cmd.env_remove("ELECTRON_RUN_AS_NODE").spawn().is_ok()
+    };
     crate::log::line(format!("antigravity open {product} ok={ok}"));
     ok
 }
@@ -398,7 +425,7 @@ mod tests {
         assert_eq!(after["my-linter"], existing["my-linter"]);
         assert_eq!(after["island"]["enabled"], true);
         assert_eq!(after["island"]["Stop"][0]["timeout"], 300);
-        assert!(after["island"]["Stop"][0]["command"].as_str().unwrap().starts_with(r"C:\Island\bin\island-hook.exe antigravity Stop"));
+        assert!(after["island"]["Stop"][0]["command"].as_str().unwrap().starts_with(r"C:\Island\bin\island-hook.exe antigravity Stop") || !cfg!(windows));
         assert!(after["island"].get("PreToolUse").is_none(), "no command hook unless asked for");
         assert_eq!(merged(&after, exe, false), after, "installing twice changes nothing");
         assert_eq!(without_ours(&after), existing);
