@@ -2832,9 +2832,10 @@ export class Island {
   }
 
   /** The timer running, for the taskbar: the first one's time left. */
-  private dockTimer(): string | null {
+  /** The timer's time on the taskbar while one runs; '' otherwise (the taskbar shows its icon alone). */
+  private dockTimer(): string {
     const st = this.running.get('timer')?.status();
-    return st?.active && st.summary ? (st.summary.match(/\d+:\d{2}(:\d{2})?/)?.[0] ?? null) : null;
+    return st?.active && st.summary ? (st.summary.match(/\d+:\d{2}(:\d{2})?/)?.[0] ?? '') : '';
   }
 
   /** The first running activity with a strip to show over a full-screen app. */

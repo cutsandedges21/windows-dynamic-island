@@ -2437,9 +2437,12 @@ export async function runDock(stage: HTMLElement): Promise<void> {
         musicPP.innerHTML = SVG[pp];
       }
     }
-    const t = off.has('timer') ? null : f.timer;
-    want.timer = Boolean(t);
+    // On the bar whenever it is turned on: its time while one runs, else just its icon, which opens the
+    // timer to start one (Justin, 11-19: turned on, it never showed).
+    const t = off.has('timer') ? null : (f.timer ?? '');
+    want.timer = t !== null;
     timerText.textContent = t ?? '';
+    timerText.hidden = !t;
     // Claude's limits: 42% | 18% (the session's, the week's).
     const c = off.has('claude') ? null : f.claude;
     want.claude = Boolean(c);
