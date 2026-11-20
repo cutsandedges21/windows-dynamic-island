@@ -116,6 +116,15 @@ mod imp {
                     return true;
                 }
                 *on = h;
+                // The peek fades every window but the one shown, the taskbar too (Justin, 11-20), unless
+                // it is marked out of it, as Explorer marks its own.
+                if let Some(d) = dock {
+                    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_EXCLUDED_FROM_PEEK};
+                    let yes = windows::core::BOOL::from(true);
+                    unsafe {
+                        let _ = DwmSetWindowAttribute(HWND(d as *mut _), DWMWA_EXCLUDED_FROM_PEEK, &yes as *const _ as *const _, std::mem::size_of_val(&yes) as u32);
+                    }
+                }
                 unsafe { f(1, h, dock.unwrap_or(0), 1, 0) >= 0 }
             }
             _ => {
@@ -137,7 +146,15 @@ mod imp {
             let want = std::env::var("PEEK").unwrap_or_default().to_lowercase();
             let w = crate::workspaces::layout::list_now().into_iter().find(|w| w.title.to_lowercase().contains(&want)).expect("no such window");
             println!("peek {} ({})", w.title, w.hwnd);
-            println!("on: {}", super::live(None, Some(w.hwnd as isize)));
+            // DOCK=1: the running Island's taskbar kept out of it.
+            let dock = if std::env::var("DOCK").is_ok() {
+                let name: Vec<u16> = "Island taskbar\0".encode_utf16().collect();
+                unsafe { windows::Win32::UI::WindowsAndMessaging::FindWindowW(None, windows::core::PCWSTR(name.as_ptr())) }.ok().map(|h| h.0 as isize)
+            } else {
+                None
+            };
+            println!("dock {dock:?}");
+            println!("on: {}", super::live(dock, Some(w.hwnd as isize)));
             std::thread::sleep(std::time::Duration::from_millis(2500));
             println!("off: {}", super::live(None, None));
         }
