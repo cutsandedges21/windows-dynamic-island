@@ -106,6 +106,21 @@ pub fn tip_key(tip: &str) -> String {
     no_digits.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Whether an icon is on Windows' taskbar by its tip's key (`tip_key`), given the key it had when last
+/// found there (`was`) and the keys Windows' taskbar shows (`shown`, None when they can't be read): on it
+/// by its tip, or by its last one while Windows still shows that (the app sent it again with another tip
+/// or none); not on it when its tip is known and neither is shown; None when only the settings can say.
+pub fn shown_by_tip(key: &str, was: Option<&str>, shown: Option<&[String]>) -> Option<bool> {
+    let list = shown?;
+    if !key.is_empty() && list.iter().any(|k| k == key) {
+        return Some(true);
+    }
+    if was.is_some_and(|t| list.iter().any(|k| k == t)) {
+        return Some(true);
+    }
+    if key.is_empty() { None } else { Some(false) }
+}
+
 /// What Explorer sends an app's callback for a click, by the version the app asked for:
 /// version 4 gets (MAKEWPARAM(x, y), MAKELPARAM(msg, id)), older ones (id, msg).
 pub fn callback_params(version: u32, uid: u32, msg: u32, x: i32, y: i32) -> (usize, isize) {
@@ -139,7 +154,7 @@ mod imp {
         SWP_NOACTIVATE, WM_CLOSE, WM_COMMAND, WM_COPYDATA, WM_DESTROY, WM_TIMER, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
 
-    use super::{callback_params, is_pinned, key_of, tip_key, IconSetting, TrayIcon};
+    use super::{callback_params, is_pinned, key_of, shown_by_tip, tip_key, IconSetting, TrayIcon};
 
     const NIM_ADD: u32 = 0;
     const NIM_MODIFY: u32 = 1;
@@ -229,13 +244,32 @@ mod imp {
         }
     }
 
-    /// Whether an icon is on the bar: as Windows' taskbar shows it, else as its settings say.
+    /// Each icon's (program and number, or GUID) tip_key when last found on Windows' taskbar, kept while
+    /// Island runs: an app sends its icon again when the tray icons are turned back on, for a while with
+    /// another tip (or none) than the one Windows' taskbar still shows for it (Justin, 11-19: the usage
+    /// widget's session icon was gone for 15 s after turning Tray icons off and on).
+    static KNOWN: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+    fn ident(i: &Item) -> String {
+        match i.guid.filter(|g| g.iter().any(|b| *b != 0)) {
+            Some(g) => g.iter().map(|b| format!("{b:02x}")).collect(),
+            None => format!("{}|{}", i.exe.rsplit(['\\', '/']).next().unwrap_or(&i.exe).to_lowercase(), i.uid),
+        }
+    }
+
+    /// Whether an icon is on the bar: as Windows' taskbar shows it (by its tip, or by the tip it had when
+    /// last found there while Windows still shows that one), else as its settings say.
     fn pinned(i: &Item, shown: &Option<Vec<String>>, settings: &[IconSetting]) -> bool {
         let key = tip_key(&i.tip);
-        match shown {
-            Some(list) if !key.is_empty() => list.contains(&key),
-            _ => is_pinned(&i.exe, i.uid, i.guid, settings),
+        let id = ident(i);
+        let mut known = KNOWN.lock().unwrap();
+        let was = known.iter().find(|(k, _)| *k == id).map(|(_, t)| t.clone());
+        let by_tip = shown_by_tip(&key, was.as_deref(), shown.as_deref());
+        if by_tip == Some(true) && !key.is_empty() && shown.as_ref().is_some_and(|l| l.contains(&key)) && was.as_deref() != Some(key.as_str()) {
+            known.retain(|(k, _)| *k != id);
+            known.push((id, key));
         }
+        by_tip.unwrap_or_else(|| is_pinned(&i.exe, i.uid, i.guid, settings))
     }
 
     /// HKCU\Control Panel\NotifyIconSettings: Windows' note on each icon it has seen.
@@ -610,7 +644,7 @@ mod imp {
                     *SHOWN.lock().unwrap() = now;
                     std::thread::sleep(Duration::from_secs(2));
                 }
-                *SHOWN.lock().unwrap() = None;
+                // Kept for the next start: until it is read again, the last list is nearer than the settings.
             });
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -700,6 +734,23 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::{callback_params, is_pinned, key_of, tip_key, IconSetting};
+
+    #[test]
+    fn an_icon_sent_again_with_another_tip_stays_where_windows_still_shows_it() {
+        use super::shown_by_tip;
+        let shown = vec!["island".to_string(), "session: %".to_string(), "weekly: %".to_string()];
+        // Found by its own tip.
+        assert_eq!(shown_by_tip("weekly: %", None, Some(&shown)), Some(true));
+        // Sent again with another tip (or none): Windows still shows the one it had.
+        assert_eq!(shown_by_tip("claude usage", Some("session: %"), Some(&shown)), Some(true));
+        assert_eq!(shown_by_tip("", Some("session: %"), Some(&shown)), Some(true));
+        // Taken off Windows' taskbar: neither its tip nor its last one is shown.
+        let fewer = vec!["island".to_string()];
+        assert_eq!(shown_by_tip("session: %", Some("session: %"), Some(&fewer)), Some(false));
+        // No tip and never found: the settings say; nor when Windows' taskbar can't be read.
+        assert_eq!(shown_by_tip("", None, Some(&shown)), None);
+        assert_eq!(shown_by_tip("weekly: %", None, None), None);
+    }
 
     #[test]
     fn an_icon_is_found_on_windows_taskbar_by_its_tips_first_line() {
