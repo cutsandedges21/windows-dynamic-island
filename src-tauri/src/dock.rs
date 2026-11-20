@@ -652,6 +652,11 @@ fn watch_pointer(app: AppHandle) {
     std::thread::spawn(move || {
         let mut taking: Option<bool> = None;
         let mut tick = 0u32;
+        // Ctrl tapped with the pointer on the bar: it fades and the mouse goes through it to what is
+        // under it, as the island does, until the pointer leaves the bar (Justin, 11-19).
+        let mut taps = crate::overlay::CTRL_TAPS.load(Ordering::SeqCst);
+        let mut peeking = false;
+        let mut was_held = false;
         loop {
             std::thread::sleep(std::time::Duration::from_millis(20));
             let Some(win) = app.get_webview_window(LABEL) else {
@@ -667,6 +672,8 @@ fn watch_pointer(app: AppHandle) {
                 crate::frame::restack(&app);
             }
             let held = unsafe { (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000 != 0) || (GetAsyncKeyState(VK_RBUTTON.0 as i32) as u16 & 0x8000 != 0) };
+            let pressed = held && !was_held;
+            was_held = held;
             if held && taking == Some(true) {
                 continue;
             }
@@ -680,7 +687,25 @@ fn watch_pointer(app: AppHandle) {
                 dpi => dpi as f64 / 96.0,
             };
             let (x, y) = ((p.x - r.left) as f64 / scale, (p.y - r.top) as f64 / scale);
-            let on = solid_at(&SOLID.lock().unwrap(), x, y);
+            let over = solid_at(&SOLID.lock().unwrap(), x, y);
+            if pressed && !over {
+                // A press off the bar and its cards: the page may close what stays up through an app's
+                // own menu (the tray's hidden icons), which a lost focus can't tell.
+                let _ = app.emit_to(LABEL, "dock-press-out", ());
+            }
+            let now_taps = crate::overlay::CTRL_TAPS.load(Ordering::SeqCst);
+            if now_taps != taps {
+                taps = now_taps;
+                if over && !peeking && !TYPING.load(Ordering::Relaxed) {
+                    peeking = true;
+                    let _ = app.emit_to(LABEL, "dock-peek", true);
+                }
+            }
+            if peeking && !over {
+                peeking = false;
+                let _ = app.emit_to(LABEL, "dock-peek", false);
+            }
+            let on = over && !peeking;
             if taking != Some(on) {
                 taking = Some(on);
                 let _ = win.set_ignore_cursor_events(!on);

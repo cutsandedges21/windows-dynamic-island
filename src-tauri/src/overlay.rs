@@ -432,6 +432,9 @@ const FAR_POLL_MS: u64 = 100;
 const PEEK_LEAVE_PX: f64 = 24.0;
 /// A tap of Ctrl, not a hold: it peeks only when let go within this.
 const PEEK_TAP: Duration = Duration::from_millis(600);
+/// Taps of Ctrl alone counted so far (with the peek setting on and the island not typing), wherever the
+/// pointer was: the taskbar peeks too when one comes with the pointer on it (dock.rs watch_pointer).
+pub static CTRL_TAPS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 // ------------------------------------------------------------------ Ctrl+V on Land's icon
 
@@ -649,6 +652,9 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
             if !ctrl && was_ctrl {
                 let pasted = PASTE_AT.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_millis(1500));
                 let tap = ctrl_since.take().is_some_and(|t| t.elapsed() <= PEEK_TAP) && !ctrl_combo && !pasted;
+                if peek_on && tap {
+                    CTRL_TAPS.fetch_add(1, Ordering::SeqCst);
+                }
                 if peek_on && !peek.on && on_island && tap {
                     peek = Peek { on: true, left: false, smart: false };
                     let _ = app.emit_to(LABEL, "peek", true);

@@ -98,6 +98,14 @@ pub fn is_pinned(exe: &str, uid: u32, guid: Option<[u8; 16]>, settings: &[IconSe
     best.is_some_and(|s| s.promoted)
 }
 
+/// An icon's tooltip as a key to find it among the icons Windows' own taskbar shows: its first line, in
+/// lower case, its digits left out (a percentage can change between the two reads), spaces closed up.
+pub fn tip_key(tip: &str) -> String {
+    let first = tip.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let no_digits: String = first.to_lowercase().chars().filter(|c| !c.is_ascii_digit()).collect();
+    no_digits.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// What Explorer sends an app's callback for a click, by the version the app asked for:
 /// version 4 gets (MAKEWPARAM(x, y), MAKELPARAM(msg, id)), older ones (id, msg).
 pub fn callback_params(version: u32, uid: u32, msg: u32, x: i32, y: i32) -> (usize, isize) {
@@ -131,7 +139,7 @@ mod imp {
         SWP_NOACTIVATE, WM_CLOSE, WM_COMMAND, WM_COPYDATA, WM_DESTROY, WM_TIMER, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
 
-    use super::{callback_params, is_pinned, key_of, IconSetting, TrayIcon};
+    use super::{callback_params, is_pinned, key_of, tip_key, IconSetting, TrayIcon};
 
     const NIM_ADD: u32 = 0;
     const NIM_MODIFY: u32 = 1;
@@ -191,6 +199,44 @@ mod imp {
     /// Windows' tray settings, read again at most every 2 s; and which icons were pinned when last told.
     static SETTINGS: Mutex<Option<(Instant, Vec<IconSetting>)>> = Mutex::new(None);
     static LAST_PINNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    /// The icons Windows' own taskbar shows now (their tip_key), read through UI Automation every 2 s;
+    /// None until read, or when it can't be. Windows' settings alone miss some (an app's second icon, its
+    /// own update icon), so this is what decides; the settings only when it can't be read (Justin, 11-19).
+    static SHOWN: Mutex<Option<Vec<String>>> = Mutex::new(None);
+
+    /// The names of the icons on Windows' taskbar (not in its overflow): its NotifyItemIcon buttons.
+    fn read_shown() -> Option<Vec<String>> {
+        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+        use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, TreeScope_Descendants};
+        let tray = explorer_tray()?;
+        unsafe {
+            let a: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            let all = a.CreateTrueCondition().ok()?;
+            let arr = a.ElementFromHandle(tray).ok()?.FindAll(TreeScope_Descendants, &all).ok()?;
+            let n = arr.Length().unwrap_or(0);
+            let mut out = Vec::new();
+            for i in 0..n {
+                let Ok(e) = arr.GetElement(i) else { continue };
+                if e.CurrentAutomationId().map(|b| b.to_string()).unwrap_or_default() != "NotifyItemIcon" {
+                    continue;
+                }
+                let key = tip_key(&e.CurrentName().map(|b| b.to_string()).unwrap_or_default());
+                if !key.is_empty() {
+                    out.push(key);
+                }
+            }
+            Some(out)
+        }
+    }
+
+    /// Whether an icon is on the bar: as Windows' taskbar shows it, else as its settings say.
+    fn pinned(i: &Item, shown: &Option<Vec<String>>, settings: &[IconSetting]) -> bool {
+        let key = tip_key(&i.tip);
+        match shown {
+            Some(list) if !key.is_empty() => list.contains(&key),
+            _ => is_pinned(&i.exe, i.uid, i.guid, settings),
+        }
+    }
 
     /// HKCU\Control Panel\NotifyIconSettings: Windows' note on each icon it has seen.
     fn read_settings() -> Vec<IconSetting> {
@@ -239,12 +285,13 @@ mod imp {
 
     pub fn icons() -> Vec<TrayIcon> {
         let settings = settings();
+        let shown = SHOWN.lock().unwrap().clone();
         let list: Vec<TrayIcon> = ITEMS
             .lock()
             .unwrap()
             .iter()
             .filter(|i| !i.hidden && i.icon.is_some())
-            .map(|i| TrayIcon { key: i.key.clone(), tip: i.tip.clone(), icon: i.icon.clone(), pinned: is_pinned(&i.exe, i.uid, i.guid, &settings) })
+            .map(|i| TrayIcon { key: i.key.clone(), tip: i.tip.clone(), icon: i.icon.clone(), pinned: pinned(i, &shown, &settings) })
             .collect();
         *LAST_PINNED.lock().unwrap() = pinned_keys(&list);
         list
@@ -259,8 +306,9 @@ mod imp {
         let before = LAST_PINNED.lock().unwrap().clone();
         let now = {
             let settings = settings();
+            let shown = SHOWN.lock().unwrap().clone();
             let items = ITEMS.lock().unwrap();
-            items.iter().filter(|i| !i.hidden && i.icon.is_some() && is_pinned(&i.exe, i.uid, i.guid, &settings)).map(|i| i.key.clone()).collect::<Vec<_>>()
+            items.iter().filter(|i| !i.hidden && i.icon.is_some() && pinned(i, &shown, &settings)).map(|i| i.key.clone()).collect::<Vec<_>>()
         };
         if now != before {
             changed();
@@ -544,6 +592,16 @@ mod imp {
                 let _ = SendNotifyMessageW(HWND_BROADCAST, created, WPARAM(0), LPARAM(0));
             }
             crate::log::line("tray: reading the notification area");
+            // What Windows' own taskbar shows, read beside it (UI Automation can take a moment).
+            std::thread::spawn(|| {
+                let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
+                while OURS.load(Ordering::SeqCst) != 0 {
+                    let now = read_shown();
+                    *SHOWN.lock().unwrap() = now;
+                    std::thread::sleep(Duration::from_secs(2));
+                }
+                *SHOWN.lock().unwrap() = None;
+            });
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 let _ = TranslateMessage(&msg);
@@ -631,7 +689,20 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{callback_params, is_pinned, key_of, IconSetting};
+    use super::{callback_params, is_pinned, key_of, tip_key, IconSetting};
+
+    #[test]
+    fn an_icon_is_found_on_windows_taskbar_by_its_tips_first_line() {
+        // As UI Automation names them, and as the app's tip reads a moment later.
+        assert_eq!(tip_key(" Session: 91%
+Resets: 19:40"), tip_key("Session: 92%
+Resets: 19:40"));
+        assert_ne!(tip_key("Session: 91%"), tip_key("Weekly: 55%"));
+        assert_eq!(tip_key("Island
+Session 89%, resets 7:40 PM"), "island");
+        assert_eq!(tip_key("  
+"), "");
+    }
 
     fn setting(path: &str, uid: Option<u32>, guid: Option<[u8; 16]>, promoted: bool) -> IconSetting {
         IconSetting { path: path.into(), uid, guid, promoted }

@@ -712,6 +712,8 @@ const RISE_BOB_LIFT = 4;
 const RISE_BOB_GROW = 0.05;
 /** With Rise on, the Glide highlight eases onto the item it moves to with this time constant, ms. */
 const GLIDE_EASE_MS = 70;
+/** The bar's other icons that rise with the apps (not the wide ones: now playing, S/W, the clock). */
+const RISE_OTHERS = '.dk-winstart, .dk-search, .dk-start, .dk-skip, .dk-tray .dk-tray-ico, .dk-wifi, .dk-sound, .dk-bell';
 /** Room above the bar for grown (and bobbing) apps, CSS px. */
 const HEADROOM = 20;
 /** An app's place on the bar and the gap between places, CSS px (island.css .dk-app, .dk-apps). */
@@ -748,12 +750,11 @@ export function spotlightOn(apps: readonly Pick<DockApp, 'key' | 'front' | 'wind
 /** Each size's scale; Medium is the size the taskbar was first built at. */
 export const DOCK_ZOOM: Record<DockSize, number> = { small: 0.84, medium: 1, large: 1.18 };
 
-/** The Claude item's text: `S: 42% | W: 18%`, a part left out while it isn't known. */
+/** The Claude item's text: `42% | 18%`, the session then the week (no S: and W:, Justin 11-19); a dash for one not known yet. */
 export function claudeUsageText(c: { session: number | null; week: number | null }): string {
-  const parts: string[] = [];
-  if (c.session != null) parts.push(`S: ${Math.round(c.session)}%`);
-  if (c.week != null) parts.push(`W: ${Math.round(c.week)}%`);
-  return parts.join(' | ');
+  if (c.session == null && c.week == null) return '';
+  const pct = (v: number | null) => (v == null ? '–' : `${Math.round(v)}%`);
+  return `${pct(c.session)} | ${pct(c.week)}`;
 }
 
 /** A limit's reset for the hover card over S/W: "in 2h 10m · 4:15 PM", "Tue 4:00 AM". */
@@ -989,6 +990,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   claude.append(claudeText);
   claude.addEventListener('click', () => send({ kind: 'claude' }));
   const sepB = el('i', 'dk-sep');
+  // Between now playing and what comes after it (the timer, S/W): they read as one otherwise (Justin, 11-19).
+  const sepM = el('i', 'dk-sep');
   // The notification area's icons (trayhost.rs reads them while this shows): Island's own, OneDrive,
   // Discord… A click goes to the app as Windows' taskbar sends it; right-click opens its menu.
   // Only the ones Windows shows on its taskbar (Settings › Taskbar › Other system tray icons); the rest
@@ -997,10 +1000,13 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   let trayList: TrayIcon[] = [];
   let trayOn = false;
   const trayMore = el('button', 'dk-tray-ico dk-tray-more', SVG.up);
-  trayMore.title = 'Show hidden icons';
+  trayMore.dataset.tip = 'Show hidden icons';
   /** Set once the menu is made (the arrow's grid is drawn in it). */
   let trayFlyOpen: (() => void) | null = null;
   let trayFlyRedraw: (() => void) | null = null;
+  /** An icon in the hidden ones was clicked: they stay up through its app's menu or window (which take
+   *  the focus) until a press somewhere else (Justin, 11-19: right-clicking one made the rest go). */
+  let trayKeep = false;
   trayMore.addEventListener('click', () => trayFlyOpen?.());
   const drawTray = () => {
     // An older Island (no pinned) shows them all, as before.
@@ -1012,7 +1018,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   function trayButton(t: TrayIcon): HTMLElement {
     // One icon: a click goes to its app as Windows' taskbar sends it; right-click opens its menu.
     const b = el('button', 'dk-tray-ico');
-    b.title = t.tip || 'Tray icon';
+    b.dataset.tip = t.tip || 'Tray icon';
     if (t.icon && /^data:image\/(png|svg\+xml);/.test(t.icon)) {
       const img = document.createElement('img');
       img.src = t.icon;
@@ -1025,11 +1031,21 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       const k = window.devicePixelRatio || 1;
       return [(window.screenX + r.left + r.width / 2) * k, (window.screenY + r.top + r.height / 2) * k] as const;
     };
-    b.addEventListener('click', () => void native.trayClick(t.key, 'left', ...at()));
-    b.addEventListener('dblclick', () => void native.trayClick(t.key, 'double', ...at()));
+    const keep = () => {
+      if (menu.contains(b)) trayKeep = true;
+    };
+    b.addEventListener('click', () => {
+      keep();
+      void native.trayClick(t.key, 'left', ...at());
+    });
+    b.addEventListener('dblclick', () => {
+      keep();
+      void native.trayClick(t.key, 'double', ...at());
+    });
     b.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      keep();
       void native.trayClick(t.key, 'right', ...at());
     });
     return b;
@@ -1104,7 +1120,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     void native.startToggle();
   });
   let startPrepared: string | null = null;
-  bar.append(winStart, search, start, appsBox, fillEl, gapEl, sepA, musicPrev, music, musicNext, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell);
+  bar.append(winStart, search, start, appsBox, fillEl, gapEl, sepA, musicPrev, music, musicNext, sepM, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell);
 
   // Over the bar, coming up from behind it: the Apps card (the arrow) and when S/W reset (pointing at them).
   const above = el('div', 'dk-above');
@@ -1189,6 +1205,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const closeMenu = () => {
     if (menuOn === null) return;
     menuOn = null;
+    trayKeep = false;
     trayMore.classList.remove('on');
     hidePop(menu);
     if (!cardOn) void native.dockTyping(false);
@@ -1270,7 +1287,10 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (n) rows.push(row('', SVG.x, n === 1 ? 'Close window' : `Close all ${n} windows`, { kind: 'close', key: a.key, rect: iconRect(b) }));
     showMenu(b, a.key, rows, '');
   };
-  window.addEventListener('blur', () => closeMenu());
+  window.addEventListener('blur', () => {
+    if (menuOn === TRAY_FLY && trayKeep) return;
+    closeMenu();
+  });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeMenu();
   });
@@ -1707,13 +1727,21 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const up = upright();
     const z = Number(bar.style.zoom) || 1;
     const places = [...appsBox.children].filter((c): c is HTMLElement => c instanceof HTMLElement && c.classList.contains('dk-app') && !c.hidden && !c.classList.contains('dk-cut'));
+    // The bar's other icons rise too (Start, Search, the tray's, Wi-Fi, sound...), in place: only the
+    // apps make room (Justin, 11-19: "search doesn't rise").
+    const others = [...bar.querySelectorAll<HTMLElement>(RISE_OTHERS)].filter((b) => !b.hidden && b.offsetWidth > 0 && !b.closest('[hidden]'));
+    const els = [...places, ...others];
     // Where each place's middle is with nothing spread: the pointer is measured against those, so the
     // spreading never moves the icon it is on away from it.
     const box = appsBox.getBoundingClientRect();
     const start0 = (up ? box.top : box.left) + (riseExtra / 2) * z;
     const on = pointerX !== null && !move?.moved && has('rise');
-    const dist = places.map((_, i) => (on ? (pointerX! - (start0 + (i * (APP_W + APP_GAP) + APP_W / 2) * z)) / z : Infinity));
-    const levels = places.map((b, i) => {
+    const dist = els.map((b, i) => {
+      if (!on) return Infinity;
+      const mid = i < places.length ? start0 + (i * (APP_W + APP_GAP) + APP_W / 2) * z : alongOf(b.getBoundingClientRect());
+      return (pointerX! - mid) / z;
+    });
+    const levels = els.map((b, i) => {
       const want = on ? riseAt(dist[i]) * intensity : 0;
       const was = rise.get(b) ?? 0;
       const now = Math.abs(want - was) < 0.002 ? want : was + (want - was) * k;
@@ -1721,23 +1749,24 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       rise.set(b, now);
       return now;
     });
-    // The bob: the app nearest the pointer, once the pointer has been still a while.
+    // The bob: the icon nearest the pointer, once the pointer has been still a while.
     let nearest = -1;
     dist.forEach((d, i) => {
       if (Math.abs(d) < RISE_REACH / 2 && (nearest < 0 || Math.abs(d) < Math.abs(dist[nearest]))) nearest = i;
     });
     let bob = 0;
-    // Kept going while the pointer is on an app, for the bob to start once it has been still long enough.
+    // Kept going while the pointer is on an icon, for the bob to start once it has been still long enough.
     if (on && pointerIn && nearest >= 0) busy = true;
     if (on && pointerIn && nearest >= 0 && t - stillSince > RISE_BOB_AFTER) {
       if (!bobFrom) bobFrom = t;
       bob = Math.sin((((t - bobFrom) % RISE_BOB_MS) / RISE_BOB_MS) * Math.PI);
     } else bobFrom = 0;
-    const { shifts, total } = riseShifts(spread ? levels : levels.map(() => 0));
-    places.forEach((b, i) => {
+    const appLevels = levels.slice(0, places.length);
+    const { shifts, total } = riseShifts(spread ? appLevels : appLevels.map(() => 0));
+    els.forEach((b, i) => {
       const bobs = i === nearest ? bob : 0;
       const s = (1 + RISE_GROW * levels[i]) * (1 + RISE_BOB_GROW * bobs);
-      const along = shifts[i];
+      const along = i < places.length ? shifts[i] : 0;
       const out = RISE_BOB_LIFT * bobs;
       placed.set(b, { s, along, out });
       if (Math.abs(s - 1) < 0.0005 && Math.abs(along) < 0.01 && out < 0.01) {
@@ -1748,6 +1777,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       const [x, y] = up ? [outSign() * out, along] : [along, outSign() * out];
       b.style.translate = `${x.toFixed(2)}px ${y.toFixed(2)}px`;
     });
+    // One that left the bar (a tray icon gone) keeps no rise.
+    for (const b of rise.keys()) if (!b.isConnected) rise.delete(b);
     // Wider from its middle: half of it to each side, as room the apps' row keeps at its ends.
     riseExtra = total > 0.05 ? total : 0;
     appsBox.style.paddingInline = riseExtra ? `${(riseExtra / 2).toFixed(2)}px` : '';
@@ -1764,14 +1795,14 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const kickRise = () => {
     if (!raf) raf = requestAnimationFrame(animateRise);
   };
-  appsBox.addEventListener('pointermove', (e) => {
+  bar.addEventListener('pointermove', (e) => {
     const x = along(e);
     if (pointerX === null || Math.abs(x - pointerX) > 0.5) stillSince = performance.now();
     pointerX = x;
     pointerIn = true;
     kickRise();
   });
-  appsBox.addEventListener('pointerleave', () => {
+  bar.addEventListener('pointerleave', () => {
     // It shrinks back where it is as the pointer leaves, not toward where the pointer went.
     pointerIn = false;
     kickRise();
@@ -1850,14 +1881,13 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const label = el('div', 'dk-label');
   above.append(label);
   let glideOn: HTMLElement | null = null;
-  /** With Names on, the names are the label over the bar, not Windows' tooltips. */
+  /** No Windows tooltips (the small boxed "Search") on the bar: names are the Names style's, over the bar
+   *  (Justin, 11-19). Each name stays on its button for that label. */
   const titles = () => {
-    const names = has('names');
     for (const b of bar.querySelectorAll<HTMLElement>('button')) {
-      if (names && b.title) {
-        b.dataset.tip = b.title;
-        b.removeAttribute('title');
-      } else if (!names && !b.title && b.dataset.tip) b.title = b.dataset.tip;
+      if (!b.title) continue;
+      b.dataset.tip = b.title;
+      b.removeAttribute('title');
     }
   };
   const glideTo = (b: HTMLElement | null) => {
@@ -1977,6 +2007,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const middle = !music.hidden || !timer.hidden || !claude.hidden;
     // Beside the island's gap a line is one too many: the island parts them.
     sepA.hidden = !middle || split;
+    sepM.hidden = music.hidden || (timer.hidden && claude.hidden);
     const leftShown = !start.hidden || !appsBox.hidden || middle;
     const rightShown = !battery.hidden || !wifi.hidden || !sound.hidden || !clock.hidden || !bell.hidden;
     sepB.hidden = !leftShown || !rightShown || (split && !middle);
@@ -2231,7 +2262,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const t = off.has('timer') ? null : f.timer;
     want.timer = Boolean(t);
     timerText.textContent = t ?? '';
-    // Claude's limits: S: 42% | W: 18%.
+    // Claude's limits: 42% | 18% (the session's, the week's).
     const c = off.has('claude') ? null : f.claude;
     want.claude = Boolean(c);
     // Upright, S and W stack.
@@ -2419,6 +2450,19 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   stretch(handles.inner, 'inner');
 
   await on<{ full: boolean; up: boolean }>('dock-full', (st) => bar.classList.toggle('faint', Boolean(st?.full && !st.up)));
+  // Ctrl tapped with the pointer on the bar: it fades (html.peek #stage, as the island) and clicks go
+  // through it (dock.rs) until the pointer leaves it.
+  // A press off the bar: the hidden tray icons kept up through an app's menu go now.
+  await on('dock-press-out', () => {
+    if (menuOn === TRAY_FLY && trayKeep) closeMenu();
+  });
+  await on<boolean>('dock-peek', (peeking) => {
+    document.documentElement.classList.toggle('peek', peeking === true);
+    if (peeking !== true) return;
+    closeMenu();
+    closePeek();
+    setCard(false);
+  });
   // The screen border's window just opened: it hears where the bar is.
   await on<null>('frame-hello', () => {
     frameSent = '';
