@@ -55,6 +55,11 @@ pub fn stop() {
     imp::stop();
 }
 
+/// Runs `f` with Explorer's own taskbar found first (imp::explorer_first).
+pub fn explorer_first<T>(f: impl FnOnce() -> T) -> T {
+    imp::explorer_first(f)
+}
+
 /// Its key: the app's GUID for the icon when it gave one, else its window and number.
 pub fn key_of(hwnd: u32, uid: u32, guid: Option<[u8; 16]>) -> String {
     match guid {
@@ -164,7 +169,7 @@ mod imp {
         AllowSetForegroundWindow, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowExW, GetIconInfo, GetMessageW,
         GetWindowRect, GetWindowThreadProcessId, IsWindow, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SendMessageTimeoutW,
         SendNotifyMessageW, SetTimer, SetWindowPos, TranslateMessage, HICON, HWND_BROADCAST, HWND_TOPMOST, ICONINFO, MSG, SMTO_ABORTIFHUNG,
-        SWP_NOACTIVATE, WM_CLOSE, WM_COMMAND, WM_COPYDATA, WM_DESTROY, WM_TIMER, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WM_CLOSE, WM_COMMAND, WM_COPYDATA, WM_DESTROY, WM_TIMER, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
 
     use super::{callback_params, is_pinned, key_of, shown_by_tip, tip_key, with_before, IconSetting, TrayIcon};
@@ -540,6 +545,23 @@ mod imp {
         changed();
     }
 
+    /// Runs `f` with Explorer's taskbar found first again (ours put just under it, then back on top):
+    /// Island's own app bar messages (Keep windows clear of it, dock.rs) go straight to Explorer. Passed
+    /// on by ours from Island itself, Explorer said yes and left the room out of the work area (Justin,
+    /// 11-20); from any other app they pass on fine.
+    pub fn explorer_first<T>(f: impl FnOnce() -> T) -> T {
+        let ours = OURS.load(Ordering::SeqCst);
+        let ex = explorer_tray();
+        let (Some(ex), true) = (ex, ours != 0) else { return f() };
+        let ours = HWND(ours as *mut _);
+        unsafe {
+            let _ = SetWindowPos(ours, Some(ex), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        let out = f();
+        keep_on_top(ours);
+        out
+    }
+
     /// Explorer's own taskbar window (not ours).
     fn explorer_tray() -> Option<HWND> {
         let ours = OURS.load(Ordering::SeqCst);
@@ -753,6 +775,9 @@ mod imp {
     }
     pub fn start(_app: AppHandle) {}
     pub fn stop() {}
+    pub fn explorer_first<T>(f: impl FnOnce() -> T) -> T {
+        f()
+    }
     pub fn click(_key: &str, _button: &str, _x: i32, _y: i32) -> bool {
         false
     }

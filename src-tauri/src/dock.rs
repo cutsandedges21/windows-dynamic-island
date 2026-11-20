@@ -691,23 +691,84 @@ pub fn widen_to(work: Area, side: Side, rect: (i32, i32, i32, i32)) -> Area {
     }
 }
 
-/// Holds (or lets go of, or moves) the strip for the taskbar's window `win`, where Windows says it can
-/// go now (off Windows' own taskbar, while that shows). `check`: also when nothing about the bar changed,
-/// in case Windows moved the others or forgot it (below). Answers whether it held anew or moved.
+/// The window the room is held for: a hidden one of its own, on a thread of its own, and a new one each
+/// time the room is taken anew. Held for the taskbar's own window (WebView2's), or taken again for the
+/// same window after being let go, Windows said yes and then worked the work area out without it
+/// (Justin, 11-20: it worked once, then not); a window it hasn't seen before it keeps the room for.
+#[cfg(windows)]
+static ROOM_HW: Mutex<(isize, u32)> = Mutex::new((0, 0));
+
+#[cfg(windows)]
+fn room_window() -> Option<isize> {
+    let hw = ROOM_HW.lock().unwrap().0;
+    if hw != 0 {
+        return Some(hw);
+    }
+    fresh_room_window()
+}
+
+/// A new window for the room, the last one closed.
+#[cfg(windows)]
+fn fresh_room_window() -> Option<isize> {
+    use windows::core::w;
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DispatchMessageW, GetMessageW, PostMessageW, PostThreadMessageW, TranslateMessage, MSG, WM_CLOSE, WM_QUIT, WS_EX_TOOLWINDOW, WS_POPUP};
+    let mut cur = ROOM_HW.lock().unwrap();
+    if cur.0 != 0 {
+        unsafe {
+            let _ = PostMessageW(Some(HWND(cur.0 as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0));
+            let _ = PostThreadMessageW(cur.1, WM_QUIT, WPARAM(0), LPARAM(0));
+        }
+        *cur = (0, 0);
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || unsafe {
+        let hw = CreateWindowExW(WS_EX_TOOLWINDOW, w!("STATIC"), w!("Island taskbar room"), WS_POPUP, 0, 0, 1, 1, None, None, None, None).ok();
+        let _ = tx.send(hw.map(|h| (h.0 as isize, GetCurrentThreadId())));
+        if hw.is_none() {
+            return;
+        }
+        // Its messages answered (Windows' news for app bars among them) until it is closed.
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    });
+    let made = rx.recv().ok().flatten()?;
+    *cur = made;
+    Some(made.0)
+}
+
+/// Holds (or lets go of, or moves) the strip for the taskbar, where Windows says it can go now (off
+/// Windows' own taskbar, while that shows). `check`: also when nothing about the bar changed, in case
+/// Windows moved the others or forgot it (below). Answers whether it held anew or moved.
 #[cfg(windows)]
 fn hold_room(win: &WebviewWindow, check: bool) -> bool {
+    // Straight to Explorer, not through Island's own stand-in for its tray (trayhost.rs).
+    crate::trayhost::explorer_first(|| hold_room_now(win, check))
+}
+
+#[cfg(windows)]
+fn hold_room_now(win: &WebviewWindow, check: bool) -> bool {
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::UI::Shell::{SHAppBarMessage, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
-    let Ok(hw) = win.hwnd() else { return false };
+    let _ = win;
     let Some(m) = monitors::primary() else { return false };
     let want = room_wanted(m.scale);
     let s = side();
     let mut held = HELD.lock().unwrap();
-    let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: HWND(hw.0), ..Default::default() };
+    let data = |hw: isize| APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: HWND(hw as *mut _), uCallbackMessage: 0x8000 + 0x1A5, ..Default::default() };
+    let let_go = |held: &mut Held| {
+        if let Some(hw) = room_window() {
+            unsafe { SHAppBarMessage(ABM_REMOVE, &mut data(hw)) };
+        }
+        *held = Held { side: 0, deep: 0, rect: (0, 0, 0, 0) };
+    };
     if want == 0 {
         if held.deep > 0 {
-            unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
-            *held = Held { side: 0, deep: 0, rect: (0, 0, 0, 0) };
+            let_go(&mut held);
         }
         return false;
     }
@@ -715,41 +776,42 @@ fn hold_room(win: &WebviewWindow, check: bool) -> bool {
         return false;
     }
     if held.deep > 0 && held.side != s.index() {
-        unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
-        held.deep = 0;
+        let_go(&mut held);
     }
+    // Taken anew: for a window Windows hasn't seen.
     if held.deep == 0 {
-        // A message of its own Windows sends it news on; the page's window just ignores it.
-        d.uCallbackMessage = 0x8000 + 0x1A5;
-        if unsafe { SHAppBarMessage(ABM_NEW, &mut d) } == 0 {
-            // Already one (Windows kept it): asked for where it goes all the same.
-            crate::log::line("dock: the taskbar's room was already Windows'");
-        }
+        fresh_room_window();
     }
+    let Some(hw) = room_window() else { return false };
+    let mut d = data(hw);
+    // Made an app bar (when it held none; on a check, answering 0 while it still is one).
+    let made = unsafe { SHAppBarMessage(ABM_NEW, &mut d) } != 0;
     let b = &m.bounds;
     let (l, t, r, bt) = (b.x, b.y, b.x + b.width, b.y + b.height);
-    d.uEdge = match s {
-        Side::Bottom => ABE_BOTTOM,
-        Side::Top => ABE_TOP,
-        Side::Left => ABE_LEFT,
-        Side::Right => ABE_RIGHT,
+    let place = |d: &mut APPBARDATA| {
+        d.uEdge = match s {
+            Side::Bottom => ABE_BOTTOM,
+            Side::Top => ABE_TOP,
+            Side::Left => ABE_LEFT,
+            Side::Right => ABE_RIGHT,
+        };
+        d.rc = match s {
+            Side::Bottom => RECT { left: l, top: bt - want, right: r, bottom: bt },
+            Side::Top => RECT { left: l, top: t, right: r, bottom: t + want },
+            Side::Left => RECT { left: l, top: t, right: l + want, bottom: bt },
+            Side::Right => RECT { left: r - want, top: t, right: r, bottom: bt },
+        };
+        // Windows moves it off another bar on that edge (its own taskbar, showing): then it is as deep from there.
+        unsafe { SHAppBarMessage(ABM_QUERYPOS, d) };
+        match s {
+            Side::Bottom => d.rc.top = d.rc.bottom - want,
+            Side::Top => d.rc.bottom = d.rc.top + want,
+            Side::Left => d.rc.right = d.rc.left + want,
+            Side::Right => d.rc.left = d.rc.right - want,
+        }
     };
-    d.rc = match s {
-        Side::Bottom => RECT { left: l, top: bt - want, right: r, bottom: bt },
-        Side::Top => RECT { left: l, top: t, right: r, bottom: t + want },
-        Side::Left => RECT { left: l, top: t, right: l + want, bottom: bt },
-        Side::Right => RECT { left: r - want, top: t, right: r, bottom: bt },
-    };
-    // Windows moves it off another bar on that edge (its own taskbar, showing): then it is as deep from there.
-    unsafe { SHAppBarMessage(ABM_QUERYPOS, &mut d) };
-    match s {
-        Side::Bottom => d.rc.top = d.rc.bottom - want,
-        Side::Top => d.rc.bottom = d.rc.top + want,
-        Side::Left => d.rc.right = d.rc.left + want,
-        Side::Right => d.rc.left = d.rc.right - want,
-    }
+    place(&mut d);
     let rect = (d.rc.left, d.rc.top, d.rc.right, d.rc.bottom);
-    // Where it was and out of the work area still: nothing to do.
     let w = &m.work;
     let out = match s {
         Side::Bottom => w.y + w.height <= rect.1,
@@ -758,8 +820,25 @@ fn hold_room(win: &WebviewWindow, check: bool) -> bool {
         Side::Right => w.x + w.width <= rect.0,
     };
     let now = Held { side: s.index(), deep: want, rect };
-    if *held == now && out {
-        return false;
+    if *held == now {
+        if out && !made {
+            return false;
+        }
+        // At most once in a while (it may be something else putting the work area back).
+        static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+        let mut last = LAST.lock().unwrap();
+        if !made && last.is_some_and(|t| t.elapsed().as_secs() < 30) {
+            return false;
+        }
+        *last = Some(std::time::Instant::now());
+        // Held there, yet Windows forgot it (it was made again) or works the work area out without it: a
+        // new window takes it.
+        crate::log::line(format!("dock: Windows {} the taskbar's room; held again for a new window", if made { "forgot" } else { "left out" }));
+        unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
+        let Some(fresh) = fresh_room_window() else { return false };
+        d = data(fresh);
+        unsafe { SHAppBarMessage(ABM_NEW, &mut d) };
+        place(&mut d);
     }
     unsafe { SHAppBarMessage(ABM_SETPOS, &mut d) };
     *held = Held { side: s.index(), deep: want, rect: (d.rc.left, d.rc.top, d.rc.right, d.rc.bottom) };
@@ -777,6 +856,20 @@ fn hold_room(_win: &WebviewWindow, _check: bool) -> bool {
 /// stayed up where that taskbar had been). About once a second it asks; moved or forgotten, it holds it
 /// again and the bar is put back against it.
 fn keep_room(win: &WebviewWindow) {
+    {
+        // What it wants and holds, in the log when that changes.
+        static SEEN: Mutex<String> = Mutex::new(String::new());
+        let h = *HELD.lock().unwrap();
+        let scale = monitors::primary().map(|m| m.scale).unwrap_or(1.0);
+        let want = room_wanted(scale);
+        let work = monitors::primary().map(|m| (m.work.y + m.work.height, m.bounds.y + m.bounds.height));
+        let now = format!("room: on {} auto {} want {want} held {} at {:?}, work {:?}", ROOM.load(Ordering::SeqCst), AUTO.load(Ordering::SeqCst), h.deep, h.rect, work);
+        let mut seen = SEEN.lock().unwrap();
+        if *seen != now {
+            crate::log::line(format!("dock: {now}"));
+            *seen = now;
+        }
+    }
     if HELD.lock().unwrap().deep <= 0 {
         return;
     }
@@ -791,14 +884,20 @@ fn keep_room(win: &WebviewWindow) {
 /// Lets go of the strip (the taskbar is off, or Island quits).
 #[cfg(windows)]
 fn let_go_room(app: &AppHandle) {
+    crate::trayhost::explorer_first(|| let_go_room_now(app));
+}
+
+#[cfg(windows)]
+fn let_go_room_now(app: &AppHandle) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_REMOVE, APPBARDATA};
+    let _ = app;
     let mut held = HELD.lock().unwrap();
     if held.deep == 0 {
         return;
     }
-    if let Some(Ok(hw)) = app.get_webview_window(LABEL).map(|w| w.hwnd()) {
-        let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: HWND(hw.0), ..Default::default() };
+    if let Some(hw) = room_window() {
+        let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: HWND(hw as *mut _), ..Default::default() };
         unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
     }
     *held = Held { side: 0, deep: 0, rect: (0, 0, 0, 0) };
@@ -1045,6 +1144,121 @@ mod tests {
     }
 
     use super::{centre_of, place_on, widen_to, Side};
+
+    /// Holds a 100 px strip at the bottom from a window of its own for 1.5 s and prints the work area
+    /// (cargo test --lib appbar_now -- --ignored --nocapture).
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn appbar_now() {
+        use windows::core::w;
+        use windows::Win32::Foundation::RECT;
+        use windows::Win32::UI::Shell::{SHAppBarMessage, ABE_BOTTOM, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
+        use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_POPUP};
+        if std::env::var("AWARE").is_ok() {
+            use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
+            println!("aware {:?}", unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) });
+        }
+        let work = || crate::monitors::primary().map(|m| (m.work.y + m.work.height, m.bounds.y + m.bounds.height));
+        if let Ok(h) = std::env::var("DOCKSET") {
+            // The running Island's taskbar's window made an app bar from here: does Windows take it?
+            let dock = windows::Win32::Foundation::HWND(h.parse::<isize>().unwrap() as *mut _);
+            let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: dock, uCallbackMessage: 0x8000 + 0x1A5, ..Default::default() };
+            println!("before {:?}", work());
+            println!("new {}", unsafe { SHAppBarMessage(ABM_NEW, &mut d) });
+            d.uEdge = ABE_BOTTOM;
+            d.rc = RECT { left: 0, top: 1135, right: 1920, bottom: 1200 };
+            println!("set {}", unsafe { SHAppBarMessage(ABM_SETPOS, &mut d) });
+            for _ in 0..4 {
+                println!("then {:?}", work());
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            return;
+        }
+        if let Ok(h) = std::env::var("DOCKDROP") {
+            // Windows forgetting the running Island's taskbar: it holds its room again within a second or so.
+            let dock = windows::Win32::Foundation::HWND(h.parse::<isize>().unwrap() as *mut _);
+            let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: dock, ..Default::default() };
+            println!("held {:?}", work());
+            unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
+            println!("dropped {:?}", work());
+            for _ in 0..4 {
+                std::thread::sleep(std::time::Duration::from_millis(600));
+                println!("then {:?}", work());
+            }
+            return;
+        }
+        if std::env::var("DOCKNEW").is_ok() {
+            // Is the running Island's taskbar one? ABM_NEW answers 0 for a window that already is.
+            let dock = windows::Win32::Foundation::HWND(std::env::var("DOCKNEW").unwrap().parse::<isize>().unwrap() as *mut _);
+            let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: dock, uCallbackMessage: 0x8000 + 0x1A5, ..Default::default() };
+            let n = unsafe { SHAppBarMessage(ABM_NEW, &mut d) };
+            println!("dock new -> {n} (0: it was one)");
+            if n != 0 {
+                unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
+            }
+            return;
+        }
+        // STYLED=x,y,w,h: a window like the dock's (on top, a tool window, not activating), shown there.
+        let styled = std::env::var("STYLED").ok().map(|s| s.split(',').map(|n| n.parse::<i32>().unwrap()).collect::<Vec<_>>());
+        let (ex, at) = match &styled {
+            Some(v) => (WINDOW_EX_STYLE(0x0800_0088), (v[0], v[1], v[2], v[3])),
+            None => (WINDOW_EX_STYLE(0), (0, 0, 10, 10)),
+        };
+        let hw = unsafe { CreateWindowExW(ex, w!("STATIC"), w!("appbar probe"), WS_POPUP, at.0, at.1, at.2, at.3, None, None, None, None) }.unwrap();
+        if styled.is_some() {
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(hw, windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE);
+            }
+        }
+        let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: hw, uCallbackMessage: 0x8000 + 0x1A6, ..Default::default() };
+        if std::env::var("OTHER").is_ok() {
+            // From a thread other than the window's.
+            let h = hw.0 as isize;
+            let t = std::thread::spawn(move || {
+                let hw = windows::Win32::Foundation::HWND(h as *mut _);
+                let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: hw, uCallbackMessage: 0x8000 + 0x1A6, ..Default::default() };
+                let work = || crate::monitors::primary().map(|m| (m.work.y + m.work.height, m.bounds.y + m.bounds.height));
+                println!("other: new {}", unsafe { SHAppBarMessage(ABM_NEW, &mut d) });
+                d.uEdge = ABE_BOTTOM;
+                d.rc = RECT { left: 0, top: 1135, right: 1920, bottom: 1200 };
+                println!("other: set {}", unsafe { SHAppBarMessage(ABM_SETPOS, &mut d) });
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                println!("other: work {:?}", work());
+                unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
+                println!("other: removed {:?}", work());
+            });
+            let _ = t.join();
+            return;
+        }
+        println!("before {:?}", work());
+        println!("new {}", unsafe { SHAppBarMessage(ABM_NEW, &mut d) });
+        let (_, b) = work().unwrap();
+        d.uEdge = ABE_BOTTOM;
+        let r = crate::monitors::primary().unwrap().bounds;
+        for round in 0..2 {
+            if round > 0 {
+                println!("new again {}", unsafe { SHAppBarMessage(ABM_NEW, &mut d) });
+            }
+            d.uEdge = ABE_BOTTOM;
+            d.rc = RECT { left: r.x, top: b - 65, right: r.x + r.width, bottom: b };
+            unsafe { SHAppBarMessage(ABM_QUERYPOS, &mut d) };
+            println!("query {:?}", (d.rc.left, d.rc.top, d.rc.right, d.rc.bottom));
+            d.rc.top = d.rc.bottom - 65;
+            println!("set {}", unsafe { SHAppBarMessage(ABM_SETPOS, &mut d) });
+            println!("after set {:?}", work());
+            let secs: u64 = std::env::var("LONG").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+            for i in 0..secs {
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                println!("{} s on {:?}", i + 1, work());
+            }
+            unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
+            println!("removed {:?}", work());
+        }
+        unsafe {
+            let _ = DestroyWindow(hw);
+        }
+    }
 
     #[test]
     fn the_room_held_for_it_is_given_back_on_its_own_side() {
