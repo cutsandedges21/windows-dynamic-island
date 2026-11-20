@@ -85,6 +85,11 @@ describe('taskbar apps', () => {
   it("gives Windows' Settings a place, under its own name", () => {
     const w = { hwnd: 7, pid: 7, exe: 'C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe', title: 'Settings', className: 'ApplicationFrameWindow', rect: { x: 0, y: 0, width: 10, height: 10 }, state: 'normal' as const, monitor: 'm', dpi: 96, appId: 'windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel', appName: 'Settings' };
     expect(dockApps([], [w], 7, new Map()).map((a) => [a.name, a.windows])).toEqual([['Settings', [7]]]);
+    // Minimized, its window is the frame host's: it stays, in the same place.
+    const min = { ...w, exe: 'C:\\Windows\\System32\\ApplicationFrameHost.exe', state: 'minimized' as const };
+    expect(dockApps([], [min], 0, new Map()).map((a) => [a.key, a.name])).toEqual(dockApps([], [w], 0, new Map()).map((a) => [a.key, a.name]));
+    // A frame with no app in it still gets none.
+    expect(dockApps([], [{ ...min, appId: '' }], 0, new Map())).toEqual([]);
   });
 
   it('keeps how much taller the bar was stretched, within its bounds', () => {

@@ -232,7 +232,10 @@ const FILE_EXPLORER = 'shell:AppsFolder\\Microsoft.Windows.Explorer';
 const isFileExplorer = (w: Pick<LiveWindow, 'exe' | 'className'>) => /\\explorer\.exe$/i.test(w.exe) && w.className === 'CabinetWClass';
 /** A window that gets a place on the dock: not the shell's, File Explorer's yes, Island's Settings yes
  *  (Windows' taskbar shows it; Island's other windows never come listed). */
-const onDock = (w: LiveWindow) => Boolean(w.exe) && (w.own === true || !SKIP.test(w.exe) || isFileExplorer(w));
+const onDock = (w: LiveWindow) => Boolean(w.exe) && (w.own === true || !SKIP.test(w.exe) || isFileExplorer(w) || isFramedApp(w));
+/** A Store app's window minimized: its own process leaves the frame, so the frame host is all that is
+ *  left, with the app's id (Justin, 11-19: Settings left the bar when minimized, not only when closed). */
+const isFramedApp = (w: Pick<LiveWindow, 'exe' | 'appId'>) => Boolean(w.appId) && /\\applicationframehost\.exe$/i.test(w.exe);
 /** What a window belongs to: File Explorer, its web app (YouTube Music), the shortcut of a browser's
  *  app window (Google Calendar, Omnivox: chrome --app=<address>), else its program (so not "Chrome"). */
 export const targetOf = (w: LiveWindow) => (isFileExplorer(w) ? FILE_EXPLORER : w.appId ? 'shell:AppsFolder\\' + w.appId : w.link || w.exe);
