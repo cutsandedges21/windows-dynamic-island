@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
-import { batteryTone, claudeUsageText, DOCK_LABELS, DOCK_ZOOM, toggleDockItem } from '../src/core/dock';
+import { batteryTone, claudeUsageText, DOCK_LABELS, DOCK_ZOOM, soundWaves, toggleDockItem } from '../src/core/dock';
 import { DOCK_ITEMS, migrate } from '../src/core/settings';
 
 describe('taskbar items', () => {
@@ -56,5 +56,16 @@ describe('taskbar Claude usage and sizes', () => {
     expect(DOCK_ZOOM.medium).toBe(1);
     expect(DOCK_ZOOM.small).toBeLessThan(1);
     expect(DOCK_ZOOM.large).toBeGreaterThan(1);
+  });
+
+  it("shows as many sound waves as the volume is loud, as Windows' taskbar does", () => {
+    expect(soundWaves(0)).toBe(0);
+    expect(soundWaves(0.12)).toBe(1);
+    expect(soundWaves(0.33)).toBe(1);
+    expect(soundWaves(0.5)).toBe(2);
+    expect(soundWaves(0.67)).toBe(3);
+    expect(soundWaves(1)).toBe(3);
+    // Not known yet: the middle one.
+    expect(soundWaves(null)).toBe(2);
   });
 });

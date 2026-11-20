@@ -43,6 +43,8 @@ export interface DockFrame {
   /** This PC's battery; null on a desktop. */
   battery: { percent: number; charging: boolean } | null;
   muted: boolean;
+  /** The volume, 0..1 (null: not known yet). */
+  volume?: number | null;
   wifi: boolean | null;
   /** What the user took off the taskbar. */
   hidden: DockItem[];
@@ -149,6 +151,18 @@ const BATTERY_SVG =
   '<rect class="dk-bnub" x="23.3" y="7.9" width="1.3" height="3.4" rx="0.6"/>' +
   `<rect class="dk-bfill" x="3.4" y="6.4" width="${BATTERY_FULL}" height="7.2" rx="1.4"/></g>` +
   `<path class="dk-bbolt" d="${BATTERY_BOLT}"/></svg>`;
+
+/** How many waves the speaker shows for a volume (0..1), as Windows 11's: none when silent, then one,
+ *  two, three by thirds; two while the volume isn't known. */
+export function soundWaves(volume: number | null | undefined): 0 | 1 | 2 | 3 {
+  if (volume == null || !Number.isFinite(volume)) return 2;
+  const v = Math.round(Math.max(0, Math.min(1, volume)) * 100);
+  return v === 0 ? 0 : v <= 33 ? 1 : v <= 66 ? 2 : 3;
+}
+
+const SOUND_WAVES = ['M15 10a2.8 2.8 0 0 1 0 4', 'M17.3 7.6a6.2 6.2 0 0 1 0 8.8', 'M19.6 5.4a9.4 9.4 0 0 1 0 13.2'];
+/** The speaker with `n` of its waves. */
+const soundIcon = (n: number) => `<svg viewBox="0 0 24 24" class="line"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/>${SOUND_WAVES.slice(0, n).map((d) => `<path d="${d}"/>`).join('')}</svg>`;
 
 export function batteryTone(b: { percent: number; charging: boolean }): 'low' | 'charging' | '' {
   if (b.charging) return 'charging';
@@ -356,6 +370,7 @@ export interface DockHooks {
   appsAct(name: string, arg?: string): Promise<void> | void;
   battery(): DockFrame['battery'];
   muted(): boolean;
+  volume(): number | null;
   wifi(): boolean | null;
   hidden(): DockItem[];
   setHidden(items: DockItem[]): void;
@@ -522,6 +537,7 @@ export class DockHost {
         card: this.cardOpen ? this.hooks.appsCard() : null,
         battery: this.hooks.battery(),
         muted: this.hooks.muted(),
+        volume: this.hooks.volume(),
         wifi: this.hooks.wifi(),
         hidden: this.hooks.hidden(),
         ...this.hooks.look(),
@@ -2342,10 +2358,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       wifi.innerHTML = wk === 'off' ? SVG.wifiOff : SVG.wifi;
     }
     want.sound = !off.has('sound');
-    const sk = f.muted ? 'mute' : 'sound';
+    // As Windows' taskbar has it: as many waves as the volume is loud (Justin, 11-19).
+    const sk = f.muted ? 'mute' : `sound${soundWaves(f.volume)}`;
     if (sound.dataset.k !== sk) {
       sound.dataset.k = sk;
-      sound.innerHTML = SVG[sk];
+      sound.innerHTML = f.muted ? SVG.mute : soundIcon(soundWaves(f.volume));
     }
     want.clock = !off.has('clock');
     want.bell = !off.has('notifications');

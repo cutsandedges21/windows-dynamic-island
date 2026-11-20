@@ -440,6 +440,7 @@ export class Island {
         appsAct: (name, arg) => this.running.get('apps')?.action?.(name, arg),
         battery: () => this.dockBattery,
         muted: () => this.dockMuted,
+        volume: () => this.dockVolume,
         wifi: () => this.dockWifi,
         hidden: () => this.settings.island.taskbar.hidden,
         setHidden: (items) => {
@@ -528,8 +529,15 @@ export class Island {
       },
       () => this.settings.island.taskbar.on,
     );
-    void on<{ muted: boolean }>('audio', (a) => {
+    void on<{ muted: boolean; volume?: number }>('audio', (a) => {
       if (typeof a?.muted === 'boolean') this.dockMuted = a.muted;
+      if (typeof a?.volume === 'number') this.dockVolume = a.volume;
+    });
+    void native.audioState().then((a) => {
+      if (a && this.dockVolume === null) {
+        this.dockMuted = a.muted;
+        this.dockVolume = a.volume;
+      }
     });
     // The taskbar's battery and Wi-Fi: the battery as Windows reports it, Wi-Fi asked now and then.
     const power = (p: PowerState | null) => {
@@ -2794,6 +2802,7 @@ export class Island {
   private barSynced = false;
 
   private dockMuted = false;
+  private dockVolume: number | null = null;
   private dockBattery: { percent: number; charging: boolean } | null = null;
   private dockWifi: boolean | null = null;
 

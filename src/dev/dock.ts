@@ -20,6 +20,7 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
     claude: { session: 42, week: 18 },
     battery: { percent: mode === 'low' ? 9 : 76, charging: mode === 'charging' },
     muted: false,
+    volume: 0.5,
     wifi: true,
     hidden: hide,
     accent: '#6aa6e8',
