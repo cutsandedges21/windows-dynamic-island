@@ -2935,9 +2935,5 @@ html.fr-slide .notch[data-side='right']:is(.out, .drop) .nt-ring { transform: no
 /* Accent (a style, Settings › Taskbar › Styles, Justin 11-20): every icon on the bar that isn't an app's. */
 html.dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg { color: var(--accent); }
 html.dk-accent .dock :is(.dk-prev, .dk-next) svg { opacity: 0.64; }
-/* On glass the wallpaper shows through, and a dark accent (teal, indigo) sinks into it (Justin, 11-20):
-   lifted toward white, with the same shadow its text has. */
-html[data-pill='glass'].dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg {
-  color: color-mix(in oklab, var(--accent) 62%, white);
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
-}
+/* On glass the wallpaper shows through: the same shadow the bar's text has there, the accent itself kept. */
+html[data-pill='glass'].dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55)); }

@@ -408,7 +408,8 @@ export class Island {
         tiles: (now) => this.gridTiles(now, 460, false),
         act: (action, arg) => void this.runAct(action, arg),
         save: () => this.saveSettings(),
-        look: () => ({ accent: this.settings.island.accent, color: this.settings.island.color, glass: this.settings.island.glass, reduce: document.documentElement.classList.contains('reduce') }),
+        // The accent's colour, not its name ("teal" is CSS's own dark teal; Justin, 11-20).
+        look: () => ({ accent: accentColor(this.settings.island), color: this.settings.island.color, glass: this.settings.island.glass, reduce: document.documentElement.classList.contains('reduce') }),
         enabled: (kind) => this.running.has(kind),
       },
       () => this.settings.island.widgets,
@@ -450,7 +451,11 @@ export class Island {
           this.settings.island.taskbar.hidden = items;
           this.saveSettings();
         },
-        look: () => ({ accent: this.settings.island.accent, ...lookOf(this.settings.island.taskbar.look, this.settings.island) }),
+        // The accent's colour, not its name: "teal" was CSS's own dark teal on the bar (Justin, 11-20).
+        look: () => {
+          const look = lookOf(this.settings.island.taskbar.look, this.settings.island);
+          return { accent: accentColor({ ...this.settings.island, color: look.color }), ...look };
+        },
         act: (action) => void this.runAct(action, null),
         scale: () => this.settings.island.taskbar.scale,
         minLen: () => this.settings.island.taskbar.minLen,
