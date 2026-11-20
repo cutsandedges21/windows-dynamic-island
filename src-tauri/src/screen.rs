@@ -2,7 +2,7 @@
 // (design: docs/superpowers/specs/2026-10-28-phone-terminal-claude-screen-design.md). Its host runs
 // as the Windows service `chromoting`, which "Set up remote access" at
 // remotedesktop.google.com/access installs. "ready": running; "off": installed but stopped;
-// "missing": not installed; null: unknown (a Mac isn't looked at yet).
+// "missing": not installed; null: unknown. A Mac's host is looked for under /Library.
 
 /// Chrome Remote Desktop's host service.
 #[cfg(windows)]
@@ -54,7 +54,7 @@ fn query(name: &str) -> Service {
     }
 }
 
-/// "ready", "off", "missing", or null when Island can't tell (always on a Mac).
+/// "ready", "off", "missing", or null when Island can't tell.
 #[tauri::command]
 pub async fn screen_state() -> Option<String> {
     #[cfg(windows)]
@@ -62,8 +62,29 @@ pub async fn screen_state() -> Option<String> {
         let state = tauri::async_runtime::spawn_blocking(|| query(SERVICE)).await.unwrap_or(Service::Unknown);
         word(state).map(str::to_string)
     }
-    #[cfg(not(windows))]
+    // A Mac: the host is installed under /Library (a LaunchAgent and its helper app) and runs as
+    // Chrome Remote Desktop's own process when remote access is on.
+    #[cfg(target_os = "macos")]
+    {
+        let state = tauri::async_runtime::spawn_blocking(mac_state).await.unwrap_or(Service::Unknown);
+        word(state).map(str::to_string)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     None
+}
+
+#[cfg(target_os = "macos")]
+fn mac_state() -> Service {
+    let installed = ["/Library/LaunchAgents/org.chromium.chromoting.plist", "/Library/PrivilegedHelperTools/org.chromium.chromoting.me2me_host.app"].iter().any(|p| std::path::Path::new(p).exists());
+    if !installed {
+        return Service::Missing;
+    }
+    let running = crate::procs::snapshot().iter().any(|r| r.2.contains("chromoting") || r.2.contains("remoting_me2me_host"));
+    if running {
+        Service::Running
+    } else {
+        Service::Stopped
+    }
 }
 
 #[cfg(test)]
