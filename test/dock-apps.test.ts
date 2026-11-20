@@ -82,6 +82,11 @@ describe('taskbar apps', () => {
     expect(dockRow(DOCK_ITEMS, new Set<DockItem>(['apps', 'clock']), true).join(' ')).toBe('apps clock');
   });
 
+  it("gives Windows' Settings a place, under its own name", () => {
+    const w = { hwnd: 7, pid: 7, exe: 'C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe', title: 'Settings', className: 'ApplicationFrameWindow', rect: { x: 0, y: 0, width: 10, height: 10 }, state: 'normal' as const, monitor: 'm', dpi: 96, appId: 'windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel', appName: 'Settings' };
+    expect(dockApps([], [w], 7, new Map()).map((a) => [a.name, a.windows])).toEqual([['Settings', [7]]]);
+  });
+
   it('keeps how much taller the bar was stretched, within its bounds', () => {
     expect(barTall(23.4)).toBe(23);
     expect(barTall(-5)).toBe(0);

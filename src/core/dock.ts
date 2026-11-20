@@ -221,8 +221,9 @@ export type DockAct =
 
 /** Apps on the dock, at most. */
 export const DOCK_MAX = 14;
-/** Programs whose windows never get a place (Island's own, the shell's). */
-const SKIP = /\\(island|explorer|applicationframehost|textinputhost|shellexperiencehost|searchhost|startmenuexperiencehost|systemsettings)\.exe$/i;
+/** Programs whose windows never get a place (Island's own, the shell's). Windows' Settings does, as on
+ *  Windows' taskbar (Justin, 11-19); closed, its window is cloaked, which ws_windows leaves out. */
+const SKIP = /\\(island|explorer|applicationframehost|textinputhost|shellexperiencehost|searchhost|startmenuexperiencehost)\.exe$/i;
 
 const keyOf = (path: string) => path.toLowerCase();
 /** File Explorer's id in Start, which a pinned File Explorer is. */
