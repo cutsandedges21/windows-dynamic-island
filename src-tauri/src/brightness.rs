@@ -131,7 +131,12 @@ pub async fn brightness_set(percent: u32) -> bool {
         WAKE.notify_one();
         return true;
     }
-    #[cfg(not(windows))]
+    // A Mac: DisplayServices (mac/display.rs); the change is read back and reported from there.
+    #[cfg(target_os = "macos")]
+    {
+        crate::mac::display::set_brightness(percent.min(100))
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = percent;
         false

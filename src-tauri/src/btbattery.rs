@@ -50,7 +50,12 @@ pub fn bt_batteries() -> Vec<BtBattery> {
     {
         dedupe(win::read())
     }
-    #[cfg(not(windows))]
+    // A Mac: the Bluetooth report's batteries (mac/bluetooth.rs), read in the background.
+    #[cfg(target_os = "macos")]
+    {
+        dedupe(crate::mac::bluetooth::batteries().into_iter().map(|(name, percent, connected)| BtBattery { name, percent, connected }).collect())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         Vec::new()
     }

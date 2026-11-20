@@ -5,5 +5,20 @@
   <!-- Land (src/land.rs): macOS asks before an app talks to devices on the local network. -->
   <key>NSLocalNetworkUsageDescription</key>
   <string>Land finds your other computers on this network so you can send them files.</string>
+  <!-- Terminal and iTerm (a Claude Code chat's tab, a reply typed into it) and System Events (restart
+       and shut down from your phone): macOS asks once per app before Island may control it. -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Island brings up the terminal tab a chat runs in, types the replies you send from the island, and restarts or shuts down this Mac when you ask from your phone.</string>
+  <!-- Control Center's Bluetooth switch, its devices and their batteries (src/mac/bluetooth.rs). -->
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>Island's Bluetooth switch turns Bluetooth on and off, connects your headphones and shows their battery.</string>
+  <!-- Calendar (src/mac/agenda.rs): your next event and the week in Control Center. -->
+  <key>NSCalendarsUsageDescription</key>
+  <string>Island shows your next event and your week from the calendars on this Mac.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Island shows your next event and your week from the calendars on this Mac.</string>
+  <!-- Reminders you set in the island go off as notifications even when Island isn't running. -->
+  <key>NSUserNotificationsUsageDescription</key>
+  <string>Island's reminders and alerts show as notifications.</string>
 </dict>
 </plist>

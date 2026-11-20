@@ -73,6 +73,8 @@ keyring = { version = "3", features = ["apple-native"] }
 libc = "0.2"
 # Cocoa calls (src/mac/cf.rs): the app in front, bringing an app forward. Already in the tree through Tauri.
 objc2 = "0.6"
+# Blocks for the now-playing center's callbacks (src/mac/media.rs). Already in the tree through Tauri.
+block2 = "0.6"
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.61"

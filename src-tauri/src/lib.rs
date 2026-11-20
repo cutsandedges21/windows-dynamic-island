@@ -181,6 +181,8 @@ pub fn run() {
             {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 monitors::init(app.handle());
+                // The screen's brightness, read back for the brightness flyout (Windows reports it to msgwin.rs).
+                mac::display::start(app.handle().clone());
             }
             let handle = app.handle().clone();
             log::line(format!("start v{}", app.package_info().version));

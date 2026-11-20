@@ -245,7 +245,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'music',
-    mac: 'soon',
     name: 'Music',
     description: 'Whatever is playing through Windows media controls: Spotify, YouTube, Apple Music and more.',
     icon: 'music',
@@ -428,9 +427,9 @@ export const CATALOG: ActivityMeta[] = [
     priority: 'low',
     behavior: B(true, false, true, false),
     options: [
-      { key: 'volume', type: 'toggle', label: 'Volume', help: 'The volume and mute as you change them.', default: true, mac: 'never' },
-      { key: 'device', type: 'toggle', label: 'Audio device', help: 'Which speakers or headphones play, when that changes.', default: true, mac: 'never' },
-      { key: 'brightness', type: 'toggle', label: 'Brightness', help: "A laptop's own screen; external monitors don't report it.", default: true, mac: 'never' },
+      { key: 'volume', type: 'toggle', label: 'Volume', help: 'The volume and mute as you change them.', default: true },
+      { key: 'device', type: 'toggle', label: 'Audio device', help: 'Which speakers or headphones play, when that changes.', default: true },
+      { key: 'brightness', type: 'toggle', label: 'Brightness', help: "A laptop's own screen; external monitors don't report it.", default: true },
       { key: 'caps', type: 'toggle', label: 'Caps Lock', default: true },
       { key: 'num', type: 'toggle', label: 'Num Lock', default: true, mac: 'never' },
     ],
@@ -448,7 +447,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'calls',
-    mac: 'soon',
     name: 'Mic & Camera',
     description: 'Shows which apps use your microphone or camera, with a system-wide mute.',
     icon: 'mic',
@@ -674,7 +672,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'quick',
-    mac: 'soon',
     name: 'Quick Actions',
     description: 'Mute, screenshot, focus, Bluetooth, Wi-Fi and lock, when you open an idle island.',
     icon: 'grid',

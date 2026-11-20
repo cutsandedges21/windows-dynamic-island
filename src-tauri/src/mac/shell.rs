@@ -27,7 +27,25 @@ fn open(args: &[&str]) -> bool {
     Command::new("/usr/bin/open").args(args).status().is_ok_and(|s| s.success())
 }
 
+/// Windows Settings pages the island links to, as the Mac's System Settings panes.
+pub fn mac_settings(url: &str) -> Option<&'static str> {
+    let page = url.strip_prefix("ms-settings:")?;
+    Some(match page {
+        "network-wifi" | "network" => "x-apple.systempreferences:com.apple.preference.network",
+        "bluetooth" => "x-apple.systempreferences:com.apple.preferences.Bluetooth",
+        "batterysaver" => "x-apple.systempreferences:com.apple.preference.battery",
+        "quiethours" | "focus" => "x-apple.systempreferences:com.apple.preference.notifications",
+        "privacy-notifications" => "x-apple.systempreferences:com.apple.preference.notifications",
+        "sound" => "x-apple.systempreferences:com.apple.preference.sound",
+        "display" => "x-apple.systempreferences:com.apple.preference.displays",
+        _ => "x-apple.systempreferences:",
+    })
+}
+
 fn open_url_checked(url: &str) -> bool {
+    if let Some(pane) = mac_settings(url) {
+        return open(&[pane]);
+    }
     if !scheme_ok(url) {
         crate::log::line(format!("refused url scheme: {}", url.split(':').next().unwrap_or("")));
         return false;
@@ -214,6 +232,8 @@ mod tests {
         assert!(power_script("rm -rf").is_none());
         assert!(scheme_ok("x-apple.systempreferences:com.apple.preference.sound"));
         assert!(!scheme_ok("file:///etc/passwd"));
+        assert_eq!(mac_settings("ms-settings:bluetooth"), Some("x-apple.systempreferences:com.apple.preferences.Bluetooth"));
+        assert_eq!(mac_settings("https://x"), None);
     }
 
     #[test]

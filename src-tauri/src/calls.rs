@@ -122,7 +122,13 @@ pub async fn call_camera(label: String) -> Result<(), String> {
     {
         tauri::async_runtime::spawn_blocking(move || win::press(app, app.camera)).await.map_err(|e| e.to_string())?
     }
-    #[cfg(not(windows))]
+    // A Mac: the same, with the Mac's shortcuts (mac/keys.rs).
+    #[cfg(target_os = "macos")]
+    {
+        let name = app.name;
+        tauri::async_runtime::spawn_blocking(move || crate::mac::keys::call_camera(name)).await.map_err(|e| e.to_string())?
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = app;
         Err("Windows only".into())
