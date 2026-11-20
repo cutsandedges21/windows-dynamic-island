@@ -19,7 +19,8 @@ jobs:
       - run: mkdir -p dist && echo '<!doctype html>' > dist/index.html
       - run: cargo check -p island --lib --locked
 
-  # The Mac self-update for real: a disk image made with hdiutil replaces a test Island.app.
+  # Every native test on a Mac, the Mac twins' own included; the self-update one does it for real (a
+  # disk image made with hdiutil replaces a test Island.app).
   update-test:
     runs-on: macos-latest
     steps:
@@ -27,7 +28,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: mkdir -p dist && echo '<!doctype html>' > dist/index.html
-      - run: cargo test -p island --lib --locked updater
+      - run: cargo test -p island --lib --locked
 
   build:
     needs: check
@@ -43,7 +44,10 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
       - run: npm ci
+      # Lowered for macOS 12's Safari engine (vite.config.ts).
       - run: npm run build:web
+        env:
+          ISLAND_MAC: '1'
       - run: npx tauri build --target universal-apple-darwin --bundles app,dmg
       - name: Smoke test
         run: |

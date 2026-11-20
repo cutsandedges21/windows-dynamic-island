@@ -472,7 +472,7 @@ pub async fn ws_place(places: Vec<Place>) -> Result<Vec<Placed>, String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod live_tests {
     /// Prints this PC's windows as the taskbar sees them (cargo test --lib windows_now -- --ignored --nocapture).
     #[test]
