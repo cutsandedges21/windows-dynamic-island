@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
-import { clickPlan, dockApps, dockRow, fillSplit, meltEnds, songBg, movePins, openOrder, pinToggle, resetLine, riseAt, riseShifts, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
+import { clickPlan, dockApps, dockRow, fillSplit, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, riseShifts, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
 import { barAutoHide, barEdge, barFill, barOrder, barSquare, barStyles, barTall, BAR_TALL_MAX, cleanNames, DOCK_ITEMS, migrate, type DockItem } from '../src/core/settings';
 
 const app = (key: string, pinned: boolean, windows: number[] = [], front = false): DockApp => ({ key, name: key.toUpperCase(), icon: null, windows, front, pinned });
@@ -152,10 +152,6 @@ describe('taskbar apps', () => {
     // The song's box in its album's colour: on until turned off.
     expect(migrate({}).island.taskbar.songTint).toBe(true);
     expect(migrate({ island: { taskbar: { songTint: false } } }).island.taskbar.songTint).toBe(false);
-    // The art's hue, deep enough for white writing, never washed out or garish.
-    expect(songBg([340, 0.7, 0.5])).toBe('hsl(340 70% 40%)');
-    expect(songBg([200, 0.1, 0.5])).toBe('hsl(200 40% 40%)');
-    expect(songBg([20, 1, 0.5])).toBe('hsl(20 75% 40%)');
   });
 
   it('gives a browser\'s app window its shortcut\'s place, and Island\'s Settings one of its own', () => {

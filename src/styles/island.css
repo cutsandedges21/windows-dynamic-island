@@ -2975,7 +2975,7 @@ html[data-pill='tinted'] {
 html[data-pill='tinted'] :is(.pill-bg, .sheet-bg, .bubble-bg, .chat-bar, .chat-card) { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
 html[data-pill='tinted'] .dock-bg { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
 html[data-pill='tinted'].dock-square .dock-bg { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07); }
-/* The song's box in its album's colour (Justin, 11-20): white writing on it, a touch lighter pointed at. */
-html .dock button.dk-music.dk-tint { background: var(--song); color: #fff; }
-html .dock button.dk-music.dk-tint:hover { background: color-mix(in srgb, var(--song), #fff 10%); }
-html .dock button.dk-music.dk-tint .dk-mtext span { color: rgba(255, 255, 255, 0.72); }
+/* The song's box in its album's colour, washed over the bar as the island's music card's glass is
+   (.sheet-bg::before; Justin, 11-20: "make the taskbar like island"); a touch stronger pointed at. */
+html .dock button.dk-music.dk-tint { background: linear-gradient(150deg, color-mix(in srgb, var(--song) 46%, transparent), color-mix(in srgb, var(--song) 12%, transparent) 70%); }
+html .dock button.dk-music.dk-tint:hover { background: linear-gradient(150deg, color-mix(in srgb, var(--song) 56%, transparent), color-mix(in srgb, var(--song) 20%, transparent) 70%); }
