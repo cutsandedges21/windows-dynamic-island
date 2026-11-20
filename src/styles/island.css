@@ -2935,10 +2935,10 @@ html.fr-slide .notch[data-side='right']:is(.out, .drop) .nt-ring { transform: no
 /* Accent (a style, Settings › Taskbar › Styles, Justin 11-20): every icon on the bar that isn't an app's. */
 html.dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg { color: var(--accent); }
 html.dk-accent .dock :is(.dk-prev, .dk-next) svg { opacity: 0.64; }
-/* On glass the wallpaper shows through and some accents don't stand out on it (Justin, 11-20): the exact
-   accent kept, each line edged in a hairline of dark that follows it (a soft halo was too spread out), its
-   lines a little bolder. */
-html[data-pill='glass'].dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg {
-  filter: drop-shadow(0.5px 0 0 rgba(0, 0, 0, 0.55)) drop-shadow(-0.5px 0 0 rgba(0, 0, 0, 0.55)) drop-shadow(0 0.5px 0 rgba(0, 0, 0, 0.55)) drop-shadow(0 -0.5px 0 rgba(0, 0, 0, 0.55));
+/* Each icon outlined in black, so any accent stands out on any bar, glass with the wallpaper through it too
+   (Justin, 11-20: a soft halo, then a faint edge, were not it): four zero-blur shadows, one each way, each
+   also edging the last, make a solid line round the shape. Its lines a little bolder. */
+html.dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg {
+  filter: drop-shadow(0.75px 0 0 #000) drop-shadow(-0.75px 0 0 #000) drop-shadow(0 0.75px 0 #000) drop-shadow(0 -0.75px 0 #000);
 }
-html[data-pill='glass'].dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg.line { stroke-width: 2.5; }
+html.dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg.line { stroke-width: 2.5; }
