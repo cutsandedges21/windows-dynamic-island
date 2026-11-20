@@ -23,6 +23,7 @@ const PHRASES: Array<[string, string]> = [
   ],
   [' On Windows, allow Island through the firewall on private networks the first time it asks.', ' If macOS asks whether Island may find devices on your network, allow it.'],
   ['It starts with the apps pinned to your taskbar; Edit adds any app from Start.', 'It starts with the apps in your Dock; Edit adds any app from Applications.'],
+  ["codex.exe isn't on this PC", "Codex isn't on this Mac"],
   ['Alt+Shift+', 'Option+Shift+'],
   ['Ctrl+V', 'Control+V'],
   ['this PC', 'this Mac'],
