@@ -293,12 +293,20 @@ mod imp {
             .filter(|i| !i.hidden && i.icon.is_some())
             .map(|i| TrayIcon { key: i.key.clone(), tip: i.tip.clone(), icon: i.icon.clone(), pinned: pinned(i, &shown, &settings) })
             .collect();
+        // The ones on the bar in the order Windows' taskbar has them; the rest after, as they came.
+        let mut list = list;
+        if let Some(order) = &shown {
+            list.sort_by_key(|t| if t.pinned { order.iter().position(|k| *k == tip_key(&t.tip)).unwrap_or(usize::MAX) } else { usize::MAX });
+        }
         *LAST_PINNED.lock().unwrap() = pinned_keys(&list);
         list
     }
 
+    /// The keys of the ones on the bar, sorted (a set to compare).
     fn pinned_keys(list: &[TrayIcon]) -> Vec<String> {
-        list.iter().filter(|t| t.pinned).map(|t| t.key.clone()).collect()
+        let mut keys: Vec<String> = list.iter().filter(|t| t.pinned).map(|t| t.key.clone()).collect();
+        keys.sort();
+        keys
     }
 
     /// Settings › Taskbar › Other system tray icons changed which are shown: the taskbar hears it.
@@ -308,7 +316,9 @@ mod imp {
             let settings = settings();
             let shown = SHOWN.lock().unwrap().clone();
             let items = ITEMS.lock().unwrap();
-            items.iter().filter(|i| !i.hidden && i.icon.is_some() && pinned(i, &shown, &settings)).map(|i| i.key.clone()).collect::<Vec<_>>()
+            let mut keys = items.iter().filter(|i| !i.hidden && i.icon.is_some() && pinned(i, &shown, &settings)).map(|i| i.key.clone()).collect::<Vec<_>>();
+            keys.sort();
+            keys
         };
         if now != before {
             changed();
