@@ -2941,3 +2941,35 @@ html.dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg.line {
    dk-outline filter, dock.ts), so any accent stands out on any bar, glass with the wallpaper through it too. */
 html.dk-accent.dk-accent-border .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg { filter: url(#dk-outline); }
 .dk-defs { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
+
+/* Fill the width (Settings › Taskbar, Justin 11-20): the bar runs the screen's width (dock.ts sets its
+   min-width), Start, search and the apps in its middle, the rest at its ends; search is a box with its
+   word, as on Windows' own taskbar. */
+html.dock-full .dock { box-sizing: border-box; }
+.dock .dk-search-word { display: none; }
+html.dock-full:not(.dk-upright) .dock .dk-search {
+  justify-content: flex-start;
+  gap: 10px;
+  width: 220px;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 14px;
+  border-radius: 12px;
+  background: rgba(var(--ink), 0.06);
+  box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.1);
+}
+html.dock-full:not(.dk-upright) .dock .dk-search:hover { background: rgba(var(--ink), 0.1); }
+html.dock-full:not(.dk-upright) .dock .dk-search svg { width: 16px; height: 16px; }
+html.dock-full:not(.dk-upright) .dock .dk-search-word { display: inline; font: 500 12.5px/1 var(--font); opacity: 0.75; }
+/* ... square, flat on the edge as Windows' own: no round corners, no ends in from the screen's. */
+html.dock-square .dock { left: 0; border-radius: 0; box-shadow: none; }
+html.dock-square .dock-bg { border-radius: 0; box-shadow: inset 0 1px 0 rgba(var(--ink), 0.1); }
+
+/* Tinted black (a look for the taskbar and widgets): Windows' own dark taskbar's near-black with a blue
+   tint (Justin's, 11-20: rgb 14 18 25), a faint lit line along its top. */
+html[data-pill='tinted'] {
+  --pill: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 40%), rgba(14, 18, 25, 0.97);
+}
+html[data-pill='tinted'] :is(.pill-bg, .sheet-bg, .bubble-bg, .chat-bar, .chat-card) { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+html[data-pill='tinted'] .dock-bg { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+html[data-pill='tinted'].dock-square .dock-bg { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07); }

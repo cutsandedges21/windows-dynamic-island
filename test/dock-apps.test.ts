@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
 import { clickPlan, dockApps, dockRow, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, riseShifts, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
-import { barAutoHide, barEdge, barOrder, barStyles, barTall, BAR_TALL_MAX, cleanNames, DOCK_ITEMS, migrate, type DockItem } from '../src/core/settings';
+import { barAutoHide, barEdge, barFill, barOrder, barSquare, barStyles, barTall, BAR_TALL_MAX, cleanNames, DOCK_ITEMS, migrate, type DockItem } from '../src/core/settings';
 
 const app = (key: string, pinned: boolean, windows: number[] = [], front = false): DockApp => ({ key, name: key.toUpperCase(), icon: null, windows, front, pinned });
 const pin = (key: string) => ({ name: key.toUpperCase(), target: key });
@@ -104,6 +104,16 @@ describe('taskbar apps', () => {
     expect(migrate({ island: { taskbar: { on: true, styles: ['rise', 'accent'] } } }).island.taskbar.styles).toEqual(['rise', 'accent']);
     expect(migrate({ island: { taskbar: { on: true, styles: ['glide'], names: {}, accentIcons: true } } }).island.taskbar.styles).toEqual(['glide', 'accent']);
     expect(migrate({ island: { taskbar: { on: true, styles: ['rise'], accentIcons: 'yes' } } }).island.taskbar.styles).toEqual(['rise']);
+    // Fill the width: only with its room kept clear, along the bottom, not auto-hiding; square only on the edge.
+    const t = { ...migrate({}).island.taskbar, on: true, keepClear: true, fill: true };
+    expect(barFill(t)).toBe(true);
+    expect(barFill({ ...t, keepClear: false })).toBe(false);
+    expect(barFill({ ...t, side: 'left' })).toBe(false);
+    expect(barFill({ ...t, autoHide: true })).toBe(false);
+    expect(barSquare({ ...t, square: true })).toBe(false);
+    expect(barSquare({ ...t, square: true, edge: true })).toBe(true);
+    expect(barSquare({ ...t, square: true, edge: true, hideWindows: false })).toBe(false);
+    expect(migrate({ island: { taskbar: { fill: true, square: 'yes' } } }).island.taskbar).toMatchObject({ fill: true, square: false });
     // Keep windows clear of it: off until turned on.
     expect(migrate({}).island.taskbar.keepClear).toBe(false);
     expect(migrate({ island: { taskbar: { on: true, keepClear: true } } }).island.taskbar.keepClear).toBe(true);

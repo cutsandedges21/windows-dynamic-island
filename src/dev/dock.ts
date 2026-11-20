@@ -39,6 +39,9 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
     styles: q.has('styles') ? (q.get('styles') ?? '').split(',').filter((k): k is DockStyle => (DOCK_STYLES as readonly string[]).includes(k)) : ['rise'],
     // &names=serif,plain,bold: the names' font, look, and bold (style Names).
     names: cleanNames({ font: (q.get('names') ?? '').split(',')[0], look: (q.get('names') ?? '').split(',')[1], bold: (q.get('names') ?? '').includes('bold') }),
+    // &fill=1: filling the width; &square=1 with &edge=1: square on the edge.
+    fill: q.get('fill') === '1',
+    square: q.get('square') === '1',
     // &border=1 is the screen border's; &accentborder=1: Accent's black line round each icon.
     accentBorder: q.get('accentborder') === '1',
     edge: q.get('edge') === '1',

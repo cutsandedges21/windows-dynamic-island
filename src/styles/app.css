@@ -572,3 +572,4 @@ button.me-grip:hover, button.me-grip:focus-visible { background: rgba(255, 255, 
 .tb-stage .tb-item.ghost { outline: 1.5px solid var(--accent); outline-offset: -1px; background: rgba(255, 255, 255, 0.08); }
 .tb-stage .tb-sep { width: 1px; height: 20px; margin: 0 4px; background: rgba(255, 255, 255, 0.18); }
 .me-always { font-size: 12px; white-space: nowrap; }
+.lk-tinted { background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 45%), rgb(14, 18, 25); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.12); }

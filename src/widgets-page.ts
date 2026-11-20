@@ -66,6 +66,7 @@ const LOOKS: ReadonlyArray<[ItemLook['color'], string]> = [
   ['matte-black', 'Matte black'],
   ['matte-white', 'Matte white'],
   ['glass', 'Glass'],
+  ['tinted', 'Tinted black'],
 ];
 
 /** A row of small swatches, one per look, the chosen one ringed; under it the glass slider when Glass is picked. */
@@ -455,7 +456,7 @@ function edgeRows(host: WidgetsPageHost): HTMLElement[] {
         host.render();
       }),
     ),
-    ...(t.edge
+    ...(t.edge && !(t.fill && t.square && t.keepClear)
       ? [
           row(
             'Melt the ends',
@@ -486,8 +487,49 @@ function edgeRows(host: WidgetsPageHost): HTMLElement[] {
             toggle(t.keepClear, (v) => {
               t.keepClear = v;
               host.save(true);
+              host.render();
             }),
           ),
+          // Its room kept, it can fill it: the whole width (along the bottom).
+          ...(t.keepClear && t.side === 'bottom'
+            ? [
+                sub(
+                  row(
+                    'Fill the width',
+                    'It runs the whole width of the screen: Start, search and your apps in the middle, the rest at the ends.',
+                    toggle(t.fill, (v) => {
+                      t.fill = v;
+                      host.save(true);
+                      host.render();
+                    }),
+                  ),
+                ),
+                ...(t.fill
+                  ? [
+                      sub(
+                        row(
+                          'Shape',
+                          "Floating above the edge, blended into it, or square on it like Windows' own taskbar.",
+                          segmented<'float' | 'blend' | 'square'>(
+                            !t.edge ? 'float' : t.square ? 'square' : 'blend',
+                            [
+                              ['float', 'Floating'],
+                              ['blend', 'Blend'],
+                              ['square', 'Square'],
+                            ],
+                            (v) => {
+                              t.edge = v !== 'float';
+                              t.square = v === 'square';
+                              host.save(true);
+                              host.render();
+                            },
+                          ),
+                        ),
+                      ),
+                    ]
+                  : []),
+              ]
+            : []),
         ]),
   ];
 }

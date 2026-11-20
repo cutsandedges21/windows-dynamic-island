@@ -32,7 +32,7 @@ import { fadeSegments, fadeSheet } from './fade-menu';
 import { quietMoon } from './quiet';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
 import { applyGlass } from './glass';
-import { accentColor, backAt, barAutoHide, cleanAt, cleanPins, barEdge, barMinLen, barNeedsHidden, barScale, barTall, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
+import { accentColor, backAt, barAutoHide, barFill, barSquare, cleanAt, cleanPins, barEdge, barMinLen, barNeedsHidden, barScale, barTall, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { CARD_RADIUS, mapActions, SheetRenderer, type Block, type DropZone, type SheetButton, type SheetChip, type SheetView, type Tile } from './sheet';
 import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
@@ -494,13 +494,15 @@ export class Island {
         },
         autoHide: () => barAutoHide(this.settings.island.taskbar),
         keepClear: () => this.settings.island.taskbar.keepClear,
+        fill: () => barFill(this.settings.island.taskbar),
+        square: () => barSquare(this.settings.island.taskbar),
         setAutoHide: (on) => {
           const t = this.settings.island.taskbar;
           t.autoHide = on;
           if (on && barNeedsHidden(t)) t.hideWindows = true;
           this.saveSettings();
         },
-        melt: () => this.settings.island.taskbar.melt,
+        melt: () => this.settings.island.taskbar.melt && !barSquare(this.settings.island.taskbar),
         setMelt: (on) => {
           this.settings.island.taskbar.melt = on;
           this.saveSettings();

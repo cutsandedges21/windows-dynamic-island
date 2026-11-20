@@ -69,6 +69,11 @@ export interface DockFrame {
   startKey?: boolean;
   /** With Accent: a thin black line round each of its icons. */
   accentBorder?: boolean;
+  /** Fill the width (barFill): the bar runs the screen's whole width, Start, search and the apps in the
+   *  middle, the rest at the ends, search a box with its word. */
+  fill?: boolean;
+  /** ... square, flat on the edge, as Windows' own taskbar. */
+  square?: boolean;
   /** On the screen's bottom edge, over Windows' taskbar ... */
   edge?: boolean;
   /** ... its ends curving out into the edge. */
@@ -443,6 +448,8 @@ export interface DockHooks {
   setAutoHide(on: boolean): void;
   /** Keep windows clear of it: its strip of the screen held for it (not while it auto-hides). */
   keepClear(): boolean;
+  fill(): boolean;
+  square(): boolean;
   side(): DockSide;
   setSide(side: DockSide): void;
   /** The screen border's width while it is on, else 0. */
@@ -598,6 +605,8 @@ export class DockHost {
         startOpens: this.hooks.startOpens(),
         startKey: this.hooks.startKey(),
         accentBorder: this.hooks.accentBorder(),
+        fill: this.hooks.fill(),
+        square: this.hooks.square(),
         edge: this.hooks.edge(),
         melt: this.hooks.melt(),
         side: this.hooks.side(),
@@ -1216,6 +1225,10 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   gear.addEventListener('click', () => void native.openApp('taskbar'));
   // Takes the room when the bar is stretched longer than what it holds (Edit position).
   const fillEl = el('i', 'dk-fill');
+  // Filling the width: the room either side of the middle (Start, search, the apps), the rest at the ends.
+  const fillL = el('i', 'dk-fill dk-fill-l');
+  const fillR = el('i', 'dk-fill dk-fill-r');
+  fillL.hidden = fillR.hidden = true;
   // Start: Island's own menu (startmenu.ts) or Windows', as Settings › Taskbar says.
   const winStart = el('button', 'dk-btn dk-winstart', '<svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7.6" height="7.6" rx="1.6"/><rect x="12.9" y="3.5" width="7.6" height="7.6" rx="1.6"/><rect x="3.5" y="12.9" width="7.6" height="7.6" rx="1.6"/><rect x="12.9" y="12.9" width="7.6" height="7.6" rx="1.6"/></svg>');
   winStart.title = 'Start';
@@ -1248,6 +1261,9 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   // the keyboard on opening), or Windows' search (Win+S) when Start opens Windows'.
   const search = el('button', 'dk-btn dk-search', SVG.search);
   search.title = 'Search';
+  const searchWord = el('span', 'dk-search-word');
+  searchWord.textContent = 'Search';
+  search.append(searchWord);
   search.addEventListener('click', () => {
     if (frame?.startOpens === 'windows') {
       send({ kind: 'search' });
@@ -1897,7 +1913,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // Every item on the bar rises, in the bar's order: the apps, Start, Search, the song and its buttons,
     // S/W, the tray's, the battery, the clock... (Justin, 11-19: "search doesn't rise", then "no not all").
     const els = [...bar.querySelectorAll<HTMLElement>(`.dk-apps > .dk-app, ${RISE_OTHERS}`)].filter(
-      (b) => !b.hidden && !b.classList.contains('dk-cut') && b.offsetWidth > 0 && !b.closest('[hidden]'),
+      (b) => !b.hidden && !b.classList.contains('dk-cut') && b.offsetWidth > 0 && !b.closest('[hidden]') && !(b === search && fullNow()),
     );
     // Where each one's middle is with nothing spread (measured while nothing is): the pointer is
     // measured against those, so the spreading never moves the item it is on away from it.
@@ -2232,13 +2248,45 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const order = barOrder(frame?.order);
     const shown = new Set(order.filter((k) => !pieces[k][0].hidden));
     const row = dockRow(order, shown, !gapEl.hidden);
-    const sig = `${order.join()}|${row.join()}`;
+    const full = fullNow();
+    const sig = `${order.join()}|${row.join()}|${full}`;
     if (sig === rowSig) return;
     rowSig = sig;
-    const lined = new Set(row.filter((_, n) => row[n - 1] === 'sep') as DockItem[]);
+    let lined = new Set(row.filter((_, n) => row[n - 1] === 'sep') as DockItem[]);
+    // Filling the width: the middle is the apps and what sits with them in their kind, next to them in
+    // the order (Start, search); the room goes either side of it, not after the apps.
+    const mid = new Set<DockItem>();
+    let seqOrder: readonly DockItem[] = order;
+    if (full) {
+      const at = order.indexOf('apps');
+      let a = at;
+      let b = at;
+      while (a > 0 && ZONE[order[a - 1]] === ZONE.apps) a--;
+      while (b < order.length - 1 && ZONE[order[b + 1]] === ZONE.apps) b++;
+      for (let i = a; i <= b; i++) mid.add(order[i]);
+      // Nothing before the middle and two kinds after it (the song, timer and usage; the tray and clock):
+      // the first goes to the left end, as Windows' widgets do, so both ends weigh about the same and the
+      // middle can sit on the screen's middle.
+      const after = order.slice(b + 1);
+      const firstKind = after.findIndex((k, i) => i > 0 && ZONE[k] !== ZONE[after[0]]);
+      if (a === 0 && firstKind > 0) seqOrder = [...after.slice(0, firstKind), ...order.slice(a, b + 1), ...after.slice(firstKind)];
+      // The lines between kinds as they now sit (none where the room is, below).
+      const moved = dockRow(seqOrder, shown);
+      lined = new Set(moved.filter((_, n) => moved[n - 1] === 'sep') as DockItem[]);
+    }
+    fillEl.hidden = full;
+    fillL.hidden = fillR.hidden = !full;
     const seq: HTMLElement[] = [];
     let used = 0;
-    for (const k of order) {
+    let inMid = false;
+    for (const k of seqOrder) {
+      if (full && mid.has(k) !== inMid) {
+        // Into the middle or out of it: the room there, no line.
+        seq.push(inMid ? fillR : fillL);
+        inMid = !inMid;
+        seq.push(...pieces[k]);
+        continue;
+      }
       if (lined.has(k)) {
         const line = seps[used] ?? seps[seps.push(el('i', 'dk-sep')) - 1];
         line.hidden = false;
@@ -2247,6 +2295,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       }
       seq.push(...pieces[k]);
     }
+    if (full && inMid) seq.push(fillR);
     for (const line of seps.slice(used)) line.hidden = true;
     let at = bar.querySelector('.dock-bg')?.nextSibling ?? null;
     for (const e of seq) {
@@ -2254,8 +2303,27 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       at = e.nextSibling;
     }
   };
+  /** Filling the width (along the bottom only). */
+  const fullNow = () => frame?.fill === true && !upright();
+  /**
+   * Filling the width: the middle on the screen's middle. The two rooms share what is free; the side
+   * with less on it gets the difference first (as much as there is), so both sides weigh the same.
+   */
+  const balance = () => {
+    fillL.style.marginLeft = fillR.style.marginRight = '';
+    if (!fullNow() || fillL.hidden) return;
+    const pad = parseFloat(getComputedStyle(bar).paddingLeft) || 0;
+    const left = fillL.offsetLeft - pad;
+    const right = bar.clientWidth - pad - (fillR.offsetLeft + fillR.offsetWidth);
+    const free = fillL.offsetWidth + fillR.offsetWidth;
+    const d = Math.min(Math.abs(right - left), free);
+    if (d < 0.5) return;
+    if (left < right) fillL.style.marginLeft = `${d.toFixed(1)}px`;
+    else fillR.style.marginRight = `${d.toFixed(1)}px`;
+  };
   /** The screen's length along the bar (CSS px): its work area's (the window is only the bar's size);
    *  in the browser preview, the page's. */
+  const fullLen = () => (frame?.square ? screenLen() : screenLen() - 24 - (frame?.edge && frame.melt ? 2 * MELT.out * zoomOf(frame) : 0));
   const screenLen = () => {
     const preview = document.documentElement.classList.contains('dock-preview');
     if (upright()) return preview ? innerHeight : screen.availHeight || screen.height;
@@ -2269,7 +2337,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const up = upright();
     const zoom = zoomOf(frame);
     // The window's 12px at each end, and the melted feet.
-    const ends = 12 + (frame?.edge && frame.melt ? MELT.out * zoom : 0);
+    // Square, filling the width: none, it runs edge to edge.
+    const ends = fullNow() && frame?.square ? 0 : 12 + (frame?.edge && frame.melt ? MELT.out * zoom : 0);
     const len = screenLen();
     if (!gapEl.hidden) {
       const g = gapEl.getBoundingClientRect();
@@ -2284,6 +2353,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   /** The bar squeezed until it fits on the screen: DROP's items go one by one, then the apps furthest
    *  along (never the one in front). Everything comes back once there is room again. */
   const squeezeToFit = () => {
+    // Measured without the middle's balancing (it only takes room that is free); set again after.
+    fillL.style.marginLeft = fillR.style.marginRight = '';
     for (const k of appsBox.children) (k as HTMLElement).classList.remove('dk-cut');
     // The island open in the bar's middle: only the apps and the clock, room or not (Moss: "temporarily
     // hide things like now playing ... only keep tabs and time").
@@ -2310,6 +2381,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       }
     }
     document.documentElement.dataset.squeeze = String(sq);
+    balance();
   };
 
   /** The window to the bar's width, with the room over it for a card. */
@@ -2319,7 +2391,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // 12px at each end; the melted ends grow with the bar's size, as the bar does.
     const zoom = zoomOf(frame);
     const restLen = up ? r.height : r.width;
-    const len = Math.ceil(restLen + 24 + (frame?.edge && frame.melt ? 2 * MELT.out * zoom : 0));
+    const len = Math.ceil(restLen + (fullNow() && frame?.square ? 0 : 24 + (frame?.edge && frame.melt ? 2 * MELT.out * zoom : 0)));
     const thick = up ? r.width : r.height;
     const barArea = Math.ceil(thick + 16 + HEADROOM);
     // Beside an upright bar the card stands out sideways, as tall as the bar lets it.
@@ -2439,8 +2511,12 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     root.classList.toggle('dk-name-bold', f.names?.bold === true);
     root.classList.toggle('dock-edge', f.edge === true);
     root.classList.toggle('dock-melt', f.edge === true && f.melt === true);
-    // Stretched longer in Edit position: the room goes between the apps and what follows them.
-    if (!stretching) bar.style.minWidth = !upright() && f.minLen ? `${f.minLen}px` : '';
+    root.classList.toggle('dock-full', fullNow());
+    root.classList.toggle('dock-square', fullNow() && f.square === true);
+    // Filling the width: the screen's, less the window's 12px at each end and the melted feet (square:
+    // all of it). Else stretched longer in Edit position: the room goes between the apps and what follows.
+    if (fullNow()) bar.style.minWidth = `${(fullLen() / zoomOf(f)).toFixed(2)}px`;
+    else if (!stretching) bar.style.minWidth = !upright() && f.minLen ? `${f.minLen}px` : '';
     const off = new Set(f.hidden ?? []);
     // Apps, kept by key.
     const seen = new Set<string>();
