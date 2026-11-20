@@ -226,10 +226,10 @@ pub async fn media_control(action: String, value: Option<f64>) -> bool {
                 let props = s.TryGetMediaPropertiesAsync()?.get()?;
                 let text = |h: windows::core::Result<HSTRING>| h.map(|h| h.to_string()).unwrap_or_default();
                 let aumid = text(s.SourceAppUserModelId());
-                let before = crate::procs::foreground();
+                let before = front_app();
                 let mut back = Back { before, player: 0, minimized: false, tab: None };
                 let ok = focus(&aumid, &text(props.Title()), &text(props.Artist()), &text(props.AlbumTitle()), &mut back);
-                back.player = crate::procs::foreground();
+                back.player = front_app();
                 *BACK.lock().unwrap() = (ok && back.player != 0 && back.player != before).then_some(back);
                 ok
             }
@@ -263,7 +263,7 @@ static BACK: std::sync::Mutex<Option<Back>> = std::sync::Mutex::new(None);
 fn undo_focus() -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{IsWindow, ShowWindow, SW_MINIMIZE};
     let Some(b) = BACK.lock().unwrap().take() else { return false };
-    if crate::procs::foreground() != b.player {
+    if front_app() != b.player {
         return false;
     }
     if let Some(name) = &b.tab {
@@ -278,6 +278,30 @@ fn undo_focus() -> bool {
         crate::procs::activate(b.before);
     }
     true
+}
+
+/// The app window in front, past Island's own: a click on the island's art can bring the island
+/// forward (Justin, 11-19: the second click on it should put things back too, as on the taskbar).
+/// Else the frontmost visible window of another program that is not a tool window, minimized or cloaked.
+fn front_app() -> isize {
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, IsIconic, GWL_EXSTYLE, WS_EX_TOOLWINDOW};
+    let me = std::process::id();
+    let fg = crate::procs::foreground();
+    if fg != 0 && crate::procs::window_pid(fg) != me {
+        return fg;
+    }
+    crate::procs::windows()
+        .into_iter()
+        .find(|w| {
+            let h = HWND(w.hwnd as *mut _);
+            let mut cloaked = 0u32;
+            unsafe {
+                let _ = DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut _, 4);
+                w.pid != me && cloaked == 0 && !IsIconic(h).as_bool() && GetWindowLongPtrW(h, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 == 0
+            }
+        })
+        .map_or(0, |w| w.hwnd)
 }
 
 /// Brings forward whatever is playing: the browser tab it's in, else the app's window

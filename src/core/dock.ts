@@ -1780,20 +1780,19 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       if (!bobFrom) bobFrom = t;
       bob = Math.sin((((t - bobFrom) % RISE_BOB_MS) / RISE_BOB_MS) * Math.PI);
     } else bobFrom = 0;
-    // Each one makes room for what it grows by as a margin each side: an icon for half of it (Windhawk's
-    // spacing; its place has room round the icon), a wide one (the song, S/W, the clock) for all of it, or
-    // it would grow over its neighbours. Everything after it moves on, the bar widens by the total and
-    // slides back by half of it, so the bar parts round the pointer.
-    const rooms = els.map((b, i) => {
-      if (!spread) return 0;
-      const w = b.classList.contains('dk-app') ? APP_W : b.offsetWidth;
-      return RISE_GROW * levels[i] * w * (w > APP_W * 1.25 ? 1 : RISE_SPACING);
-    });
+    // Only the apps make room, half of what they grow by as a margin each side (Windhawk's spacing):
+    // everything after one moves on, the bar widens by the total and slides back by half of it, so the
+    // row parts round the pointer. The others grow in place: their room moved the whole bar, by up to
+    // 20 px at each end for the song (Justin, 11-19, "some boxes make the whole taskbar move").
+    const rooms = els.map((b, i) => (spread && b.classList.contains('dk-app') ? RISE_GROW * levels[i] * APP_W * RISE_SPACING : 0));
     const total = rooms.reduce((a, r) => a + r, 0);
     const spaced = new Set<HTMLElement>();
     els.forEach((b, i) => {
       const bobs = i === nearest ? bob : 0;
-      const s = (1 + RISE_GROW * levels[i]) * (1 + RISE_BOB_GROW * bobs);
+      // A wide one (the song, S/W, the battery, the clock) grows by as many px as an icon does, not by
+      // as large a share, so it stays clear of its neighbours.
+      const w = b.classList.contains('dk-app') ? APP_W : b.offsetWidth;
+      const s = (1 + RISE_GROW * levels[i] * Math.min(1, (APP_W * 1.25) / Math.max(1, w))) * (1 + RISE_BOB_GROW * bobs);
       const room = rooms[i];
       const out = RISE_BOB_LIFT * bobs;
       placed.set(b, { s, along: 0, out });
