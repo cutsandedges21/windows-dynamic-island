@@ -146,6 +146,8 @@ export function withBack(c: { owner: string; view: SheetView }): { owner: string
 
 /** A press and its release on the taskbar (a tap) fit in this (ms): see the taskbar's claudeCard. */
 const RETAP_MS = 800;
+/** Activities a tap on the pill opens on their own card (not Control Center) while the pill shows them. */
+const CARD_ON_TAP: ReadonlySet<string> = new Set(['timer']);
 
 /** The open island's bar, blended into the top or bottom, is at least this wide (CSS px): room for Control Center's card under it. */
 const FLUSH_MIN_W = 360;
@@ -2345,7 +2347,12 @@ export class Island {
     switch (action) {
       case 'island:tap':
         if (this.view !== 'main') this.view = 'main';
-        else if (!this.inputActive) this.open = !this.open;
+        else if (!this.inputActive) {
+          this.open = !this.open;
+          // Showing the timer, it opens on the Timer's card, as the taskbar's timer does (Justin, 11-19);
+          // its Back goes to Control Center.
+          if (this.open && this.primaryId && CARD_ON_TAP.has(this.primaryId) && this.running.has(this.primaryId)) this.cardFor = this.primaryId;
+        }
         break;
       case 'island:hide-menu':
         this.view = 'hide';
