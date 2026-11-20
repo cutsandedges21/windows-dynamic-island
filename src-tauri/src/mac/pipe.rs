@@ -122,9 +122,12 @@ pub fn start(app: AppHandle) {
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
-                    // Somebody else's program gets nothing from us.
+                    // Somebody else's program gets nothing from us. Only this user can reach the socket
+                    // anyway (it lives in their own ~/Library, mode 600); an event that needs no answer
+                    // writes its line and leaves at once, so a peer already gone shows no credentials
+                    // and is let through.
                     let me = unsafe { libc::getuid() };
-                    if stream.peer_cred().map(|c| c.uid() != me).unwrap_or(true) {
+                    if stream.peer_cred().is_ok_and(|c| c.uid() != me) {
                         continue;
                     }
                     let app = app.clone();
@@ -381,6 +384,31 @@ mod tests {
         let p = socket_path();
         assert!(p.ends_with("Library/Application Support/Island/hook.sock"));
         assert!(p.as_os_str().len() < 104, "a Unix socket path has 104 bytes at most");
+    }
+
+    /// A client that writes its line and leaves at once (an event that needs no answer) is still read.
+    #[test]
+    fn a_line_from_a_client_already_gone_is_read() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join(format!("island-sock-gone-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join("t.sock");
+            let _ = std::fs::remove_file(&path);
+            let listener = UnixListener::bind(&path).unwrap();
+            {
+                let mut c = std::os::unix::net::UnixStream::connect(&path).unwrap();
+                std::io::Write::write_all(&mut c, b"{\"hook_event_name\":\"UserPromptSubmit\"}
+").unwrap();
+            }
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let me = unsafe { libc::getuid() };
+            assert!(!sock.peer_cred().is_ok_and(|c| c.uid() != me), "a peer gone is let through");
+            let mut buf = String::new();
+            sock.read_to_string(&mut buf).await.unwrap();
+            assert!(buf.contains("UserPromptSubmit"));
+            let _ = std::fs::remove_dir_all(&dir);
+        });
     }
 
     /// A whole round trip on a real socket: a waiting event is answered, a plain one goes through.

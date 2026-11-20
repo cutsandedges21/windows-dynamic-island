@@ -54,28 +54,31 @@ pub fn list() -> Vec<LiveWindow> {
     let screens = crate::monitors::all();
     let shown: Vec<cf::CgWindow> = cf::on_screen_windows().into_iter().filter(|w| w.layer == 0 && w.pid != me && w.bounds.2 > 40.0 && w.bounds.3 > 40.0).collect();
     let mut out: Vec<LiveWindow> = Vec::new();
-    let mut seen_apps: Vec<u32> = Vec::new();
     let mut extra: Vec<LiveWindow> = Vec::new();
+    // Each app is asked once (the Accessibility API goes to the app itself), with its bundle's facts.
+    let mut apps: std::collections::HashMap<u32, ((String, String, String), Vec<ax::AxWindow>)> = std::collections::HashMap::new();
     for w in &shown {
-        let (exe, app_id, app_name) = app_info(w.pid);
-        let mut title = w.title.clone();
-        if !seen_apps.contains(&w.pid) {
-            seen_apps.push(w.pid);
-            // The app's minimized windows, and the titles macOS holds back from Core Graphics.
-            for a in ax::windows_of(w.pid) {
-                if a.minimized {
-                    if let Some(s) = screen_at(a.position.x, a.position.y, &screens) {
-                        extra.push(live(w.pid, a.id as isize, &exe, &app_id, &app_name, a.title.clone(), (a.position.x, a.position.y, a.size.w, a.size.h), "minimized", &s));
-                    }
+        if !apps.contains_key(&w.pid) {
+            let info = app_info(w.pid);
+            let ax_windows = ax::windows_of(w.pid);
+            // The app's minimized windows: not on screen, so only the Accessibility API knows them.
+            for a in ax_windows.iter().filter(|a| a.minimized) {
+                if let Some(s) = screen_at(a.position.x, a.position.y, &screens) {
+                    extra.push(live(w.pid, a.id as isize, &info.0, &info.1, &info.2, a.title.clone(), (a.position.x, a.position.y, a.size.w, a.size.h), "minimized", &s));
                 }
             }
+            apps.insert(w.pid, (info, ax_windows));
         }
-        if title.is_empty() {
-            title = ax::windows_of(w.pid).iter().find(|a| a.id == w.id).map(|a| a.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| w.owner.clone());
-        }
+        let ((exe, app_id, app_name), ax_windows) = &apps[&w.pid];
+        // macOS keeps other apps' titles from Core Graphics unless Island may record the screen.
+        let title = if w.title.is_empty() {
+            ax_windows.iter().find(|a| a.id == w.id).map(|a| a.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| w.owner.clone())
+        } else {
+            w.title.clone()
+        };
         let Some(s) = screen_at(w.bounds.0 + w.bounds.2 / 2.0, w.bounds.1 + w.bounds.3 / 2.0, &screens) else { continue };
         let state = if fills(&s, w.bounds) { "maximized" } else { "normal" };
-        out.push(live(w.pid, w.id as isize, &exe, &app_id, &app_name, title, w.bounds, state, &s));
+        out.push(live(w.pid, w.id as isize, exe, app_id, app_name, title, w.bounds, state, &s));
     }
     out.extend(extra);
     out
