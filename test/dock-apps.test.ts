@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
 import { clickPlan, dockApps, dockRow, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, riseShifts, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
-import { barAutoHide, barEdge, barOrder, barStyles, barTall, BAR_TALL_MAX, cleanNames, DOCK_ITEMS, type DockItem } from '../src/core/settings';
+import { barAutoHide, barEdge, barOrder, barStyles, barTall, BAR_TALL_MAX, cleanNames, DOCK_ITEMS, migrate, type DockItem } from '../src/core/settings';
 
 const app = (key: string, pinned: boolean, windows: number[] = [], front = false): DockApp => ({ key, name: key.toUpperCase(), icon: null, windows, front, pinned });
 const pin = (key: string) => ({ name: key.toUpperCase(), target: key });
@@ -97,6 +97,13 @@ describe('taskbar apps', () => {
     expect(barTall(-5)).toBe(0);
     expect(barTall('20')).toBe(0);
     expect(barTall(999)).toBe(BAR_TALL_MAX);
+  });
+
+  it('keeps the icons in the accent colour only when turned on, off for a bar saved before', () => {
+    expect(migrate({}).island.taskbar.accentIcons).toBe(false);
+    expect(migrate({ island: { taskbar: { on: true } } }).island.taskbar.accentIcons).toBe(false);
+    expect(migrate({ island: { taskbar: { on: true, accentIcons: true } } }).island.taskbar.accentIcons).toBe(true);
+    expect(migrate({ island: { taskbar: { on: true, accentIcons: 'yes' } } }).island.taskbar.accentIcons).toBe(false);
   });
 
   it('gives a browser\'s app window its shortcut\'s place, and Island\'s Settings one of its own', () => {

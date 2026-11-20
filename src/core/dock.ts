@@ -67,6 +67,8 @@ export interface DockFrame {
   /** The Start button opens Island's Start menu (else Windows'); the Windows key too. */
   startOpens?: 'island' | 'windows';
   startKey?: boolean;
+  /** The icons that aren't apps' (Start, Wi-Fi, sound, the battery...) in the accent colour. */
+  accentIcons?: boolean;
   /** On the screen's bottom edge, over Windows' taskbar ... */
   edge?: boolean;
   /** ... its ends curving out into the edge. */
@@ -431,6 +433,7 @@ export interface DockHooks {
   names(): NameStyle;
   startOpens(): 'island' | 'windows';
   startKey(): boolean;
+  accentIcons(): boolean;
   edge(): boolean;
   setEdge(on: boolean): void;
   melt(): boolean;
@@ -590,6 +593,7 @@ export class DockHost {
         names: this.hooks.names(),
         startOpens: this.hooks.startOpens(),
         startKey: this.hooks.startKey(),
+        accentIcons: this.hooks.accentIcons(),
         edge: this.hooks.edge(),
         melt: this.hooks.melt(),
         side: this.hooks.side(),
@@ -790,6 +794,8 @@ const RISE_BOB_AFTER = 500;
 const RISE_BOB_MS = 1200;
 const RISE_BOB_LIFT = 4;
 const RISE_BOB_GROW = 0.05;
+/** Pointing at a window's picture this long shows the window itself (Windows' own peek), ms. */
+const LIVE_PEEK_MS = 300;
 /** With Rise on, the Glide highlight eases onto the item it moves to with this time constant, ms (70 was
  *  "too slow", Justin 11-20: it trailed the app the pointer was on). */
 const GLIDE_EASE_MS = 25;
@@ -1594,9 +1600,27 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     window.clearTimeout(peekShots);
     void native.dockPeek([]);
   };
+  // Pointing at a window's picture a moment shows that window itself, where it is, the others faded to
+  // glass, until the pointer leaves it, as on Windows' taskbar (Justin, 11-20).
+  let liveWait = 0;
+  let liveOn = false;
+  const liveTo = (hwnd: number | null) => {
+    window.clearTimeout(liveWait);
+    if (hwnd === null) {
+      if (!liveOn) return;
+      liveOn = false;
+      void native.dockLivePeek(null);
+      return;
+    }
+    liveWait = window.setTimeout(() => {
+      liveOn = true;
+      void native.dockLivePeek(hwnd);
+    }, LIVE_PEEK_MS);
+  };
   const closePeek = () => {
     window.clearTimeout(peekWait);
     window.clearTimeout(peekLeave);
+    liveTo(null);
     if (peekKey === null && peek.hidden) return;
     peekKey = null;
     peekSig = '';
@@ -1633,6 +1657,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
         x.title = 'Close this window';
         x.addEventListener('click', (e) => {
           e.stopPropagation();
+          liveTo(null);
           send({ kind: 'closewin', key: a.key, hwnd, rect: iconRect(b) });
           closePeek();
         });
@@ -1660,9 +1685,12 @@ export async function runDock(stage: HTMLElement): Promise<void> {
           shot.append(img);
         }
         shot.addEventListener('click', () => {
+          liveTo(null);
           send({ kind: 'window', key: a.key, hwnd, rect: iconRect(b) });
           closePeek();
         });
+        slot.addEventListener('pointerenter', () => liveTo(hwnd));
+        slot.addEventListener('pointerleave', () => liveTo(null));
         slot.append(head, shot);
         return slot;
       });
@@ -2366,6 +2394,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // The zoom scales the bar's place in its window too; the CSS divides it back out of that.
     root.style.setProperty('--dk-z', bar.style.zoom);
     root.dataset.pill = f.color;
+    root.classList.toggle('dk-accent-icons', f.accentIcons === true);
     root.dataset.side = side();
     root.classList.toggle('dk-upright', upright());
     // The melted ends' masks for this side, their feet on the border while it is on.

@@ -38,6 +38,8 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
     styles: q.has('styles') ? (q.get('styles') ?? '').split(',').filter((k): k is DockStyle => (DOCK_STYLES as readonly string[]).includes(k)) : ['rise'],
     // &names=serif,plain,bold: the names' font, look, and bold (style Names).
     names: cleanNames({ font: (q.get('names') ?? '').split(',')[0], look: (q.get('names') ?? '').split(',')[1], bold: (q.get('names') ?? '').includes('bold') }),
+    // &accenticons=1: the icons that aren't apps' in the accent colour.
+    accentIcons: q.get('accenticons') === '1',
     edge: q.get('edge') === '1',
     melt: q.get('melt') === '1',
     side: (q.get('side') as DockSide | null) ?? 'bottom',

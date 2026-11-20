@@ -407,6 +407,14 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
           ...(barNeedsHidden(t) ? [] : edgeRows(host)),
           ...lookPicker(t.look, host),
           row(
+            'Icons in the accent colour',
+            "Start, search, Wi-Fi, sound, the battery and the rest of the icons that aren't apps take the accent colour you picked under Appearance.",
+            toggle(t.accentIcons, (v) => {
+              t.accentIcons = v;
+              host.save(true);
+            }),
+          ),
+          row(
             "Hide Windows' taskbar",
             barNeedsHidden(t) && !t.hideWindows
               ? "Windows' own taskbar hides itself while this one shows, and comes back when you turn this off or quit Island. Turn it on to blend this one into the bottom or let it auto-hide."

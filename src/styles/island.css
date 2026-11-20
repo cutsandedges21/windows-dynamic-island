@@ -2931,3 +2931,7 @@ html.fr-slide .notch:is(.out, .drop) .notch-in,
 html.fr-slide .notch[data-side='right']:is(.out, .drop) .notch-in,
 html.fr-slide .notch:is(.out, .drop) .nt-ring,
 html.fr-slide .notch[data-side='right']:is(.out, .drop) .nt-ring { transform: none; }
+
+/* Icons in the accent colour (Settings › Taskbar, Justin 11-20): every icon on the bar that isn't an app's. */
+html.dk-accent-icons .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg { color: var(--accent); }
+html.dk-accent-icons .dock :is(.dk-prev, .dk-next) svg { opacity: 0.64; }
