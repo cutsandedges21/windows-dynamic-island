@@ -2270,7 +2270,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     rowSig = sig;
     const lined = new Set(row.filter((_, n) => row[n - 1] === 'sep') as DockItem[]);
     // Filling the width (fillSplit): the left end, the middle, the right end, in the order dragged to;
-    // the room either side of the middle.
+    // the room either side of the middle. The same order as not filling it, never moved (Justin, 11-20:
+    // "make sure it stays like that"; dock-apps.test.ts holds it to that for any order).
     const mid = new Set<DockItem>(full ? fillSplit(order).mid : []);
     const seqOrder: readonly DockItem[] = order;
     fillEl.hidden = full;

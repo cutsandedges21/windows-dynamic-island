@@ -104,6 +104,18 @@ describe('taskbar apps', () => {
     expect(all.left).toEqual([]);
   });
 
+  it('keeps the same order filling the width as not, whatever order they are dragged to (Justin, 11-20: "make sure it stays like that")', () => {
+    // Any order: the three parts, one after the other, are that order, nothing moved, left out or doubled.
+    let seed = 7;
+    const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let n = 0; n < 200; n++) {
+      const order = [...DOCK_ITEMS].sort(() => rand() - 0.5);
+      const { left, mid, right } = fillSplit(order);
+      expect([...left, ...mid, ...right]).toEqual(order);
+      expect(mid).toContain('apps');
+    }
+  });
+
   it('keeps how much taller the bar was stretched, within its bounds', () => {
     expect(barTall(23.4)).toBe(23);
     expect(barTall(-5)).toBe(0);
