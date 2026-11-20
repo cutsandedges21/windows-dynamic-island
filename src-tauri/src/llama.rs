@@ -191,13 +191,13 @@ pub fn cpu_name() -> String {
         .unwrap_or_default()
 }
 
-/// Island's own runtime is the Windows llama.cpp build; Macs use Ollama until a later part.
-#[cfg(target_os = "macos")]
-const MAC_RUNTIME: &str = "Island's own model runtime comes to the Mac later. Install Ollama from ollama.com and pick an Ollama model.";
-
+/// A Mac: the RAM, and on Apple's chips their GPU, which shares that memory (Metal may use about
+/// two thirds of it). An Intel Mac's runtime works on the processor.
 #[cfg(target_os = "macos")]
 pub fn hardware() -> (u64, Vec<Gpu>) {
-    (crate::mac::sys::total_memory(), Vec::new())
+    let ram = crate::mac::sys::total_memory();
+    let gpus = if cfg!(target_arch = "aarch64") && ram > 0 { vec![Gpu { name: "Apple GPU".into(), vram: ram / 3 * 2 }] } else { Vec::new() };
+    (ram, gpus)
 }
 
 #[cfg(target_os = "macos")]
@@ -211,9 +211,17 @@ fn disk_free(path: &Path) -> Option<u64> {
     crate::mac::sys::disk_space(dir).map(|(free, _)| free)
 }
 
+/// A Mac: the release is a .tar.gz with one folder in it; its contents go straight into `dir`
+/// (the Mac's own tar keeps the programs' execute bits and the libraries' links).
 #[cfg(target_os = "macos")]
-fn extract(_zip: &Path, _dir: &Path) -> Result<(), String> {
-    Err(MAC_RUNTIME.to_string())
+fn extract(archive: &Path, dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|_| "Island could not make its download folder.".to_string())?;
+    let status = std::process::Command::new("/usr/bin/tar").arg("-xzf").arg(archive).arg("-C").arg(dir).args(["--strip-components", "1"]).status();
+    if status.is_ok_and(|s| s.success()) {
+        Ok(())
+    } else {
+        Err("macOS could not unpack the download.".to_string())
+    }
 }
 
 /// Free bytes on the disk that holds `path` (or the nearest folder above it that exists).
@@ -317,9 +325,25 @@ pub(crate) fn extract(zip: &Path, dir: &Path) -> Result<(), String> {
 /// llama.cpp's Vulkan build: it also carries CPU builds from SSE4.2 to Zen 4, so one zip
 /// runs on every x64 PC and uses a graphics card when the plan picked one.
 const BUILD: &str = "b11450";
+#[cfg(not(target_os = "macos"))]
 const RUNTIME_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-win-vulkan-x64.zip";
+#[cfg(not(target_os = "macos"))]
 const RUNTIME_SHA256: &str = "8ce71f060c08cc8b89115eab0d63209d80537936706544d95c3b936fd0f63095";
+#[cfg(not(target_os = "macos"))]
 const RUNTIME_SIZE: u64 = 33_400_000;
+/// A Mac: llama.cpp's own Mac build for its chip (Metal on Apple's chips), the same release.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const RUNTIME_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-macos-arm64.tar.gz";
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const RUNTIME_SHA256: &str = "8bf9bc6c51d248e07f603c5a0cdb2d290cbfaf242d3755bdb65621c2d34415ac";
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const RUNTIME_SIZE: u64 = 11_984_978;
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const RUNTIME_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-macos-x64.tar.gz";
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const RUNTIME_SHA256: &str = "4d1bd2beebddaeaab513b4d64c8fc85a1ff8e9d7621799a9e2f9bf1a13a355aa";
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const RUNTIME_SIZE: u64 = 11_503_793;
 /// llama-server goes after this long unused, giving its memory back.
 const IDLE: Duration = Duration::from_secs(5 * 60);
 /// Loading 18 GB from a slow disk can take minutes.
@@ -332,7 +356,7 @@ fn runtime_dir() -> PathBuf {
     ai_dir().join(format!("llama-{BUILD}"))
 }
 fn server_exe() -> PathBuf {
-    runtime_dir().join("llama-server.exe")
+    runtime_dir().join(if cfg!(target_os = "macos") { "llama-server" } else { "llama-server.exe" })
 }
 fn model_file(tier: &Tier) -> PathBuf {
     ai_dir().join("models").join(tier.file)
@@ -528,11 +552,7 @@ fn missing_bytes(tier: &Tier) -> u64 {
 }
 
 /// Downloads what `tier` is missing: the runtime, then the model. `slot` is held throughout.
-#[cfg_attr(target_os = "macos", allow(unreachable_code, unused_variables, unused_mut))]
 pub async fn setup(tier: &'static Tier, slot: Slot, mut report: impl FnMut(Progress)) -> Result<(), String> {
-    // Nothing to download on a Mac: the runtime here is the Windows build.
-    #[cfg(target_os = "macos")]
-    return Err(MAC_RUNTIME.to_string());
     let need = missing_bytes(tier);
     if need > 0 {
         if let Some(free) = disk_free(&ai_dir()).filter(|free| *free < need + SPARE) {
@@ -627,10 +647,7 @@ pub async fn ensure(id: &str) -> Result<u16, String> {
     ensure_plan(&pick_from(id, *ram, gpus, |t| model_file(t).is_file())?).await
 }
 
-#[cfg_attr(target_os = "macos", allow(unreachable_code, unused_variables, unused_mut))]
 async fn ensure_plan(plan: &Plan) -> Result<u16, String> {
-    #[cfg(target_os = "macos")]
-    return Err(MAC_RUNTIME.to_string());
     let (exe, model) = (server_exe(), model_file(plan.tier));
     if !exe.is_file() || !model.is_file() {
         return Err(format!("{} is not downloaded yet. Get it in Activities › Local AI.", plan.tier.name));
@@ -749,7 +766,7 @@ unsafe impl Send for Job {}
 #[cfg(windows)]
 unsafe impl Sync for Job {}
 
-/// No runtime starts on a Mac yet (see MAC_RUNTIME), so there is nothing to hold.
+/// A Mac has no job objects: the runtime is stopped when Island quits or it goes idle (see `end`).
 #[cfg(target_os = "macos")]
 struct Job;
 
@@ -759,8 +776,19 @@ impl Job {
         Ok(Job)
     }
 
-    fn adopt(&self, _child: &std::process::Child) -> Result<(), String> {
-        Ok(())
+    /// The runtime goes when Island goes, even if Island crashes: a little watcher waits while both
+    /// run, and stops the runtime if Island is the one that went (Windows does this with a job object).
+    fn adopt(&self, child: &std::process::Child) -> Result<(), String> {
+        let (island, server) = (std::process::id(), child.id());
+        let script = format!("while kill -0 {island} 2>/dev/null && kill -0 {server} 2>/dev/null; do sleep 2; done; if ! kill -0 {island} 2>/dev/null; then kill {server} 2>/dev/null; fi");
+        std::process::Command::new("/bin/sh")
+            .args(["-c", &script])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -825,6 +853,27 @@ fn local_client() -> &'static reqwest::Client {
 fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| reqwest::Client::builder().user_agent(concat!("Island/", env!("CARGO_PKG_VERSION"))).build().unwrap_or_default())
+}
+
+/// The Mac runtime for real: downloaded, checked against its SHA-256, unpacked, and run
+/// (`cargo test --lib mac_llama_runtime -- --ignored`, which the Mac CI does).
+#[cfg(all(test, target_os = "macos"))]
+mod mac_runtime_tests {
+    #[test]
+    #[ignore]
+    fn mac_llama_runtime_downloads_unpacks_and_runs() {
+        let dir = std::env::temp_dir().join(format!("island-llama-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let archive = dir.join("runtime.tar.gz");
+        rt.block_on(super::download(super::RUNTIME_URL, super::RUNTIME_SHA256, &archive, |_, _| {})).unwrap();
+        let unpacked = dir.join("llama");
+        super::extract(&archive, &unpacked).unwrap();
+        let out = std::process::Command::new(unpacked.join("llama-server")).arg("--version").output().unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(text.contains("version"), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]

@@ -30,6 +30,8 @@ jobs:
       - run: mkdir -p dist && echo '<!doctype html>' > dist/index.html
       - run: cargo test -p island --lib --locked
       - run: cargo test -p island-hook --locked
+      # Island's own model runtime for real: the Mac build downloaded, checked, unpacked and run.
+      - run: cargo test -p island --lib --locked mac_llama_runtime -- --ignored
 
   build:
     needs: check

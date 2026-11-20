@@ -15,7 +15,8 @@ Island runs on macOS 12 (Monterey) and later, on Apple chips and Intel. The Mac 
 | Calendar, Reminders | The Mac's own calendars (EventKit). Reminders go on the Notification Center's schedule, so they show even when Island is closed. |
 | Workspaces, Apps | Opening apps, files, folders and commands; saving and restoring window layouts; noticing what you work on. Apps starts with the Dock's apps, with their real icons. |
 | Taskbar, widgets, screen border | Island's own taskbar, desktop widgets and screen border, over every Space. The taskbar's Start button opens the Mac's app launcher. |
-| Land, Island on your phone, Bot chat, Timer, Weather, Hockey, GitHub… | The same code as on Windows. |
+| Bot chat (Local AI) | Island's own model runtime: llama.cpp's Mac build for the Mac's chip, on the GPU (Metal) on Apple's chips. Ollama works too. |
+| Land, Island on your phone, Timer, Weather, Hockey, GitHub… | The same code as on Windows. |
 
 ## What macOS asks the first time
 
@@ -34,7 +35,6 @@ Why Island asks is written in `src-tauri/Info.plist`.
 - **The music bars bounce** instead of following the sound. Reading the Mac's sound output needs a separate audio driver on macOS 12.
 - **The tray's icons** aren't in Island's taskbar: a Mac keeps those in its menu bar.
 - **Dragging files out of the Shelf** isn't on a Mac yet. A shelf file opens or shows in the Finder instead.
-- **Island's own Local AI model runtime** isn't on a Mac yet: Bot chat uses Ollama there.
 
 ## How it is built and checked
 
