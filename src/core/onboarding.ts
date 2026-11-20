@@ -87,7 +87,7 @@ export const GLANCE: Glance[] = [
   { id: 'land', label: 'Sending files nearby', icon: 'land' },
   { id: 'screenshots', label: 'Screenshots', icon: 'screenshot' },
   { id: 'clipboard', label: 'Clipboard', icon: 'clipboard' },
-  { id: 'system-controls', label: 'System Controls', icon: 'sliders', windows: true },
+  { id: 'system-controls', label: 'System Controls', icon: 'sliders' },
 ];
 
 /** What each use ticks in the second question before the user changes anything. */
@@ -125,7 +125,7 @@ export function glanceChoices(facts: Facts): Glance[] {
 
 /**
  * Claude, under the glance tiles: one activity, shown as Claude Status (every Claude chat at a
- * glance), with Claude Code's answers from the island as its options. Windows only for now.
+ * glance), with Claude Code's answers from the island as its options.
  */
 export const CLAUDE: Glance[] = [
   {
@@ -133,11 +133,10 @@ export const CLAUDE: Glance[] = [
     label: 'Claude Status',
     sub: 'Every Claude chat at a glance: Claude Code, the desktop app, claude.ai in Chrome. Claude Code chats are answered right in the island: Allow or Deny, questions, replies.',
     icon: 'claude',
-    windows: true,
   },
 ];
 
-/** The Claude choice this PC gets: shown when Claude Code is on it or Coding was picked. It doesn't run on a Mac yet, so a Mac gets none. */
+/** The Claude choice this computer gets: shown when Claude Code is on it or Coding was picked. */
 export function claudeChoices(facts: Facts, uses: Use[]): Glance[] {
   const on = facts.platform ?? 'windows';
   if (!facts.claudeCode && !uses.includes('coding')) return [];

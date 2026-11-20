@@ -75,6 +75,8 @@ libc = "0.2"
 objc2 = "0.6"
 # Blocks for the now-playing center's callbacks (src/mac/media.rs). Already in the tree through Tauri.
 block2 = "0.6"
+# The Dock's own list of apps (src/mac/apps.rs). Already in the tree through Tauri.
+plist = "1"
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.61"

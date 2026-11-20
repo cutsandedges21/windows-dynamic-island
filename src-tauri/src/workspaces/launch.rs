@@ -602,8 +602,14 @@ mod mac {
         }
     }
 
-    pub fn running(_path: &str, _base: &str) -> Option<Running> {
-        None
+    /// The app an item starts, when it runs: found by its bundle among the running apps, with its
+    /// front window on screen.
+    pub fn running(path: &str, base: &str) -> Option<Running> {
+        let app = existing(path, base).ok()?;
+        let want = app.to_string_lossy().trim_end_matches('/').to_string();
+        let windows = crate::mac::layout::list();
+        let w = windows.iter().find(|w| w.exe.trim_end_matches('/') == want)?;
+        Some(Running { pid: w.pid, hwnd: Some(w.hwnd) })
     }
 
     pub fn installed() -> Vec<InstalledApp> {
@@ -712,7 +718,12 @@ pub async fn ws_program(path: String, base: String) -> Option<Program> {
     {
         tauri::async_runtime::spawn_blocking(move || win::program_info(&path, &base).map(|(exe, args)| Program { exe: exe.display().to_string(), args })).await.ok().flatten()
     }
-    #[cfg(not(windows))]
+    // A Mac: an app item's program is its bundle, the same path a window of it reports (mac/layout.rs).
+    #[cfg(target_os = "macos")]
+    {
+        existing(&path, &base).ok().map(|p| p.to_string_lossy().trim_end_matches('/').to_string()).filter(|p| p.ends_with(".app")).map(|exe| Program { exe, args: String::new() })
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (path, base);
         None

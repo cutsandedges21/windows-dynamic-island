@@ -149,7 +149,13 @@ fn attach(win: &WebviewWindow) {
     }
 }
 
-#[cfg(not(windows))]
+/// A Mac: just above the desktop's icons, under every app, on every Space (mac/window.rs).
+#[cfg(target_os = "macos")]
+fn attach(win: &WebviewWindow) {
+    crate::mac::window::on_desktop(win);
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn attach(_win: &WebviewWindow) {}
 
 fn widget_windows(app: &AppHandle) -> Vec<WebviewWindow> {

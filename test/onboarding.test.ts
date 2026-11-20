@@ -45,16 +45,15 @@ describe('planActivities', () => {
     expect(planActivities(answers({ uses: ['coding'], glance: ['system'] }), withClaude).enabled).not.toContain('claude');
   });
 
-  it('on a Mac, plans only what a Mac can run', () => {
+  it('on a Mac, plans what a Mac runs: everything but the Windows-only Games and Phone', () => {
     const mac: Facts = { laptop: true, claudeCode: true, platform: 'macos' };
     const plan = planActivities(answers({ uses: ['media', 'coding'], glance: ['music', 'timer', 'calendar'] }), mac);
-    expect(plan.enabled).not.toContain('music');
-    expect(plan.enabled).not.toContain('claude');
-    expect(plan.enabled).not.toContain('battery');
+    expect(plan.picked).toContain('music');
     expect(plan.picked).toContain('timer');
-    expect(glanceChoices(mac).map((g) => g.id)).not.toContain('music');
-    // Volume and brightness have nothing to show on a Mac yet.
-    expect(glanceChoices(mac).map((g) => g.id)).not.toContain('system-controls');
+    expect(glanceChoices(mac).map((g) => g.id)).toContain('music');
+    expect(glanceChoices(mac).map((g) => g.id)).toContain('system-controls');
+    expect(plan.enabled).not.toContain('game');
+    expect(plan.enabled).not.toContain('phone');
   });
 
   it('a glance tick the PC cannot have is ignored, and Battery runs on laptops only', () => {
@@ -94,11 +93,11 @@ describe('Claude (Claude Status, with Claude Code as its options)', () => {
     expect(suggestGlance(['school'], withClaude, [])).not.toContain('claude');
   });
 
-  it('a Mac is offered none and gets none', () => {
+  it('a Mac is offered it too (its hooks reach Island over a socket there)', () => {
     const mac: Facts = { laptop: true, claudeCode: true, platform: 'macos' };
-    expect(claudeChoices(mac, ['coding'])).toEqual([]);
+    expect(claudeChoices(mac, ['coding']).map((c) => c.id)).toEqual(['claude']);
     const plan = planActivities(answers({ uses: ['coding'], glance: suggestGlance(['coding'], mac, ['claude']) }), mac);
-    expect(plan.enabled).not.toContain('claude');
+    expect(plan.enabled).toContain('claude');
   });
 });
 
@@ -118,10 +117,9 @@ describe('System Controls', () => {
     }
   });
 
-  it('a Mac still runs it as a helper (Caps Lock), without the volume and brightness tick', () => {
+  it('a Mac gets the same tick as Windows (volume and brightness run there too)', () => {
     const mac: Facts = { laptop: true, claudeCode: false, platform: 'macos' };
-    expect(planActivities(answers({}), mac).hidden).toContain('system-controls');
-    expect(planActivities(answers({ glance: ['system-controls'] }), mac).picked).not.toContain('system-controls');
+    expect(planActivities(answers({ glance: ['system-controls'] }), mac).picked).toContain('system-controls');
   });
 });
 
@@ -193,8 +191,8 @@ describe('the screens', () => {
     expect(welcomeSteps('windows')).toEqual(['hello', 'look', 'uses', 'glance', 'ai', 'phone', 'land', 'workspaces', 'tour', 'done']);
   });
 
-  it('skip Workspaces where it does not run yet', () => {
-    expect(welcomeSteps('macos')).toEqual(['hello', 'look', 'uses', 'glance', 'ai', 'phone', 'land', 'tour', 'done']);
+  it('a Mac gets every screen, Workspaces too', () => {
+    expect(welcomeSteps('macos')).toEqual(welcomeSteps('windows'));
   });
 });
 

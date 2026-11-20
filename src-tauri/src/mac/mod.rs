@@ -3,13 +3,16 @@
 // Windows module's own `mod` line.
 
 pub mod ai;
+pub mod ax;
 pub mod bluetooth;
 pub mod cf;
 pub mod display;
 pub mod claude;
 pub mod osa;
+pub mod window;
 pub mod input;
 pub mod keys;
+pub mod layout;
 pub mod notify;
 pub mod sys;
 

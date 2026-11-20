@@ -519,7 +519,17 @@ fn toggle(app: &AppHandle) {
     open(app);
 }
 
-#[cfg(not(windows))]
+/// A Mac: Start is the Mac's own app launcher (Launchpad; the Apps view from macOS 26 on).
+#[cfg(target_os = "macos")]
+fn toggle(_app: &AppHandle) {
+    for launcher in ["Launchpad", "Apps"] {
+        if std::process::Command::new("/usr/bin/open").args(["-a", launcher]).status().is_ok_and(|s| s.success()) {
+            return;
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn toggle(_app: &AppHandle) {}
 
 /// While it is open: the keyboard going to another window, or a click anywhere outside it and the Start

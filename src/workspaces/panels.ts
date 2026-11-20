@@ -5,7 +5,6 @@
 import { agoText } from '../core/format';
 import { icon } from '../core/icons';
 import { native } from '../core/native';
-import { platform } from '../core/platform';
 import { toggle } from '../controls';
 import { h } from '../dom';
 import type { Ctx } from './ctx';
@@ -168,7 +167,6 @@ export async function placeNow(ws: Workspace): Promise<void> {
 
 export function layoutPanel(ctx: Ctx, ws: Workspace, readOnly: boolean): HTMLElement {
   const head = h('h2', { text: 'Window layout' });
-  if (platform === 'macos') return h('section', { class: 'ws-panel' }, [head, h('p', { class: 'muted', text: 'Window layouts come to the Mac later.' })]);
   const layout = ws.layout;
   const save = h('button', { class: 'btn sm', type: 'button', text: layout ? 'Save again…' : 'Save the layout…', disabled: readOnly || !native.isTauri, onclick: () => void saveLayout(ctx, ws) });
   if (!layout || !layout.windows.length) {

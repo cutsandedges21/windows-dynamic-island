@@ -315,7 +315,58 @@ fn watch(app: AppHandle) {
     });
 }
 
-#[cfg(not(windows))]
+/// A Mac: the border takes clicks only on its notches, and comes up near the screen's edge
+/// (Auto-hide), as on Windows; over apps' windows and on every Space (mac/window.rs).
+#[cfg(target_os = "macos")]
+fn watch(app: AppHandle) {
+    const EDGE_NEAR: f64 = 36.0;
+    if WATCHING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if let Some(win) = app.get_webview_window(LABEL) {
+        crate::mac::window::over_apps(&win);
+    }
+    std::thread::spawn(move || {
+        let mut taking: Option<bool> = None;
+        let mut tick = 0u32;
+        let mut frame: Option<(f64, f64, f64, f64)> = None;
+        let mut bounds: Option<(i32, i32, i32, i32)> = None;
+        let mut near: Option<bool> = None;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let Some(win) = app.get_webview_window(LABEL) else {
+                WATCHING.store(false, Ordering::SeqCst);
+                return;
+            };
+            if tick % 15 == 0 || frame.is_none() {
+                let b = monitors::primary().map(|m| (m.bounds.x, m.bounds.y, m.bounds.width, m.bounds.height));
+                if b != bounds {
+                    bounds = b;
+                    cover(&win);
+                }
+                frame = crate::mac::window::frame_of(&win);
+            }
+            tick = tick.wrapping_add(1);
+            if crate::mac::input::buttons_held() && taking == Some(true) {
+                continue;
+            }
+            let Some(f) = frame else { continue };
+            let Some((x, y)) = crate::mac::window::pointer_in(f) else { continue };
+            let close = x < EDGE_NEAR || y < EDGE_NEAR || x > f.2 - EDGE_NEAR || y > f.3 - EDGE_NEAR;
+            if near != Some(close) {
+                near = Some(close);
+                let _ = app.emit_to(LABEL, "frame-near", close);
+            }
+            let on = crate::dock::solid_at(&SOLID.lock().unwrap(), x, y);
+            if taking != Some(on) {
+                taking = Some(on);
+                let _ = win.set_ignore_cursor_events(!on);
+            }
+        }
+    });
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn watch(_app: AppHandle) {}
 
 #[cfg(test)]

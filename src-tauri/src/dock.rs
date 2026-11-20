@@ -105,7 +105,13 @@ fn style(win: &WebviewWindow) {
     apply_style(windows::Win32::Foundation::HWND(h.0));
 }
 
-#[cfg(not(windows))]
+/// A Mac: over apps' windows and on every Space (mac/window.rs).
+#[cfg(target_os = "macos")]
+fn style(win: &WebviewWindow) {
+    crate::mac::window::over_apps(win);
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn style(_win: &WebviewWindow) {}
 
 /// The bar's margin under it inside the dock window, logical px (src/core/dock.ts: the window is the
@@ -716,7 +722,65 @@ fn watch_pointer(app: AppHandle) {
     });
 }
 
-#[cfg(not(windows))]
+/// A Mac: the same watch, the pointer read from Core Graphics (mac/window.rs) and the window's place
+/// every 300 ms. The bar takes clicks only where it draws; the rest of its window lets them through.
+#[cfg(target_os = "macos")]
+fn watch_pointer(app: AppHandle) {
+    if POINTER_WATCH.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let mut taking: Option<bool> = None;
+        let mut tick = 0u32;
+        let mut frame: Option<(f64, f64, f64, f64)> = None;
+        let mut taps = crate::overlay::CTRL_TAPS.load(Ordering::SeqCst);
+        let mut peeking = false;
+        let mut was_held = false;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let Some(win) = app.get_webview_window(LABEL) else {
+                POINTER_WATCH.store(false, Ordering::SeqCst);
+                crate::overlay::DOCK_HOT.store(false, Ordering::Relaxed);
+                return;
+            };
+            if tick % 15 == 0 || frame.is_none() {
+                frame = crate::mac::window::frame_of(&win);
+            }
+            tick = tick.wrapping_add(1);
+            let held = crate::mac::input::buttons_held();
+            let pressed = held && !was_held;
+            was_held = held;
+            if held && taking == Some(true) {
+                continue;
+            }
+            let Some((x, y)) = frame.and_then(crate::mac::window::pointer_in) else { continue };
+            let over = solid_at(&SOLID.lock().unwrap(), x, y);
+            crate::overlay::DOCK_HOT.store(over, Ordering::Relaxed);
+            if pressed && !over {
+                let _ = app.emit_to(LABEL, "dock-press-out", ());
+            }
+            let now_taps = crate::overlay::CTRL_TAPS.load(Ordering::SeqCst);
+            if now_taps != taps {
+                taps = now_taps;
+                if over && !peeking && !TYPING.load(Ordering::Relaxed) {
+                    peeking = true;
+                    let _ = app.emit_to(LABEL, "dock-peek", true);
+                }
+            }
+            if peeking && !over {
+                peeking = false;
+                let _ = app.emit_to(LABEL, "dock-peek", false);
+            }
+            let on = over && !peeking;
+            if taking != Some(on) {
+                taking = Some(on);
+                let _ = win.set_ignore_cursor_events(!on);
+            }
+        }
+    });
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn watch_pointer(_app: AppHandle) {}
 
 /// Dragging the dock: its start (left edge, or top edge on a side) to `x` (physical px), along its edge

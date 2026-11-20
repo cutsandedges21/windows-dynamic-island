@@ -15,6 +15,17 @@ extern "C" {
     fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
     fn CGEventSourceFlagsState(state: i32) -> u64;
     fn CGEventSourceCounterForEventType(state: i32, event_type: u32) -> u32;
+    fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
+}
+
+/// Since the last key press, click or mouse move, ms (kCGAnyInputEventType).
+pub fn idle_ms() -> u64 {
+    let secs = unsafe { CGEventSourceSecondsSinceLastEventType(COMBINED_SESSION, u32::MAX) };
+    if secs.is_finite() && secs >= 0.0 {
+        (secs * 1000.0) as u64
+    } else {
+        0
+    }
 }
 
 const SHIFT_MASK: u64 = 1 << 17; // kCGEventFlagMaskShift
@@ -33,6 +44,11 @@ pub fn control_down() -> bool {
 /// Caps Lock is on (keys.rs).
 pub fn caps_lock_on() -> bool {
     unsafe { CGEventSourceFlagsState(COMBINED_SESSION) & CAPS_LOCK_MASK != 0 }
+}
+
+/// The left or right mouse button is down.
+pub fn buttons_held() -> bool {
+    unsafe { CGEventSourceButtonState(COMBINED_SESSION, LEFT_BUTTON) || CGEventSourceButtonState(COMBINED_SESSION, RIGHT_BUTTON) }
 }
 
 /// Mouse-down counts at the last poll.

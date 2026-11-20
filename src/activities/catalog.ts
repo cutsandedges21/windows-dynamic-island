@@ -622,7 +622,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'workspaces',
-    mac: 'soon',
     name: 'Workspaces',
     description: 'Shows a workspace opening on the pill and asks there before a command runs; puts your favorites in Control Center. Can also notice what you work on, show a workspace’s next step when you switch to it, and ask where you stopped when you leave.',
     icon: 'grid',
@@ -658,7 +657,6 @@ export const CATALOG: ActivityMeta[] = [
   },
   {
     id: 'apps',
-    mac: 'soon',
     name: 'Apps',
     description: "Your apps in Control Center: tap one to open it on this computer. From Island on your phone, that opens it on the PC. It starts with the apps pinned to your taskbar; Edit adds any app from Start.",
     icon: 'grid',

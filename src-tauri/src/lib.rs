@@ -83,7 +83,6 @@ mod dock;
 mod dockfx;
 mod dockpeek;
 mod frame;
-#[cfg_attr(target_os = "macos", path = "mac/widgets.rs")]
 mod widgets;
 mod workspaces;
 

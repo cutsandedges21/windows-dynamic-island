@@ -131,6 +131,10 @@ fn app_pid(mut pid: u32) -> Option<u32> {
 /// that app had in front.
 pub fn activate(hwnd: isize) -> bool {
     let Some(w) = cf::window(hwnd as u32) else { return false };
+    // That very window first, when Island may use the Accessibility API (mac/layout.rs).
+    if crate::mac::ax::trusted() && crate::mac::layout::raise(hwnd) {
+        return true;
+    }
     app_pid(w.pid).is_some_and(cf::activate_pid)
 }
 

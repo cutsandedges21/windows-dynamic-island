@@ -452,7 +452,25 @@ mod imp {
     }
 }
 
-#[cfg(not(windows))]
+/// A Mac: macOS draws its own minimize and restore (the genie into the Dock), so a window is raised,
+/// minimized or closed straight through the Accessibility API (mac/layout.rs).
+#[cfg(target_os = "macos")]
+mod imp {
+    type Rect = (i32, i32, i32, i32);
+    pub fn raise(_icon: Option<Rect>, raw: isize) -> bool {
+        crate::mac::layout::raise(raw)
+    }
+    pub fn minimize(_icon: Option<Rect>, raw: isize) {
+        crate::mac::layout::minimize(raw);
+    }
+    pub fn close(_icon: Option<Rect>, hwnds: Vec<isize>) {
+        for h in hwnds {
+            crate::mac::layout::close(h);
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod imp {
     type Rect = (i32, i32, i32, i32);
     pub fn raise(_icon: Option<Rect>, _raw: isize) -> bool {

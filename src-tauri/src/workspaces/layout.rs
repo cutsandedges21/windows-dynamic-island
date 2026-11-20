@@ -422,13 +422,18 @@ pub fn place_now(p: &Place) -> Placed {
     win::place_one(p)
 }
 
-/// The app window in front (for noticing what you work on); None on a Mac for now.
+/// The app window in front (for noticing what you work on).
 pub fn foreground_window() -> Option<LiveWindow> {
     #[cfg(windows)]
     {
         win::foreground()
     }
-    #[cfg(not(windows))]
+    // A Mac: Core Graphics' windows, with the Accessibility API's titles (mac/layout.rs).
+    #[cfg(target_os = "macos")]
+    {
+        crate::mac::layout::foreground()
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         None
     }
@@ -452,8 +457,14 @@ pub async fn ws_windows(app: tauri::AppHandle, own: Option<bool>) -> Result<Vec<
         .await
         .map_err(|e| e.to_string())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
+        let _ = (app, own);
+        tauri::async_runtime::spawn_blocking(crate::mac::layout::list).await.map_err(|e| e.to_string())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = (app, own);
         Err("Window layouts come to the Mac later.".into())
     }
 }
@@ -465,7 +476,11 @@ pub async fn ws_place(places: Vec<Place>) -> Result<Vec<Placed>, String> {
     {
         tauri::async_runtime::spawn_blocking(move || places.iter().take(200).map(win::place_one).collect()).await.map_err(|e| e.to_string())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        tauri::async_runtime::spawn_blocking(move || places.iter().take(200).map(crate::mac::layout::place_one).collect()).await.map_err(|e| e.to_string())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = places;
         Err("Window layouts come to the Mac later.".into())

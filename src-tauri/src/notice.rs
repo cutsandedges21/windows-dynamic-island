@@ -37,7 +37,12 @@ fn idle_ms() -> u64 {
     u64::from(unsafe { GetTickCount() }.wrapping_sub(info.dwTime))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn idle_ms() -> u64 {
+    crate::mac::input::idle_ms()
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn idle_ms() -> u64 {
     0
 }

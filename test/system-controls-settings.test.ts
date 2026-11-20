@@ -26,9 +26,9 @@ describe('System Controls in place of Sound, Brightness and Caps Lock', () => {
     const meta = CATALOG_BY_ID.get('system-controls')!;
     expect(meta.options.map((o) => o.key)).toEqual(['volume', 'device', 'brightness', 'caps', 'num']);
     expect(meta.options.every((o) => o.default === true)).toBe(true);
-    // Caps Lock flashes on a Mac too, so the activity runs there; volume and brightness are Windows only for now.
+    // A Mac runs it all (Core Audio, DisplayServices) but Num Lock: a Mac's keyboard has none.
     expect(meta.mac).toBeUndefined();
-    expect(meta.options.filter((o) => o.mac === 'never').map((o) => o.key)).toEqual(['volume', 'device', 'brightness', 'num']);
+    expect(meta.options.filter((o) => o.mac === 'never').map((o) => o.key)).toEqual(['num']);
   });
 
   it('new settings: on, every part on', () => {

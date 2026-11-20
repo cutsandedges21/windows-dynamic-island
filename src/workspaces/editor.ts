@@ -346,7 +346,8 @@ function items(ctx: Ctx, st: EditState): HTMLElement {
           { label: 'From your apps…', icon: 'grid', run: () => void addInstalled(ctx, st) },
           { label: 'Browse for a program…', icon: 'folder', run: () => void addItem(ctx, st, 'app') },
         ];
-        if (!mac) choices.push({ label: 'From open windows…', icon: 'window', run: () => void addFromWindows(ctx, st) });
+        // A Mac lists its open windows too (mac/layout.rs).
+        choices.push({ label: 'From open windows…', icon: 'window', run: () => void addFromWindows(ctx, st) });
         openMenu(e.currentTarget as HTMLElement, choices);
       });
       b.dataset.focus = `e:add:${kind}`;
