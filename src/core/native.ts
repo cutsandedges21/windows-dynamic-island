@@ -864,6 +864,8 @@ export const native = {
   dockEdge: (on: boolean) => call('dock_edge', { on }, undefined),
   /** The taskbar waits faint on its edge until pointed at (Settings › Taskbar › Auto-hide). */
   dockAuto: (on: boolean) => call('dock_auto', { on }, undefined),
+  /** Keep windows clear of the taskbar: its strip of the screen held for it, as Windows' own taskbar's is. */
+  dockRoom: (on: boolean) => call('dock_room', { on }, undefined),
   /** The screen border's window (src-tauri/src/frame.rs) over the main screen, or closed. */
   frameShow: (on: boolean) => call('frame_show', { on }, undefined),
   /** Where the border's page takes clicks (the notches): CSS px rects [x, y, w, h]. */

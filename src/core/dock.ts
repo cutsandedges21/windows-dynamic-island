@@ -441,6 +441,8 @@ export interface DockHooks {
   /** Auto-hide: faint on its edge until pointed at. */
   autoHide(): boolean;
   setAutoHide(on: boolean): void;
+  /** Keep windows clear of it: its strip of the screen held for it (not while it auto-hides). */
+  keepClear(): boolean;
   side(): DockSide;
   setSide(side: DockSide): void;
   /** The screen border's width while it is on, else 0. */
@@ -466,6 +468,7 @@ export class DockHost {
   private again = false;
   /** On the bottom edge, as last told to the dock's window. */
   private edgeSent: boolean | undefined;
+  private roomSent: boolean | undefined;
   /** The side last told to the dock's window. */
   private sideSent: DockSide | undefined;
   /** Auto-hide, as last told to the dock's window. */
@@ -548,6 +551,7 @@ export class DockHost {
       if (!this.shown) {
         this.shown = true;
         this.edgeSent = undefined;
+        this.roomSent = undefined;
         this.sideSent = undefined;
         this.autoSent = undefined;
         void native.dockShow(true, 640, 60, this.hooks.centre());
@@ -613,6 +617,11 @@ export class DockHost {
       if (frame.edge !== this.edgeSent) {
         this.edgeSent = frame.edge;
         void native.dockEdge(frame.edge === true);
+      }
+      const room = this.hooks.keepClear();
+      if (room !== this.roomSent) {
+        this.roomSent = room;
+        void native.dockRoom(room);
       }
       const json = JSON.stringify(frame);
       if (json !== this.sent) {

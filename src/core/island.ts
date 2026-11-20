@@ -493,6 +493,7 @@ export class Island {
           this.saveSettings();
         },
         autoHide: () => barAutoHide(this.settings.island.taskbar),
+        keepClear: () => this.settings.island.taskbar.keepClear,
         setAutoHide: (on) => {
           const t = this.settings.island.taskbar;
           t.autoHide = on;

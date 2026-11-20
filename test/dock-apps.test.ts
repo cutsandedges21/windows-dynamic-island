@@ -104,6 +104,9 @@ describe('taskbar apps', () => {
     expect(migrate({ island: { taskbar: { on: true, styles: ['rise', 'accent'] } } }).island.taskbar.styles).toEqual(['rise', 'accent']);
     expect(migrate({ island: { taskbar: { on: true, styles: ['glide'], names: {}, accentIcons: true } } }).island.taskbar.styles).toEqual(['glide', 'accent']);
     expect(migrate({ island: { taskbar: { on: true, styles: ['rise'], accentIcons: 'yes' } } }).island.taskbar.styles).toEqual(['rise']);
+    // Keep windows clear of it: off until turned on.
+    expect(migrate({}).island.taskbar.keepClear).toBe(false);
+    expect(migrate({ island: { taskbar: { on: true, keepClear: true } } }).island.taskbar.keepClear).toBe(true);
     // Its black outline: off until turned on.
     expect(migrate({}).island.taskbar.accentBorder).toBe(false);
     expect(migrate({ island: { taskbar: { on: true, accentBorder: true } } }).island.taskbar.accentBorder).toBe(true);

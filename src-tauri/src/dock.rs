@@ -225,7 +225,8 @@ fn spot_as(w: f64, h: f64, tucked: Option<bool>) -> Option<(i32, i32, i32, i32)>
     let pivot = *PIVOT.lock().unwrap();
     let (pw, ph) = ((w.ceil() * m.scale).round() as i32, (h.ceil() * m.scale).round() as i32);
     let tucked = tucked.unwrap_or_else(|| EDGE.load(Ordering::SeqCst) || (FULL.load(Ordering::SeqCst) && !UP.load(Ordering::SeqCst)));
-    let work = (m.work.x, m.work.y, m.work.width, m.work.height);
+    // Against the work area as it is without the strip held for it (Keep windows clear), which it sits in.
+    let work = work_without_room((m.work.x, m.work.y, m.work.width, m.work.height));
     let bounds = (m.bounds.x, m.bounds.y, m.bounds.width, m.bounds.height);
     let pivot = (pivot >= 0.0).then(|| (pivot * m.scale).round() as i32);
     let (x, y) = place_on(side(), work, bounds, m.scale, pw, ph, centre, pivot, tucked);
@@ -237,6 +238,7 @@ fn spot_as(w: f64, h: f64, tucked: Option<bool>) -> Option<(i32, i32, i32, i32)>
 /// full-screen app in front, at the screen's bottom edge until the pointer comes to it.
 fn put(win: &WebviewWindow, w: f64, h: f64) {
     *SIZE.lock().unwrap() = (w, h);
+    hold_room(win);
     let Some((x, y, pw, ph)) = spot(w, h) else { return };
     set_rect(win, x, y, pw, ph);
     tell(win);
@@ -497,8 +499,9 @@ pub fn dock_show(app: AppHandle, on: bool, w: f64, h: f64, centre: f64) {
     *CENTRE.lock().unwrap() = if centre.is_finite() { centre } else { -1.0 };
     std::thread::spawn(move || {
         if !on {
-            // No taskbar: Explorer's has the tray to itself again.
+            // No taskbar: Explorer's has the tray to itself again, and the windows the room it held.
             crate::trayhost::stop();
+            let_go_room(&app);
             if let Some(win) = app.get_webview_window(LABEL) {
                 let _ = win.destroy();
             }
@@ -566,12 +569,9 @@ pub fn dock_side(app: AppHandle, side: String) {
     }
     // Its place along the old edge means nothing on the new one.
     *CENTRE.lock().unwrap() = -1.0;
-    if let Some(win) = app.get_webview_window(LABEL) {
-        let (w, h) = *SIZE.lock().unwrap();
-        if w > 0.0 && h > 0.0 {
-            put(&win, w, h);
-        }
-    }
+    // The strip held on the old edge goes; put holds one on the new.
+    let_go_room(&app);
+    replace(&app);
 }
 
 /// The Apps card is open over the bar (`on`): the taskbar takes the keyboard (for its search field,
@@ -625,8 +625,151 @@ pub fn dock_edge(app: AppHandle, on: bool) {
 
 /// Auto-hide on or off: the watcher tucks the dock at its edge until the pointer comes (watch_fullscreen).
 #[tauri::command]
-pub fn dock_auto(on: bool) {
-    AUTO.store(on, Ordering::SeqCst);
+pub fn dock_auto(app: AppHandle, on: bool) {
+    if AUTO.swap(on, Ordering::SeqCst) != on {
+        // Auto-hiding, it holds no room for itself.
+        replace(&app);
+    }
+}
+
+/// Keep windows clear of it (Settings › Taskbar): the taskbar's strip of the screen is held for it as
+/// Windows' own taskbar's is (an app bar), so maximized windows stop at it instead of going under it
+/// (Justin, 11-20). Not while it auto-hides, as Windows' own doesn't.
+static ROOM: AtomicBool = AtomicBool::new(false);
+/// The strip held now: the side (Side::index) and how deep, physical px; 0 deep: none.
+static HELD: Mutex<(u8, i32)> = Mutex::new((0, 0));
+/// The room its icons rise into over the bar, logical px (src/core/dock.ts HEADROOM), and the window's
+/// margin round the bar (16): BAR_AREA less these is the bar's own thickness.
+const RISE_ROOM: f64 = 20.0;
+
+/// How deep a strip the taskbar wants held now, physical px (0: none): from the screen's edge to just
+/// past the bar's inner side (GAP clear of it), or to the bar's inner side when it sits on the edge.
+fn room_wanted(scale: f64) -> i32 {
+    if !ROOM.load(Ordering::SeqCst) || AUTO.load(Ordering::SeqCst) {
+        return 0;
+    }
+    let bar = *BAR_AREA.lock().unwrap();
+    let thick = bar - 16.0 - RISE_ROOM;
+    if thick <= 0.0 {
+        return 0;
+    }
+    let deep = if EDGE.load(Ordering::SeqCst) { thick } else { GAP + BAR_BELOW + thick + GAP };
+    (deep * scale).round() as i32
+}
+
+/// The work area as it would be without the strip held for the taskbar (it is placed against that, so
+/// holding the strip doesn't move it).
+fn work_without_room(work: Area) -> Area {
+    let (s, deep) = *HELD.lock().unwrap();
+    widen(work, Side::from_u8(s), deep)
+}
+
+/// `work` grown `deep` px out on `side`.
+pub fn widen(work: Area, side: Side, deep: i32) -> Area {
+    if deep <= 0 {
+        return work;
+    }
+    let (x, y, w, h) = work;
+    match side {
+        Side::Bottom => (x, y, w, h + deep),
+        Side::Top => (x, y - deep, w, h + deep),
+        Side::Left => (x - deep, y, w + deep, h),
+        Side::Right => (x, y, w + deep, h),
+    }
+}
+
+/// Holds (or lets go of, or changes) the strip for the taskbar's window `win`.
+#[cfg(windows)]
+fn hold_room(win: &WebviewWindow) {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::Shell::{SHAppBarMessage, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
+    let Ok(hw) = win.hwnd() else { return };
+    let Some(m) = monitors::primary() else { return };
+    let want = room_wanted(m.scale);
+    let s = side();
+    let mut held = HELD.lock().unwrap();
+    if *held == (s.index(), want) || (held.1 == 0 && want == 0) {
+        return;
+    }
+    let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: HWND(hw.0), ..Default::default() };
+    if want == 0 {
+        unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
+        *held = (0, 0);
+        return;
+    }
+    if held.1 == 0 {
+        // A message of its own Windows sends it news on; the page's window just ignores it.
+        d.uCallbackMessage = 0x8000 + 0x1A5;
+        if unsafe { SHAppBarMessage(ABM_NEW, &mut d) } == 0 {
+            crate::log::line("dock: Windows didn't take the taskbar's room");
+            return;
+        }
+    }
+    let b = &m.bounds;
+    let (l, t, r, bt) = (b.x, b.y, b.x + b.width, b.y + b.height);
+    d.uEdge = match s {
+        Side::Bottom => ABE_BOTTOM,
+        Side::Top => ABE_TOP,
+        Side::Left => ABE_LEFT,
+        Side::Right => ABE_RIGHT,
+    };
+    d.rc = match s {
+        Side::Bottom => RECT { left: l, top: bt - want, right: r, bottom: bt },
+        Side::Top => RECT { left: l, top: t, right: r, bottom: t + want },
+        Side::Left => RECT { left: l, top: t, right: l + want, bottom: bt },
+        Side::Right => RECT { left: r - want, top: t, right: r, bottom: bt },
+    };
+    // Windows may move it off another bar on that edge (its own taskbar, showing): then it is as deep from there.
+    unsafe { SHAppBarMessage(ABM_QUERYPOS, &mut d) };
+    match s {
+        Side::Bottom => d.rc.top = d.rc.bottom - want,
+        Side::Top => d.rc.bottom = d.rc.top + want,
+        Side::Left => d.rc.right = d.rc.left + want,
+        Side::Right => d.rc.left = d.rc.right - want,
+    }
+    unsafe { SHAppBarMessage(ABM_SETPOS, &mut d) };
+    *held = (s.index(), want);
+}
+
+#[cfg(not(windows))]
+fn hold_room(_win: &WebviewWindow) {}
+
+/// Lets go of the strip (the taskbar is off, or Island quits).
+#[cfg(windows)]
+fn let_go_room(app: &AppHandle) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_REMOVE, APPBARDATA};
+    let mut held = HELD.lock().unwrap();
+    if held.1 == 0 {
+        return;
+    }
+    if let Some(Ok(hw)) = app.get_webview_window(LABEL).map(|w| w.hwnd()) {
+        let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: HWND(hw.0), ..Default::default() };
+        unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
+    }
+    *held = (0, 0);
+}
+
+#[cfg(not(windows))]
+fn let_go_room(_app: &AppHandle) {}
+
+/// Keep windows clear of the taskbar, on or off (Settings › Taskbar).
+#[tauri::command]
+pub fn dock_room(app: AppHandle, on: bool) {
+    if ROOM.swap(on, Ordering::SeqCst) == on {
+        return;
+    }
+    replace(&app);
+}
+
+/// Places the dock again as it is (its mode changed).
+fn replace(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window(LABEL) {
+        let (w, h) = *SIZE.lock().unwrap();
+        if w > 0.0 && h > 0.0 {
+            put(&win, w, h);
+        }
+    }
 }
 
 /// `(x, y)` (logical px in the window) is on something the page drew that takes clicks.
@@ -815,8 +958,9 @@ pub fn dock_autohide(_on: bool) -> bool {
 }
 
 /// Island is quitting: Windows' taskbar comes back if Island hid it.
-pub fn quit(_app: &AppHandle) {
+pub fn quit(app: &AppHandle) {
     crate::trayhost::stop();
+    let_go_room(app);
     #[cfg(windows)]
     if HID_WINDOWS_BAR.swap(false, Ordering::SeqCst) {
         set_autohide(false);
@@ -846,7 +990,22 @@ mod tests {
         assert!(!gv(r"c:\program files\windowsapps\notion.exe", false, None));
     }
 
-    use super::{centre_of, place_on, Side};
+    use super::{centre_of, place_on, widen, Side};
+
+    #[test]
+    fn the_room_held_for_it_is_given_back_on_its_own_side() {
+        let work = (0, 0, 1920, 1100);
+        assert_eq!(widen(work, Side::Bottom, 100), (0, 0, 1920, 1200));
+        assert_eq!(widen(work, Side::Top, 100), (0, -100, 1920, 1200));
+        assert_eq!(widen(work, Side::Left, 80), (-80, 0, 2000, 1100));
+        assert_eq!(widen(work, Side::Right, 80), (0, 0, 2000, 1100));
+        assert_eq!(widen(work, Side::Bottom, 0), work);
+        // Placed against the work area without it, the bar is where it was before the room was held.
+        let bounds = (0, 0, 1920, 1200);
+        let before = place_on(Side::Bottom, bounds, bounds, 1.0, 800, 120, -1.0, None, false);
+        let held = (0, 0, 1920, 1200 - 96);
+        assert_eq!(place_on(Side::Bottom, widen(held, Side::Bottom, 96), bounds, 1.0, 800, 120, -1.0, None, false), before);
+    }
 
     const WORK: super::Area = (0, 0, 1920, 1032);
     const SCREEN: super::Area = (0, 0, 1920, 1080);

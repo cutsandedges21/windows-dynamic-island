@@ -473,8 +473,22 @@ function edgeRows(host: WidgetsPageHost): HTMLElement[] {
       toggle(t.autoHide, (v) => {
         t.autoHide = v;
         host.save(true);
+        host.render();
       }),
     ),
+    // Auto-hiding, it holds no room (Windows' own taskbar doesn't either).
+    ...(t.autoHide
+      ? []
+      : [
+          row(
+            'Keep windows clear of it',
+            "Its strip of the screen is kept for it, as Windows' own taskbar's is: maximized windows stop at it instead of going under it.",
+            toggle(t.keepClear, (v) => {
+              t.keepClear = v;
+              host.save(true);
+            }),
+          ),
+        ]),
   ];
 }
 

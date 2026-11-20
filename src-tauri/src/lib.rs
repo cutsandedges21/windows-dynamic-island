@@ -339,6 +339,7 @@ pub fn run() {
             dock::dock_solid,
             dock::dock_edge,
             dock::dock_auto,
+            dock::dock_room,
             dockpeek::dock_peek,
             dockpeek::dock_live_peek,
             dock::dock_side,
