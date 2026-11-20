@@ -2888,6 +2888,16 @@ html.fr-autohide.fr-near :is(.fr-border, .fr-glow, .fr-tint, .notch) { opacity: 
 .dock .dk-tray[hidden] { display: none; }
 .dock .dk-tray-ico { width: 30px; padding: 0; }
 .dock .dk-tray-ico img { width: 16px; height: 16px; image-rendering: auto; pointer-events: none; }
+/* The arrow before them to the hidden ones (dock.ts trayFlyOpen); it turns over while they're up. */
+.dock .dk-tray-more svg { width: 16px; height: 16px; transition: transform 0.2s ease; }
+.dock .dk-tray-more.on svg { transform: rotate(180deg); }
+.dock .dk-tray-more[hidden] { display: none; }
+/* The hidden icons over the arrow: a grid, four across. */
+.dk-menu.dk-trayfly { display: grid; grid-template-columns: repeat(4, 38px); gap: 2px; min-width: 0; padding: 8px; }
+.dk-pop.dk-trayfly .dk-tray-ico { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; transition: background-color 0.12s ease; }
+.dk-pop.dk-trayfly .dk-tray-ico:hover { background: rgba(var(--ink), 0.1); }
+.dk-pop.dk-trayfly .dk-tray-ico:active { background: rgba(var(--ink), 0.16); }
+.dk-trayfly .dk-tray-ico img { width: 18px; height: 18px; pointer-events: none; }
 
 /* Blended into the border (frame.ts fr-slide, Moss 11-19): the notch is always its full, expanded size,
    pushed into the edge with a sliver (TAB.thick) showing; pointed at, it slides out as it is. No growing.

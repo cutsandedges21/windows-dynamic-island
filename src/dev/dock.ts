@@ -67,7 +67,9 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
   // &open=1: the island open in the gap (the bar keeps only its apps and the clock).
   // Three tray icons, as trayhost.rs sends them.
   const dot = (c: string) => `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='${c}'/></svg>`)}`;
-  setTimeout(() => emitLocal('tray-icons', [{ key: 'a', tip: 'Island', icon: dot('#e8845f') }, { key: 'b', tip: 'OneDrive', icon: dot('#3b82f6') }, { key: 'c', tip: 'Discord', icon: dot('#5865f2') }]), 1300);
+  // Island shown on the taskbar; the rest behind the arrow, as Windows keeps them.
+  const hiddenTray = ['OneDrive', 'Discord', 'Steam', 'Spotify', 'Zoom', 'ShareX', 'Windhawk'].map((tip, i) => ({ key: `h${i}`, tip, icon: dot(['#3b82f6', '#5865f2', '#1b2838', '#1db954', '#2d8cff', '#d23b3b', '#7c5cff'][i]), pinned: false }));
+  setTimeout(() => emitLocal('tray-icons', [{ key: 'a', tip: 'Island', icon: dot('#e8845f'), pinned: true }, ...hiddenTray]), 1300);
   if (q.get('edit') === '1') setTimeout(() => emitLocal('dock-edit', true), 1400);
   if (frame.gap && q.get('open') === '1') setTimeout(() => emitLocal('dock-gap', { w: frame.gap, open: true }), 1500);
 }

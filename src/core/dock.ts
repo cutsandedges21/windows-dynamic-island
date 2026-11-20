@@ -871,6 +871,8 @@ const GAP_PAD = 10;
 const POP_GAP = 8;
 /** A card's slide down behind the bar, ms (as in the CSS). */
 const POP_MS = 240;
+/** The menu's key while it holds the tray's hidden icons. */
+const TRAY_FLY = '#tray';
 /** Pointing at S/W this long shows when they reset, ms. */
 const TIP_DELAY_MS = 250;
 /** The pointer resting on an app this long (still) shows its windows' previews, ms (Moss, 11-18: "only
@@ -989,36 +991,49 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const sepB = el('i', 'dk-sep');
   // The notification area's icons (trayhost.rs reads them while this shows): Island's own, OneDrive,
   // Discord… A click goes to the app as Windows' taskbar sends it; right-click opens its menu.
+  // Only the ones Windows shows on its taskbar (Settings › Taskbar › Other system tray icons); the rest
+  // are behind an arrow before them, in a grid over it, as Windows 10's (Justin, 11-19).
   const trayBox = el('div', 'dk-tray');
   let trayList: TrayIcon[] = [];
   let trayOn = false;
+  const trayMore = el('button', 'dk-tray-ico dk-tray-more', SVG.up);
+  trayMore.title = 'Show hidden icons';
+  /** Set once the menu is made (the arrow's grid is drawn in it). */
+  let trayFlyOpen: (() => void) | null = null;
+  let trayFlyRedraw: (() => void) | null = null;
+  trayMore.addEventListener('click', () => trayFlyOpen?.());
   const drawTray = () => {
-    const kids = trayList.map((t) => {
-      const b = el('button', 'dk-tray-ico');
-      b.title = t.tip || 'Tray icon';
-      if (t.icon && /^data:image\/(png|svg\+xml);/.test(t.icon)) {
-        const img = document.createElement('img');
-        img.src = t.icon;
-        img.alt = '';
-        img.draggable = false;
-        b.append(img);
-      }
-      const at = () => {
-        const r = b.getBoundingClientRect();
-        const k = window.devicePixelRatio || 1;
-        return [(window.screenX + r.left + r.width / 2) * k, (window.screenY + r.top + r.height / 2) * k] as const;
-      };
-      b.addEventListener('click', () => void native.trayClick(t.key, 'left', ...at()));
-      b.addEventListener('dblclick', () => void native.trayClick(t.key, 'double', ...at()));
-      b.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        void native.trayClick(t.key, 'right', ...at());
-      });
-      return b;
-    });
-    trayBox.replaceChildren(...kids);
+    // An older Island (no pinned) shows them all, as before.
+    const sorts = trayList.some((t) => t.pinned !== undefined);
+    trayMore.hidden = !sorts || !trayList.some((t) => t.pinned === false);
+    trayBox.replaceChildren(trayMore, ...(sorts ? trayList.filter((t) => t.pinned) : trayList).map(trayButton));
+    trayFlyRedraw?.();
   };
+  function trayButton(t: TrayIcon): HTMLElement {
+    // One icon: a click goes to its app as Windows' taskbar sends it; right-click opens its menu.
+    const b = el('button', 'dk-tray-ico');
+    b.title = t.tip || 'Tray icon';
+    if (t.icon && /^data:image\/(png|svg\+xml);/.test(t.icon)) {
+      const img = document.createElement('img');
+      img.src = t.icon;
+      img.alt = '';
+      img.draggable = false;
+      b.append(img);
+    }
+    const at = () => {
+      const r = b.getBoundingClientRect();
+      const k = window.devicePixelRatio || 1;
+      return [(window.screenX + r.left + r.width / 2) * k, (window.screenY + r.top + r.height / 2) * k] as const;
+    };
+    b.addEventListener('click', () => void native.trayClick(t.key, 'left', ...at()));
+    b.addEventListener('dblclick', () => void native.trayClick(t.key, 'double', ...at()));
+    b.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void native.trayClick(t.key, 'right', ...at());
+    });
+    return b;
+  }
   /** Reads the tray only while its icons are on the taskbar. */
   const trayWanted = async (on: boolean) => {
     if (on === trayOn || !isTauri) return;
@@ -1174,16 +1189,53 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const closeMenu = () => {
     if (menuOn === null) return;
     menuOn = null;
+    trayMore.classList.remove('on');
     hidePop(menu);
     if (!cardOn) void native.dockTyping(false);
   };
-  /** An app's right-click menu, as on Windows' taskbar: its name opens another window, Pin or Unpin, Close. */
-  const openMenu = (b: HTMLElement, a: DockApp) => {
+  /** The menu (or the tray's hidden icons, `cls` dk-trayfly) with `rows`, over `b`, for `key`. */
+  const showMenu = (b: HTMLElement, key: string, rows: HTMLElement[], cls: string) => {
     setCard(false);
     closePeek();
     hidePop(tip);
     label.classList.remove('on');
-    const row = (cls: string, icon: string | HTMLElement, text: string, act: DockAct) => {
+    menu.classList.toggle('dk-trayfly', cls === 'dk-trayfly');
+    menu.replaceChildren(...rows);
+    menuOn = key;
+    menu.hidden = false;
+    // Over the icon, inside the window (as the S/W tip).
+    const r = b.getBoundingClientRect();
+    if (upright()) {
+      const h = menu.offsetHeight;
+      menu.style.left = '';
+      menu.style.top = `${Math.round(Math.max(8, Math.min(window.innerHeight - h - 8, r.top + r.height / 2 - h / 2)))}px`;
+    } else {
+      const w = menu.offsetWidth;
+      menu.style.top = '';
+      menu.style.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2)))}px`;
+    }
+    showPop(menu);
+    // The keyboard (Esc), and a click anywhere else is noticed as the taskbar losing it.
+    void native.dockTyping(true);
+  };
+  /** The tray's icons that Windows keeps in its overflow, in a grid over the arrow (as Windows 10's). */
+  const hiddenTray = () => trayList.filter((t) => t.pinned === false);
+  trayFlyOpen = () => {
+    if (menuOn === TRAY_FLY) return closeMenu();
+    const icons = hiddenTray();
+    if (!icons.length) return;
+    showMenu(trayMore, TRAY_FLY, icons.map(trayButton), 'dk-trayfly');
+    trayMore.classList.add('on');
+  };
+  trayFlyRedraw = () => {
+    if (menuOn !== TRAY_FLY) return;
+    const icons = hiddenTray();
+    if (!icons.length) return closeMenu();
+    menu.replaceChildren(...icons.map(trayButton));
+  };
+  /** An app's right-click menu, as on Windows' taskbar: its name opens another window, Pin or Unpin, Close. */
+  const openMenu = (b: HTMLElement, a: DockApp) => {
+    const row =(cls: string, icon: string | HTMLElement, text: string, act: DockAct) => {
       const r = el('button', `dk-mi ${cls}`);
       const ico = el('span', 'dk-mi-ico');
       if (typeof icon === 'string') ico.innerHTML = icon;
@@ -1216,30 +1268,15 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       row('', a.pinned ? SVG.unpin : SVG.pin, a.pinned ? 'Unpin from taskbar' : 'Pin to taskbar', { kind: 'pin', key: a.key, on: !a.pinned }),
     ];
     if (n) rows.push(row('', SVG.x, n === 1 ? 'Close window' : `Close all ${n} windows`, { kind: 'close', key: a.key, rect: iconRect(b) }));
-    menu.replaceChildren(...rows);
-    menuOn = a.key;
-    menu.hidden = false;
-    // Over the icon, inside the window (as the S/W tip).
-    const r = b.getBoundingClientRect();
-    if (upright()) {
-      const h = menu.offsetHeight;
-      menu.style.left = '';
-      menu.style.top = `${Math.round(Math.max(8, Math.min(window.innerHeight - h - 8, r.top + r.height / 2 - h / 2)))}px`;
-    } else {
-      const w = menu.offsetWidth;
-      menu.style.top = '';
-      menu.style.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2)))}px`;
-    }
-    showPop(menu);
-    // The keyboard (Esc), and a click anywhere else is noticed as the taskbar losing it.
-    void native.dockTyping(true);
+    showMenu(b, a.key, rows, '');
   };
   window.addEventListener('blur', () => closeMenu());
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeMenu();
   });
   window.addEventListener('pointerdown', (e) => {
-    if (menuOn !== null && !menu.contains(e.target as Node)) closeMenu();
+    // Not the arrow: its click opens or closes the hidden icons itself.
+    if (menuOn !== null && !menu.contains(e.target as Node) && !trayMore.contains(e.target as Node)) closeMenu();
   });
 
   const setCard = (on: boolean) => {

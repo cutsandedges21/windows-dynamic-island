@@ -646,6 +646,8 @@ export interface TrayIcon {
   key: string;
   tip: string;
   icon: string | null;
+  /** Shown on Windows' taskbar (Settings › Taskbar › Other system tray icons); the rest are behind the arrow. */
+  pinned?: boolean;
 }
 
 export interface LiveWindow {

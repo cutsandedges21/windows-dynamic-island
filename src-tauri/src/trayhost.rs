@@ -21,6 +21,8 @@ pub struct TrayIcon {
     pub tip: String,
     /// PNG data address; None while the app gave none.
     pub icon: Option<String>,
+    /// Shown on Windows' taskbar (not only in its overflow): on Island's bar too; the rest are behind its arrow.
+    pub pinned: bool,
 }
 
 /// The icons now (the app's order of adding them), hidden ones left out.
@@ -61,6 +63,41 @@ pub fn key_of(hwnd: u32, uid: u32, guid: Option<[u8; 16]>) -> String {
     }
 }
 
+/// Windows' own note on one tray icon (HKCU\Control Panel\NotifyIconSettings\<id>): its program, its
+/// number or GUID, and whether it is shown on the taskbar (Settings › Taskbar › Other system tray icons).
+#[derive(Clone, Debug, PartialEq)]
+pub struct IconSetting {
+    /// The program's path; a known folder may stand at its start as a GUID ("{6D809377-…}\Tailscale\…").
+    pub path: String,
+    pub uid: Option<u32>,
+    pub guid: Option<[u8; 16]>,
+    pub promoted: bool,
+}
+
+/// Whether Windows shows this icon on the taskbar rather than in the overflow: the setting for the same
+/// GUID, else for the same program and number (the one for this very path first: an older copy of the
+/// same app has its own). An icon Windows has no setting for yet is in the overflow, as Windows puts it.
+pub fn is_pinned(exe: &str, uid: u32, guid: Option<[u8; 16]>, settings: &[IconSetting]) -> bool {
+    let file = |p: &str| p.rsplit(['\\', '/']).next().unwrap_or(p).to_lowercase();
+    let exe_l = exe.to_lowercase().replace('/', "\\");
+    let real_guid = guid.filter(|g| g.iter().any(|b| *b != 0));
+    let same: Vec<&IconSetting> = match real_guid {
+        Some(g) => settings.iter().filter(|s| s.guid == Some(g)).collect(),
+        None => settings.iter().filter(|s| s.guid.is_none() && s.uid == Some(uid) && !exe_l.is_empty() && file(&s.path) == file(&exe_l)).collect(),
+    };
+    // A known folder's GUID at the start of the path: what follows it is the end of the real path.
+    let tail = |p: &str| -> String {
+        let p = p.to_lowercase().replace('/', "\\");
+        if p.starts_with('{') { p.split_once("}\\").map(|(_, t)| format!("\\{t}")).unwrap_or(p) } else { p }
+    };
+    let best = same
+        .iter()
+        .find(|s| s.path.to_lowercase().replace('/', "\\") == exe_l)
+        .or_else(|| same.iter().find(|s| s.path.starts_with('{') && exe_l.ends_with(&tail(&s.path))))
+        .or_else(|| same.first());
+    best.is_some_and(|s| s.promoted)
+}
+
 /// What Explorer sends an app's callback for a click, by the version the app asked for:
 /// version 4 gets (MAKEWPARAM(x, y), MAKELPARAM(msg, id)), older ones (id, msg).
 pub fn callback_params(version: u32, uid: u32, msg: u32, x: i32, y: i32) -> (usize, isize) {
@@ -94,7 +131,7 @@ mod imp {
         SWP_NOACTIVATE, WM_CLOSE, WM_COMMAND, WM_COPYDATA, WM_DESTROY, WM_TIMER, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
 
-    use super::{callback_params, key_of, TrayIcon};
+    use super::{callback_params, is_pinned, key_of, IconSetting, TrayIcon};
 
     const NIM_ADD: u32 = 0;
     const NIM_MODIFY: u32 = 1;
@@ -145,9 +182,50 @@ mod imp {
         tip: String,
         icon: Option<String>,
         hidden: bool,
+        guid: Option<[u8; 16]>,
+        /// The program that put it there (its window's), to find Windows' setting for it.
+        exe: String,
     }
 
     static ITEMS: Mutex<Vec<Item>> = Mutex::new(Vec::new());
+    /// Windows' tray settings, read again at most every 2 s; and which icons were pinned when last told.
+    static SETTINGS: Mutex<Option<(Instant, Vec<IconSetting>)>> = Mutex::new(None);
+    static LAST_PINNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    /// HKCU\Control Panel\NotifyIconSettings: Windows' note on each icon it has seen.
+    fn read_settings() -> Vec<IconSetting> {
+        let mut out = Vec::new();
+        let Ok(root) = windows_registry::CURRENT_USER.open(r"Control Panel\NotifyIconSettings") else { return out };
+        let Ok(keys) = root.keys() else { return out };
+        for name in keys {
+            let Ok(k) = root.open(&name) else { continue };
+            let guid = k.get_value("IconGuid").ok().and_then(|v| <[u8; 16]>::try_from(&v[..]).ok());
+            out.push(IconSetting { path: k.get_string("ExecutablePath").unwrap_or_default(), uid: k.get_u32("UID").ok(), guid, promoted: k.get_u32("IsPromoted").unwrap_or(0) == 1 });
+        }
+        out
+    }
+
+    fn settings() -> Vec<IconSetting> {
+        let mut s = SETTINGS.lock().unwrap();
+        if let Some((at, list)) = s.as_ref() {
+            if at.elapsed() < Duration::from_secs(2) {
+                return list.clone();
+            }
+        }
+        let list = read_settings();
+        *s = Some((Instant::now(), list.clone()));
+        list
+    }
+
+    /// The program behind an icon's window.
+    fn exe_of(hwnd: u32) -> String {
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(HWND(hwnd as isize as *mut _), Some(&mut pid)) };
+        if pid == 0 {
+            return String::new();
+        }
+        crate::workspaces::launch::program_path(pid).unwrap_or_default()
+    }
     /// Tells the taskbar (set by `start`; kept apart so the window's own code needs no app).
     type Notify = Box<dyn Fn(Vec<TrayIcon>) + Send + Sync>;
     static NOTIFY: OnceLock<Notify> = OnceLock::new();
@@ -160,7 +238,33 @@ mod imp {
     }
 
     pub fn icons() -> Vec<TrayIcon> {
-        ITEMS.lock().unwrap().iter().filter(|i| !i.hidden && i.icon.is_some()).map(|i| TrayIcon { key: i.key.clone(), tip: i.tip.clone(), icon: i.icon.clone() }).collect()
+        let settings = settings();
+        let list: Vec<TrayIcon> = ITEMS
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|i| !i.hidden && i.icon.is_some())
+            .map(|i| TrayIcon { key: i.key.clone(), tip: i.tip.clone(), icon: i.icon.clone(), pinned: is_pinned(&i.exe, i.uid, i.guid, &settings) })
+            .collect();
+        *LAST_PINNED.lock().unwrap() = pinned_keys(&list);
+        list
+    }
+
+    fn pinned_keys(list: &[TrayIcon]) -> Vec<String> {
+        list.iter().filter(|t| t.pinned).map(|t| t.key.clone()).collect()
+    }
+
+    /// Settings › Taskbar › Other system tray icons changed which are shown: the taskbar hears it.
+    fn recheck_pinned() {
+        let before = LAST_PINNED.lock().unwrap().clone();
+        let now = {
+            let settings = settings();
+            let items = ITEMS.lock().unwrap();
+            items.iter().filter(|i| !i.hidden && i.icon.is_some() && is_pinned(&i.exe, i.uid, i.guid, &settings)).map(|i| i.key.clone()).collect::<Vec<_>>()
+        };
+        if now != before {
+            changed();
+        }
     }
 
     /// The taskbar hears the icons, at most every 150 ms (an animated icon changes often).
@@ -282,7 +386,18 @@ mod imp {
                     let i = match at {
                         Some(i) => i,
                         None if message == NIM_ADD => {
-                            items.push(Item { key: key.clone(), hwnd: nid.hwnd, uid: nid.uid, callback: 0, version: 0, tip: String::new(), icon: None, hidden: false });
+                            items.push(Item {
+                                key: key.clone(),
+                                hwnd: nid.hwnd,
+                                uid: nid.uid,
+                                callback: 0,
+                                version: 0,
+                                tip: String::new(),
+                                icon: None,
+                                hidden: false,
+                                guid,
+                                exe: exe_of(nid.hwnd),
+                            });
                             items.len() - 1
                         }
                         None => return,
@@ -293,6 +408,9 @@ mod imp {
                     } else {
                         it.hwnd = nid.hwnd;
                         it.uid = nid.uid;
+                        if it.exe.is_empty() {
+                            it.exe = exe_of(nid.hwnd);
+                        }
                         if nid.flags & NIF_MESSAGE != 0 {
                             it.callback = nid.callback;
                         }
@@ -373,6 +491,7 @@ mod imp {
                 }
                 WM_TIMER => {
                     keep_on_top(hwnd);
+                    recheck_pinned();
                     LRESULT(0)
                 }
                 WM_DESTROY => {
@@ -512,7 +631,35 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{callback_params, key_of};
+    use super::{callback_params, is_pinned, key_of, IconSetting};
+
+    fn setting(path: &str, uid: Option<u32>, guid: Option<[u8; 16]>, promoted: bool) -> IconSetting {
+        IconSetting { path: path.into(), uid, guid, promoted }
+    }
+
+    #[test]
+    fn an_icon_is_pinned_as_windows_shows_it() {
+        let mut g = [0u8; 16];
+        g[3] = 7;
+        let s = vec![
+            setting(r"C:\Users\me\AppData\Local\Programs\Claude-Usage-Widget\Claude-Usage-Widget.exe", Some(3), None, true),
+            setting(r"{6D809377-6AF0-444B-8957-A3773F02200E}\Microsoft OneDrive\OneDrive.exe", Some(501), None, false),
+            setting(r"{6D809377-6AF0-444B-8957-A3773F02200E}\Tailscale\tailscale-ipn.exe", None, Some(g), true),
+            // Two copies of one app, each its own setting.
+            setting(r"C:\Users\me\Downloads\release\Island.exe", Some(2), None, false),
+            setting(r"C:\Users\me\AppData\Local\target\debug\island.exe", Some(2), None, true),
+        ];
+        assert!(is_pinned(r"C:\Users\me\AppData\Local\Programs\Claude-Usage-Widget\Claude-Usage-Widget.exe", 3, None, &s));
+        // Same program, another number: Windows has no setting for it, so it's in the overflow.
+        assert!(!is_pinned(r"C:\Users\me\AppData\Local\Programs\Claude-Usage-Widget\Claude-Usage-Widget.exe", 4, None, &s));
+        assert!(!is_pinned(r"C:\Program Files\Microsoft OneDrive\OneDrive.exe", 501, None, &s));
+        // By its GUID, whatever its program.
+        assert!(is_pinned(r"C:\Program Files\Tailscale\tailscale-ipn.exe", 0, Some(g), &s));
+        assert!(is_pinned(r"C:\Users\me\AppData\Local\target\debug\island.exe", 2, None, &s));
+        assert!(!is_pinned(r"C:\Users\me\Downloads\release\Island.exe", 2, None, &s));
+        assert!(!is_pinned(r"C:\x\unknown.exe", 1, None, &s));
+        assert!(!is_pinned("", 3, None, &s));
+    }
 
     #[test]
     fn an_icon_is_known_by_its_guid_or_its_window_and_number() {
