@@ -1039,6 +1039,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   start.title = 'Your apps';
   start.addEventListener('click', () => setCard(!cardOn));
   const appsBox = el('div', 'dk-apps');
+  const pinLine = el('i', 'dk-pinline');
+  pinLine.hidden = true;
   // On the top edge with the island there: room in the bar's middle for it (the bar runs on behind).
   const gapEl = el('i', 'dk-gap');
   gapEl.hidden = true;
@@ -1213,7 +1215,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     void native.startToggle();
   });
   let startPrepared: string | null = null;
-  bar.append(winStart, search, start, appsBox, fillEl, gapEl, sepA, music, musicPrev, musicPP, musicNext, sepM, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell, gear);
+  bar.append(winStart, search, start, appsBox, fillEl, gapEl, sepA, music, musicPrev, musicPP, musicNext, sepM, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell, gear, pinLine);
 
   // Over the bar, coming up from behind it: the Apps card (the arrow) and when S/W reset (pointing at them).
   const above = el('div', 'dk-above');
@@ -1883,9 +1885,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       const out = RISE_BOB_LIFT * bobs;
       placed.set(b, { s, along: 0, out });
       if (room > 0.01) {
-        b.style.marginInline = `${(room / 2).toFixed(2)}px`;
+        // The first open app after the pins keeps its room for the line before it too (--dk-pin-gap).
+        b.style.marginLeft = `calc(${(room / 2).toFixed(2)}px + var(--dk-pin-gap, 0px))`;
+        b.style.marginRight = `${(room / 2).toFixed(2)}px`;
         spaced.add(b);
-      } else if (b.style.marginInline) b.style.marginInline = '';
+      } else if (b.style.marginLeft || b.style.marginRight) b.style.marginLeft = b.style.marginRight = '';
       if (Math.abs(s - 1) < 0.0005 && out < 0.01) {
         b.style.scale = b.style.translate = '';
         return;
@@ -1895,8 +1899,9 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       b.style.translate = `${x.toFixed(2)}px ${y.toFixed(2)}px`;
     });
     // One no longer rising (hidden, cut, gone from the tray) keeps no room.
-    for (const b of marginsOn) if (!spaced.has(b)) b.style.marginInline = '';
+    for (const b of marginsOn) if (!spaced.has(b)) b.style.marginLeft = b.style.marginRight = '';
     marginsOn = spaced;
+    placePinLine();
     // One that left the bar (a tray icon gone) keeps no rise.
     for (const b of rise.keys()) if (!b.isConnected) rise.delete(b);
     for (const b of restMid.keys()) if (!b.isConnected) restMid.delete(b);
@@ -1976,6 +1981,19 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const spot = el('i', 'dk-spot');
   bar.insertBefore(spot, start);
   let spotKey: string | null = null;
+  /** The short line between the pinned apps and the open ones that aren't (Justin, 11-19), in the
+   *  middle of the room between them; on the bar, not on the app, so it doesn't grow when that rises. */
+  const placePinLine = () => {
+    const b = appsBox.querySelector<HTMLElement>(':scope > .dk-app.dk-after-pins:not(.dk-cut)');
+    const prev = b?.previousElementSibling as HTMLElement | null;
+    if (!b || !prev || appsBox.hidden) {
+      pinLine.hidden = true;
+      return;
+    }
+    pinLine.hidden = false;
+    const mid = upright() ? (prev.offsetTop + prev.offsetHeight + b.offsetTop) / 2 : (prev.offsetLeft + prev.offsetWidth + b.offsetLeft) / 2;
+    pinLine.style.transform = upright() ? `translateY(${mid.toFixed(2)}px)` : `translateX(${mid.toFixed(2)}px)`;
+  };
   const placeSpot = () => {
     spotKey = frame && has('spotlight') ? spotlightOn(frame.apps, spotKey) : null;
     const front = spotKey ? appEls.get(spotKey) : undefined;
@@ -2391,6 +2409,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
         } else ico.innerHTML = SVG.app;
       }
       if (appsBox.children[i] !== b) appsBox.insertBefore(b, appsBox.children[i] ?? null);
+      b.classList.toggle('dk-after-pins', !a.pinned && i > 0 && f.apps[i - 1].pinned);
     });
     for (const [key, b] of appEls) {
       if (!seen.has(key)) {
@@ -2469,6 +2488,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     want.gear = !off.has('settings');
     tickClock();
     squeezeToFit();
+    placePinLine();
     if (cardOn && f.card) {
       drawCard(f.card);
       showPop(card);

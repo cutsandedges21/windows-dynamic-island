@@ -2421,6 +2421,12 @@ html[data-pill='glass'] .dk-menu {
 .dock .dk-apps { display: flex; align-items: center; gap: 2px; }
 /* Grows from the bar's edge as the pointer passes, its highlight and dot with it (dock.ts riseAt). */
 .dock .dk-app { position: relative; width: 40px; padding: 0; flex: none; transform-origin: 50% 100%; }
+/* Between the pinned apps and the open ones that aren't: room for a short faint line, smaller than the
+   bar's other lines (Justin, 11-19). The line is the bar's (dock.ts placePinLine), in the room's middle. */
+.dock .dk-app.dk-after-pins { --dk-pin-gap: 8px; margin-left: var(--dk-pin-gap); }
+.dock .dk-pinline { position: absolute; left: -0.5px; top: 50%; width: 1px; height: 16px; margin-top: -8px; background: rgba(var(--ink), 0.13); pointer-events: none; }
+html.dk-upright .dock .dk-app.dk-after-pins { margin-left: 0; margin-top: var(--dk-pin-gap); }
+html.dk-upright .dock .dk-pinline { left: 50%; top: -0.5px; width: 16px; height: 1px; margin: 0 0 0 -8px; }
 /* The bar's other icons rise in place with them (dock.ts RISE_OTHERS). */
 .dock :is(.dk-winstart, .dk-search, .dk-start, .dk-music, .dk-skip, .dk-timer, .dk-claude, .dk-tray-ico, .dk-batt, .dk-wifi, .dk-sound, .dk-clock, .dk-bell, .dk-gear) { transform-origin: 50% 100%; }
 .dock .dk-app:hover, .dock .dk-app:active { background: transparent; }

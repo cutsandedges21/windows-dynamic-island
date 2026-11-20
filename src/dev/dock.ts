@@ -14,7 +14,8 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
   const hide = (q.get('hide') ?? '').split(',').filter((k): k is DockItem => (DOCK_ITEMS as readonly string[]).includes(k));
   const app = (key: string, name: string, open: boolean, front = false) => ({ key, name, icon: null, windows: open ? [1] : [], front, pinned: true });
   const frame: DockFrame = {
-    apps: [app('code', 'Visual Studio Code', true, true), app('chrome', 'Chrome', true), app('spotify', 'Spotify', true), app('explorer', 'File Explorer', false)],
+    // &unpinned=2: the last two open but not pinned (a short line before them).
+    apps: [app('code', 'Visual Studio Code', true, true), app('chrome', 'Chrome', true), app('spotify', 'Spotify', true), app('explorer', 'File Explorer', false)].map((a, i, all) => ({ ...a, pinned: i < all.length - Number(q.get('unpinned') ?? 0) })),
     music: { title: 'Blinding Lights', artist: 'The Weeknd', playing: mode !== 'paused', art: null },
     timer: '4:32',
     claude: { session: 42, week: 18 },
