@@ -2936,8 +2936,9 @@ html.fr-slide .notch[data-side='right']:is(.out, .drop) .nt-ring { transform: no
 html.dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg { color: var(--accent); }
 html.dk-accent .dock :is(.dk-prev, .dk-next) svg { opacity: 0.64; }
 /* On glass the wallpaper shows through and some accents don't stand out on it (Justin, 11-20): the exact
-   accent kept, with a thin dark halo round each icon and its lines a little bolder. */
+   accent kept, each line edged in a hairline of dark that follows it (a soft halo was too spread out), its
+   lines a little bolder. */
 html[data-pill='glass'].dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg {
-  filter: drop-shadow(0 0 0.6px rgba(0, 0, 0, 0.9)) drop-shadow(0 0 2px rgba(0, 0, 0, 0.55)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+  filter: drop-shadow(0.5px 0 0 rgba(0, 0, 0, 0.55)) drop-shadow(-0.5px 0 0 rgba(0, 0, 0, 0.55)) drop-shadow(0 0.5px 0 rgba(0, 0, 0, 0.55)) drop-shadow(0 -0.5px 0 rgba(0, 0, 0, 0.55));
 }
 html[data-pill='glass'].dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg.line { stroke-width: 2.5; }
