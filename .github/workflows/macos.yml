@@ -78,6 +78,9 @@ jobs:
           sleep 5
           screencapture -x shot.png || echo "screencapture failed"
           printf '{"id":"ci","title":"Hello from CI","text":"The activity API works","ms":8000}' | "$HOOK" activity || true
+          # Codex and Cursor reach it the same way (their own event names).
+          printf '{"session_id":"22222222-3333-4444-8555-666666666666","hook_event_name":"SessionStart","cwd":"%s"}' "$PWD" | "$HOOK" codex SessionStart || true
+          printf '{"conversation_id":"c1","hook_event_name":"sessionStart","workspace_roots":["%s"]}' "$PWD" | "$HOOK" cursor sessionStart || true
           sleep 2
           screencapture -x shot-activity.png || echo "screencapture failed"
           kill $PID || true
@@ -88,6 +91,8 @@ jobs:
           grep -q "hook socket listening" island.log
           grep -q "hook claude UserPromptSubmit" island.log
           grep -q "hook claude PermissionRequest" island.log
+          grep -q "hook codex SessionStart" island.log
+          grep -q "hook cursor sessionStart" island.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
