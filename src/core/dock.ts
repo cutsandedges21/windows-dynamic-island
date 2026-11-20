@@ -1780,14 +1780,14 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       if (!bobFrom) bobFrom = t;
       bob = Math.sin((((t - bobFrom) % RISE_BOB_MS) / RISE_BOB_MS) * Math.PI);
     } else bobFrom = 0;
-    // The apps and the other small ones (Start, Search, back/play/next, the tray's, Wi-Fi, sound...)
-    // make room, half of what they grow by as a margin each side (Windhawk's spacing): everything after
-    // one moves on, the bar widens by the total and slides back by half of it, so the row parts round
-    // the pointer. The wide ones (the song, S/W, the battery, the clock) grow in place: their room moved
-    // the whole bar, by up to 20 px at each end for the song (Justin, 11-19, "some boxes make the whole
-    // taskbar move"; the small ones "could still make room").
+    // Only the apps make room, half of what they grow by as a margin each side (Windhawk's spacing):
+    // everything after one moves on, the bar widens by the total and slides back by half of it, so the
+    // row parts round the pointer. Everything else grows in place: the wide ones' room moved the whole
+    // bar, by up to 20 px at each end for the song, and the small ones' (back/play/next, the tray's)
+    // pushed the song, S/W and the clock about (Justin, 11-19, "some boxes make the whole taskbar
+    // move", then "they push the big boxes").
     const widths = els.map((b) => (b.classList.contains('dk-app') ? APP_W : b.offsetWidth));
-    const rooms = els.map((_, i) => (spread && widths[i] <= APP_W * 1.25 ? RISE_GROW * levels[i] * widths[i] * RISE_SPACING : 0));
+    const rooms = els.map((b, i) => (spread && b.classList.contains('dk-app') ? RISE_GROW * levels[i] * APP_W * RISE_SPACING : 0));
     const total = rooms.reduce((a, r) => a + r, 0);
     const spaced = new Set<HTMLElement>();
     els.forEach((b, i) => {
