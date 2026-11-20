@@ -790,8 +790,9 @@ const RISE_BOB_AFTER = 500;
 const RISE_BOB_MS = 1200;
 const RISE_BOB_LIFT = 4;
 const RISE_BOB_GROW = 0.05;
-/** With Rise on, the Glide highlight eases onto the item it moves to with this time constant, ms. */
-const GLIDE_EASE_MS = 70;
+/** With Rise on, the Glide highlight eases onto the item it moves to with this time constant, ms (70 was
+ *  "too slow", Justin 11-20: it trailed the app the pointer was on). */
+const GLIDE_EASE_MS = 25;
 /** The bar's other items, which rise with the apps (all of them, Justin 11-19). */
 const RISE_OTHERS = '.dk-winstart, .dk-search, .dk-start, .dk-music, .dk-skip, .dk-timer, .dk-claude, .dk-tray .dk-tray-ico, .dk-batt, .dk-wifi, .dk-sound, .dk-clock, .dk-bell, .dk-gear';
 /** Room above the bar for grown (and bobbing) apps, CSS px. */

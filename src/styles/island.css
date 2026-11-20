@@ -2308,7 +2308,7 @@ html.dk-spotlight .dock .dk-app.front .dk-dot { width: 4px; margin-left: -2px; b
   background: rgba(var(--ink), 0.12);
   pointer-events: none;
   opacity: 0;
-  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1), height 0.32s ease, opacity 0.18s ease;
+  transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), width 0.16s cubic-bezier(0.22, 1, 0.36, 1), height 0.16s ease, opacity 0.18s ease;
 }
 html.dk-glide .dock .dk-glow.on { opacity: 1; }
 html.dk-glide .dock button:hover, html.dk-glide .dock button:active { background: transparent; }
