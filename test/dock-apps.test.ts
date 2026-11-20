@@ -99,11 +99,11 @@ describe('taskbar apps', () => {
     expect(barTall(999)).toBe(BAR_TALL_MAX);
   });
 
-  it('keeps the icons in the accent colour only when turned on, off for a bar saved before', () => {
-    expect(migrate({}).island.taskbar.accentIcons).toBe(false);
-    expect(migrate({ island: { taskbar: { on: true } } }).island.taskbar.accentIcons).toBe(false);
-    expect(migrate({ island: { taskbar: { on: true, accentIcons: true } } }).island.taskbar.accentIcons).toBe(true);
-    expect(migrate({ island: { taskbar: { on: true, accentIcons: 'yes' } } }).island.taskbar.accentIcons).toBe(false);
+  it('has the icons in the accent colour as a style, on for a bar saved with its old toggle on', () => {
+    expect(migrate({}).island.taskbar.styles).toEqual(['rise']);
+    expect(migrate({ island: { taskbar: { on: true, styles: ['rise', 'accent'] } } }).island.taskbar.styles).toEqual(['rise', 'accent']);
+    expect(migrate({ island: { taskbar: { on: true, styles: ['glide'], names: {}, accentIcons: true } } }).island.taskbar.styles).toEqual(['glide', 'accent']);
+    expect(migrate({ island: { taskbar: { on: true, styles: ['rise'], accentIcons: 'yes' } } }).island.taskbar.styles).toEqual(['rise']);
   });
 
   it('gives a browser\'s app window its shortcut\'s place, and Island\'s Settings one of its own', () => {

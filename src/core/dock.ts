@@ -67,8 +67,6 @@ export interface DockFrame {
   /** The Start button opens Island's Start menu (else Windows'); the Windows key too. */
   startOpens?: 'island' | 'windows';
   startKey?: boolean;
-  /** The icons that aren't apps' (Start, Wi-Fi, sound, the battery...) in the accent colour. */
-  accentIcons?: boolean;
   /** On the screen's bottom edge, over Windows' taskbar ... */
   edge?: boolean;
   /** ... its ends curving out into the edge. */
@@ -433,7 +431,6 @@ export interface DockHooks {
   names(): NameStyle;
   startOpens(): 'island' | 'windows';
   startKey(): boolean;
-  accentIcons(): boolean;
   edge(): boolean;
   setEdge(on: boolean): void;
   melt(): boolean;
@@ -593,7 +590,6 @@ export class DockHost {
         names: this.hooks.names(),
         startOpens: this.hooks.startOpens(),
         startKey: this.hooks.startKey(),
-        accentIcons: this.hooks.accentIcons(),
         edge: this.hooks.edge(),
         melt: this.hooks.melt(),
         side: this.hooks.side(),
@@ -814,7 +810,7 @@ const RISE_SLACK = 8;
 export const zoomOf = (f: Pick<DockFrame, 'size' | 'scale'> | null): number => (f ? (f.scale ?? DOCK_ZOOM[f.size] ?? 1) : 1);
 
 export const DOCK_SIZE_LABELS: Record<DockSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
-export const DOCK_STYLE_LABELS: Record<DockStyle, string> = { rise: 'Rise', spotlight: 'Spotlight', glide: 'Glide', names: 'Names' };
+export const DOCK_STYLE_LABELS: Record<DockStyle, string> = { rise: 'Rise', spotlight: 'Spotlight', glide: 'Glide', names: 'Names', accent: 'Accent' };
 
 /** The taskbar's styles with `style` turned on, or off. */
 export function toggleStyle(on: readonly DockStyle[], style: DockStyle): DockStyle[] {
@@ -2394,7 +2390,6 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // The zoom scales the bar's place in its window too; the CSS divides it back out of that.
     root.style.setProperty('--dk-z', bar.style.zoom);
     root.dataset.pill = f.color;
-    root.classList.toggle('dk-accent-icons', f.accentIcons === true);
     root.dataset.side = side();
     root.classList.toggle('dk-upright', upright());
     // The melted ends' masks for this side, their feet on the border while it is on.

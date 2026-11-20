@@ -44,6 +44,7 @@ const STYLE_HINTS: Record<DockStyle, string> = {
   spotlight: 'A light shines down on the app in front, and glides to the next one.',
   glide: 'A highlight slides along to what you point at.',
   names: 'The name of what you point at shows over the bar.',
+  accent: "Start, search, Wi-Fi, sound, the battery and the rest of the icons that aren't apps take the accent colour.",
 };
 import { MAX_WIDGETS, newWidgetId, WIDGET_KINDS } from './core/widgets';
 import { h } from './dom';
@@ -406,14 +407,6 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
           // Off the bottom, Windows' taskbar is not in the way: Blend and Auto-hide stand on their own.
           ...(barNeedsHidden(t) ? [] : edgeRows(host)),
           ...lookPicker(t.look, host),
-          row(
-            'Icons in the accent colour',
-            "Start, search, Wi-Fi, sound, the battery and the rest of the icons that aren't apps take the accent colour you picked under Appearance.",
-            toggle(t.accentIcons, (v) => {
-              t.accentIcons = v;
-              host.save(true);
-            }),
-          ),
           row(
             "Hide Windows' taskbar",
             barNeedsHidden(t) && !t.hideWindows
