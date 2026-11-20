@@ -151,10 +151,20 @@ const ZONE: Record<DockItem, 0 | 1 | 2> = { start: 0, search: 0, arrow: 0, apps:
  * after the song (it reads as one with the timer or S/W otherwise). Split round the island, no line
  * beside the apps: the island parts them.
  */
-/** Filling the width: the left end's kind (the song, timer, usage), the middle's (Start, search, the
- *  apps), the right end's (the tray, the clock...), each in `order`'s order. */
-export function fillOrder(order: readonly DockItem[]): DockItem[] {
-  return [1, 0, 2].flatMap((z) => order.filter((k) => ZONE[k] === z));
+/**
+ * Filling the width, in the order dragged to in Settings: the middle starts with the apps and what is
+ * next to them of their kind (Start, search, the arrow) and runs on to the tray's kind (the song, timer,
+ * usage after the apps go with them); what is before it sits at the left end, the tray and clock at the
+ * right end (Justin, 11-20: Start and search left of the song, the usage after the apps).
+ */
+export function fillSplit(order: readonly DockItem[]): { left: DockItem[]; mid: DockItem[]; right: DockItem[] } {
+  const at = order.indexOf('apps');
+  if (at < 0) return { left: [], mid: [...order], right: [] };
+  let a = at;
+  while (a > 0 && ZONE[order[a - 1]] === ZONE.apps) a--;
+  let b = at + 1;
+  while (b < order.length && ZONE[order[b]] !== 2) b++;
+  return { left: order.slice(0, a), mid: order.slice(a, b), right: order.slice(b) };
 }
 
 export function dockRow(order: readonly DockItem[], shown: ReadonlySet<DockItem>, split = false): Array<DockItem | 'sep'> {
@@ -2258,20 +2268,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const sig = `${order.join()}|${row.join()}|${full}`;
     if (sig === rowSig) return;
     rowSig = sig;
-    let lined = new Set(row.filter((_, n) => row[n - 1] === 'sep') as DockItem[]);
-    // Filling the width, as Windows' own taskbar: Start, search and the apps (their kind) in the middle,
-    // the song, timer and usage at the left end (where Windows has its widgets), the tray and the clock
-    // at the right end, each in the order dragged to; the room either side of the middle (Justin, 11-20:
-    // with the song dragged between search and the apps, the middle was only the apps).
-    const mid = new Set<DockItem>();
-    let seqOrder: readonly DockItem[] = order;
-    if (full) {
-      for (const k of order) if (ZONE[k] === ZONE.apps) mid.add(k);
-      seqOrder = fillOrder(order);
-      // The lines between kinds as they now sit (none where the room is, below).
-      const moved = dockRow(seqOrder, shown);
-      lined = new Set(moved.filter((_, n) => moved[n - 1] === 'sep') as DockItem[]);
-    }
+    const lined = new Set(row.filter((_, n) => row[n - 1] === 'sep') as DockItem[]);
+    // Filling the width (fillSplit): the left end, the middle, the right end, in the order dragged to;
+    // the room either side of the middle.
+    const mid = new Set<DockItem>(full ? fillSplit(order).mid : []);
+    const seqOrder: readonly DockItem[] = order;
     fillEl.hidden = full;
     fillL.hidden = fillR.hidden = !full;
     const seq: HTMLElement[] = [];
