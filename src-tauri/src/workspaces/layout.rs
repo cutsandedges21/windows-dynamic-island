@@ -472,7 +472,9 @@ pub async fn ws_place(places: Vec<Place>) -> Result<Vec<Placed>, String> {
     }
 }
 
-#[cfg(test)]
+// Windows only: what it reads (the live windows, Store apps' icons) is Windows' own. The Mac CI's test
+// build failed on it.
+#[cfg(all(test, windows))]
 mod live_tests {
     /// Prints this PC's windows as the taskbar sees them (cargo test --lib windows_now -- --ignored --nocapture).
     #[test]
