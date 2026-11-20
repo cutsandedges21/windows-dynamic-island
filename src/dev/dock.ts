@@ -45,6 +45,7 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
     // &border=1 is the screen border's; &accentborder=1: Accent's black line round each icon.
     accentBorder: q.get('accentborder') === '1',
     songTint: q.get('songtint') !== '0',
+    barTint: q.get('bartint') === '1',
     edge: q.get('edge') === '1',
     melt: q.get('melt') === '1',
     side: (q.get('side') as DockSide | null) ?? 'bottom',

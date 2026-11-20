@@ -72,6 +72,8 @@ export interface DockFrame {
   accentBorder?: boolean;
   /** The song's box in its album art's colour. */
   songTint?: boolean;
+  /** The whole bar in it. */
+  barTint?: boolean;
   /** Fill the width (barFill): the bar runs the screen's whole width, Start, search and the apps in the
    *  middle, the rest at the ends, search a box with its word. */
   fill?: boolean;
@@ -461,6 +463,7 @@ export interface DockHooks {
   songOpens(): 'app' | 'tile';
   accentBorder(): boolean;
   songTint(): boolean;
+  barTint(): boolean;
   edge(): boolean;
   setEdge(on: boolean): void;
   melt(): boolean;
@@ -628,6 +631,7 @@ export class DockHost {
         startKey: this.hooks.startKey(),
         accentBorder: this.hooks.accentBorder(),
         songTint: this.hooks.songTint(),
+        barTint: this.hooks.barTint(),
         fill: this.hooks.fill(),
         square: this.hooks.square(),
         edge: this.hooks.edge(),
@@ -1113,6 +1117,14 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   // forward, as the island's art does.
   const music = el('button', 'dk-music');
   let songTintFor: string | null = null;
+  let songColour: string | null = null;
+  let songTint = { box: false, bar: false };
+  const paintSong = () => {
+    const root = document.documentElement;
+    if (songColour) root.style.setProperty('--song', songColour);
+    music.classList.toggle('dk-tint', songTint.box && songColour !== null);
+    root.classList.toggle('dk-bar-tint', songTint.bar && songColour !== null);
+  };
   const musicCover = el('span', 'dk-cover');
   const musicArt = document.createElement('img');
   musicArt.alt = '';
@@ -2571,25 +2583,28 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // What is playing, and the timer.
     const m = off.has('music') ? null : f.music;
     want.music = Boolean(m);
+    // The album's colour, as the island's music card takes it (the same colour, washed over the same way;
+    // Justin, 11-20: "the colors are not the same"): on the song's box, and on the whole bar when that is
+    // on too ("make it an option"). Grey art keeps the bar's own.
+    songTint = { box: f.songTint === true, bar: f.barTint === true };
+    const tintArt = (songTint.box || songTint.bar) && m?.art ? m.art : null;
+    if (tintArt !== songTintFor) {
+      songTintFor = tintArt;
+      songColour = null;
+      if (tintArt)
+        void artColour(tintArt).then((c) => {
+          if (songTintFor !== tintArt) return;
+          songColour = c ? barColour(c, /white/.test(document.documentElement.dataset.pill ?? '')) : null;
+          paintSong();
+        });
+    }
+    paintSong();
     if (m) {
       music.title = `${m.title}${m.artist ? ` · ${m.artist}` : ''}`;
       musicPP.title = m.playing ? 'Pause' : 'Play';
       musicArt.hidden = !m.art;
       musicNote.hidden = Boolean(m.art);
       if (m.art && musicArt.src !== m.art) musicArt.src = m.art;
-      // Its box in the album's colour, as the island's music card takes it (the same colour, washed over
-      // the bar the same way; Justin, 11-20: "the colors are not the same"); grey art keeps the bar's.
-      const tintArt = f.songTint === true && m.art ? m.art : null;
-      if (tintArt !== songTintFor) {
-        songTintFor = tintArt;
-        if (!tintArt) music.classList.remove('dk-tint');
-        else
-          void artColour(tintArt).then((c) => {
-            if (songTintFor !== tintArt) return;
-            if (c) music.style.setProperty('--song', barColour(c, /white/.test(document.documentElement.dataset.pill ?? '')));
-            music.classList.toggle('dk-tint', Boolean(c));
-          });
-      }
       musicTitle.textContent = m.title || 'Playing';
       musicArtist.textContent = m.artist;
       musicArtist.hidden = !m.artist;

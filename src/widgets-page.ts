@@ -416,6 +416,16 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
                     }),
                   ),
                 ),
+                sub(
+                  row(
+                    "The whole taskbar in the album's colour",
+                    "While a song plays, the taskbar takes its album art's colour, as the island's music card does.",
+                    toggle(t.barTint, (v) => {
+                      t.barTint = v;
+                      host.save(true);
+                    }),
+                  ),
+                ),
               ]),
           row(
             'Position',

@@ -152,6 +152,9 @@ describe('taskbar apps', () => {
     // The song's box in its album's colour: on until turned off.
     expect(migrate({}).island.taskbar.songTint).toBe(true);
     expect(migrate({ island: { taskbar: { songTint: false } } }).island.taskbar.songTint).toBe(false);
+    // The whole bar in it: off until turned on.
+    expect(migrate({}).island.taskbar.barTint).toBe(false);
+    expect(migrate({ island: { taskbar: { barTint: true } } }).island.taskbar.barTint).toBe(true);
   });
 
   it('gives a browser\'s app window its shortcut\'s place, and Island\'s Settings one of its own', () => {

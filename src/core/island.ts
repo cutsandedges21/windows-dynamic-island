@@ -486,6 +486,7 @@ export class Island {
         songOpens: () => (this.running.has('music') ? this.settings.island.taskbar.songOpens : 'app'),
         accentBorder: () => this.settings.island.taskbar.accentBorder,
         songTint: () => this.settings.island.taskbar.songTint,
+        barTint: () => this.settings.island.taskbar.barTint,
         // At the bottom these two live inside Hide Windows' taskbar: they only count while it hides,
         // and turning one on from the taskbar's menu hides Windows' taskbar too.
         edge: () => barEdge(this.settings.island.taskbar),
