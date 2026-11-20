@@ -30,14 +30,14 @@ pub fn dock_peek(window: WebviewWindow, items: Vec<Peek>) {
     imp::show(&window, items);
 }
 
-/// Pointing at a window's picture shows that window itself where it is, the others faded to glass, as
-/// Windows' own taskbar does (Justin, 11-20); `None` puts them all back.
+/// Pointing at a window's picture brings that window in front, where it is, until the pointer leaves
+/// (Justin, 11-20); `None` puts it back, unless `keep` (it was clicked, so it stays in front).
 #[tauri::command]
-pub fn dock_live_peek(window: WebviewWindow, hwnd: Option<isize>) -> bool {
+pub fn dock_live_peek(window: WebviewWindow, hwnd: Option<isize>, keep: Option<bool>) -> bool {
     if window.label() != crate::dock::LABEL {
         return false;
     }
-    imp::live(window.hwnd().ok().map(|h| h.0 as isize), hwnd)
+    imp::live(hwnd, keep == Some(true))
 }
 
 #[cfg(windows)]
@@ -85,78 +85,97 @@ mod imp {
         }
     }
 
-    /// dwmapi's DwmpActivateLivePreview (ordinal 113, not exported by name; what Explorer's taskbar
-    /// calls): on or off, the window shown, the window kept over the glass (the dock), 1 = a taskbar
-    /// window's peek, and a last argument Windows 10 added (0).
-    type LivePreviewFn = unsafe extern "system" fn(u32, isize, isize, u32, usize) -> i32;
-    type Farproc = unsafe extern "system" fn() -> isize;
-
-    fn live_preview() -> Option<LivePreviewFn> {
-        use std::sync::OnceLock;
-        use windows::core::{PCSTR, PCWSTR};
-        use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32};
-        static F: OnceLock<Option<usize>> = OnceLock::new();
-        let p = *F.get_or_init(|| unsafe {
-            let name: Vec<u16> = "dwmapi.dll\0".encode_utf16().collect();
-            let lib = LoadLibraryExW(PCWSTR(name.as_ptr()), None, LOAD_LIBRARY_SEARCH_SYSTEM32).ok()?;
-            GetProcAddress(lib, PCSTR(113usize as *const u8)).map(|f| f as usize)
-        });
-        p.map(|p| unsafe { std::mem::transmute::<Farproc, LivePreviewFn>(std::mem::transmute::<usize, Farproc>(p)) })
+    /// The window brought forward: whether it was minimized, and the windows that were over it (nearest
+    /// first; shown, not always-on-top), to put it back under when the pointer leaves its picture.
+    struct Lifted {
+        hwnd: isize,
+        over: Vec<isize>,
+        minimized: bool,
     }
 
-    /// The peek's window now (0: none), so a second "off" does nothing.
-    static LIVE: Mutex<isize> = Mutex::new(0);
+    static LIVE: Mutex<Option<Lifted>> = Mutex::new(None);
 
-    pub fn live(dock: Option<isize>, hwnd: Option<isize>) -> bool {
-        let Some(f) = live_preview() else { return false };
-        let mut on = LIVE.lock().unwrap();
-        match hwnd {
-            Some(h) if h != 0 && unsafe { IsWindow(Some(HWND(h as *mut _))) }.as_bool() => {
-                if *on == h {
-                    return true;
-                }
-                *on = h;
-                // The peek fades every window but the one shown, the taskbar too (Justin, 11-20), unless
-                // it is marked out of it, as Explorer marks its own.
-                if let Some(d) = dock {
-                    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_EXCLUDED_FROM_PEEK};
-                    let yes = windows::core::BOOL::from(true);
-                    unsafe {
-                        let _ = DwmSetWindowAttribute(HWND(d as *mut _), DWMWA_EXCLUDED_FROM_PEEK, &yes as *const _ as *const _, std::mem::size_of_val(&yes) as u32);
-                    }
-                }
-                unsafe { f(1, h, dock.unwrap_or(0), 1, 0) >= 0 }
+    fn above(h: HWND) -> Vec<isize> {
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindow, GetWindowLongPtrW, IsWindowVisible, GWL_EXSTYLE, GW_HWNDPREV, WS_EX_TOPMOST};
+        let mut out = Vec::new();
+        let mut w = unsafe { GetWindow(h, GW_HWNDPREV) }.ok();
+        let mut steps = 0;
+        while let Some(x) = w {
+            steps += 1;
+            if steps > 2000 || out.len() >= 16 {
+                break;
             }
-            _ => {
-                if *on == 0 {
-                    return true;
-                }
-                *on = 0;
-                unsafe { f(0, 0, 0, 1, 0) >= 0 }
+            let ex = unsafe { GetWindowLongPtrW(x, GWL_EXSTYLE) } as u32;
+            if ex & WS_EX_TOPMOST.0 == 0 && unsafe { IsWindowVisible(x) }.as_bool() {
+                out.push(x.0 as isize);
+            }
+            w = unsafe { GetWindow(x, GW_HWNDPREV) }.ok();
+        }
+        out
+    }
+
+    /// Back where it was: under the window that was over it, or minimized again; `keep` (it was clicked)
+    /// leaves it in front.
+    fn put_back(l: Lifted, keep: bool) {
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, ShowWindow, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWMINNOACTIVE};
+        let h = HWND(l.hwnd as *mut _);
+        if keep || !unsafe { IsWindow(Some(h)) }.as_bool() {
+            return;
+        }
+        if l.minimized {
+            unsafe {
+                let _ = ShowWindow(h, SW_SHOWMINNOACTIVE);
+            }
+            return;
+        }
+        if let Some(a) = l.over.iter().map(|&x| HWND(x as *mut _)).find(|&x| unsafe { IsWindow(Some(x)) }.as_bool()) {
+            unsafe {
+                let _ = SetWindowPos(h, Some(a), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             }
         }
     }
 
+    /// Brings `hwnd` in front of the other windows, where it is, without making it the active one (the
+    /// others stay as they are, Justin 11-20: Windows' own peek hid them all); `None` puts it back.
+    pub fn live(hwnd: Option<isize>, keep: bool) -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::{IsIconic, SetWindowPos, ShowWindow, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE};
+        let mut on = LIVE.lock().unwrap();
+        let want = hwnd.filter(|&h| h != 0 && unsafe { IsWindow(Some(HWND(h as *mut _))) }.as_bool());
+        if want.is_some() && on.as_ref().map(|l| l.hwnd) == want {
+            return true;
+        }
+        if let Some(l) = on.take() {
+            put_back(l, keep);
+        }
+        let Some(h) = want else { return true };
+        let w = HWND(h as *mut _);
+        let minimized = unsafe { IsIconic(w) }.as_bool();
+        let over = if minimized { Vec::new() } else { above(w) };
+        unsafe {
+            if minimized {
+                let _ = ShowWindow(w, SW_SHOWNOACTIVATE);
+            }
+            // HWND_TOP alone does nothing from a process that isn't in the foreground: always on top for a
+            // moment, then not, leaves it at the top of the others.
+            let _ = SetWindowPos(w, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            let _ = SetWindowPos(w, Some(HWND_NOTOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        *on = Some(Lifted { hwnd: h, over, minimized });
+        true
+    }
+
     #[cfg(test)]
     mod live_tests {
-        /// Peeks the window whose title has PEEK in it for 2 s (cargo test --lib live_peek_now -- --ignored --nocapture).
+        /// Brings the window whose title has PEEK in it forward for 2.5 s (cargo test --lib live_peek_now -- --ignored --nocapture).
         #[test]
         #[ignore]
         fn live_peek_now() {
             let want = std::env::var("PEEK").unwrap_or_default().to_lowercase();
             let w = crate::workspaces::layout::list_now().into_iter().find(|w| w.title.to_lowercase().contains(&want)).expect("no such window");
-            println!("peek {} ({})", w.title, w.hwnd);
-            // DOCK=1: the running Island's taskbar kept out of it.
-            let dock = if std::env::var("DOCK").is_ok() {
-                let name: Vec<u16> = "Island taskbar\0".encode_utf16().collect();
-                unsafe { windows::Win32::UI::WindowsAndMessaging::FindWindowW(None, windows::core::PCWSTR(name.as_ptr())) }.ok().map(|h| h.0 as isize)
-            } else {
-                None
-            };
-            println!("dock {dock:?}");
-            println!("on: {}", super::live(dock, Some(w.hwnd as isize)));
+            println!("peek {} ({}) minimized {}", w.title, w.hwnd, unsafe { windows::Win32::UI::WindowsAndMessaging::IsIconic(windows::Win32::Foundation::HWND(w.hwnd as *mut _)) }.as_bool());
+            println!("on: {}", super::live(Some(w.hwnd as isize), false));
             std::thread::sleep(std::time::Duration::from_millis(2500));
-            println!("off: {}", super::live(None, None));
+            println!("off: {}", super::live(None, false));
         }
     }
 }
@@ -165,7 +184,7 @@ mod imp {
 mod imp {
     use super::Peek;
     pub fn show(_win: &tauri::WebviewWindow, _items: Vec<Peek>) {}
-    pub fn live(_dock: Option<isize>, _hwnd: Option<isize>) -> bool {
+    pub fn live(_hwnd: Option<isize>, _keep: bool) -> bool {
         false
     }
 }

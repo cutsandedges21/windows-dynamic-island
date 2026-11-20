@@ -794,7 +794,7 @@ const RISE_BOB_AFTER = 500;
 const RISE_BOB_MS = 1200;
 const RISE_BOB_LIFT = 4;
 const RISE_BOB_GROW = 0.05;
-/** Pointing at a window's picture this long shows the window itself (Windows' own peek), ms. */
+/** Pointing at a window's picture this long brings the window in front, ms. */
 const LIVE_PEEK_MS = 300;
 /** With Rise on, the Glide highlight eases onto the item it moves to with this time constant, ms (70 was
  *  "too slow", Justin 11-20: it trailed the app the pointer was on). */
@@ -1600,16 +1600,16 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     window.clearTimeout(peekShots);
     void native.dockPeek([]);
   };
-  // Pointing at a window's picture a moment shows that window itself, where it is, the others faded to
-  // glass, until the pointer leaves it, as on Windows' taskbar (Justin, 11-20).
+  // Pointing at a window's picture a moment brings that window in front, where it is, the others left
+  // as they are, until the pointer leaves it (Justin, 11-20). Clicked, it stays in front.
   let liveWait = 0;
   let liveOn = false;
-  const liveTo = (hwnd: number | null) => {
+  const liveTo = (hwnd: number | null, keep = false) => {
     window.clearTimeout(liveWait);
     if (hwnd === null) {
       if (!liveOn) return;
       liveOn = false;
-      void native.dockLivePeek(null);
+      void native.dockLivePeek(null, keep);
       return;
     }
     liveWait = window.setTimeout(() => {
@@ -1685,7 +1685,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
           shot.append(img);
         }
         shot.addEventListener('click', () => {
-          liveTo(null);
+          liveTo(null, true);
           send({ kind: 'window', key: a.key, hwnd, rect: iconRect(b) });
           closePeek();
         });

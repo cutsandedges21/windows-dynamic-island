@@ -890,8 +890,8 @@ export const native = {
   dockClose: (hwnds: number[], icon: DockIconRect) => call('dock_close', { hwnds, icon }, undefined),
   /** Live pictures of windows drawn into the taskbar's window, each fitted in its rect (CSS px); [] takes them away. */
   dockPeek: (items: Array<{ hwnd: number; rect: DockIconRect }>) => call('dock_peek', { items }, undefined),
-  /** The window itself shown where it is, the others faded to glass (Windows' own peek); null puts them back. */
-  dockLivePeek: (hwnd: number | null) => call('dock_live_peek', { hwnd }, false),
+  /** The window brought in front, where it is; null puts it back (keep: it was clicked, so it stays). */
+  dockLivePeek: (hwnd: number | null, keep = false) => call('dock_live_peek', { hwnd, keep }, false),
   /** The notification area's icons on the taskbar (trayhost.rs): start or stop reading them, the list now, a click. */
   trayHost: (on: boolean) => call('tray_host', { on }, undefined),
   /** Island's Start menu (startmenu.rs): where the Start button is, open/close it, and what it shows. */
