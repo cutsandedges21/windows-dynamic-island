@@ -238,7 +238,7 @@ fn spot_as(w: f64, h: f64, tucked: Option<bool>) -> Option<(i32, i32, i32, i32)>
 /// full-screen app in front, at the screen's bottom edge until the pointer comes to it.
 fn put(win: &WebviewWindow, w: f64, h: f64) {
     *SIZE.lock().unwrap() = (w, h);
-    hold_room(win);
+    hold_room(win, false);
     let Some((x, y, pw, ph)) = spot(w, h) else { return };
     set_rect(win, x, y, pw, ph);
     tell(win);
@@ -446,6 +446,7 @@ fn watch_fullscreen(app: AppHandle) {
     }
     std::thread::spawn(move || {
         let mut away: Option<std::time::Instant> = None;
+        let mut room_check = std::time::Instant::now();
         loop {
             let full = FULL.load(Ordering::SeqCst);
             std::thread::sleep(std::time::Duration::from_millis(if full { 30 } else { 300 }));
@@ -455,6 +456,10 @@ fn watch_fullscreen(app: AppHandle) {
                 UP.store(false, Ordering::SeqCst);
                 return;
             };
+            if room_check.elapsed().as_millis() >= 1000 {
+                room_check = std::time::Instant::now();
+                keep_room(&win);
+            }
             #[cfg(windows)]
             {
                 let own = win.hwnd().map(|h| h.0 as isize).unwrap_or(0);
@@ -680,7 +685,7 @@ pub fn widen(work: Area, side: Side, deep: i32) -> Area {
 
 /// Holds (or lets go of, or changes) the strip for the taskbar's window `win`.
 #[cfg(windows)]
-fn hold_room(win: &WebviewWindow) {
+fn hold_room(win: &WebviewWindow, again: bool) {
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::UI::Shell::{SHAppBarMessage, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
     let Ok(hw) = win.hwnd() else { return };
@@ -688,10 +693,15 @@ fn hold_room(win: &WebviewWindow) {
     let want = room_wanted(m.scale);
     let s = side();
     let mut held = HELD.lock().unwrap();
-    if *held == (s.index(), want) || (held.1 == 0 && want == 0) {
+    if !again && (*held == (s.index(), want) || (held.1 == 0 && want == 0)) {
         return;
     }
     let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: HWND(hw.0), ..Default::default() };
+    if again && held.1 > 0 {
+        // Windows gave its room back (below): made anew.
+        unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
+        *held = (0, 0);
+    }
     if want == 0 {
         unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
         *held = (0, 0);
@@ -732,7 +742,36 @@ fn hold_room(win: &WebviewWindow) {
 }
 
 #[cfg(not(windows))]
-fn hold_room(_win: &WebviewWindow) {}
+fn hold_room(_win: &WebviewWindow, _again: bool) {}
+
+/// Windows works the work area out again when its own taskbar changes (Island setting it to hide, on
+/// each start; a screen added; sleep) and expects every app bar to ask for its room again (Justin,
+/// 11-20: "keep windows clear of it doesn't work anymore"). The room held, but not out of the work area
+/// now: asked for again, and the bar put back against it.
+fn keep_room(win: &WebviewWindow) {
+    let (s, deep) = *HELD.lock().unwrap();
+    if deep <= 0 || s != side().index() {
+        return;
+    }
+    let Some(m) = monitors::primary() else { return };
+    let (w, b) = (&m.work, &m.bounds);
+    // Out of the work area: the work area stops at least `deep` in from that edge (a bar of Windows' own
+    // there, showing, makes it more).
+    let out = match side() {
+        Side::Bottom => w.y + w.height <= b.y + b.height - deep,
+        Side::Top => w.y >= b.y + deep,
+        Side::Left => w.x >= b.x + deep,
+        Side::Right => w.x + w.width <= b.x + b.width - deep,
+    };
+    if out {
+        return;
+    }
+    hold_room(win, true);
+    let (sw, sh) = *SIZE.lock().unwrap();
+    if sw > 0.0 && sh > 0.0 {
+        put(win, sw, sh);
+    }
+}
 
 /// Lets go of the strip (the taskbar is off, or Island quits).
 #[cfg(windows)]
