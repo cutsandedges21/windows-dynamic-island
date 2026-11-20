@@ -154,6 +154,8 @@ export type Block =
   | { t: 'stats'; key: string; items: Array<{ key: string; label: string; value: string; tone?: Tone; tip?: string }> }
   /** A thin bar draining until `until` (epoch ms) out of `total` ms. */
   | { t: 'countdown'; key: string; until: number; total: number; tone?: Tone }
+  /** The timer's dial on a card, as on its Control Center tile: hours, minutes, seconds and its Start. */
+  | { t: 'dial'; key: string; dial: Dial }
   /** A row of avatars to pick from; `empty` (with a searching pulse) when there are none. */
   | { t: 'people'; key: string; items: Person[]; empty?: string }
   /**
@@ -437,6 +439,8 @@ export function mapActions(blocks: Block[], fn: (action: string) => string): Blo
         return { ...b, action: fn(b.action), engage: b.engage ? fn(b.engage) : undefined, change: b.change ? fn(b.change) : undefined, point: b.point ? fn(b.point) : undefined, pasteFiles: b.pasteFiles ? fn(b.pasteFiles) : undefined };
       case 'meter':
         return b.action ? { ...b, action: fn(b.action) } : b;
+      case 'dial':
+        return { ...b, dial: { ...b.dial, action: fn(b.dial.action), start: btn(b.dial.start) } };
       case 'rows':
         return { ...b, items: b.items.map(row) };
       case 'choices':
@@ -1774,6 +1778,13 @@ export class SheetRenderer {
         });
         return true;
       }
+      case 'dial': {
+        // Only its length changed (just turned or typed): set in place, the box being typed in kept.
+        const set = dialSetters.get(e.querySelector('.dial')!);
+        if (!set || node.spec.t !== 'dial' || JSON.stringify({ ...node.spec.dial, seconds: 0 }) !== JSON.stringify({ ...b.dial, seconds: 0 })) return false;
+        set(b.dial.seconds);
+        return true;
+      }
       case 'countdown': {
         const prev = node.spec.t === 'countdown' ? node.spec : null;
         e.className = `sb sb-countdown tone-${b.tone ?? 'claude'}`;
@@ -1991,6 +2002,11 @@ export class SheetRenderer {
           if (s.tip) c.title = s.tip;
           e.append(c);
         }
+        return e;
+      }
+      case 'dial': {
+        const e = make('div', 'sb sb-dial');
+        e.append(this.dial(b.dial));
         return e;
       }
       case 'countdown': {

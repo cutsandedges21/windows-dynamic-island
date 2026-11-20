@@ -289,14 +289,20 @@ describe('timer', () => {
     ]);
   });
 
-  it('opened on its own (the taskbar), its tile is its card: the dial\'s Start when none runs, the time when one does', async () => {
-    const { act } = await boot(new TimerActivity(), { timerSeconds: 300 });
+  it('opened on its own (the taskbar, the pill, its tile), its card has the dial when none runs, the time when one does', async () => {
+    const { act, calls } = await boot(new TimerActivity(), { timerSeconds: 300 });
     const open = { reason: 'open' as const, now: Date.now(), width: 300, vertical: false, interactive: true, surfaced: null };
+    // Its tile opens it.
+    expect(act.tile(open)).toMatchObject({ action: 'open-card' });
+    act.action('open-card', null);
+    expect(calls.openCard).toBe(1);
     const idle = act.sheet(open)!;
     expect(idle).toMatchObject({ key: 'tile-card' });
-    const buttons = idle.blocks.find((b) => b.t === 'buttons');
-    expect(buttons?.t === 'buttons' && buttons.items[0]).toMatchObject({ action: 'start-secs', arg: 300 });
+    expect(idle.blocks.map((b) => b.t)).toEqual(['head', 'dial']);
+    expect(idle.blocks[1]).toMatchObject({ dial: { seconds: 300, action: 'length', start: { action: 'start-secs' } } });
+    expect(idle.blocks[0].t === 'head' && idle.blocks[0].buttons?.map((b) => b.key)).toEqual(['focus', 'sw']);
     act.action('start-secs', 300);
+    expect(act.tile({ ...open, now: Date.now() })).toMatchObject({ action: 'open-card' });
     expect(act.sheet({ ...open, now: Date.now() })).toMatchObject({ key: 'tile-card' });
     // The hover card is still only for a stopwatch's laps.
     expect(act.sheet({ ...open, reason: 'hover' })).toBeNull();

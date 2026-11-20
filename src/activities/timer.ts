@@ -213,7 +213,8 @@ export class TimerActivity extends BaseActivity {
       // The dial and its Start replace the quick-timer button; focus and stopwatch sit small up top.
       const buttons = starters.filter((b) => b.key !== 'start5').map((b) => ({ ...b, style: 'ghost' as const }));
       const dial = { seconds: this.timerSeconds(), action: 'length', start: { key: 'start', icon: 'play', action: 'start-secs', style: 'primary' as const, tip: 'Start' } };
-      return { key: 'timer', span: TILE_SPAN, tone: 'accent', body: { k: 'actions', icon: 'timer', label: 'Timer', buttons, dial } };
+      // The tile itself opens the Timer's card (Justin, 11-19: a click on it did nothing).
+      return { key: 'timer', span: TILE_SPAN, tone: 'accent', action: 'open-card', tip: 'Open the timer', body: { k: 'actions', icon: 'timer', label: 'Timer', buttons, dial } };
     }
 
     if (t.doneAt) {
@@ -255,6 +256,8 @@ export class TimerActivity extends BaseActivity {
       key: 'timer',
       span: TILE_SPAN,
       tone: t.running ? 'accent' : undefined,
+      action: 'open-card',
+      tip: 'Open the timer',
       body: { k: 'actions', icon: this.iconName(), label: `${name} ${this.timeText(env.now)}`, sub: t.running ? what : 'Paused', buttons },
     };
   }
@@ -262,10 +265,15 @@ export class TimerActivity extends BaseActivity {
   /** Pointed at, a stopwatch with laps: its tile's card, then the laps, newest first. */
   sheet(env: SheetEnv): SheetView | null {
     const t = this.t;
-    // Opened on its own (the taskbar's timer): its tile as a card, the dial to start one when none runs.
+    // Opened on its own (the taskbar's timer, the pill, its tile): its tile as a card; with none running,
+    // the dial to pick how long, as on the tile (Justin, 11-19).
     if (env.reason === 'open') {
       const tile = this.tile(env);
       if (!tile) return null;
+      const b = tile.body;
+      if (b.k === 'actions' && b.dial) {
+        return { key: 'tile-card', blocks: [{ t: 'head', key: 'head', icon: b.icon ?? 'timer', tone: tile.tone, title: b.label, buttons: b.buttons }, { t: 'dial', key: 'dial', dial: b.dial }] };
+      }
       const laps: SheetRow[] = t?.mode === 'stopwatch' ? t.laps.map((at, i) => ({ key: `lap${i + 1}`, title: `Lap ${i + 1}`, badge: lapClock(at - (t.laps[i - 1] ?? 0)) })) : [];
       return { key: 'tile-card', blocks: [...tileCard(tile, 'Timer', 'timer'), ...(laps.length ? [{ t: 'rows' as const, key: 'laps', items: laps.reverse().slice(0, SHOWN_LAPS) }] : [])] };
     }
@@ -330,6 +338,9 @@ export class TimerActivity extends BaseActivity {
   action(name: string, arg: unknown): void {
     const now = Date.now();
     switch (name) {
+      case 'open-card':
+        this.ctx.openCard?.();
+        return;
       case 'start':
         this.startTimer((Number(arg) || 5) * 60000, `${Number(arg) || 5} min timer`);
         return;
