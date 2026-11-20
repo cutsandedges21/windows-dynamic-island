@@ -220,7 +220,7 @@ function cleanSites(v: unknown): PinnedSite[] {
 /** How the taskbar shows what you point at and what is in front (Settings › Widgets, or its right-click
  *  menu), any of them together: Rise (icons grow under the pointer), Spotlight (a light shines down on
  *  the app in front), Glide (a highlight and the name slide along to what you point at). */
-export const DOCK_STYLES = ['rise', 'spotlight', 'glide', 'names'] as const;
+export const DOCK_STYLES = ['rise', 'glide', 'spotlight', 'names'] as const;
 export type DockStyle = (typeof DOCK_STYLES)[number];
 
 /** The taskbar's styles on, from saved settings: the list, or the one style saved before they could be
@@ -269,6 +269,13 @@ export function barScale(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? Math.min(BAR_SCALE.max, Math.max(BAR_SCALE.min, v)) : null;
 }
 export const BAR_SCALE = { min: 0.7, max: 1.5 };
+
+/** How much taller than its size the taskbar is (CSS px before its zoom), stretched by its top in Edit
+ *  position: only taller, what it holds keeps its size (Justin, 11-19: "higher not wider too"). */
+export function barTall(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.min(BAR_TALL_MAX, Math.round(v)) : 0;
+}
+export const BAR_TALL_MAX = 60;
 
 /** The taskbar's least length (CSS px before its zoom), stretched in Edit position; 0: as long as what it holds. */
 export function barMinLen(v: unknown): number {
@@ -361,7 +368,7 @@ export interface Settings {
      * its ends curve out into the edge instead of going straight down; `styles`: the ones on, together;
      * `autoHide`: it waits faint on its edge until the pointer comes to it (as under a full-screen app).
      */
-    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; scale: number | null; minLen: number; hidden: DockItem[]; size: DockSize; styles: DockStyle[]; edge: boolean; melt: boolean; side: DockSide; autoHide: boolean; names: NameStyle; startOpens: 'island' | 'windows'; startKey: boolean; startPins: Array<{ name: string; target: string }> | null };
+    taskbar: { on: boolean; hideWindows: boolean; centre: number; look: ItemLook; scale: number | null; minLen: number; tall: number; hidden: DockItem[]; size: DockSize; styles: DockStyle[]; edge: boolean; melt: boolean; side: DockSide; autoHide: boolean; names: NameStyle; startOpens: 'island' | 'windows'; startKey: boolean; startPins: Array<{ name: string; target: string }> | null };
     /** The screen border and its notches (Settings › Widgets › Screen border). */
     frame: FrameConfig;
     /** The Websites notch's sites, in order. */
@@ -430,14 +437,21 @@ export function newPhoneTopic(): string {
   return `island-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 
-/** Orange stays Claude's colour, so the island's own default is sky. */
+/** Orange stays Claude's colour, so the island's own default is sky. In the order the swatches show:
+ *  white and silver, then round the colour wheel (Justin, 11-19: more colours). */
 export const ACCENTS: Record<string, string> = {
-  sky: '#6aa6e8',
   white: '#ffffff',
+  silver: '#a9b4c2',
+  red: '#ee6a6a',
   ember: '#e8845f',
-  mint: '#62c99a',
-  violet: '#a58cf0',
   gold: '#e3b34f',
+  lime: '#a8d45c',
+  mint: '#62c99a',
+  teal: '#43c2c0',
+  sky: '#6aa6e8',
+  indigo: '#7d86f0',
+  violet: '#a58cf0',
+  magenta: '#d873df',
   rose: '#ea7aa1',
 };
 
@@ -492,7 +506,7 @@ export function defaultSettings(): Settings {
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
       widgets: { on: false, items: [], look: { color: 'island', glass: GLASS_DEFAULT } },
-      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, scale: null, minLen: 0, hidden: [], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom', autoHide: false, names: { font: 'system', look: 'bubble', bold: false }, startOpens: 'island', startKey: false, startPins: null },
+      taskbar: { on: false, hideWindows: true, centre: -1, look: { color: 'island', glass: GLASS_DEFAULT }, scale: null, minLen: 0, tall: 0, hidden: [], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom', autoHide: false, names: { font: 'system', look: 'bubble', bold: false }, startOpens: 'island', startKey: false, startPins: null },
       frame: { on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small', at: null, free: false }, shelf: { on: false, corner: 'bottom-right', size: 'small', at: null, free: false }, look: { color: 'island', glass: GLASS_DEFAULT }, autoHide: false, melt: true, blend: true },
       sites: [],
       hiddenUntil: 0,
@@ -648,7 +662,7 @@ export function migrate(saved: unknown): Settings {
   const savedBar = isObj(saved.island) && isObj(saved.island.taskbar) ? saved.island.taskbar : {};
   const centre = typeof savedBar.centre === 'number' && savedBar.centre >= 0 && savedBar.centre <= 1 ? savedBar.centre : -1;
   const barHidden = Array.isArray(savedBar.hidden) ? DOCK_ITEMS.filter((k) => (savedBar.hidden as unknown[]).includes(k)) : [];
-  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), scale: barScale(savedBar.scale), minLen: barMinLen(savedBar.minLen), hidden: barHidden, size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium', styles: barStyles(savedBar), edge: savedBar.edge === true, melt: savedBar.melt === true, side: (DOCK_SIDES as readonly unknown[]).includes(savedBar.side) ? (savedBar.side as DockSide) : 'bottom', autoHide: savedBar.autoHide === true, names: cleanNames(savedBar.names), startOpens: savedBar.startOpens === 'windows' ? 'windows' : 'island', startKey: savedBar.startKey === true, startPins: cleanPins(savedBar.startPins) };
+  out.island.taskbar = { on: savedBar.on === true, hideWindows: savedBar.hideWindows !== false, centre, look: cleanLook(savedBar.look), scale: barScale(savedBar.scale), minLen: barMinLen(savedBar.minLen), tall: barTall(savedBar.tall), hidden: barHidden, size: (DOCK_SIZES as readonly unknown[]).includes(savedBar.size) ? (savedBar.size as DockSize) : 'medium', styles: barStyles(savedBar), edge: savedBar.edge === true, melt: savedBar.melt === true, side: (DOCK_SIDES as readonly unknown[]).includes(savedBar.side) ? (savedBar.side as DockSide) : 'bottom', autoHide: savedBar.autoHide === true, names: cleanNames(savedBar.names), startOpens: savedBar.startOpens === 'windows' ? 'windows' : 'island', startKey: savedBar.startKey === true, startPins: cleanPins(savedBar.startPins) };
   const savedFrame = isObj(saved.island) && isObj(saved.island.frame) ? saved.island.frame : {};
   out.island.frame = {
     on: savedFrame.on === true,

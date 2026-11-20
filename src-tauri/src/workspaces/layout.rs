@@ -36,7 +36,13 @@ pub struct LiveWindow {
     /// `Package!App`): what the taskbar groups it under instead of its program. Empty when it has none.
     pub app_id: String,
     /// A Store app's name as Start shows it ("Calculator", not its program's "CalculatorApp"); else empty.
+    /// A browser's app window's, its shortcut's name ("Google Calendar"); Island's own, "Island".
     pub app_name: String,
+    /// A browser's app window (`chrome --app=<address>`, which has no app of its own in Start): the
+    /// shortcut that opens it, whose icon Windows' taskbar draws for it. Empty for any other window.
+    pub link: String,
+    /// Island's own window (Settings), listed only for the taskbar.
+    pub own: bool,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -149,6 +155,24 @@ mod win {
         if super::super::launch::is_web_app(&id) { id } else { String::new() }
     }
 
+    /// A browser's app window (`chrome --app=<address>`: its id is like Chrome.calendar.google_/calendar/u/0/r):
+    /// the shortcut with the same id, and its name. Windows' taskbar groups it apart from the
+    /// browser, under that shortcut's icon (Justin, 11-19: Google Calendar and Omnivox were missing).
+    fn browser_app_link(hwnd: HWND, class_name: &str, exe: &str) -> Option<(String, String)> {
+        let file = exe.rsplit(['\\', '/']).next().unwrap_or("").to_ascii_lowercase();
+        if class_name != "Chrome_WidgetWin_1" || !["chrome.exe", "msedge.exe", "brave.exe", "vivaldi.exe"].contains(&file.as_str()) {
+            return None;
+        }
+        let id = aumid(hwnd);
+        // The browser's own windows: "Chrome", "MSEdge".
+        if !id.contains('.') {
+            return None;
+        }
+        let path = crate::apps::shortcut_with_app_id(&id)?;
+        let name = std::path::Path::new(&path).file_stem()?.to_string_lossy().to_string();
+        Some((path, name))
+    }
+
     /// A Store app's id (Package!App), from its frame window or the app's own window in it; its icon
     /// and name come from Start by it, as Windows' taskbar's do (its program has no icon of its own).
     fn store_app_id(hwnd: HWND, class_name: &str, exe: &str) -> String {
@@ -231,15 +255,15 @@ mod win {
 
     unsafe extern "system" fn collect(hwnd: HWND, data: LPARAM) -> BOOL {
         let list = unsafe { &mut *(data.0 as *mut Vec<LiveWindow>) };
-        if let Some(w) = describe(hwnd) {
+        if let Some(w) = describe(hwnd, false) {
             list.push(w);
         }
         true.into()
     }
 
     /// An app window worth saving: on screen (or minimized), titled, not owned, not a tool window,
-    /// not Island's, not the desktop's, not on another virtual desktop.
-    fn describe(hwnd: HWND) -> Option<LiveWindow> {
+    /// not Island's (unless `own`), not the desktop's, not on another virtual desktop.
+    fn describe(hwnd: HWND, own: bool) -> Option<LiveWindow> {
         unsafe {
             if !IsWindowVisible(hwnd).as_bool() || cloaked(hwnd) {
                 return None;
@@ -255,7 +279,8 @@ mod win {
                 return None;
             }
             let pid = app_pid(hwnd, &class_name);
-            if pid == std::process::id() {
+            let mine = pid == std::process::id();
+            if mine && !own {
                 return None;
             }
             let exe = super::super::launch::program_path(pid)?;
@@ -290,12 +315,18 @@ mod win {
                 MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
             };
             let web = web_app_id(hwnd, &class_name);
-            let (app_id, app_name) = if web.is_empty() {
+            let mut link = String::new();
+            let (app_id, app_name) = if mine {
+                (String::new(), "Island".to_string())
+            } else if !web.is_empty() {
+                (web, String::new())
+            } else if let Some((path, name)) = browser_app_link(hwnd, &class_name, &exe) {
+                link = path;
+                (String::new(), name)
+            } else {
                 let id = store_app_id(hwnd, &class_name, &exe);
                 let name = if id.is_empty() { String::new() } else { app_name_of(&id) };
                 (id, name)
-            } else {
-                (web, String::new())
             };
             Some(LiveWindow {
                 hwnd: hwnd.0 as isize,
@@ -309,6 +340,8 @@ mod win {
                 dpi: GetDpiForWindow(hwnd),
                 app_id,
                 app_name,
+                link,
+                own: mine,
             })
         }
     }
@@ -320,7 +353,12 @@ mod win {
         if hwnd.0.is_null() {
             return None;
         }
-        describe(hwnd)
+        describe(hwnd, false)
+    }
+
+    /// Island's own window, as the taskbar lists it.
+    pub fn own(hwnd: isize) -> Option<LiveWindow> {
+        describe(HWND(hwnd as *mut _), true)
     }
 
     pub fn list() -> Vec<LiveWindow> {
@@ -396,12 +434,23 @@ pub fn foreground_window() -> Option<LiveWindow> {
     }
 }
 
-/// The app windows on screen now, front first.
+/// The app windows on screen now, front first; `own`: with Island's own window (Settings) at the
+/// end when it is open, as Windows' taskbar shows it (for Island's taskbar).
 #[tauri::command]
-pub async fn ws_windows() -> Result<Vec<LiveWindow>, String> {
+pub async fn ws_windows(app: tauri::AppHandle, own: Option<bool>) -> Result<Vec<LiveWindow>, String> {
     #[cfg(windows)]
     {
-        tauri::async_runtime::spawn_blocking(win::list).await.map_err(|e| e.to_string())
+        use tauri::Manager;
+        let mine = if own == Some(true) { app.get_webview_window(crate::app::APP_LABEL).and_then(|w| w.hwnd().ok()).map(|h| h.0 as isize) } else { None };
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut list = win::list();
+            if let Some(w) = mine.and_then(win::own) {
+                list.push(w);
+            }
+            list
+        })
+        .await
+        .map_err(|e| e.to_string())
     }
     #[cfg(not(windows))]
     {

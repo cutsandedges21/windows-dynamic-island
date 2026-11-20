@@ -29,6 +29,8 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
     // &scale=1.2 its own height, &minlen=900 stretched longer (Edit position); &edit=1 starts editing.
     scale: q.has('scale') ? Number(q.get('scale')) : null,
     minLen: Number(q.get('minlen') ?? 0),
+    // &tall=20: stretched taller by its top (Edit position).
+    tall: Number(q.get('tall') ?? 0),
     size: (q.get('size') as DockSize | null) ?? 'medium',
     styles: q.has('styles') ? (q.get('styles') ?? '').split(',').filter((k): k is DockStyle => (DOCK_STYLES as readonly string[]).includes(k)) : ['rise'],
     // &names=serif,plain,bold: the names' font, look, and bold (style Names).

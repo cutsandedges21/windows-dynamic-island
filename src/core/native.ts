@@ -663,8 +663,12 @@ export interface LiveWindow {
   dpi: number;
   /** A Chrome or Edge web app's own id (Chrome._crx_…), or a Store app's (Package!App); '' for any other window. */
   appId: string;
-  /** A Store app's name as Start shows it ("Calculator"); '' otherwise (older builds: missing). */
+  /** A Store app's name as Start shows it ("Calculator"); a browser's app window's, its shortcut's; '' otherwise (older builds: missing). */
   appName?: string;
+  /** A browser's app window (chrome --app=<address>): the shortcut that opens it; '' otherwise. */
+  link?: string;
+  /** Island's own window (Settings), listed only when asked for (the taskbar). */
+  own?: boolean;
 }
 export interface WinPlaced {
   hwnd: number;
@@ -1222,8 +1226,8 @@ export const native = {
   /** Each app's icon as a PNG data address, in the order asked; null where Windows has none. */
   appsIcons: (targets: string[], px = 48) => call<Array<string | null>>('apps_icons', { targets, px }, []),
   wsApps: () => call<InstalledApp[]>('ws_apps', {}, []),
-  /** App windows on screen now, front first. */
-  wsWindows: () => tryCall<LiveWindow[]>('ws_windows', {}),
+  /** App windows on screen now, front first; `own`: with Island's own window (Settings) when it is open. */
+  wsWindows: (own = false) => tryCall<LiveWindow[]>('ws_windows', own ? { own } : {}),
   /** Moves windows to their rectangles and states; one result each. */
   wsPlace: (places: Array<{ hwnd: number; rect: MonitorRect; state: string }>) => tryCall<WinPlaced[]>('ws_place', { places }),
   /** What's in front (Workspaces › Notice what I work on), and how long since the last input. */

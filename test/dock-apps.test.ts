@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
 import { clickPlan, dockApps, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, riseShifts, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
-import { barAutoHide, barEdge, barStyles, cleanNames } from '../src/core/settings';
+import { barAutoHide, barEdge, barStyles, barTall, BAR_TALL_MAX, cleanNames } from '../src/core/settings';
 
 const app = (key: string, pinned: boolean, windows: number[] = [], front = false): DockApp => ({ key, name: key.toUpperCase(), icon: null, windows, front, pinned });
 const pin = (key: string) => ({ name: key.toUpperCase(), target: key });
@@ -62,6 +62,27 @@ describe('taskbar apps', () => {
     seen = openOrder(seen, [win(2, 'C:\\code.exe')]);
     seen = openOrder(seen, [win(3, 'C:\\chrome.exe'), win(2, 'C:\\code.exe')]);
     expect(seen).toEqual(['c:\\code.exe', 'c:\\chrome.exe']);
+  });
+
+  it('keeps how much taller the bar was stretched, within its bounds', () => {
+    expect(barTall(23.4)).toBe(23);
+    expect(barTall(-5)).toBe(0);
+    expect(barTall('20')).toBe(0);
+    expect(barTall(999)).toBe(BAR_TALL_MAX);
+  });
+
+  it('gives a browser\'s app window its shortcut\'s place, and Island\'s Settings one of its own', () => {
+    const base = { pid: 1, className: 'Chrome_WidgetWin_1', rect: { x: 0, y: 0, width: 10, height: 10 }, state: 'normal' as const, monitor: 'm', dpi: 96, appId: '' };
+    const lnk = 'C:\\Pins\\Google Calendar.lnk';
+    const chrome = { ...base, hwnd: 1, exe: 'C:\\chrome.exe', title: 'Google' };
+    const cal = { ...base, hwnd: 2, exe: 'C:\\chrome.exe', title: 'Google Agenda', appName: 'Google Calendar', link: lnk };
+    const own = { ...base, hwnd: 3, exe: 'C:\\x\\island.exe', title: 'Island', appName: 'Island', own: true };
+    const other = { ...base, hwnd: 4, exe: 'C:\\y\\island.exe', title: 'Island' };
+    // Pinned by its shortcut (as Windows' pins give it): its window goes with the pin.
+    const apps = dockApps([{ name: 'Google Calendar', target: lnk }], [cal, chrome, own, other], 2, new Map());
+    expect(apps.map((a) => [a.name, a.windows])).toEqual([['Google Calendar', [2]], ['chrome', [1]], ['Island', [3]]]);
+    expect(apps[0].front).toBe(true);
+    expect(dockApps([], [cal], 0, new Map()).map((a) => [a.key, a.name])).toEqual([[lnk.toLowerCase(), 'Google Calendar']]);
   });
 
   it('groups a web app\'s window under its own icon, not the browser\'s', () => {
@@ -131,7 +152,7 @@ describe('taskbar apps', () => {
 
   it('turns styles on and off together, in their order', () => {
     expect(toggleStyle(['rise'], 'glide')).toEqual(['rise', 'glide']);
-    expect(toggleStyle(['glide', 'rise'], 'spotlight')).toEqual(['rise', 'spotlight', 'glide']);
+    expect(toggleStyle(['glide', 'rise'], 'spotlight')).toEqual(['rise', 'glide', 'spotlight']);
     expect(toggleStyle(['rise'], 'rise')).toEqual([]);
   });
 
@@ -143,7 +164,7 @@ describe('taskbar apps', () => {
   });
 
   it('keeps the names for a bar saved with Glide before Names was its own style', () => {
-    expect(barStyles({ styles: ['glide', 'nope', 'spotlight'] })).toEqual(['spotlight', 'glide', 'names']);
+    expect(barStyles({ styles: ['glide', 'nope', 'spotlight'] })).toEqual(['glide', 'spotlight', 'names']);
     // Saved since: what was saved, Names off included.
     expect(barStyles({ styles: ['glide'], names: { font: 'serif' } })).toEqual(['glide']);
     expect(barStyles({ styles: ['rise', 'names'], names: {} })).toEqual(['rise', 'names']);

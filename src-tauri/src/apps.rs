@@ -88,6 +88,70 @@ pub async fn apps_pinned() -> Vec<InstalledApp> {
     .unwrap_or_default()
 }
 
+/// The shortcut whose app id is `id` (a browser's app window, `chrome --app=<address>`), from the
+/// taskbar's pins, then Start's; read again at most once a minute when one isn't found.
+pub fn shortcut_with_app_id(id: &str) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static FOUND: Mutex<Option<(Instant, HashMap<String, String>)>> = Mutex::new(None);
+    let key = id.to_lowercase();
+    let mut found = FOUND.lock().ok()?;
+    if let Some((at, map)) = found.as_ref() {
+        if let Some(p) = map.get(&key) {
+            return Some(p.clone());
+        }
+        if at.elapsed() < Duration::from_secs(60) {
+            return None;
+        }
+    }
+    let map = shortcut_ids();
+    let out = map.get(&key).cloned();
+    *found = Some((Instant::now(), map));
+    out
+}
+
+/// Every shortcut's app id (lower case) and path: the taskbar's pins first, then Start's.
+fn shortcut_ids() -> std::collections::HashMap<String, String> {
+    use windows::core::GUID;
+    use windows::Win32::Foundation::PROPERTYKEY;
+    use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreFromParsingName, GPS_DEFAULT};
+    fn walk(dir: &std::path::Path, depth: u32, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for p in entries.flatten().map(|e| e.path()) {
+            if p.is_dir() {
+                if depth > 0 {
+                    walk(&p, depth - 1, out);
+                }
+            } else if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("lnk")) {
+                out.push(p);
+            }
+        }
+    }
+    let mut links = Vec::new();
+    if let Some(d) = pins_dir() {
+        walk(&d, 0, &mut links);
+    }
+    for (var, sub) in [("APPDATA", r"Microsoft\Windows\Start Menu\Programs"), ("ProgramData", r"Microsoft\Windows\Start Menu\Programs")] {
+        if let Some(base) = std::env::var_os(var) {
+            walk(&PathBuf::from(base).join(sub), 3, &mut links);
+        }
+    }
+    let key = PROPERTYKEY { fmtid: GUID::from_u128(0x9F4C2855_9F79_4B39_A8D0_E1D42DE1D5F3), pid: 5 };
+    let init = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) }.is_ok();
+    let mut map = std::collections::HashMap::new();
+    for p in links {
+        let id = unsafe { SHGetPropertyStoreFromParsingName::<_, _, IPropertyStore>(&HSTRING::from(p.as_os_str()), None, GPS_DEFAULT).and_then(|s| s.GetValue(&key)).map(|v| v.to_string()).unwrap_or_default() };
+        if !id.is_empty() {
+            map.entry(id.to_lowercase()).or_insert_with(|| p.display().to_string());
+        }
+    }
+    if init {
+        unsafe { CoUninitialize() };
+    }
+    map
+}
+
 /// Each app's icon as a PNG data address, in the order asked; None where Windows has none.
 #[tauri::command]
 pub async fn apps_icons(targets: Vec<String>, px: u32) -> Vec<Option<String>> {

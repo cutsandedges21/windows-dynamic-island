@@ -13,7 +13,7 @@ import { duration } from './format';
 import { packageFamily } from './store-app';
 import { applyGlass } from './glass';
 import { isTauri, native, on, sendTo, type DockIconRect, type InstalledApp, type LiveWindow, type TrayIcon } from './native';
-import { BAR_SCALE, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
+import { BAR_TALL_MAX, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
 
 /** One app on the dock. */
 export interface DockApp {
@@ -55,6 +55,8 @@ export interface DockFrame {
   scale?: number | null;
   /** Its least length (CSS px before its zoom), stretched in Edit position; 0 or unset: as long as what it holds. */
   minLen?: number;
+  /** How much taller than its size (CSS px before its zoom), stretched by its top in Edit position. */
+  tall?: number;
   size: DockSize;
   /** Rise, Spotlight, Glide, Names: the ones on (Settings › Taskbar › Styles). */
   styles?: DockStyle[];
@@ -100,6 +102,7 @@ export interface DockPref {
   /** Its own height and least length (Edit position); scale null: its size's again. */
   scale?: number | null;
   minLen?: number;
+  tall?: number;
   /** Back to the middle. */
   centre?: boolean;
   /** Show or hide one of its items. */
@@ -186,6 +189,8 @@ export type DockAct =
   | { kind: 'skip'; dir: 'next' | 'prev' }
   /** The song on the taskbar clicked: the app playing it comes forward (act:music:open). */
   | { kind: 'music-open' }
+  /** Edit position turned on or off: the bar doesn't auto-hide meanwhile. */
+  | { kind: 'editing'; on: boolean }
   /** The arrow opened or closed the Apps card. */
   | { kind: 'card'; open: boolean }
   /** One of the Apps card's actions (the Apps activity's: open, edit, find, add, remove). */
@@ -201,10 +206,12 @@ const keyOf = (path: string) => path.toLowerCase();
 const FILE_EXPLORER = 'shell:AppsFolder\\Microsoft.Windows.Explorer';
 /** A File Explorer window: explorer.exe runs the shell too, so only its folder windows count. */
 const isFileExplorer = (w: Pick<LiveWindow, 'exe' | 'className'>) => /\\explorer\.exe$/i.test(w.exe) && w.className === 'CabinetWClass';
-/** A window that gets a place on the dock: not the shell's or Island's own, File Explorer's yes. */
-const onDock = (w: LiveWindow) => Boolean(w.exe) && (!SKIP.test(w.exe) || isFileExplorer(w));
-/** What a window belongs to: File Explorer, its web app (YouTube Music), else its program (so not "Chrome"). */
-export const targetOf = (w: LiveWindow) => (isFileExplorer(w) ? FILE_EXPLORER : w.appId ? 'shell:AppsFolder\\' + w.appId : w.exe);
+/** A window that gets a place on the dock: not the shell's, File Explorer's yes, Island's Settings yes
+ *  (Windows' taskbar shows it; Island's other windows never come listed). */
+const onDock = (w: LiveWindow) => Boolean(w.exe) && (w.own === true || !SKIP.test(w.exe) || isFileExplorer(w));
+/** What a window belongs to: File Explorer, its web app (YouTube Music), the shortcut of a browser's
+ *  app window (Google Calendar, Omnivox: chrome --app=<address>), else its program (so not "Chrome"). */
+export const targetOf = (w: LiveWindow) => (isFileExplorer(w) ? FILE_EXPLORER : w.appId ? 'shell:AppsFolder\\' + w.appId : w.link || w.exe);
 const nameOf = (path: string) => (path.split(/[\\/]/).pop() ?? path).replace(/\.exe$/i, '');
 
 /**
@@ -386,7 +393,8 @@ export interface DockHooks {
   saveCentre(centre: number): void;
   scale(): number | null;
   minLen(): number;
-  setShape(scale: number | null, minLen: number): void;
+  tall(): number;
+  setShape(scale: number | null, minLen: number, tall: number): void;
   size(): DockSize;
   setSize(size: DockSize): void;
   styles(): DockStyle[];
@@ -431,6 +439,8 @@ export class DockHost {
   private sideSent: DockSide | undefined;
   /** Auto-hide, as last told to the dock's window. */
   private autoSent: boolean | undefined;
+  /** The bar is in Edit position: it stays up. */
+  private editing = false;
   private offs: Array<() => void> = [];
 
   constructor(
@@ -443,13 +453,15 @@ export class DockHost {
       await on<DockAct>('dock-act', (a) => void this.act(a)),
       await on<null>('dock-ready', () => {
         this.sent = '';
+        this.editing = false;
         void this.tick();
       }),
       await on<DockPref>('dock-pref', (p) => {
-        if (p && ('scale' in p || 'minLen' in p)) {
+        if (p && ('scale' in p || 'minLen' in p || 'tall' in p)) {
           const scale = p.scale === null ? null : typeof p.scale === 'number' && Number.isFinite(p.scale) ? p.scale : this.hooks.scale();
           const minLen = typeof p.minLen === 'number' && Number.isFinite(p.minLen) ? p.minLen : this.hooks.minLen();
-          this.hooks.setShape(scale, minLen);
+          const tall = typeof p.tall === 'number' && Number.isFinite(p.tall) ? p.tall : this.hooks.tall();
+          this.hooks.setShape(scale, minLen, tall);
         }
         if (typeof p?.size === 'string' && (DOCK_SIZES as readonly string[]).includes(p.size)) this.hooks.setSize(p.size);
         if (typeof p?.style === 'string' && (DOCK_STYLES as readonly string[]).includes(p.style)) this.hooks.setStyles(toggleStyle(this.hooks.styles(), p.style));
@@ -509,7 +521,7 @@ export class DockHost {
         this.autoSent = undefined;
         void native.dockShow(true, 640, 60, this.hooks.centre());
       }
-      const [wins, front] = await Promise.all([native.wsWindows(), native.foreground()]);
+      const [wins, front] = await Promise.all([native.wsWindows(true), native.foreground()]);
       const live = wins.ok ? wins.value : [];
       const pinned = this.hooks.pinned();
       const want = [...new Set([...pinned.map((p) => p.target), ...live.filter((w) => w.exe).map(targetOf)])].filter((t) => !this.icons.has(keyOf(t)));
@@ -543,6 +555,7 @@ export class DockHost {
         ...this.hooks.look(),
         scale: this.hooks.scale(),
         minLen: this.hooks.minLen(),
+        tall: this.hooks.tall(),
         size: this.hooks.size(),
         styles: this.hooks.styles(),
         names: this.hooks.names(),
@@ -559,7 +572,7 @@ export class DockHost {
         this.sideSent = frame.side;
         void native.dockSide(frame.side ?? 'bottom');
       }
-      const auto = this.hooks.autoHide();
+      const auto = this.hooks.autoHide() && !this.editing;
       if (auto !== this.autoSent) {
         this.autoSent = auto;
         void native.dockAuto(auto);
@@ -596,6 +609,10 @@ export class DockHost {
     }
     if (a.kind === 'music') return this.hooks.act('act:music:toggle');
     if (a.kind === 'music-open') return this.hooks.act('act:music:open');
+    if (a.kind === 'editing') {
+      this.editing = a.on === true;
+      return this.tick();
+    }
     if (a.kind === 'skip') return this.hooks.act(a.dir === 'prev' ? 'act:music:prev' : 'act:music:next');
     if (a.kind === 'timer') return this.hooks.open('timer');
     if (a.kind === 'claude') return this.hooks.claudeCard();
@@ -967,10 +984,20 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   bar.append(el('i', 'dock-bg'));
   stage.append(bar);
   const send = (a: DockAct) => void sendTo('island', 'dock-act', a);
-  /** A style is on (Rise, Spotlight, Glide; any together). */
-  const has = (k: DockStyle) => (frame?.styles ?? ['rise']).includes(k);
+  /** Edit position is on: the bar only moves and stretches; its buttons only show, its styles rest. */
+  let editing = false;
+  /** A style is chosen (Rise, Spotlight, Glide; any together). */
+  const chosen = (k: DockStyle) => (frame?.styles ?? ['rise']).includes(k);
+  /** A style is on now: none while in Edit position (Justin, 11-19: they moved it about while placing it). */
+  const has = (k: DockStyle) => !editing && chosen(k);
   let frame: DockFrame | null = null;
   let lastSize = '';
+  /** How much taller than its size the bar is now (CSS px before its zoom): --dk-tall. */
+  let tallNow = 0;
+  const setTall = (px: number) => {
+    tallNow = Math.round(px * 2) / 2;
+    document.documentElement.style.setProperty('--dk-tall', `${tallNow}px`);
+  };
   /** The edge it sits along, and whether the bar stands upright (on the left or right). */
   const side = (): DockSide => frame?.side ?? 'bottom';
   const upright = () => side() === 'left' || side() === 'right';
@@ -1756,7 +1783,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     appsBox.style.paddingInline = pad ? `${pad.toFixed(2)}px` : '';
   };
   let solidAt = 0;
-  const spreads = () => has('rise') && !upright() && gapEl.hidden;
+  // Its room at the ends stays in Edit position, so the bar is placed and stretched as long as it is after.
+  const spreads = () => chosen('rise') && !upright() && gapEl.hidden;
   /** -1 where away from the screen's edge is up or left (a bar at the bottom or on the right). */
   const outSign = () => (side() === 'bottom' || side() === 'right' ? -1 : 1);
   const animateRise = (t: number) => {
@@ -2166,7 +2194,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   let frameSent = '';
   const tellFrame = (r: DOMRect, zoom: number) => {
     const part = frame?.border
-      ? { rect: [window.screenX + r.left, window.screenY + r.top, r.width, r.height], side: side(), zoom, melt: frame.edge && frame.melt ? MELT : null, thick: BAR_H, radius: BAR_R }
+      ? { rect: [window.screenX + r.left, window.screenY + r.top, r.width, r.height], side: side(), zoom, melt: frame.edge && frame.melt ? MELT : null, thick: BAR_H + tallNow, radius: BAR_R }
       : null;
     const json = JSON.stringify(part);
     if (json === frameSent) return;
@@ -2238,10 +2266,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // The melted ends' masks for this side, their feet on the border while it is on.
     const z = zoomOf(f);
     const border = f.edge ? (f.border ?? 0) : 0;
-    const sig = `${side()}|${(border / z).toFixed(2)}`;
+    if (!stretching) setTall(f.tall ?? 0);
+    const sig = `${side()}|${(border / z).toFixed(2)}|${tallNow}`;
     if (sig !== meltSig) {
       meltSig = sig;
-      const m = meltMasks(side(), MELT.out, MELT.up, border / z);
+      const m = meltMasks(side(), MELT.out, MELT.up, border / z, BAR_H + tallNow);
       root.style.setProperty('--dk-melt-end', `${m.end}px`);
       root.style.setProperty('--dk-mask-fill', m.fill);
       root.style.setProperty('--dk-mask-rim', m.rim);
@@ -2249,7 +2278,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     root.classList.toggle('dk-border', border > 0);
     setGap(side() === 'top' && f.gap ? f.gap : 0);
     applyGlass(root, f.glass);
-    for (const k of DOCK_STYLES) root.classList.toggle(`dk-${k}`, (f.styles ?? ['rise']).includes(k));
+    for (const k of DOCK_STYLES) root.classList.toggle(`dk-${k}`, has(k));
     if (!raf) keepSlack(0);
     root.dataset.nameFont = f.names?.font ?? 'system';
     root.dataset.nameLook = f.names?.look ?? 'bubble';
@@ -2417,7 +2446,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   // Edit position (right-click › Edit position, or Settings › Taskbar): otherwise the taskbar never
   // moves under a stray drag (Moss, 11-18: always locked). While editing: drag it along its edge,
   // double-click it back to the middle, stretch its ends longer and its inner edge taller; Done.
-  let editing = false;
+  // Meanwhile its buttons only show (a click or a drag on one moves the bar), its styles rest and it
+  // doesn't auto-hide (Justin, 11-19).
   let stretching = false;
   const editBox = el('div', 'dk-edit');
   const resetBtn = el('button', 'dk-edit-btn');
@@ -2433,15 +2463,26 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   };
   const handles = { start: handleOf('start'), end: handleOf('end'), inner: handleOf('inner') };
   function setEditing(on: boolean): void {
+    if (on !== editing) send({ kind: 'editing', on });
     editing = on;
     document.documentElement.classList.toggle('dk-editing', on);
     if (!on) bar.classList.remove('grabbing');
+    if (on) {
+      closeMenu();
+      closePeek();
+      setCard(false);
+      tip.hidden = true;
+    }
+    draw();
+    kickRise();
     solid();
   }
   doneBtn.addEventListener('click', () => setEditing(false));
   resetBtn.addEventListener('click', () => {
     bar.style.minWidth = '';
-    void sendTo('island', 'dock-pref', { scale: null, minLen: 0 });
+    setTall(0);
+    if (frame) frame.tall = 0;
+    void sendTo('island', 'dock-pref', { scale: null, minLen: 0, tall: 0 });
   });
   await on<boolean>('dock-edit', (v) => setEditing(v !== false));
   // Stretching: the window follows now and then while the pointer moves, and once more at the end.
@@ -2469,15 +2510,14 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       const len0 = (upright() ? r0.height : r0.width) / z0;
       const x0 = e.screenX;
       const y0 = e.screenY;
-      let scale = z0;
+      const tall0 = tallNow;
       let minLen = frame?.minLen ?? 0;
       const move = (ev: PointerEvent) => {
         if (kind === 'inner') {
-          // Away from the screen's edge: taller.
+          // Away from the screen's edge: taller, and only taller; what it holds keeps its size, so it
+          // gets no longer (Justin, 11-19: "makes it higher not wider too").
           const d = side() === 'top' ? ev.screenY - y0 : side() === 'left' ? ev.screenX - x0 : side() === 'right' ? x0 - ev.screenX : y0 - ev.screenY;
-          scale = Math.min(BAR_SCALE.max, Math.max(BAR_SCALE.min, z0 * (1 + d / (BAR_H * z0))));
-          bar.style.zoom = String(scale);
-          document.documentElement.style.setProperty('--dk-z', bar.style.zoom);
+          setTall(Math.min(BAR_TALL_MAX, Math.max(0, tall0 + d / z0)));
         } else {
           // Both ends move (it stays centred), so each end follows the pointer: twice the move.
           const along = upright() ? ev.screenY - y0 : ev.screenX - x0;
@@ -2494,7 +2534,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
         stretching = false;
         move(ev);
         refit(true);
-        if (kind === 'inner') void sendTo('island', 'dock-pref', { scale: Number(scale.toFixed(3)) });
+        if (kind === 'inner') {
+          // Kept until the island's next frame says the same.
+          if (frame) frame.tall = tallNow;
+          void sendTo('island', 'dock-pref', { tall: Math.round(tallNow) });
+        }
         else {
           // No longer than what it holds (no room left between the apps and the rest): back to fitting it.
           void sendTo('island', 'dock-pref', { minLen: fillEl.offsetWidth < 1 ? 0 : minLen });

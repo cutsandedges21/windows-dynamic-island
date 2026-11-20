@@ -2147,7 +2147,8 @@ html[data-pill='glass'] .sb-tiles.editing ~ .sb-buttons {
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 52px;
+  /* Taller by --dk-tall when stretched by its top in Edit position (dock.ts setTall). */
+  height: calc(52px + var(--dk-tall, 0px));
   padding: 0 10px;
   border-radius: 20px;
   color: var(--fg);
@@ -2441,7 +2442,9 @@ html[data-pill='glass'] .dk-menu {
 .dock .dk-sep { width: 1px; height: 26px; margin: 0 6px; background: rgba(var(--ink), 0.18); }
 .dock [hidden] { display: none !important; }
 /* what is playing: cover, then the title over the artist at the clock's sizes */
-.dock .dk-music { gap: 8px; padding: 0 10px 0 5px; max-width: 200px; }
+/* One width whatever plays (Justin, 11-19: a long video title made it too big; Spotify's "Pastel" was
+   "perfect"): a longer title ends in an ellipsis, a shorter one leaves room after it. */
+.dock .dk-music { gap: 8px; padding: 0 10px 0 5px; width: 86px; flex: none; justify-content: flex-start; }
 .dock .dk-cover { position: relative; flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; overflow: hidden; background: rgba(var(--ink), 0.1); color: var(--muted); }
 .dock .dk-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .dock .dk-cover .dk-note svg { width: 15px; height: 15px; }
@@ -2495,12 +2498,13 @@ html[data-pill='white'] .dock .dk-batt, html[data-pill='matte-white'] .dock .dk-
 .dock .dk-batt[data-tone='charging'] :is(.dk-bbolt, .dk-bcut) { display: inline; }
 .dock .dk-batt[data-tone='low'] .dk-bfill { fill: var(--bt-low); }
 .dock .dk-wifi, .dock .dk-sound { width: 34px; padding: 0; }
-.dock .dk-timer span { font: 600 15px/1 var(--font); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+/* The numbers keep one width as they change (up to 59:59, 99% | 99%, 12:00 AM, 12/28/2026), so the bar never moves. */
+.dock .dk-timer span { font: 600 15px/1 var(--font); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; min-width: 41px; text-align: center; }
 .dock .dk-claude { padding: 0 10px; }
-.dock .dk-claude span { font: 600 13px/1 var(--font); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dock .dk-claude span { font: 600 13px/1 var(--font); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 62px; text-align: center; }
 .dock .dk-clock { flex-direction: column; gap: 2px; padding: 0 10px; text-align: center; }
-.dock .dk-clock b { font: 650 14px/1 var(--font); }
-.dock .dk-clock span { font: 500 11px/1 var(--font); color: var(--muted); }
+.dock .dk-clock b { font: 650 14px/1 var(--font); font-variant-numeric: tabular-nums; min-width: 64px; }
+.dock .dk-clock span { font: 500 11px/1 var(--font); color: var(--muted); font-variant-numeric: tabular-nums; min-width: 58px; }
 
 /* desktop widgets: the stage takes no clicks, the clock and the card do (and drag the widget) */
 .widget-window .wc { pointer-events: auto; }
@@ -2630,7 +2634,7 @@ html.dock-window.dock-preview.dock-edge[data-side='right'] .dock { right: 0; }
    (Settings › Taskbar › Position). The bar keeps its look; upright on the left or right, its items
    stack and the long ones (what is playing, the clock, Claude's limits) shorten to fit its width. */
 html[data-side='top'] .dock { bottom: auto; top: calc(12px / var(--dk-z, 1)); }
-html.dk-upright .dock { bottom: auto; top: calc(12px / var(--dk-z, 1)); flex-direction: column; width: 52px; height: auto; padding: 10px 0; }
+html.dk-upright .dock { bottom: auto; top: calc(12px / var(--dk-z, 1)); flex-direction: column; width: calc(52px + var(--dk-tall, 0px)); height: auto; padding: 10px 0; }
 html[data-side='right'] .dock { left: auto; right: calc(12px / var(--dk-z, 1)); }
 html.dock-edge[data-side='top'] .dock { border-radius: 0 0 18px 18px; box-shadow: 0 10px 28px -16px rgba(0, 0, 0, 0.6); }
 html.dock-edge[data-side='left'] .dock { border-radius: 0 18px 18px 0; box-shadow: 10px 0 28px -16px rgba(0, 0, 0, 0.6); }
@@ -2649,7 +2653,8 @@ html.dk-upright .dock .dk-apps { flex-direction: column; }
 html.dk-upright .dock button { width: 40px; height: auto; min-height: 40px; padding: 5px 0; box-sizing: border-box; }
 html.dk-upright .dock .dk-app { height: 40px; }
 html.dk-upright .dock .dk-sep { width: 26px; height: 1px; margin: 6px 0; }
-html.dk-upright .dock .dk-music { padding: 5px 0; max-width: none; }
+html.dk-upright .dock .dk-music { padding: 5px 0; width: auto; justify-content: center; }
+html.dk-upright .dock :is(.dk-timer span, .dk-claude span, .dk-clock b, .dk-clock span) { min-width: 0; }
 html.dk-upright .dock .dk-mtext { display: none; }
 html.dk-upright .dock .dk-timer { flex-direction: column; gap: 3px; }
 html.dk-upright .dock .dk-timer span { font-size: 11px; letter-spacing: 0; }
@@ -2848,6 +2853,8 @@ html.frame-window.fr-full .fr-tint { opacity: 0; }
 .dock .dk-fill { flex: 1 1 0; min-width: 0; }
 .dock .dk-handle { display: none; position: absolute; z-index: 3; background: var(--accent); border-radius: 3px; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35); }
 html.dk-editing .dock .dk-handle { display: block; }
+/* Edit position: what is on the bar only shows; a press anywhere on it moves the bar (Justin, 11-19). */
+html.dk-editing .dock *:not(.dk-handle) { pointer-events: none !important; }
 html.dk-editing .dock { cursor: grab; }
 html.dk-editing .dock.grabbing { cursor: grabbing; }
 html.dk-editing .dock-bg { box-shadow: 0 0 0 2px var(--accent), 0 0 18px -4px var(--accent); }
