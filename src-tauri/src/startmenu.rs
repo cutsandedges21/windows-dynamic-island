@@ -11,7 +11,7 @@
 // lists as recent, the signed-in user's name and picture, and a short allow-list of places, tools
 // and power actions (Settings, File Explorer, Documents, Task Manager, Sleep, Restart, ...).
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -107,53 +107,96 @@ pub fn place(side: Side, work: Area, bar: Area, button: Area, scale: f64) -> Pla
 
 pub const VK_LWIN: u32 = 0x5B;
 pub const VK_RWIN: u32 = 0x5C;
-/// The key that tells Windows the Windows key was part of a shortcut, so its Start doesn't open: an
-/// unassigned one (AutoHotkey's menu mask key does the same).
-pub const MASK_VK: u16 = 0xE8;
 /// Marks the keys Island sends itself, so the hook lets them through untouched.
 pub const MARK: usize = 0x1514_4E53;
 
-/// Watches the Windows key go down and up. A press on its own (no other key while it was held) is
-/// Start; with another key it is a shortcut (Win+E, Win+D, Win+Shift+S) and Windows keeps it.
+/// What the hook does with one key event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyDo {
+    /// Let it through.
+    Pass,
+    /// Eat it: Windows never sees it.
+    Eat,
+    /// Eat it, then send Windows the eaten Windows key (this one) going down and this key after it: a
+    /// shortcut (Win+E) after all.
+    Replay(u32),
+    /// The Windows key let go on its own: eat it and open Island's Start.
+    Open,
+}
+
+/// Watches the Windows key go down and up. Island eats it as it goes down, so Windows never sees a lone
+/// press and its own Start can't open (hiding only the key-up from Windows, as before, let Start through
+/// now and then). Another key while it is held makes it a shortcut (Win+E, Win+D, Win+Shift+S): the
+/// Windows key goes to Windows then, ahead of that key.
 #[derive(Default, Debug)]
 pub struct WinKey {
     held: Option<u32>,
+    /// Island ate its key-down (Windows hasn't seen it).
+    eaten: bool,
     combo: bool,
 }
 
 impl WinKey {
-    /// One key event as the hook sees it. True: this was the Windows key let go on its own, so Island's
-    /// Start opens (and Windows' must not). `others`: Ctrl, Shift or Alt is down right now.
-    pub fn on_key(&mut self, vk: u32, up: bool, injected: bool, others: bool) -> bool {
-        // Keys sent by a program (Island's own, a macro tool) never make or break a lone press.
+    /// One key event as the hook sees it. `others`: Ctrl, Shift or Alt is down right now.
+    pub fn on_key(&mut self, vk: u32, up: bool, injected: bool, others: bool) -> KeyDo {
+        // Keys sent by a program (Island's own, a macro tool) go through and never make or break a press.
         if injected {
-            return false;
+            return KeyDo::Pass;
         }
-        if vk == VK_LWIN || vk == VK_RWIN {
-            if !up {
-                match self.held {
-                    // Held down, it repeats: still the same press.
-                    Some(k) if k == vk => {}
-                    // The other Windows key as well: a shortcut of sorts.
-                    Some(_) => self.combo = true,
-                    None => {
-                        self.held = Some(vk);
-                        self.combo = false;
+        let win = vk == VK_LWIN || vk == VK_RWIN;
+        if win && !up {
+            return match self.held {
+                // Held down, it repeats: still the same press.
+                Some(k) if k == vk => {
+                    if self.eaten && !self.combo {
+                        KeyDo::Eat
+                    } else {
+                        KeyDo::Pass
                     }
                 }
-                return false;
-            }
-            let lone = self.held == Some(vk) && !self.combo && !others;
-            if self.held == Some(vk) || self.held.is_none() {
-                self.held = None;
-                self.combo = false;
-            }
-            return lone;
+                // The other Windows key as well: a shortcut of sorts.
+                Some(k) => self.shortcut(k),
+                None => {
+                    self.held = Some(vk);
+                    // Ctrl, Shift or Alt already down (Ctrl+Win…): Windows' from the start.
+                    self.eaten = !others;
+                    self.combo = others;
+                    if self.eaten {
+                        KeyDo::Eat
+                    } else {
+                        KeyDo::Pass
+                    }
+                }
+            };
         }
-        if self.held.is_some() && !up {
-            self.combo = true;
+        if win {
+            if self.held != Some(vk) {
+                return KeyDo::Pass;
+            }
+            let (eaten, combo) = (self.eaten, self.combo);
+            *self = WinKey::default();
+            return match (eaten, combo) {
+                // Windows never saw it go down, so it doesn't see it go up either.
+                (true, false) if others => KeyDo::Eat,
+                (true, false) => KeyDo::Open,
+                _ => KeyDo::Pass,
+            };
         }
-        false
+        match self.held {
+            Some(k) if !up => self.shortcut(k),
+            _ => KeyDo::Pass,
+        }
+    }
+
+    /// Another key while the Windows key `held` is down.
+    fn shortcut(&mut self, held: u32) -> KeyDo {
+        let replay = self.eaten && !self.combo;
+        self.combo = true;
+        if replay {
+            KeyDo::Replay(held)
+        } else {
+            KeyDo::Pass
+        }
     }
 }
 
@@ -424,8 +467,9 @@ fn open(app: &AppHandle) {
         }
         let payload = serde_json::json!({ "side": p.side, "menu": p.menu, "origin": p.origin, "gen": gen });
         *LAST.lock().unwrap() = Some(payload.clone());
-        let _ = app.emit_to(LABEL, "start-open", payload);
+        // Shown first (the menu still down behind the bar), then told: the slide plays where it is seen.
         let _ = win.show();
+        let _ = app.emit_to(LABEL, "start-open", payload);
         // The click on Start (or the Windows key) was Island's, so Windows lets it come forward.
         crate::procs::activate(h.0 as isize);
         let _ = win.set_focus();
@@ -544,11 +588,34 @@ fn on_start_button(app: &AppHandle, x: i32, y: i32) -> bool {
 static KEYS_ON: AtomicBool = AtomicBool::new(false);
 /// The hook's thread (0: none).
 static HOOK_THREAD: AtomicU32 = AtomicU32::new(0);
-static HOOK_STATE: Mutex<WinKey> = Mutex::new(WinKey { held: None, combo: false });
+static HOOK_STATE: Mutex<WinKey> = Mutex::new(WinKey { held: None, eaten: false, combo: false });
 static HOOK_APP: Mutex<Option<AppHandle>> = Mutex::new(None);
+/// In the helper: the event that tells Island the Windows key was pressed on its own (0: the hook is
+/// Island's own and opens Start itself).
+static HELPER_SIGNAL: AtomicIsize = AtomicIsize::new(0);
+
+/// Island.exe started with this and Island's process id is the Windows-key helper: a small process of
+/// its own that only runs the hook. Windows doesn't call a keyboard hook in Island's own process while
+/// one of Island's windows is in front (its Start menu, its taskbar), so the Windows key went to Windows'
+/// Start from there (Moss, 11-19); a hook in another process hears it.
+pub const HELPER_ARG: &str = "--win-key-hook";
+
+/// The helper's Island, from its command line (`--win-key-hook <pid>`).
+pub fn helper_parent(args: &[String]) -> Option<u32> {
+    let at = args.iter().position(|a| a == HELPER_ARG)?;
+    args.get(at + 1)?.parse().ok().filter(|pid| *pid != 0)
+}
+
+/// The event the helper sets for the Island with process id `pid`, at a lone Windows-key press.
+fn signal_name(pid: u32) -> String {
+    format!("Local\\IslandStartKey-{pid}")
+}
 
 #[cfg(windows)]
 const WM_OPEN: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 0x51;
+/// How often the hook is made again (ms), in case Windows dropped it.
+#[cfg(windows)]
+const REHOOK_MS: u32 = 5000;
 
 #[cfg(windows)]
 unsafe extern "system" fn key_hook(code: i32, wparam: windows::Win32::Foundation::WPARAM, lparam: windows::Win32::Foundation::LPARAM) -> windows::Win32::Foundation::LRESULT {
@@ -561,48 +628,225 @@ unsafe extern "system" fn key_hook(code: i32, wparam: windows::Win32::Foundation
         let up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
         let injected = k.flags.0 & LLKHF_INJECTED.0 != 0 || k.dwExtraInfo == MARK;
         let others = unsafe { [VK_CONTROL, VK_SHIFT, VK_MENU].iter().any(|v| GetAsyncKeyState(v.0 as i32) as u16 & 0x8000 != 0) };
-        let lone = HOOK_STATE.lock().map(|mut s| s.on_key(k.vkCode, up, injected, others)).unwrap_or(false);
-        if lone && KEYS_ON.load(Ordering::SeqCst) {
-            // Windows must not open its own Start: it sees a key between the Windows key going down and
-            // up (a shortcut), then the key going up. This key-up itself goes no further.
-            mask_and_release(k.vkCode as u16);
+        // Off (Settings › Taskbar), the Windows key is all Windows'.
+        if KEYS_ON.load(Ordering::SeqCst) {
+            let what = HOOK_STATE.lock().map(|mut s| s.on_key(k.vkCode, up, injected, others)).unwrap_or(KeyDo::Pass);
             let thread = HOOK_THREAD.load(Ordering::SeqCst);
-            if thread != 0 {
-                let _ = unsafe { PostThreadMessageW(thread, WM_OPEN, WPARAM(0), LPARAM(0)) };
+            match what {
+                KeyDo::Pass => {}
+                KeyDo::Eat => return LRESULT(1),
+                KeyDo::Replay(win_vk) => {
+                    replay(win_vk as u16, k);
+                    return LRESULT(1);
+                }
+                KeyDo::Open => {
+                    // Nothing goes to Windows: it never saw the key go down. (Sending it a masked key-up,
+                    // as before, opened Windows' Start now and then.)
+                    if thread != 0 {
+                        let _ = unsafe { PostThreadMessageW(thread, WM_OPEN, WPARAM(0), LPARAM(0)) };
+                    }
+                    return LRESULT(1);
+                }
             }
-            return LRESULT(1);
         }
     }
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
+/// The Windows key Island ate going down, then the key that makes it a shortcut, as typed (the same
+/// scan code, so Win+Shift+S and Win+. land as they would have).
 #[cfg(windows)]
-fn mask_and_release(win_vk: u16) {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY};
-    let key = |vk: u16, up: bool| INPUT {
+fn replay(win_vk: u16, k: &windows::Win32::UI::WindowsAndMessaging::KBDLLHOOKSTRUCT) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, VIRTUAL_KEY};
+    use windows::Win32::UI::WindowsAndMessaging::LLKHF_EXTENDED;
+    // Win+L locks in Windows itself; a program sending it doesn't, so Island locks.
+    if k.vkCode == 0x4C {
+        crate::shell::shell_lock();
+        return;
+    }
+    let down = |vk: u16, scan: u16, ext: bool| INPUT {
         r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk), wScan: 0, dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) }, time: 0, dwExtraInfo: MARK } },
+        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk), wScan: scan, dwFlags: if ext { KEYEVENTF_EXTENDEDKEY } else { KEYBD_EVENT_FLAGS(0) }, time: 0, dwExtraInfo: MARK } },
     };
-    let inputs = [key(MASK_VK, false), key(MASK_VK, true), key(win_vk, true)];
+    let ext = k.flags.0 & LLKHF_EXTENDED.0 != 0;
+    let inputs = [down(win_vk, 0, true), down(k.vkCode as u16, k.scanCode as u16, ext)];
     unsafe {
         SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }
 }
 
-/// Starts or stops the hook (its own thread and message loop, so it always answers at once).
+/// The hook and its message loop on this thread, until WM_QUIT (Island's own hook) or the helper's
+/// end. False: Windows gave no hook.
 #[cfg(windows)]
-fn hook(app: &AppHandle, on: bool) {
-    use windows::Win32::Foundation::{LPARAM, WPARAM};
+fn hook_loop() -> bool {
+    use windows::Win32::Foundation::{HANDLE, HINSTANCE};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::Threading::{GetCurrentThread, SetEvent, SetThreadInformation, SetThreadPriority, ThreadPowerThrottling, THREAD_POWER_THROTTLING_CURRENT_VERSION, THREAD_POWER_THROTTLING_EXECUTION_SPEED, THREAD_POWER_THROTTLING_STATE, THREAD_PRIORITY_TIME_CRITICAL};
+    use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, SetTimer, SetWindowsHookExW, UnhookWindowsHookEx, MSG, WH_KEYBOARD_LL, WM_TIMER};
+    let who = if HELPER_SIGNAL.load(Ordering::SeqCst) != 0 { "helper" } else { "Island" };
+    unsafe {
+        // Windows waits only a moment for the hook, then skips it (and can drop it for good), and the
+        // Windows key goes to its own Start. So this thread never waits behind other work and isn't slowed
+        // down in the background (Windows' efficiency mode).
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+        let fast = THREAD_POWER_THROTTLING_STATE { Version: THREAD_POWER_THROTTLING_CURRENT_VERSION, ControlMask: THREAD_POWER_THROTTLING_EXECUTION_SPEED, StateMask: 0 };
+        let _ = SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &fast as *const _ as *const _, std::mem::size_of::<THREAD_POWER_THROTTLING_STATE>() as u32);
+        let module = GetModuleHandleW(None).ok().map(|m| HINSTANCE(m.0));
+        let Ok(mut h) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), module, 0) else {
+            crate::log::line(format!("start menu: no keyboard hook in the {who} (the Windows key opens Windows' Start)"));
+            return false;
+        };
+        crate::log::line(format!("start menu: the Windows key opens Island's Start (hook in the {who})"));
+        let _ = SetTimer(None, 0, REHOOK_MS, None);
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            match msg.message {
+                // Hooked again (between presses): first in line again, and back should Windows have dropped it.
+                WM_TIMER => {
+                    let idle = HOOK_STATE.lock().map(|s| s.held.is_none()).unwrap_or(false);
+                    if idle {
+                        if let Ok(fresh) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), module, 0) {
+                            let _ = UnhookWindowsHookEx(h);
+                            h = fresh;
+                        }
+                    }
+                }
+                WM_OPEN => {
+                    let signal = HELPER_SIGNAL.load(Ordering::SeqCst);
+                    if signal != 0 {
+                        let _ = SetEvent(HANDLE(signal as *mut _));
+                    } else if let Some(app) = HOOK_APP.lock().unwrap().clone() {
+                        // Off the hook's thread: opening may make the window, which takes a while.
+                        std::thread::spawn(move || toggle(&app));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let _ = UnhookWindowsHookEx(h);
+    }
+    if let Ok(mut s) = HOOK_STATE.lock() {
+        *s = WinKey::default();
+    }
+    true
+}
+
+/// The helper's whole life (Island.exe --win-key-hook <pid>, from `run` before anything else of Island):
+/// the hook on its main thread until its Island ends. 1: it couldn't run.
+#[cfg(windows)]
+pub fn helper_main(island: u32) -> i32 {
+    use windows::core::HSTRING;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Threading::{GetCurrentThreadId, OpenEventW, OpenProcess, WaitForSingleObject, EVENT_MODIFY_STATE, INFINITE, PROCESS_SYNCHRONIZE};
+    let Ok(parent) = (unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, island) }) else { return 1 };
+    let Ok(signal) = (unsafe { OpenEventW(EVENT_MODIFY_STATE, false, &HSTRING::from(signal_name(island))) }) else { return 1 };
+    HELPER_SIGNAL.store(signal.0 as isize, Ordering::SeqCst);
+    let parent = parent.0 as isize;
+    // Island gone (closed, crashed, updating): the helper too, and its hook with it.
+    std::thread::spawn(move || {
+        unsafe { WaitForSingleObject(HANDLE(parent as *mut _), INFINITE) };
+        std::process::exit(0);
+    });
+    KEYS_ON.store(true, Ordering::SeqCst);
+    HOOK_THREAD.store(unsafe { GetCurrentThreadId() }, Ordering::SeqCst);
+    if hook_loop() {
+        0
+    } else {
+        1
+    }
+}
+
+/// The helper Island started, while the Windows key is Island's.
+#[cfg(windows)]
+static HELPER: Mutex<Option<std::process::Child>> = Mutex::new(None);
+/// When it was started (one that ends at once isn't started again and again).
+#[cfg(windows)]
+static HELPER_AT: Mutex<Option<Instant>> = Mutex::new(None);
+
+#[cfg(windows)]
+fn helper_running() -> bool {
+    HELPER.lock().unwrap().as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None)))
+}
+
+/// The helper, started unless it runs. False: it can't (Island's own hook then).
+#[cfg(windows)]
+fn start_helper() -> bool {
+    use crate::nowindow::NoWindow;
+    let mut slot = HELPER.lock().unwrap();
+    if slot.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None))) {
+        return true;
+    }
+    if slot.is_some() && HELPER_AT.lock().unwrap().is_some_and(|t| t.elapsed().as_secs() < 5) {
+        crate::log::line("start menu: the Windows-key helper ended at once; Island's own hook instead");
+        return false;
+    }
+    let Ok(exe) = std::env::current_exe() else { return false };
+    match std::process::Command::new(exe).arg(HELPER_ARG).arg(std::process::id().to_string()).no_window().spawn() {
+        Ok(child) => {
+            *slot = Some(child);
+            *HELPER_AT.lock().unwrap() = Some(Instant::now());
+            true
+        }
+        Err(e) => {
+            crate::log::line(format!("start menu: no Windows-key helper ({e}); Island's own hook instead"));
+            false
+        }
+    }
+}
+
+#[cfg(windows)]
+fn stop_helper() {
+    if let Some(mut child) = HELPER.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// Island's side of the helper: the event it sets and a thread that opens or closes Start on it (and
+/// starts the helper again should it end while it is wanted). Made once; false if Windows gave no event.
+#[cfg(windows)]
+fn listen() -> bool {
+    use std::sync::OnceLock;
+    use windows::core::HSTRING;
+    use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+    static EVENT: OnceLock<Option<isize>> = OnceLock::new();
+    EVENT
+        .get_or_init(|| {
+            let ev = unsafe { CreateEventW(None, false, false, &HSTRING::from(signal_name(std::process::id()))) }.ok()?;
+            let raw = ev.0 as isize;
+            std::thread::spawn(move || loop {
+                if unsafe { WaitForSingleObject(HANDLE(raw as *mut _), 2000) } == WAIT_OBJECT_0 {
+                    if KEYS_ON.load(Ordering::SeqCst) {
+                        if let Some(app) = HOOK_APP.lock().unwrap().clone() {
+                            std::thread::spawn(move || toggle(&app));
+                        }
+                    }
+                } else if KEYS_ON.load(Ordering::SeqCst) && HOOK_THREAD.load(Ordering::SeqCst) == 0 && !helper_running() {
+                    crate::log::line("start menu: the Windows-key helper ended; starting it again");
+                    if !start_helper() {
+                        own_hook(true);
+                    }
+                }
+            });
+            Some(raw)
+        })
+        .is_some()
+}
+
+/// Island's own hook on a thread of its own, for when the helper can't run.
+#[cfg(windows)]
+fn own_hook(on: bool) {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
     use windows::Win32::System::Threading::GetCurrentThreadId;
-    use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, MSG, WH_KEYBOARD_LL, WM_QUIT};
-    *HOOK_APP.lock().unwrap() = Some(app.clone());
-    KEYS_ON.store(on, Ordering::SeqCst);
+    use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
     let running = HOOK_THREAD.load(Ordering::SeqCst);
     if !on {
         if running != 0 {
             HOOK_THREAD.store(0, Ordering::SeqCst);
-            let _ = unsafe { PostThreadMessageW(running, WM_QUIT, WPARAM(0), LPARAM(0)) };
+            if running != u32::MAX {
+                let _ = unsafe { PostThreadMessageW(running, WM_QUIT, WPARAM(0), LPARAM(0)) };
+            }
         }
         return;
     }
@@ -611,37 +855,34 @@ fn hook(app: &AppHandle, on: bool) {
     }
     // Claimed before the thread runs, so a second call doesn't start another.
     HOOK_THREAD.store(u32::MAX, Ordering::SeqCst);
-    std::thread::spawn(move || unsafe {
-        let me = GetCurrentThreadId();
+    std::thread::spawn(move || {
+        let me = unsafe { GetCurrentThreadId() };
         if HOOK_THREAD.compare_exchange(u32::MAX, me, Ordering::SeqCst, Ordering::SeqCst).is_err() {
             return;
         }
-        let module = GetModuleHandleW(None).ok().map(|m| windows::Win32::Foundation::HINSTANCE(m.0));
-        let Ok(h) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), module, 0) else {
-            crate::log::line("start menu: no keyboard hook (the Windows key opens Windows' Start)");
-            let _ = HOOK_THREAD.compare_exchange(me, 0, Ordering::SeqCst, Ordering::SeqCst);
-            return;
-        };
-        crate::log::line("start menu: the Windows key opens Island's Start");
-        let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-            if msg.message == WM_OPEN {
-                // Off the hook's thread: opening may make the window, which takes a while.
-                if let Some(app) = HOOK_APP.lock().unwrap().clone() {
-                    std::thread::spawn(move || toggle(&app));
-                }
-            }
-            if msg.message == WM_QUIT {
-                break;
-            }
-        }
-        let _ = UnhookWindowsHookEx(h);
-        if let Ok(mut s) = HOOK_STATE.lock() {
-            *s = WinKey::default();
-        }
+        let hooked = hook_loop();
         let _ = HOOK_THREAD.compare_exchange(me, 0, Ordering::SeqCst, Ordering::SeqCst);
-        crate::log::line("start menu: the Windows key is Windows' again");
+        if hooked {
+            crate::log::line("start menu: the Windows key is Windows' again");
+        }
     });
+}
+
+/// Starts or stops the hook: in the helper, or (when it can't run) on a thread of Island's own.
+#[cfg(windows)]
+fn hook(app: &AppHandle, on: bool) {
+    *HOOK_APP.lock().unwrap() = Some(app.clone());
+    KEYS_ON.store(on, Ordering::SeqCst);
+    if !on {
+        stop_helper();
+        own_hook(false);
+        return;
+    }
+    if listen() && start_helper() {
+        own_hook(false);
+    } else {
+        own_hook(true);
+    }
 }
 
 #[cfg(not(windows))]
@@ -1093,29 +1334,58 @@ mod tests {
 
     #[test]
     fn the_windows_key_alone_is_start_and_with_another_key_a_shortcut() {
+        use KeyDo::*;
         let mut k = WinKey::default();
-        assert!(!k.on_key(VK_LWIN, false, false, false));
-        // Held: it repeats.
-        assert!(!k.on_key(VK_LWIN, false, false, false));
-        assert!(k.on_key(VK_LWIN, true, false, false), "a lone press opens Start");
-        // Win+E.
-        assert!(!k.on_key(VK_LWIN, false, false, false));
-        assert!(!k.on_key(0x45, false, false, false));
-        assert!(!k.on_key(0x45, true, false, false));
-        assert!(!k.on_key(VK_LWIN, true, false, false), "Win+E stays Windows'");
-        // The next lone press works again.
-        assert!(!k.on_key(VK_RWIN, false, false, false));
-        assert!(k.on_key(VK_RWIN, true, false, false));
-        // Ctrl held: not Start.
-        assert!(!k.on_key(VK_LWIN, false, false, true));
-        assert!(!k.on_key(VK_LWIN, true, false, true));
-        // Keys a program sends never count.
-        assert!(!k.on_key(VK_LWIN, false, true, false));
-        assert!(!k.on_key(VK_LWIN, true, true, false));
+        // Windows never sees a lone press, down, held or up.
+        assert_eq!(k.on_key(VK_LWIN, false, false, false), Eat);
+        assert_eq!(k.on_key(VK_LWIN, false, false, false), Eat, "held, it repeats");
+        assert_eq!(k.on_key(VK_LWIN, true, false, false), Open, "a lone press opens Start");
+        // Win+E: Windows gets the Windows key back ahead of E, then the rest as typed.
+        assert_eq!(k.on_key(VK_LWIN, false, false, false), Eat);
+        assert_eq!(k.on_key(0x45, false, false, false), Replay(VK_LWIN));
+        assert_eq!(k.on_key(0x45, false, false, false), Pass, "E held repeats");
+        assert_eq!(k.on_key(0x45, true, false, false), Pass);
+        assert_eq!(k.on_key(0x44, false, false, false), Pass, "Win+E then D: Windows has the key already");
+        assert_eq!(k.on_key(VK_LWIN, true, false, false), Pass, "Win+E stays Windows'");
+        // The next lone press works again, with either Windows key.
+        assert_eq!(k.on_key(VK_RWIN, false, false, false), Eat);
+        assert_eq!(k.on_key(VK_RWIN, true, false, false), Open);
+        // Ctrl down first: Windows' from the start.
+        assert_eq!(k.on_key(VK_LWIN, false, false, true), Pass);
+        assert_eq!(k.on_key(VK_LWIN, true, false, true), Pass);
+        // Win, then Shift and S: the Windows key goes back ahead of Shift.
+        assert_eq!(k.on_key(VK_LWIN, false, false, false), Eat);
+        assert_eq!(k.on_key(0xA0, false, false, false), Replay(VK_LWIN));
+        assert_eq!(k.on_key(0x53, false, false, true), Pass);
+        assert_eq!(k.on_key(VK_LWIN, true, false, true), Pass);
+        // Shift pressed and let go mid-press with nothing else: still a press Windows never saw.
+        assert_eq!(k.on_key(VK_LWIN, false, false, false), Eat);
+        assert_eq!(k.on_key(VK_LWIN, true, false, true), Eat, "not Start, and no key-up Windows didn't see go down");
+        // Both Windows keys: the first goes back to Windows.
+        assert_eq!(k.on_key(VK_LWIN, false, false, false), Eat);
+        assert_eq!(k.on_key(VK_RWIN, false, false, false), Replay(VK_LWIN));
+        assert_eq!(k.on_key(VK_RWIN, true, false, false), Pass);
+        assert_eq!(k.on_key(VK_LWIN, true, false, false), Pass);
+        // Keys a program sends (Island's own replays among them) always go through.
+        assert_eq!(k.on_key(VK_LWIN, false, true, false), Pass);
+        assert_eq!(k.on_key(VK_LWIN, true, true, false), Pass);
         // A key let go while Win is down (pressed before it) is no shortcut; one pressed is.
-        assert!(!k.on_key(VK_LWIN, false, false, false));
-        assert!(!k.on_key(0x41, true, false, false));
-        assert!(k.on_key(VK_LWIN, true, false, false));
+        assert_eq!(k.on_key(VK_LWIN, false, false, false), Eat);
+        assert_eq!(k.on_key(0x41, true, false, false), Pass);
+        assert_eq!(k.on_key(VK_LWIN, true, false, false), Open);
+    }
+
+    #[test]
+    fn the_helper_knows_its_island_from_its_command_line() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(helper_parent(&args(&["Island.exe", HELPER_ARG, "4242"])), Some(4242));
+        assert_eq!(helper_parent(&args(&["Island.exe"])), None, "Island itself");
+        assert_eq!(helper_parent(&args(&["Island.exe", HELPER_ARG])), None);
+        assert_eq!(helper_parent(&args(&["Island.exe", HELPER_ARG, "x"])), None);
+        assert_eq!(helper_parent(&args(&["Island.exe", HELPER_ARG, "0"])), None);
+        // Each Island its own signal, in the signed-in user's session.
+        assert_eq!(signal_name(4242), "Local\\IslandStartKey-4242");
+        assert_ne!(signal_name(1), signal_name(2));
     }
 
     #[test]

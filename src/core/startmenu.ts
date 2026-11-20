@@ -368,7 +368,10 @@ export async function runStart(stage: HTMLElement): Promise<void> {
     draw();
     menu.classList.remove('up');
     void menu.offsetWidth;
-    menu.classList.add('up');
+    // Two frames on: the window is on screen by then, so the whole slide shows.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (gen === o.gen) menu.classList.add('up');
+    }));
     window.setTimeout(() => field.focus(), 30);
     // Fresh each time: the apps (cached after the first), the recent files, the user.
     void native.wsApps().then((list) => {
@@ -383,9 +386,11 @@ export async function runStart(stage: HTMLElement): Promise<void> {
   };
   await on<StartOpen>('start-open', open);
   await on<number>('start-close', (g) => {
+    gen = g;
     menu.classList.remove('up');
     powerMenu.classList.remove('on');
-    window.setTimeout(() => void native.startHidden(g), 260);
+    // Hidden once it is down behind the bar (start.css: 0.26s), not partway.
+    window.setTimeout(() => void native.startHidden(g), 300);
   });
   await on<StartFrame>('start-frame', (f) => {
     frame = f;

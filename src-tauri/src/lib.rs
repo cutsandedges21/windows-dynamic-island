@@ -128,6 +128,12 @@ fn crash_notice(app: tauri::AppHandle) {
 }
 
 pub fn run() {
+    // The Windows-key helper (startmenu.rs): a small process of its own, nothing else of Island (and no
+    // crash handler, which would start a whole Island again).
+    #[cfg(windows)]
+    if let Some(island) = startmenu::helper_parent(&std::env::args().collect::<Vec<_>>()) {
+        std::process::exit(startmenu::helper_main(island));
+    }
     // First, before any thread starts (and before Island opens anything).
     crash::install(&std::env::args().collect::<Vec<_>>());
     scrub_host_env();

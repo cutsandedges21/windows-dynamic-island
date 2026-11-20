@@ -1198,6 +1198,17 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const r = bar.getBoundingClientRect();
     void native.startAnchor([b.left, b.top, b.width, b.height], [r.left, r.top, r.width, r.height], side());
   };
+  /** Rust told where the bar is whenever it moved or changed size, so the Windows key opens Island's
+   * Start on the bar too (only a click told it before, and the key put the menu up in the air). */
+  let startAnchored = '';
+  const anchorStart = (from: HTMLElement) => {
+    const r = bar.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return;
+    const sig = `${side()}|${[r.left, r.top, r.width, r.height].map(Math.round).join()}`;
+    if (sig === startAnchored) return;
+    startAnchored = sig;
+    tellStart(from);
+  };
   winStart.addEventListener('click', () => {
     if (frame?.startOpens === 'windows') {
       send({ kind: 'start' });
@@ -2476,6 +2487,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       void native.startPrepare(mine);
       void native.startKeys(keys);
     }
+    // Measured once this frame is laid out.
+    if (isTauri && mine) requestAnimationFrame(() => anchorStart(want.winStart ? winStart : search));
     void trayWanted(want.tray);
     want.wifi = !off.has('wifi');
     const wk = f.wifi === false ? 'off' : 'on';
