@@ -482,6 +482,8 @@ export class Island {
         names: () => this.settings.island.taskbar.names,
         startOpens: () => this.settings.island.taskbar.startOpens,
         startKey: () => this.settings.island.taskbar.startKey,
+        // Its tile only while the music activity runs (else the app, as before).
+        songOpens: () => (this.running.has('music') ? this.settings.island.taskbar.songOpens : 'app'),
         accentBorder: () => this.settings.island.taskbar.accentBorder,
         // At the bottom these two live inside Hide Windows' taskbar: they only count while it hides,
         // and turning one on from the taskbar's menu hides Windows' taskbar too.

@@ -454,6 +454,8 @@ export interface DockHooks {
   names(): NameStyle;
   startOpens(): 'island' | 'windows';
   startKey(): boolean;
+  /** A click on the song: the app playing it forward, or its tile in the island (as the timer's). */
+  songOpens(): 'app' | 'tile';
   accentBorder(): boolean;
   edge(): boolean;
   setEdge(on: boolean): void;
@@ -675,7 +677,7 @@ export class DockHost {
       return this.tick();
     }
     if (a.kind === 'music') return this.hooks.act('act:music:toggle');
-    if (a.kind === 'music-open') return this.hooks.act('act:music:open');
+    if (a.kind === 'music-open') return this.hooks.songOpens() === 'tile' ? this.hooks.open('music') : this.hooks.act('act:music:open');
     if (a.kind === 'editing') {
       this.editing = a.on === true;
       return this.tick();

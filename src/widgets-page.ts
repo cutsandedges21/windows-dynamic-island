@@ -384,6 +384,28 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
                     ]
                   : []),
               ]),
+          // The song: the app playing it, or its own tile, as the timer opens its (Justin, 11-20).
+          ...(t.hidden.includes('music')
+            ? []
+            : [
+                sub(
+                  row(
+                    'The song opens',
+                    'A click on the song in the taskbar: the app playing it, or its music tile in the island, as the timer opens its own.',
+                    segmented(
+                      t.songOpens,
+                      [
+                        ['app', 'The app'],
+                        ['tile', 'Music tile'],
+                      ],
+                      (v) => {
+                        t.songOpens = v;
+                        host.save(true);
+                      },
+                    ),
+                  ),
+                ),
+              ]),
           row(
             'Position',
             t.side === 'top' && s.island.anchor === 'top' ? 'On the top, the island sits in the middle of the taskbar.' : 'The screen edge it sits along.',

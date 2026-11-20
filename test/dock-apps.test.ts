@@ -145,6 +145,10 @@ describe('taskbar apps', () => {
     expect(migrate({}).island.taskbar.accentBorder).toBe(false);
     expect(migrate({ island: { taskbar: { on: true, accentBorder: true } } }).island.taskbar.accentBorder).toBe(true);
     expect(migrate({ island: { taskbar: { on: true, accentBorder: 1 } } }).island.taskbar.accentBorder).toBe(false);
+    // A click on the song: the app, until its music tile is picked.
+    expect(migrate({}).island.taskbar.songOpens).toBe('app');
+    expect(migrate({ island: { taskbar: { songOpens: 'tile' } } }).island.taskbar.songOpens).toBe('tile');
+    expect(migrate({ island: { taskbar: { songOpens: 'card' } } }).island.taskbar.songOpens).toBe('app');
   });
 
   it('gives a browser\'s app window its shortcut\'s place, and Island\'s Settings one of its own', () => {
