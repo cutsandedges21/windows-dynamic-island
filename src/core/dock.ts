@@ -67,6 +67,8 @@ export interface DockFrame {
   /** The Start button opens Island's Start menu (else Windows'); the Windows key too. */
   startOpens?: 'island' | 'windows';
   startKey?: boolean;
+  /** With Accent: a thin black line round each of its icons. */
+  accentBorder?: boolean;
   /** On the screen's bottom edge, over Windows' taskbar ... */
   edge?: boolean;
   /** ... its ends curving out into the edge. */
@@ -431,6 +433,7 @@ export interface DockHooks {
   names(): NameStyle;
   startOpens(): 'island' | 'windows';
   startKey(): boolean;
+  accentBorder(): boolean;
   edge(): boolean;
   setEdge(on: boolean): void;
   melt(): boolean;
@@ -590,6 +593,7 @@ export class DockHost {
         names: this.hooks.names(),
         startOpens: this.hooks.startOpens(),
         startKey: this.hooks.startKey(),
+        accentBorder: this.hooks.accentBorder(),
         edge: this.hooks.edge(),
         melt: this.hooks.melt(),
         side: this.hooks.side(),
@@ -1015,6 +1019,17 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   /** The melted ends' masks last written (side, border), so they're made again only when those change. */
   let meltSig = '';
   const bar = el('div', 'dock');
+  // Accent's black line round each icon (island.css): the shape's edge grown the same each way, in black,
+  // under it. Shadows offset each way read as a shadow cast to one side (Justin, 11-20).
+  const outline = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  outline.setAttribute('class', 'dk-defs');
+  outline.setAttribute('aria-hidden', 'true');
+  outline.innerHTML =
+    '<filter id="dk-outline" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">' +
+    '<feMorphology in="SourceAlpha" operator="dilate" radius="0.75" result="grown"/>' +
+    '<feFlood flood-color="#000"/><feComposite in2="grown" operator="in" result="line"/>' +
+    '<feMerge><feMergeNode in="line"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
+  document.body.append(outline);
   bar.append(el('i', 'dock-bg'));
   stage.append(bar);
   const send = (a: DockAct) => void sendTo('island', 'dock-act', a);
@@ -2390,6 +2405,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // The zoom scales the bar's place in its window too; the CSS divides it back out of that.
     root.style.setProperty('--dk-z', bar.style.zoom);
     root.dataset.pill = f.color;
+    root.classList.toggle('dk-accent-border', f.accentBorder === true);
     root.dataset.side = side();
     root.classList.toggle('dk-upright', upright());
     // The melted ends' masks for this side, their feet on the border while it is on.

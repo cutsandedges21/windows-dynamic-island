@@ -485,18 +485,33 @@ const NAME_LOOK_LABELS: Record<NameLook, string> = { bubble: 'Bubble', plain: 'P
 function stylesSection(host: WidgetsPageHost): HTMLElement {
   const t = host.settings().island.taskbar;
   const n = t.names;
-  const rows: HTMLElement[] = DOCK_STYLES.map((k) =>
+  const styleRow = (k: DockStyle) =>
     row(
       DOCK_STYLE_LABELS[k],
       STYLE_HINTS[k],
       toggle(t.styles.includes(k), () => {
         t.styles = toggleStyle(t.styles, k);
         host.save(true);
-        // Names brings its own rows.
-        if (k === 'names') host.render();
+        // Names and Accent bring their own rows.
+        if (k === 'names' || k === 'accent') host.render();
       }),
-    ),
-  );
+    );
+  // Each style's own rows, under it.
+  const nameRows: HTMLElement[] = [];
+  const accentRows: HTMLElement[] = t.styles.includes('accent')
+    ? [
+        sub(
+          row(
+            'Black outline',
+            'A thin black line round each icon, so any accent stands out, on glass too.',
+            toggle(t.accentBorder, (v) => {
+              t.accentBorder = v;
+              host.save(true);
+            }),
+          ),
+        ),
+      ]
+    : [];
   if (t.styles.includes('names')) {
     const sample = h('span', { class: 'name-sample', 'data-name-font': n.font, 'data-name-look': n.look }, [h('span', { text: 'Spotify' })]);
     sample.classList.toggle('bold', n.bold);
@@ -513,7 +528,7 @@ function stylesSection(host: WidgetsPageHost): HTMLElement {
     font.querySelectorAll('button').forEach((b, i) => b.setAttribute('data-name-font', NAME_FONTS[i]));
     const fontRow = row('Font', null, font);
     fontRow.classList.add('stack');
-    rows.push(
+    nameRows.push(
       sub(fontRow),
       sub(
         row(
@@ -544,6 +559,7 @@ function stylesSection(host: WidgetsPageHost): HTMLElement {
       sub(row('How it looks', null, h('div', { class: 'name-stage' }, [sample]))),
     );
   }
+  const rows = DOCK_STYLES.flatMap((k) => [styleRow(k), ...(k === 'names' ? nameRows : k === 'accent' ? accentRows : [])]);
   return section('Styles', [h('p', { class: 'muted section-note', text: 'How the taskbar answers your pointer. Mix any of them.' }), ...rows]);
 }
 

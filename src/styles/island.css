@@ -2935,10 +2935,9 @@ html.fr-slide .notch[data-side='right']:is(.out, .drop) .nt-ring { transform: no
 /* Accent (a style, Settings › Taskbar › Styles, Justin 11-20): every icon on the bar that isn't an app's. */
 html.dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg { color: var(--accent); }
 html.dk-accent .dock :is(.dk-prev, .dk-next) svg { opacity: 0.64; }
-/* Each icon outlined in black, so any accent stands out on any bar, glass with the wallpaper through it too
-   (Justin, 11-20: a soft halo, then a faint edge, were not it): four zero-blur shadows, one each way, each
-   also edging the last, make a solid line round the shape. Its lines a little bolder. */
-html.dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg {
-  filter: drop-shadow(0.75px 0 0 #000) drop-shadow(-0.75px 0 0 #000) drop-shadow(0 0.75px 0 #000) drop-shadow(0 -0.75px 0 #000);
-}
+/* Its lines a little bolder, so the accent shows more of itself (Justin, 11-20). */
 html.dk-accent .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg.line { stroke-width: 2.5; }
+/* Black outline (under Accent in Settings): a thin black line round each icon, the same all round (the
+   dk-outline filter, dock.ts), so any accent stands out on any bar, glass with the wallpaper through it too. */
+html.dk-accent.dk-accent-border .dock :is(.dk-btn, .dk-batt, .dk-timer, .dk-tray-more) svg { filter: url(#dk-outline); }
+.dk-defs { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }

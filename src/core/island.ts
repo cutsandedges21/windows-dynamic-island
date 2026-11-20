@@ -482,6 +482,7 @@ export class Island {
         names: () => this.settings.island.taskbar.names,
         startOpens: () => this.settings.island.taskbar.startOpens,
         startKey: () => this.settings.island.taskbar.startKey,
+        accentBorder: () => this.settings.island.taskbar.accentBorder,
         // At the bottom these two live inside Hide Windows' taskbar: they only count while it hides,
         // and turning one on from the taskbar's menu hides Windows' taskbar too.
         edge: () => barEdge(this.settings.island.taskbar),

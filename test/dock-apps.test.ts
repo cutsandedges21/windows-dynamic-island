@@ -104,6 +104,10 @@ describe('taskbar apps', () => {
     expect(migrate({ island: { taskbar: { on: true, styles: ['rise', 'accent'] } } }).island.taskbar.styles).toEqual(['rise', 'accent']);
     expect(migrate({ island: { taskbar: { on: true, styles: ['glide'], names: {}, accentIcons: true } } }).island.taskbar.styles).toEqual(['glide', 'accent']);
     expect(migrate({ island: { taskbar: { on: true, styles: ['rise'], accentIcons: 'yes' } } }).island.taskbar.styles).toEqual(['rise']);
+    // Its black outline: off until turned on.
+    expect(migrate({}).island.taskbar.accentBorder).toBe(false);
+    expect(migrate({ island: { taskbar: { on: true, accentBorder: true } } }).island.taskbar.accentBorder).toBe(true);
+    expect(migrate({ island: { taskbar: { on: true, accentBorder: 1 } } }).island.taskbar.accentBorder).toBe(false);
   });
 
   it('gives a browser\'s app window its shortcut\'s place, and Island\'s Settings one of its own', () => {
