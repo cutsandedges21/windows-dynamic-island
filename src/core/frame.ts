@@ -16,7 +16,11 @@ import { meltMasks } from './dock';
 import { applyGlass } from './glass';
 import { GLOW_PACE, type GlowSpec, type GlowSpeed } from './glow';
 import { icon } from './icons';
-import { isTauri, native, on, onFileDrop, sendTo } from './native';
+import { isTauri, native, on, onMine, onFileDrop, sendTo, windowLabel, type DockScreen } from './native';
+
+/** The taskbar on the same screen as border `frame` ('frame-DISPLAY2' → 'dock-DISPLAY2'), and the other way round. */
+export const dockFor = (frame: string): string => `dock${frame.slice('frame'.length)}`;
+export const frameFor = (dock: string): string => `frame${dock.slice('dock'.length)}`;
 import type { DockSide, NotchAt, NotchConfig, NotchCorner, NotchSize, PillColor, PinnedSite } from './settings';
 import type { ShelfFile } from '../activities/shelf';
 
@@ -210,11 +214,17 @@ export interface FrameHooks {
   act(a: FrameAct): void;
   /** The window just loaded: say again where the island is. */
   ready?(): void;
+  /** A border on every screen with a taskbar (the taskbars' Show on). */
+  allScreens?(): boolean;
 }
 
 export class FrameHost {
   private shown = false;
-  private sent = '';
+  /** The frame last sent to each border, by its label. */
+  private sent = new Map<string, string>();
+  /** Which border is on which screen (frame_show's answer). */
+  private screens: DockScreen[] = [{ label: 'frame', monitor: '', primary: true }];
+  private allSent: boolean | undefined;
   private offs: Array<() => void> = [];
 
   constructor(private readonly hooks: FrameHooks) {}
@@ -226,11 +236,29 @@ export class FrameHost {
         this.tick();
       }),
       await on<null>('frame-ready', () => {
-        this.sent = '';
+        this.sent.clear();
         this.tick();
         this.hooks.ready?.();
       }),
+      // A screen added or taken away: Rust gives it its border; this learns where.
+      await on('displays-changed', () => {
+        if (this.shown) void this.showAll();
+      }),
     );
+  }
+
+  /** The borders on their screens. */
+  private async showAll(): Promise<void> {
+    this.allSent = this.hooks.allScreens?.() ?? true;
+    const screens = await native.frameShow(true);
+    this.screens = screens.length ? screens : [{ label: 'frame', monitor: '', primary: true }];
+    this.sent.clear();
+    this.tick();
+  }
+
+  /** The border on screen `monitor` (the main screen's when there is none there). */
+  labelOn(monitor: string | null): string {
+    return this.screens.find((s) => s.monitor === monitor)?.label ?? 'frame';
   }
 
   stop(): void {
@@ -248,14 +276,21 @@ export class FrameHost {
     }
     if (!this.shown) {
       this.shown = true;
-      this.sent = '';
-      void native.frameShow(true);
+      this.sent.clear();
+      void this.showAll();
+      return;
+    }
+    if ((this.hooks.allScreens?.() ?? true) !== this.allSent) {
+      void this.showAll();
+      return;
     }
     const f = this.hooks.frame();
     const json = JSON.stringify(f);
-    if (json === this.sent) return;
-    this.sent = json;
-    void sendTo('frame', 'frame-frame', f);
+    for (const s of this.screens) {
+      if (json === this.sent.get(s.label)) continue;
+      this.sent.set(s.label, json);
+      void sendTo(s.label, 'frame-frame', f);
+    }
   }
 }
 
@@ -633,8 +668,8 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
     drawGlow();
   });
   // Auto-hide: up while the pointer is near the screen's edge (frame.rs).
-  await on<boolean>('frame-near', (v) => root.classList.toggle('fr-near', v === true));
-  await on<string>('frame-edit', (k) => setEditingNotch(k === 'sites' || k === 'shelf' ? k : null));
+  await onMine<boolean>('frame-near', (v) => root.classList.toggle('fr-near', v === true));
+  await onMine<string>('frame-edit', (k) => setEditingNotch(k === 'sites' || k === 'shelf' ? k : null));
   for (const n of notches) {
     let press: { id: number; x: number; y: number; moved: boolean } | null = null;
     let swallow = false;
@@ -924,27 +959,27 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
     }
   });
 
-  await on<{ width: number; height: number }>('frame-screen', (s) => {
+  await onMine<{ width: number; height: number }>('frame-screen', (s) => {
     if (!s || !Number.isFinite(s.width) || !Number.isFinite(s.height)) return;
     screen = { width: s.width, height: s.height };
     borderSig = '';
     draw();
   });
-  await on<FrameFrame>('frame-frame', (f) => {
+  await onMine<FrameFrame>('frame-frame', (f) => {
     frame = f;
     draw();
   });
-  await on<FramePart | null>('frame-dock', (p) => {
+  await onMine<FramePart | null>('frame-dock', (p) => {
     dock = p;
     drawGlow();
   });
-  await on<FramePart[] | null>('frame-island', (p) => {
+  await onMine<FramePart[] | null>('frame-island', (p) => {
     island = Array.isArray(p) ? p : [];
     drawTint();
     drawGlow();
   });
   // Under a full-screen game or video the border goes, as the taskbar does.
-  await on<boolean>('frame-full', (full) => root.classList.toggle('fr-full', full === true));
+  await onMine<boolean>('frame-full', (full) => root.classList.toggle('fr-full', full === true));
   window.addEventListener('resize', () => {
     if (!isTauri) {
       screen = { width: window.innerWidth, height: window.innerHeight };
@@ -954,6 +989,6 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
   });
   void native.frameHello();
   void sendTo('island', 'frame-ready', null);
-  // The taskbar may have said where it is before this window was there.
-  void sendTo('dock', 'frame-hello', null);
+  // The taskbar (on this screen) may have said where it is before this window was there.
+  void sendTo(isTauri ? dockFor(windowLabel) : 'dock', 'frame-hello', null);
 }

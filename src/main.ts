@@ -24,10 +24,12 @@ const widget = windowLabel.startsWith('widget-');
 // The taskbar: drawn from what the island sends it.
 // The browser preview of it: /?dock (src/dev/dock.ts).
 const dockPreview = native.demo && new URLSearchParams(location.search).has('dock');
-const dock = windowLabel === 'dock' || dockPreview;
+// One per screen: 'dock' on the main one, 'dock-<screen>' on the others (src-tauri/src/dock.rs).
+const dock = windowLabel === 'dock' || windowLabel.startsWith('dock-') || dockPreview;
 // The screen border and its notches; its browser preview: /?frame (src/dev/frame.ts), with &dock too.
 const framePreview = native.demo && new URLSearchParams(location.search).has('frame');
-const frameWin = windowLabel === 'frame' || framePreview;
+// One per screen with a taskbar: 'frame' on the main one, 'frame-<screen>' on the others (src-tauri/src/frame.rs).
+const frameWin = windowLabel === 'frame' || windowLabel.startsWith('frame-') || framePreview;
 // Island's Start menu (src/core/startmenu.ts); its browser preview: /?start (src/dev/start.ts).
 const startPreview = native.demo && new URLSearchParams(location.search).has('start');
 const startWin = windowLabel === 'start' || startPreview;

@@ -32,7 +32,7 @@ function hsl([r, g, b]: Rgb): [number, number, number] {
  */
 export function vividColour(rgba: ArrayLike<number>): [number, number, number] | null {
   const weight = new Array<number>(BUCKETS).fill(0);
-  const sum: Array<[number, number, number]> = Array.from({ length: BUCKETS }, () => [0, 0, 0]);
+  const sum: Array<[number, number, number, number]> = Array.from({ length: BUCKETS }, () => [0, 0, 0, 0]);
   let total = 0;
   let pixels = 0;
   for (let i = 0; i + 3 < rgba.length; i += 4) {
@@ -47,6 +47,7 @@ export function vividColour(rgba: ArrayLike<number>): [number, number, number] |
     sum[k][0] += Math.cos((h * Math.PI) / 180) * w;
     sum[k][1] += Math.sin((h * Math.PI) / 180) * w;
     sum[k][2] += s * w;
+    sum[k][3] += l * w;
     total += w;
   }
   if (!pixels || total / pixels < MIN_VIVID) return null;
@@ -57,15 +58,40 @@ export function vividColour(rgba: ArrayLike<number>): [number, number, number] |
   let x = 0;
   let y = 0;
   let s = 0;
+  let l = 0;
   let w = 0;
   for (const k of near) {
     x += sum[k][0];
     y += sum[k][1];
     s += sum[k][2];
+    l += sum[k][3];
     w += weight[k];
   }
   const h = ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
-  return [h, s / w, 0.5];
+  return [h, s / w, l / w];
+}
+
+/** How bright an HSL colour looks, 0 (black) to 1 (white): WCAG's relative luminance. */
+export function luminance([h, s, l]: [number, number, number]): number {
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const c = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * f(0) + 0.7152 * f(8) + 0.0722 * f(4);
+}
+
+/**
+ * The taskbar's now playing section filled with the album's own colour (Moss, 11-20: the whole
+ * section, behind the buttons too): its hue, saturation and lightness, kept from going muddy or
+ * glaring; `light` when it is light enough that the buttons and the text on it go black.
+ */
+export function songFill(c: [number, number, number]): { fill: string; light: boolean } {
+  const [h, s0, l0] = c;
+  const s = Math.max(0.35, Math.min(0.9, s0));
+  const l = Math.max(0.3, Math.min(0.8, l0));
+  return { fill: `hsl(${Math.round(h)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%)`, light: luminance([h, s, l]) > 0.4 };
 }
 
 /** The colour the bars are drawn in on a dark pill (`light` false) or a light one. */

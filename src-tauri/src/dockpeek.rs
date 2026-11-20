@@ -24,7 +24,7 @@ pub fn fit(r: (f64, f64, f64, f64), w: f64, h: f64) -> (i32, i32, i32, i32) {
 
 #[tauri::command]
 pub fn dock_peek(window: WebviewWindow, items: Vec<Peek>) {
-    if window.label() != crate::dock::LABEL {
+    if !crate::dock::is_dock(window.label()) {
         return;
     }
     imp::show(&window, items);
@@ -34,7 +34,7 @@ pub fn dock_peek(window: WebviewWindow, items: Vec<Peek>) {
 /// (Justin, 11-20); `None` puts it back, unless `keep` (it was clicked, so it stays in front).
 #[tauri::command]
 pub fn dock_live_peek(window: WebviewWindow, hwnd: Option<isize>, keep: Option<bool>) -> bool {
-    if window.label() != crate::dock::LABEL {
+    if !crate::dock::is_dock(window.label()) {
         return false;
     }
     imp::live(hwnd, keep == Some(true))

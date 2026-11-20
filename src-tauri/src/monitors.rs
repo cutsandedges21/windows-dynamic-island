@@ -121,6 +121,15 @@ pub fn at_cursor() -> Option<MonitorInfo> {
     info_for(unsafe { MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST) })
 }
 
+/// The screen at (x, y), physical px: its handle (to tell a change, in a loop) and its id.
+pub fn screen_at(x: i32, y: i32) -> (isize, Option<String>) {
+    let h = unsafe { MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST) };
+    let mut mi = MONITORINFOEXW::default();
+    mi.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+    let ok = unsafe { GetMonitorInfoW(h, &mut mi.monitorInfo as *mut MONITORINFO) };
+    (h.0 as isize, ok.as_bool().then(|| wide_to_string(&mi.szDevice)))
+}
+
 pub fn of_window(hwnd: HWND) -> Option<MonitorInfo> {
     info_for(unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) })
 }

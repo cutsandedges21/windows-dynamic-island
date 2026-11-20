@@ -7,7 +7,7 @@ import { BorderGlow, type GlowSpec, type GlowSpeed } from './glow';
 import { BubbleView } from './bubble';
 import { applyGlass } from './glass';
 import { bubbleRect, pillRect, tuckedRect, type Anchor, type Area, type Orientation } from './layout';
-import { native, on, type Placement } from './native';
+import { native, onMine, type Placement } from './native';
 import { PillRenderer } from './renderer';
 import type { Placed } from './segments';
 import type { PillColor } from './settings';
@@ -41,6 +41,8 @@ export interface MirrorFrame {
   reduce: boolean;
   /** The bot's bubble beside the pill (its diameter), or null when it is off or the island is moving. */
   bot: { d: number } | null;
+  /** The screen the island itself is on: the copy there draws nothing (null: every copy shows). */
+  host?: string | null;
 }
 
 export async function runMirror(stage: HTMLElement): Promise<void> {
@@ -57,6 +59,8 @@ export async function runMirror(stage: HTMLElement): Promise<void> {
   const draw = (immediate: boolean) => {
     const f = frame;
     if (!f) return;
+    // The island itself is on this screen (Duplicate): it is the one you see and use here.
+    stage.style.visibility = f.host && f.host === monitor ? 'hidden' : '';
     document.documentElement.style.setProperty('--accent', f.accent);
     document.documentElement.dataset.pill = f.color;
     applyGlass(document.documentElement, f.glass);
@@ -93,8 +97,8 @@ export async function runMirror(stage: HTMLElement): Promise<void> {
     draw(true);
   };
 
-  await on<Placement>('mirror-placed', placeAt);
-  await on<MirrorFrame>('mirror-frame', (f) => {
+  await onMine<Placement>('mirror-placed', placeAt);
+  await onMine<MirrorFrame>('mirror-frame', (f) => {
     const first = !frame;
     frame = f;
     draw(first);

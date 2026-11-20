@@ -387,6 +387,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_DISPLAYCHANGE => {
             if let Some(app) = APP.get() {
+                crate::dock::screens_changed(app);
+                crate::frame::screens_changed(app);
                 let _ = app.emit_to(ISLAND, "displays-changed", ());
             }
         }

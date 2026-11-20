@@ -636,6 +636,13 @@ export interface Launched {
 /** A taskbar icon's place in the taskbar window: x, y, w, h in CSS px. */
 export type DockIconRect = [number, number, number, number];
 
+/** A taskbar's window and the screen it is on (src-tauri/src/dock.rs DockScreen). */
+export interface DockScreen {
+  label: string;
+  monitor: string;
+  primary: boolean;
+}
+
 export interface InstalledApp {
   name: string;
   target: string;
@@ -717,6 +724,16 @@ export async function on<T>(event: string, cb: Handler<T>): Promise<UnlistenFn> 
   if (!set) localBus.set(event, (set = new Set()));
   set.add(cb as Handler<unknown>);
   return () => set!.delete(cb as Handler<unknown>);
+}
+
+/**
+ * As `on`, for events meant for this window only: an event sent to another window (another screen's
+ * taskbar or border, another Duplicate copy) isn't heard here, as it is with `on` (Tauri's listeners
+ * for "any" hear every window's events). Events sent to every window still are.
+ */
+export async function onMine<T>(event: string, cb: Handler<T>): Promise<UnlistenFn> {
+  if (isTauri) return listen<T>(event, (e) => cb(e.payload), { target: windowLabel });
+  return on(event, cb);
 }
 
 /**
@@ -853,8 +870,10 @@ export const native = {
   /** Install newer releases from GitHub on their own (release builds only). */
   setAutoUpdate: (enabled: boolean) => call('update_set', { enabled }, undefined),
   /** Duplicate mode: one click-through copy of the pill on each of these monitors. */
-  /** The taskbar (src-tauri/src/dock.rs): shown at w x h logical px, or closed. */
-  dockShow: (on: boolean, w: number, h: number, centre = -1) => call('dock_show', { on, w, h, centre }, undefined),
+  /** The taskbars (src-tauri/src/dock.rs): shown at w x h logical px, one on the main screen and with `all`
+   *  one on every other, each at its centre from `centres` (by screen id); or closed. Answers which is where. */
+  dockShow: (on: boolean, w: number, h: number, centres: Record<string, number> | null = null, all: boolean | null = null) =>
+    call<DockScreen[]>('dock_show', { on, w, h, centres, all }, []),
   /** The taskbar page measured its content (logical px): its window takes that size, in its place. */
   dockFit: (w: number, h: number, bar: number, pivot: number | null = null) => call('dock_fit', { w, h, bar, pivot }, undefined),
   /** Where the page draws something (the bar, a card over it): CSS px rects [x, y, w, h] in the window.
@@ -867,7 +886,7 @@ export const native = {
   /** Keep windows clear of the taskbar: its strip of the screen held for it, as Windows' own taskbar's is. */
   dockRoom: (on: boolean) => call('dock_room', { on }, undefined),
   /** The screen border's window (src-tauri/src/frame.rs) over the main screen, or closed. */
-  frameShow: (on: boolean) => call('frame_show', { on }, undefined),
+  frameShow: (on: boolean) => call<DockScreen[]>('frame_show', { on }, []),
   /** Where the border's page takes clicks (the notches): CSS px rects [x, y, w, h]. */
   frameSolid: (rects: number[][]) => call('frame_solid', { rects }, undefined),
   /** The border's page loaded: Rust tells it the screen's size again (frame-screen). */
@@ -878,18 +897,19 @@ export const native = {
   dockSide: (side: 'bottom' | 'left' | 'right' | 'top') => call('dock_side', { side }, undefined),
   /** The Apps card is open over the taskbar: it may take the keyboard (its search field) until closed. */
   dockTyping: (on: boolean) => call('dock_typing', { on }, undefined),
-  /** Dragging the taskbar: its left edge to `x` physical px; `done` keeps the place (x negative with done: back to the middle). */
-  dockAt: (x: number, done: boolean) => call('dock_at', { x, done }, undefined),
+  /** Dragging the taskbar: its left edge to `x`, CSS px on the screen, where it is at `now` (window.screenX);
+   *  `done` keeps the place. With no `now`, x negative with done: back to the middle. */
+  dockAt: (x: number, done: boolean, now: number | null = null) => call('dock_at', { x, done, now }, undefined),
   /** Windows' own panels: Start, Quick Settings (Wi-Fi, sound), notifications. */
   dockPanel: (which: 'start' | 'search' | 'quick' | 'notifications') => call<boolean>('dock_panel', { which }, false),
   /** Windows' taskbar hides itself (Automatically hide the taskbar); answers whether it does now. */
   dockAutohide: (on: boolean) => call<boolean>('dock_autohide', { on }, false),
   /** A taskbar icon's window comes back out of the icon (`icon`: x, y, w, h CSS px in the taskbar), or just forward if it isn't minimized (src-tauri/src/dockfx.rs). */
-  dockRaise: (hwnd: number, icon: DockIconRect) => call<boolean>('dock_raise', { hwnd, icon }, false),
+  dockRaise: (hwnd: number, icon: DockIconRect, dock: string | null = null) => call<boolean>('dock_raise', { hwnd, icon, dock }, false),
   /** The window goes into its taskbar icon. */
-  dockMinimize: (hwnd: number, icon: DockIconRect) => call('dock_minimize', { hwnd, icon }, undefined),
+  dockMinimize: (hwnd: number, icon: DockIconRect, dock: string | null = null) => call('dock_minimize', { hwnd, icon, dock }, undefined),
   /** The app's windows close, the first one into its taskbar icon. */
-  dockClose: (hwnds: number[], icon: DockIconRect) => call('dock_close', { hwnds, icon }, undefined),
+  dockClose: (hwnds: number[], icon: DockIconRect, dock: string | null = null) => call('dock_close', { hwnds, icon, dock }, undefined),
   /** Live pictures of windows drawn into the taskbar's window, each fitted in its rect (CSS px); [] takes them away. */
   dockPeek: (items: Array<{ hwnd: number; rect: DockIconRect }>) => call('dock_peek', { items }, undefined),
   /** The window brought in front, where it is; null puts it back (keep: it was clicked, so it stays). */

@@ -5,18 +5,55 @@
 // but just under the taskbar and the island (so they draw over the line where they meet it), never
 // taking the focus, and taking clicks only on the notches. Under a full-screen game or video it goes.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-use crate::monitors;
+use crate::monitors::{self, MonitorInfo};
 
+/// The border on the main screen. Every other screen with a taskbar has its own (Moss, 11-20: the
+/// notches on every screen), labelled as its taskbar is: `frame-DISPLAY2` beside `dock-DISPLAY2`.
 pub const LABEL: &str = "frame";
+const PREFIX: &str = "frame-";
 
-/// Where the page draws something that takes clicks (logical px rects x, y, w, h): the notches.
-static SOLID: Mutex<Vec<[f64; 4]>> = Mutex::new(Vec::new());
-static WATCHING: AtomicBool = AtomicBool::new(false);
+/// A window label is one of the borders.
+pub fn is_frame(label: &str) -> bool {
+    label == LABEL || label.starts_with(PREFIX)
+}
+
+/// The border on the same screen as taskbar `dock` (and the other way round).
+pub fn for_dock(dock: &str) -> String {
+    match dock.strip_prefix("dock") {
+        Some(rest) => format!("{LABEL}{rest}"),
+        None => LABEL.to_string(),
+    }
+}
+
+/// The border windows there are now.
+pub fn labels(app: &AppHandle) -> Vec<String> {
+    let mut list: Vec<String> = app.webview_windows().into_keys().filter(|l| is_frame(l)).collect();
+    list.sort();
+    list
+}
+
+/// Each border's screen (monitors.rs id), by its label.
+static SCREENS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+/// Where each page draws something that takes clicks (logical px rects x, y, w, h): the notches.
+static SOLID: Mutex<BTreeMap<String, Vec<[f64; 4]>>> = Mutex::new(BTreeMap::new());
+/// The borders whose watcher threads run.
+static WATCHING: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+/// One sync of the borders' windows at a time.
+static SYNCING: Mutex<()> = Mutex::new(());
+
+fn screen_of(label: &str) -> Option<MonitorInfo> {
+    let id = SCREENS.lock().unwrap().get(label).cloned();
+    match id {
+        Some(id) => monitors::find(&id),
+        None if label == LABEL => monitors::primary(),
+        None => None,
+    }
+}
 
 /// A tool window (never in Alt-Tab or the taskbar) that a click doesn't activate.
 #[cfg(windows)]
@@ -81,12 +118,18 @@ pub fn restack(app: &AppHandle) {
             let _ = SetWindowPos(island, Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
             above = island;
         }
-        if let Some(dock) = hwnd_of(app, crate::dock::LABEL) {
-            let _ = SetWindowPos(dock, Some(above), 0, 0, 0, 0, flags);
-            above = dock;
+        // Every screen's taskbar under the island (the border is on the main screen only, under them).
+        for label in crate::dock::labels(app) {
+            if let Some(dock) = hwnd_of(app, &label) {
+                let _ = SetWindowPos(dock, Some(above), 0, 0, 0, 0, flags);
+                above = dock;
+            }
         }
-        if let Some(frame) = hwnd_of(app, LABEL) {
-            let _ = SetWindowPos(frame, Some(above), 0, 0, 0, 0, flags);
+        for label in labels(app) {
+            if let Some(frame) = hwnd_of(app, &label) {
+                let _ = SetWindowPos(frame, Some(above), 0, 0, 0, 0, flags);
+                above = frame;
+            }
         }
     }
 }
@@ -94,17 +137,20 @@ pub fn restack(app: &AppHandle) {
 #[cfg(not(windows))]
 pub fn restack(_app: &AppHandle) {}
 
-/// The window over the whole main screen (physical px), and the page told where the work area is
+/// The window over the whole of its screen (physical px), and the page told where the work area is
 /// (logical px from the screen's corner), for the island, which lives in the work area.
 fn cover(win: &WebviewWindow) {
-    let Some(m) = monitors::primary() else { return };
+    let Some(m) = screen_of(win.label()) else { return };
     #[cfg(windows)]
     {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
         if let Ok(h) = win.hwnd() {
-            unsafe {
-                let _ = SetWindowPos(HWND(h.0), None, m.bounds.x, m.bounds.y, m.bounds.width, m.bounds.height, SWP_NOACTIVATE | SWP_NOZORDER);
+            // Twice: a screen at another scale than the one the window was on rescales it as it crosses.
+            for _ in 0..2 {
+                unsafe {
+                    let _ = SetWindowPos(HWND(h.0), None, m.bounds.x, m.bounds.y, m.bounds.width, m.bounds.height, SWP_NOACTIVATE | SWP_NOZORDER);
+                }
             }
         }
     }
@@ -115,7 +161,7 @@ fn cover(win: &WebviewWindow) {
     }
     let s = m.scale;
     let _ = win.app_handle().emit_to(
-        LABEL,
+        win.label(),
         "frame-screen",
         serde_json::json!({
             "width": m.bounds.width as f64 / s,
@@ -126,64 +172,117 @@ fn cover(win: &WebviewWindow) {
     );
 }
 
-/// Shows the border's window over the main screen, making it the first time, or closes it. Built off
-/// the calling thread, as building a window on the event loop deadlocks WebView2.
+/// A border and the screen it is on, for the island (src/core/frame.ts FrameHost).
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameScreen {
+    pub label: String,
+    pub monitor: String,
+    pub primary: bool,
+}
+
+/// Shows a border on every screen that has a taskbar (the taskbars' own Show on), making their windows
+/// the first time, or closes them all. Answers which is where. Built off the calling thread, as building
+/// a window on the event loop deadlocks WebView2.
 #[tauri::command]
-pub fn frame_show(app: AppHandle, on: bool) {
-    std::thread::spawn(move || {
-        if !on {
-            if let Some(win) = app.get_webview_window(LABEL) {
+pub fn frame_show(app: AppHandle, on: bool) -> Vec<FrameScreen> {
+    if !on {
+        std::thread::spawn(move || {
+            let _one = SYNCING.lock().unwrap();
+            for l in labels(&app) {
+                if let Some(win) = app.get_webview_window(&l) {
+                    let _ = win.destroy();
+                }
+            }
+            SCREENS.lock().unwrap().clear();
+        });
+        return Vec::new();
+    }
+    let plan: Vec<(String, MonitorInfo)> = crate::dock::plan().into_iter().map(|(l, m)| (for_dock(&l), m)).collect();
+    let screens = plan.iter().map(|(l, m)| FrameScreen { label: l.clone(), monitor: m.id.clone(), primary: l == LABEL }).collect();
+    std::thread::spawn(move || sync(&app, plan));
+    screens
+}
+
+/// The screens changed: every screen with a taskbar gets its border, if they show.
+pub fn screens_changed(app: &AppHandle) {
+    if labels(app).is_empty() {
+        return;
+    }
+    let plan: Vec<(String, MonitorInfo)> = crate::dock::plan().into_iter().map(|(l, m)| (for_dock(&l), m)).collect();
+    let app = app.clone();
+    std::thread::spawn(move || sync(&app, plan));
+}
+
+/// Makes, moves or closes the borders' windows so there is one for each screen in `plan`.
+fn sync(app: &AppHandle, plan: Vec<(String, MonitorInfo)>) {
+    let _one = SYNCING.lock().unwrap();
+    let keep: HashSet<&str> = plan.iter().map(|(l, _)| l.as_str()).collect();
+    for l in labels(app) {
+        if !keep.contains(l.as_str()) {
+            if let Some(win) = app.get_webview_window(&l) {
                 let _ = win.destroy();
             }
-            return;
+            SCREENS.lock().unwrap().remove(&l);
+            SOLID.lock().unwrap().remove(&l);
         }
-        if let Some(win) = app.get_webview_window(LABEL) {
+    }
+    for (label, m) in plan {
+        SCREENS.lock().unwrap().insert(label.clone(), m.id.clone());
+        if let Some(win) = app.get_webview_window(&label) {
             cover(&win);
-            return;
+            continue;
         }
-        let built = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("index.html".into()))
-            .title("Island screen border")
-            .transparent(true)
-            .decorations(false)
-            .shadow(false)
-            .skip_taskbar(true)
-            .focused(false)
-            .resizable(false)
-            .maximizable(false)
-            .minimizable(false)
-            .always_on_top(true)
-            .visible(false)
-            .inner_size(800.0, 600.0)
-            .background_color(tauri::window::Color(0, 0, 0, 0))
-            .build();
-        match built {
-            Ok(win) => {
-                let _ = win.set_ignore_cursor_events(true);
-                cover(&win);
-                let _ = win.show();
-                #[cfg(windows)]
-                guard_style(&win);
-                restack(&app);
-                watch(app.clone());
-            }
-            Err(e) => crate::log::line(format!("screen border failed: {e}")),
+        build(app, &label);
+    }
+}
+
+/// Makes border `label`'s window and starts watching it.
+fn build(app: &AppHandle, label: &str) {
+    let built = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+        .title("Island screen border")
+        .transparent(true)
+        .decorations(false)
+        .shadow(false)
+        .skip_taskbar(true)
+        .focused(false)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .always_on_top(true)
+        .visible(false)
+        .inner_size(800.0, 600.0)
+        .background_color(tauri::window::Color(0, 0, 0, 0))
+        .build();
+    match built {
+        Ok(win) => {
+            let _ = win.set_ignore_cursor_events(true);
+            cover(&win);
+            let _ = win.show();
+            #[cfg(windows)]
+            guard_style(&win);
+            restack(app);
+            watch(app.clone(), label.to_string());
         }
-    });
+        Err(e) => crate::log::line(format!("screen border {label} failed: {e}")),
+    }
 }
 
 /// The page asks where the screen is again (it just loaded).
 #[tauri::command]
 pub fn frame_hello(window: WebviewWindow) {
-    if window.label() == LABEL {
+    if is_frame(window.label()) {
         cover(&window);
     }
 }
 
 /// Where the page draws something that takes clicks (logical px rects [x, y, w, h]): the notches.
 #[tauri::command]
-pub fn frame_solid(rects: Vec<Vec<f64>>) {
+pub fn frame_solid(window: WebviewWindow, rects: Vec<Vec<f64>>) {
     let clean: Vec<[f64; 4]> = rects.iter().filter(|r| r.len() == 4 && r.iter().all(|n| n.is_finite())).map(|r| [r[0], r[1], r[2], r[3]]).take(8).collect();
-    *SOLID.lock().unwrap() = clean;
+    if is_frame(window.label()) {
+        SOLID.lock().unwrap().insert(window.label().to_string(), clean);
+    }
 }
 
 /// Site icons fetched so far (host → data: URL). Failures aren't kept: offline now, maybe not later.
@@ -235,12 +334,12 @@ const EDGE_NEAR: f64 = 36.0;
 /// if it weren't there), keeps its place in the stack under the taskbar and the island, follows the
 /// main screen if it changes, and goes while a full-screen game or video is in front.
 #[cfg(windows)]
-fn watch(app: AppHandle) {
+fn watch(app: AppHandle, label: String) {
     use windows::Win32::Foundation::{HWND, POINT, RECT};
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
     use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
-    if WATCHING.swap(true, Ordering::SeqCst) {
+    if !WATCHING.lock().unwrap().get_or_insert_with(HashSet::new).insert(label.clone()) {
         return;
     }
     std::thread::spawn(move || {
@@ -252,8 +351,10 @@ fn watch(app: AppHandle) {
         let mut near: Option<bool> = None;
         loop {
             std::thread::sleep(std::time::Duration::from_millis(20));
-            let Some(win) = app.get_webview_window(LABEL) else {
-                WATCHING.store(false, Ordering::SeqCst);
+            let Some(win) = app.get_webview_window(&label) else {
+                if let Some(set) = WATCHING.lock().unwrap().as_mut() {
+                    set.remove(&label);
+                }
                 return;
             };
             let Ok(h) = win.hwnd() else { continue };
@@ -272,15 +373,16 @@ fn watch(app: AppHandle) {
                 });
             }
             if tick % 15 == 0 {
-                let now = crate::dock::full();
+                let screen = screen_of(&label);
+                let now = screen.as_ref().is_some_and(|m| crate::dock::full_on(&m.id));
                 if now != full {
                     full = now;
-                    let _ = app.emit_to(LABEL, "frame-full", now);
+                    let _ = app.emit_to(label.as_str(), "frame-full", now);
                 }
                 if !full {
                     restack(&app);
                 }
-                let b = monitors::primary().map(|m| (m.bounds.x, m.bounds.y, m.bounds.width, m.bounds.height));
+                let b = screen.map(|m| (m.bounds.x, m.bounds.y, m.bounds.width, m.bounds.height));
                 if b != bounds {
                     bounds = b;
                     cover(&win);
@@ -304,9 +406,9 @@ fn watch(app: AppHandle) {
             let close = x < EDGE_NEAR || y < EDGE_NEAR || x > ww - EDGE_NEAR || y > wh - EDGE_NEAR;
             if near != Some(close) {
                 near = Some(close);
-                let _ = app.emit_to(LABEL, "frame-near", close);
+                let _ = app.emit_to(label.as_str(), "frame-near", close);
             }
-            let on = !full && crate::dock::solid_at(&SOLID.lock().unwrap(), x, y);
+            let on = !full && SOLID.lock().unwrap().get(&label).is_some_and(|s| crate::dock::solid_at(s, x, y));
             if taking != Some(on) {
                 taking = Some(on);
                 let _ = win.set_ignore_cursor_events(!on);
@@ -316,7 +418,7 @@ fn watch(app: AppHandle) {
 }
 
 #[cfg(not(windows))]
-fn watch(_app: AppHandle) {}
+fn watch(_app: AppHandle, _label: String) {}
 
 #[cfg(test)]
 mod tests {

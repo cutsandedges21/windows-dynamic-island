@@ -5,24 +5,121 @@
 // Windows' taskbar while that one shows), sizes it to its content, moves it left and right as it
 // is dragged, opens Windows' own panels for its buttons, and can set Windows' taskbar to hide.
 
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Mutex;
 
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-use crate::monitors;
+use crate::monitors::{self, MonitorInfo};
 
+/// The taskbar on the main screen. Every other screen has its own, labelled `dock-<its device>`
+/// (`dock-DISPLAY2`): the same page, each drawn from the frames the island sends them all.
 pub const LABEL: &str = "dock";
+const PREFIX: &str = "dock-";
 /// Gap between the dock and the bottom of the work area, logical px.
 const GAP: f64 = 8.0;
 
-/// Where the dock's centre sits across the screen, 0..1; negative: the middle.
-static CENTRE: Mutex<f64> = Mutex::new(-1.0);
+/// A window label is one of the taskbars.
+pub fn is_dock(label: &str) -> bool {
+    label == LABEL || label.starts_with(PREFIX)
+}
+
+/// The taskbar windows there are now.
+pub fn labels(app: &AppHandle) -> Vec<String> {
+    let mut list: Vec<String> = app.webview_windows().into_keys().filter(|l| is_dock(l)).collect();
+    list.sort();
+    list
+}
+
+/// An event to every taskbar.
+pub fn emit_all<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
+    for l in labels(app) {
+        let _ = app.emit_to(l.as_str(), event, payload.clone());
+    }
+}
+
+/// One screen's taskbar: what its window was told and where it is.
+#[derive(Clone, Debug)]
+struct Bar {
+    /// The screen it is on (monitors.rs id).
+    monitor: String,
+    /// Where its centre sits along its edge, 0..1; negative: the middle.
+    centre: f64,
+    /// The size the page last asked for (logical px), to place it again when its mode changes.
+    size: (f64, f64),
+    /// The bar's part at the window's edge side (logical px): the bar, its margins and the room its icons
+    /// rise into. The rest of the window is room for a card over the bar.
+    bar_area: f64,
+    /// Where the page draws something that takes clicks (logical px rects x, y, w, h in the window): the
+    /// bar, the Apps card while it is up. Everywhere else a click goes through to what is under it.
+    solid: Vec<[f64; 4]>,
+    /// Set while the dock on the top edge splits round the island: how far along the window (logical px
+    /// from its left) the screen's middle falls, so the island sits in the gap. Negative: not split.
+    pivot: f64,
+    /// A full-screen app is in front on its screen: it waits at the screen's edge, faint ...
+    full: bool,
+    /// ... and while the pointer is on it (or on its way up), it is raised to its usual place.
+    up: bool,
+}
+
+impl Bar {
+    fn new(monitor: String, centre: f64) -> Self {
+        Bar { monitor, centre, size: (0.0, 0.0), bar_area: 0.0, solid: Vec::new(), pivot: -1.0, full: false, up: false }
+    }
+}
+
+/// Every taskbar, by its window's label.
+static BARS: Mutex<BTreeMap<String, Bar>> = Mutex::new(BTreeMap::new());
+/// Where each screen's taskbar was dragged to (0..1 along its edge), by screen: Settings keeps them.
+static CENTRES: Mutex<Option<HashMap<String, f64>>> = Mutex::new(None);
+/// A taskbar on every screen (Settings › Taskbar › Show on), or on the main one only.
+static ALL_SCREENS: AtomicBool = AtomicBool::new(true);
+
+fn bar(label: &str) -> Option<Bar> {
+    BARS.lock().unwrap().get(label).cloned()
+}
+
+fn with_bar<R>(label: &str, f: impl FnOnce(&mut Bar) -> R) -> Option<R> {
+    BARS.lock().unwrap().get_mut(label).map(f)
+}
+
+/// The screen a taskbar is on (the main one for `dock` until told otherwise).
+fn monitor_of(label: &str) -> Option<MonitorInfo> {
+    match bar(label) {
+        Some(b) => monitors::find(&b.monitor).or_else(|| if label == LABEL { monitors::primary() } else { None }),
+        None if label == LABEL => monitors::primary(),
+        None => None,
+    }
+}
+
+/// The label for the taskbar on screen `id` (`\\.\DISPLAY2` → `dock-DISPLAY2`): labels take letters,
+/// digits and `-`.
+pub fn label_for(id: &str, primary: bool) -> String {
+    if primary {
+        return LABEL.to_string();
+    }
+    let tail: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    format!("{PREFIX}{tail}")
+}
+
+/// Which taskbar goes on which screen: the main screen's first; the others only with `all`.
+fn layout(screens: &[MonitorInfo], all: bool) -> Vec<(String, MonitorInfo)> {
+    let main = screens.iter().position(|m| m.primary).unwrap_or(0);
+    let mut out = Vec::new();
+    for (i, m) in screens.iter().enumerate() {
+        if i == main {
+            out.insert(0, (LABEL.to_string(), m.clone()));
+        } else if all {
+            out.push((label_for(&m.id, false), m.clone()));
+        }
+    }
+    out
+}
+
 /// Which screen edge the dock sits along: bottom, left, right, top (Settings › Taskbar › Position).
 static SIDE: AtomicU8 = AtomicU8::new(0);
-/// Set while the dock on the top edge splits round the island: how far along the window (logical px
-/// from its left) the screen's middle falls, so the island sits in the gap. Negative: not split.
-static PIVOT: Mutex<f64> = Mutex::new(-1.0);
 /// Island set Windows' taskbar to hide (and puts it back when Island quits).
 static HID_WINDOWS_BAR: AtomicBool = AtomicBool::new(false);
 
@@ -34,8 +131,15 @@ pub fn centre_of(left: i32, width: i32, x: i32, pw: i32) -> f64 {
     ((x + pw / 2 - left) as f64 / width as f64).clamp(0.0, 1.0)
 }
 
-/// The Apps card is open: the taskbar may take the keyboard (its search field).
-static TYPING: AtomicBool = AtomicBool::new(false);
+/// The taskbar whose Apps card is open (its window handle; 0: none): it may take the keyboard (its search field).
+#[cfg(windows)]
+static TYPING: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// Window `hwnd` is the taskbar with its Apps card open.
+#[cfg(windows)]
+fn typing(hwnd: isize) -> bool {
+    hwnd != 0 && TYPING.load(Ordering::Relaxed) == hwnd
+}
 
 /// The extended style the dock needs: a tool window (never in Alt-Tab or Windows' taskbar;
 /// WS_EX_APPWINDOW would put it in both) that a click doesn't activate, unless the Apps card is
@@ -67,7 +171,7 @@ unsafe extern "system" fn keep_style(
     use windows::Win32::UI::WindowsAndMessaging::{GWL_EXSTYLE, STYLESTRUCT, WM_STYLECHANGING};
     if msg == WM_STYLECHANGING && wparam.0 as i32 == GWL_EXSTYLE.0 && lparam.0 != 0 {
         let change = unsafe { &mut *(lparam.0 as *mut STYLESTRUCT) };
-        change.styleNew = wanted_ex(change.styleNew, TYPING.load(Ordering::Relaxed));
+        change.styleNew = wanted_ex(change.styleNew, typing(hwnd.0 as isize));
     }
     unsafe { windows::Win32::UI::Shell::DefSubclassProc(hwnd, msg, wparam, lparam) }
 }
@@ -92,7 +196,7 @@ fn apply_style(hwnd: windows::Win32::Foundation::HWND) {
     use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE};
     unsafe {
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        let want = wanted_ex(ex as u32, TYPING.load(Ordering::Relaxed)) as isize;
+        let want = wanted_ex(ex as u32, typing(hwnd.0 as isize)) as isize;
         if want != ex {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, want);
         }
@@ -116,20 +220,8 @@ const GLIDE_MS: f64 = 240.0;
 /// The pointer gone from the raised dock this long, it goes back down, ms.
 const LEAVE_MS: u128 = 350;
 
-/// The size the page last asked for (logical px), to place the dock again when its mode changes.
-static SIZE: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
-/// The bar's part at the window's bottom (logical px): the bar, its margins and the room its icons
-/// rise into. The rest of the window is room for a card over the bar.
-static BAR_AREA: Mutex<f64> = Mutex::new(0.0);
-/// Where the page draws something that takes clicks (logical px rects x, y, w, h in the window): the
-/// bar, the Apps card while it is up. Everywhere else a click goes through to what is under it.
-static SOLID: Mutex<Vec<[f64; 4]>> = Mutex::new(Vec::new());
 /// The dock sits on the screen's bottom edge, over Windows' taskbar (Settings › Blend into the bottom).
 static EDGE: AtomicBool = AtomicBool::new(false);
-/// A full-screen app is in front: the dock waits at the screen's bottom edge, faint ...
-static FULL: AtomicBool = AtomicBool::new(false);
-/// ... and while the pointer is on it (or on its way up), it is raised to its usual place.
-static UP: AtomicBool = AtomicBool::new(false);
 /// Auto-hide (Settings › Taskbar): it waits at the edge as under a full-screen app, always.
 static AUTO: AtomicBool = AtomicBool::new(false);
 
@@ -214,19 +306,19 @@ pub fn place_on(side: Side, work: Area, bounds: Area, scale: f64, pw: i32, ph: i
 }
 
 /// Where the dock's window goes (physical x, y, width, height) at `w` x `h` logical px, by its mode.
-fn spot(w: f64, h: f64) -> Option<(i32, i32, i32, i32)> {
-    spot_as(w, h, None)
+fn spot(label: &str, w: f64, h: f64) -> Option<(i32, i32, i32, i32)> {
+    spot_as(label, w, h, None)
 }
 
 /// As `spot`; `tucked` overrides whether it sits on the edge.
-fn spot_as(w: f64, h: f64, tucked: Option<bool>) -> Option<(i32, i32, i32, i32)> {
-    let m = monitors::primary()?;
-    let centre = *CENTRE.lock().unwrap();
-    let pivot = *PIVOT.lock().unwrap();
+fn spot_as(label: &str, w: f64, h: f64, tucked: Option<bool>) -> Option<(i32, i32, i32, i32)> {
+    let m = monitor_of(label)?;
+    let b = bar(label).unwrap_or_else(|| Bar::new(m.id.clone(), -1.0));
+    let (centre, pivot) = (b.centre, b.pivot);
     let (pw, ph) = ((w.ceil() * m.scale).round() as i32, (h.ceil() * m.scale).round() as i32);
-    let tucked = tucked.unwrap_or_else(|| EDGE.load(Ordering::SeqCst) || (FULL.load(Ordering::SeqCst) && !UP.load(Ordering::SeqCst)));
+    let tucked = tucked.unwrap_or_else(|| EDGE.load(Ordering::SeqCst) || (b.full && !b.up));
     // Against the work area as it is without the strip held for it (Keep windows clear), which it sits in.
-    let work = work_without_room((m.work.x, m.work.y, m.work.width, m.work.height));
+    let work = work_without_room(label, (m.work.x, m.work.y, m.work.width, m.work.height));
     let bounds = (m.bounds.x, m.bounds.y, m.bounds.width, m.bounds.height);
     let pivot = (pivot >= 0.0).then(|| (pivot * m.scale).round() as i32);
     let (x, y) = place_on(side(), work, bounds, m.scale, pw, ph, centre, pivot, tucked);
@@ -237,18 +329,18 @@ fn spot_as(w: f64, h: f64, tucked: Option<bool>) -> Option<(i32, i32, i32, i32)>
 /// the work area (above Windows' taskbar while that one shows), floating over the windows; with a
 /// full-screen app in front, at the screen's bottom edge until the pointer comes to it.
 fn put(win: &WebviewWindow, w: f64, h: f64) {
-    *SIZE.lock().unwrap() = (w, h);
+    let label = win.label().to_string();
+    with_bar(&label, |b| b.size = (w, h));
     hold_room(win, false);
-    let Some((x, y, pw, ph)) = spot(w, h) else { return };
+    let Some((x, y, pw, ph)) = spot(&label, w, h) else { return };
     set_rect(win, x, y, pw, ph);
     tell(win);
 }
 
 /// The page hears whether the dock waits faint at the edge.
 fn tell(win: &WebviewWindow) {
-    let full = FULL.load(Ordering::SeqCst);
-    let up = UP.load(Ordering::SeqCst);
-    let _ = win.app_handle().emit_to(LABEL, "dock-full", serde_json::json!({ "full": full, "up": up }));
+    let (full, up) = bar(win.label()).map(|b| (b.full, b.up)).unwrap_or((false, false));
+    let _ = win.app_handle().emit_to(win.label(), "dock-full", serde_json::json!({ "full": full, "up": up }));
 }
 
 /// Moves and sizes the window in one step (two steps can show a frame with the new size in the old
@@ -297,9 +389,9 @@ fn glide(win: &WebviewWindow, to_x: i32, to_y: i32) {
     }
 }
 
-/// The foreground window covers its whole screen (a game, a video, F11).
+/// The foreground window covers its whole screen, screen `screen` (a game, a video, F11).
 #[cfg(windows)]
-fn fullscreen_in_front(own: isize) -> bool {
+fn fullscreen_in_front(own: isize, screen: &str) -> bool {
     use windows::Win32::Foundation::HWND;
     let fg = crate::procs::foreground();
     if fg == 0 || fg == own {
@@ -319,6 +411,9 @@ fn fullscreen_in_front(own: isize) -> bool {
         }
     }
     let (Some(r), Some(m)) = (crate::procs::window_rect(fg), monitors::of_window(HWND(fg as *mut _))) else { return false };
+    if m.id != screen {
+        return false;
+    }
     let b = &m.bounds;
     let covers = r.left <= b.x && r.top <= b.y && r.right >= b.x + b.width && r.bottom >= b.y + b.height;
     covers && game_or_video(fg)
@@ -402,14 +497,15 @@ fn is_game_or_video(exe: &str, known_game: bool, playing: Option<&str>) -> bool 
 /// The pointer is on the dock or anywhere on its way out: across the dock, from its usual inner side to
 /// the screen's edge (so a raised dock doesn't drop from under a pointer at the very edge).
 #[cfg(windows)]
-fn pointer_near() -> bool {
+fn pointer_near(label: &str) -> bool {
     use windows::Win32::Foundation::POINT;
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-    let (w, h) = *SIZE.lock().unwrap();
-    let Some(m) = monitors::primary() else { return false };
-    let Some((x, y, pw, ph)) = spot_as(w, h, Some(false)) else { return false };
+    let Some(b) = bar(label) else { return false };
+    let (w, h) = b.size;
+    let Some(m) = monitor_of(label) else { return false };
+    let Some((x, y, pw, ph)) = spot_as(label, w, h, Some(false)) else { return false };
     // The bar's part only, not the room for a card over it.
-    let bar = *BAR_AREA.lock().unwrap();
+    let bar = b.bar_area;
     let mut p = POINT::default();
     if unsafe { GetCursorPos(&mut p) }.is_err() {
         return false;
@@ -436,24 +532,38 @@ fn pointer_near() -> bool {
     }
 }
 
-static WATCHER: AtomicBool = AtomicBool::new(false);
+/// The taskbars whose watcher threads run (watch_fullscreen, watch_pointer), by label.
+static WATCHING: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
-/// While the dock exists: with a full-screen app in front it glides down to the screen's bottom
-/// edge and goes faint; the pointer coming to it glides it back up, and it works as usual there.
-fn watch_fullscreen(app: AppHandle) {
-    if WATCHER.swap(true, Ordering::SeqCst) {
+/// Marks a watcher of `kind` for `label` as running; false if one already is.
+fn start_watch(kind: &str, label: &str) -> bool {
+    WATCHING.lock().unwrap().get_or_insert_with(HashSet::new).insert(format!("{kind}:{label}"))
+}
+
+fn end_watch(kind: &str, label: &str) {
+    if let Some(set) = WATCHING.lock().unwrap().as_mut() {
+        set.remove(&format!("{kind}:{label}"));
+    }
+}
+
+/// While taskbar `label` exists: with a full-screen app in front on its screen it glides down to the
+/// screen's edge and goes faint; the pointer coming to it glides it back up, and it works as usual there.
+fn watch_fullscreen(app: AppHandle, label: String) {
+    if !start_watch("full", &label) {
         return;
     }
     std::thread::spawn(move || {
         let mut away: Option<std::time::Instant> = None;
         let mut room_check = std::time::Instant::now();
         loop {
-            let full = FULL.load(Ordering::SeqCst);
+            let full = bar(&label).is_some_and(|b| b.full);
             std::thread::sleep(std::time::Duration::from_millis(if full { 30 } else { 300 }));
-            let Some(win) = app.get_webview_window(LABEL) else {
-                WATCHER.store(false, Ordering::SeqCst);
-                FULL.store(false, Ordering::SeqCst);
-                UP.store(false, Ordering::SeqCst);
+            let (Some(win), Some(b)) = (app.get_webview_window(&label), bar(&label)) else {
+                end_watch("full", &label);
+                with_bar(&label, |b| {
+                    b.full = false;
+                    b.up = false;
+                });
                 return;
             };
             if room_check.elapsed().as_millis() >= 1000 {
@@ -463,10 +573,10 @@ fn watch_fullscreen(app: AppHandle) {
             #[cfg(windows)]
             {
                 let own = win.hwnd().map(|h| h.0 as isize).unwrap_or(0);
-                let now = AUTO.load(Ordering::SeqCst) || fullscreen_in_front(own);
-                let up = UP.load(Ordering::SeqCst);
+                let now = AUTO.load(Ordering::SeqCst) || fullscreen_in_front(own, &b.monitor);
+                let up = b.up;
                 let want_up = now && {
-                    if pointer_near() {
+                    if pointer_near(&label) {
                         away = None;
                         true
                     } else if up {
@@ -477,76 +587,161 @@ fn watch_fullscreen(app: AppHandle) {
                         false
                     }
                 };
-                if now != full || want_up != up {
-                    FULL.store(now, Ordering::SeqCst);
-                    UP.store(want_up, Ordering::SeqCst);
+                if now != b.full || want_up != up {
+                    with_bar(&label, |b| {
+                        b.full = now;
+                        b.up = want_up;
+                    });
                     if !want_up {
                         away = None;
                     }
                     tell(&win);
-                    let (w, h) = *SIZE.lock().unwrap();
-                    if let Some((x, y, _, _)) = spot(w, h) {
+                    let (w, h) = b.size;
+                    if let Some((x, y, _, _)) = spot(&label, w, h) {
                         glide(&win, x, y);
                     }
                 }
             }
             #[cfg(not(windows))]
-            let _ = (&win, &mut away, full);
+            let _ = (&win, &mut away, full, &b);
         }
     });
 }
 
-/// Shows the dock at `w` x `h` logical px with its centre at `centre` (0..1 across the screen,
-/// negative: the middle), making its window the first time, or closes it. Built off the calling
-/// thread, as building a window on the event loop deadlocks WebView2.
+/// A taskbar and the screen it is on, for the island (src/core/dock.ts DockHost).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DockScreen {
+    pub label: String,
+    pub monitor: String,
+    pub primary: bool,
+}
+
+/// One sync of the taskbars' windows at a time.
+static SYNCING: Mutex<()> = Mutex::new(());
+
+/// Shows the taskbars at `w` x `h` logical px (until their pages measure themselves), one on the main
+/// screen and, with `all`, one on every other (Settings › Taskbar › Show on), each with its centre
+/// along its edge from `centres` (0..1 by screen id; none: the middle); or closes them all. Answers
+/// which taskbar is on which screen. Their windows are made off the calling thread, as building a
+/// window on the event loop deadlocks WebView2.
 #[tauri::command]
-pub fn dock_show(app: AppHandle, on: bool, w: f64, h: f64, centre: f64) {
-    *CENTRE.lock().unwrap() = if centre.is_finite() { centre } else { -1.0 };
-    std::thread::spawn(move || {
-        if !on {
+pub fn dock_show(app: AppHandle, on: bool, w: f64, h: f64, centres: Option<HashMap<String, f64>>, all: Option<bool>) -> Vec<DockScreen> {
+    if let Some(c) = centres {
+        *CENTRES.lock().unwrap() = Some(c.into_iter().filter(|(_, v)| v.is_finite()).collect());
+    }
+    if let Some(a) = all {
+        ALL_SCREENS.store(a, Ordering::SeqCst);
+    }
+    if !on {
+        std::thread::spawn(move || {
+            let _one = SYNCING.lock().unwrap();
             // No taskbar: Explorer's has the tray to itself again, and the windows the room it held.
             crate::trayhost::stop();
             let_go_room(&app);
-            if let Some(win) = app.get_webview_window(LABEL) {
+            for l in labels(&app) {
+                if let Some(win) = app.get_webview_window(&l) {
+                    let _ = win.destroy();
+                }
+            }
+            BARS.lock().unwrap().clear();
+        });
+        return Vec::new();
+    }
+    let plan = layout(&monitors::all(), ALL_SCREENS.load(Ordering::SeqCst));
+    let screens = plan.iter().map(|(l, m)| DockScreen { label: l.clone(), monitor: m.id.clone(), primary: l == LABEL }).collect();
+    let (w, h) = (w.clamp(32.0, 2400.0), h.clamp(32.0, 2400.0));
+    std::thread::spawn(move || sync(&app, plan, w, h));
+    screens
+}
+
+/// The screens changed (one added, taken away, the main one moved): every screen gets its taskbar
+/// again, if they show.
+pub fn screens_changed(app: &AppHandle) {
+    if labels(app).is_empty() {
+        return;
+    }
+    let plan = layout(&monitors::all(), ALL_SCREENS.load(Ordering::SeqCst));
+    let same = {
+        let bars = BARS.lock().unwrap();
+        bars.len() == plan.len() && plan.iter().all(|(l, m)| bars.get(l).is_some_and(|b| b.monitor == m.id))
+    };
+    if same {
+        return;
+    }
+    let (w, h) = bar(LABEL).map(|b| b.size).filter(|s| s.0 > 0.0).unwrap_or((640.0, 60.0));
+    let app = app.clone();
+    std::thread::spawn(move || sync(&app, plan, w, h));
+}
+
+/// Makes, moves or closes the taskbars' windows so there is one for each screen in `plan`.
+fn sync(app: &AppHandle, plan: Vec<(String, MonitorInfo)>, w: f64, h: f64) {
+    let _one = SYNCING.lock().unwrap();
+    let keep: HashSet<&str> = plan.iter().map(|(l, _)| l.as_str()).collect();
+    for l in labels(app) {
+        if !keep.contains(l.as_str()) {
+            let_go_room_of(&l);
+            if let Some(win) = app.get_webview_window(&l) {
                 let _ = win.destroy();
             }
-            return;
+            BARS.lock().unwrap().remove(&l);
         }
-        let (w, h) = (w.clamp(32.0, 2400.0), h.clamp(32.0, 2400.0));
-        if let Some(win) = app.get_webview_window(LABEL) {
-            put(&win, w, h);
-            return;
-        }
-        let built = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("index.html".into()))
-            .title("Island taskbar")
-            .transparent(true)
-            .decorations(false)
-            .shadow(false)
-            .skip_taskbar(true)
-            .focused(false)
-            .resizable(false)
-            .maximizable(false)
-            .minimizable(false)
-            .always_on_top(true)
-            .visible(false)
-            .inner_size(w, h)
-            .background_color(tauri::window::Color(0, 0, 0, 0))
-            .build();
-        match built {
-            Ok(win) => {
-                style(&win);
-                put(&win, w, h);
-                let _ = win.show();
-                #[cfg(windows)]
-                guard_style(&win);
-                #[cfg(not(windows))]
-                style(&win);
-                watch_fullscreen(app.clone());
-                watch_pointer(app.clone());
+    }
+    // A screen's new taskbar starts the size of the main one's (its page measures it again once it draws).
+    let main_size = bar(LABEL).map(|b| b.size).filter(|s| s.0 > 0.0 && s.1 > 0.0);
+    for (label, m) in plan {
+        let centre = CENTRES.lock().unwrap().as_ref().and_then(|c| c.get(&m.id).copied()).unwrap_or(-1.0);
+        let size = {
+            let mut bars = BARS.lock().unwrap();
+            let b = bars.entry(label.clone()).or_insert_with(|| Bar::new(m.id.clone(), centre));
+            if b.monitor != m.id {
+                b.monitor = m.id.clone();
+                b.full = false;
+                b.up = false;
             }
-            Err(e) => crate::log::line(format!("dock failed: {e}")),
+            b.centre = centre;
+            b.size
+        };
+        let (bw, bh) = if size.0 > 0.0 && size.1 > 0.0 { size } else { main_size.unwrap_or((w, h)) };
+        if let Some(win) = app.get_webview_window(&label) {
+            put(&win, bw, bh);
+            continue;
         }
-    });
+        build(app, &label, bw, bh);
+    }
+}
+
+/// Makes taskbar `label`'s window and starts watching it.
+fn build(app: &AppHandle, label: &str, w: f64, h: f64) {
+    let built = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+        .title("Island taskbar")
+        .transparent(true)
+        .decorations(false)
+        .shadow(false)
+        .skip_taskbar(true)
+        .focused(false)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .always_on_top(true)
+        .visible(false)
+        .inner_size(w, h)
+        .background_color(tauri::window::Color(0, 0, 0, 0))
+        .build();
+    match built {
+        Ok(win) => {
+            style(&win);
+            put(&win, w, h);
+            let _ = win.show();
+            #[cfg(windows)]
+            guard_style(&win);
+            #[cfg(not(windows))]
+            style(&win);
+            watch_fullscreen(app.clone(), label.to_string());
+            watch_pointer(app.clone(), label.to_string());
+        }
+        Err(e) => crate::log::line(format!("dock {label} failed: {e}")),
+    }
 }
 
 /// The dock page measured its content: the window takes that size and stays in its place. `bar`: the
@@ -554,13 +749,15 @@ pub fn dock_show(app: AppHandle, on: bool, w: f64, h: f64, centre: f64) {
 /// round the island, where the screen's middle falls along the window (logical px); else none.
 #[tauri::command]
 pub fn dock_fit(window: WebviewWindow, w: f64, h: f64, bar: Option<f64>, pivot: Option<f64>) {
-    if window.label() != LABEL || !w.is_finite() || !h.is_finite() {
+    if !is_dock(window.label()) || !w.is_finite() || !h.is_finite() {
         return;
     }
-    if let Some(b) = bar.filter(|b| b.is_finite() && *b > 0.0) {
-        *BAR_AREA.lock().unwrap() = b;
-    }
-    *PIVOT.lock().unwrap() = pivot.filter(|p| p.is_finite() && *p >= 0.0).unwrap_or(-1.0);
+    with_bar(window.label(), |b| {
+        if let Some(a) = bar.filter(|a| a.is_finite() && *a > 0.0) {
+            b.bar_area = a;
+        }
+        b.pivot = pivot.filter(|p| p.is_finite() && *p >= 0.0).unwrap_or(-1.0);
+    });
     // Taller (or wider, on a side) while a card is up over the bar.
     put(&window, w.clamp(32.0, 2400.0), h.clamp(32.0, 2400.0));
 }
@@ -572,9 +769,12 @@ pub fn dock_side(app: AppHandle, side: String) {
     if SIDE.swap(s.index(), Ordering::SeqCst) == s.index() {
         return;
     }
-    // Its place along the old edge means nothing on the new one.
-    *CENTRE.lock().unwrap() = -1.0;
-    // The strip held on the old edge goes; put holds one on the new.
+    // Their places along the old edge mean nothing on the new one.
+    for b in BARS.lock().unwrap().values_mut() {
+        b.centre = -1.0;
+    }
+    *CENTRES.lock().unwrap() = None;
+    // The strips held on the old edge go; put holds them on the new.
     let_go_room(&app);
     replace(&app);
 }
@@ -584,11 +784,16 @@ pub fn dock_side(app: AppHandle, side: String) {
 #[cfg(windows)]
 #[tauri::command]
 pub fn dock_typing(window: WebviewWindow, on: bool) {
-    if window.label() != LABEL {
+    if !is_dock(window.label()) {
         return;
     }
-    TYPING.store(on, Ordering::Relaxed);
     let Ok(h) = window.hwnd() else { return };
+    let raw = h.0 as isize;
+    if on {
+        TYPING.store(raw, Ordering::Relaxed);
+    } else {
+        let _ = TYPING.compare_exchange(raw, 0, Ordering::Relaxed, Ordering::Relaxed);
+    }
     let hwnd = windows::Win32::Foundation::HWND(h.0);
     apply_style(hwnd);
     if on {
@@ -603,15 +808,20 @@ pub fn dock_typing(_window: WebviewWindow, _on: bool) {}
 
 /// Where the page draws something that takes clicks (logical px rects [x, y, w, h] in the window).
 #[tauri::command]
-pub fn dock_solid(rects: Vec<Vec<f64>>) {
+pub fn dock_solid(window: WebviewWindow, rects: Vec<Vec<f64>>) {
     let clean: Vec<[f64; 4]> = rects.iter().filter(|r| r.len() == 4 && r.iter().all(|n| n.is_finite())).map(|r| [r[0], r[1], r[2], r[3]]).take(8).collect();
-    *SOLID.lock().unwrap() = clean;
+    with_bar(window.label(), |b| b.solid = clean);
 }
 
-/// A full-screen game or video is in front and the taskbar waits faint at the edge (the screen
-/// border goes meanwhile).
-pub fn full() -> bool {
-    FULL.load(Ordering::SeqCst) && !UP.load(Ordering::SeqCst)
+/// A full-screen game or video is in front on screen `monitor` and its taskbar waits faint at the edge
+/// (the screen border there goes meanwhile).
+pub fn full_on(monitor: &str) -> bool {
+    BARS.lock().unwrap().values().any(|b| b.monitor == monitor && b.full && !b.up)
+}
+
+/// Which taskbar goes on which screen now (Settings › Taskbar › Show on): the borders go on the same ones.
+pub fn plan() -> Vec<(String, MonitorInfo)> {
+    layout(&monitors::all(), ALL_SCREENS.load(Ordering::SeqCst))
 }
 
 /// On the screen's bottom edge (over Windows' taskbar), or floating above it as usual.
@@ -620,12 +830,7 @@ pub fn dock_edge(app: AppHandle, on: bool) {
     if EDGE.swap(on, Ordering::SeqCst) == on {
         return;
     }
-    if let Some(win) = app.get_webview_window(LABEL) {
-        let (w, h) = *SIZE.lock().unwrap();
-        if w > 0.0 && h > 0.0 {
-            put(&win, w, h);
-        }
-    }
+    replace(&app);
 }
 
 /// Auto-hide on or off: the watcher tucks the dock at its edge until the pointer comes (watch_fullscreen).
@@ -643,24 +848,39 @@ pub fn dock_auto(app: AppHandle, on: bool) {
 static ROOM: AtomicBool = AtomicBool::new(false);
 /// The strip held now: the side (Side::index), how deep (physical px; 0: none) and where (left, top,
 /// right, bottom, physical px), as Windows gave it.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 struct Held {
     side: u8,
     deep: i32,
     rect: (i32, i32, i32, i32),
 }
-static HELD: Mutex<Held> = Mutex::new(Held { side: 0, deep: 0, rect: (0, 0, 0, 0) });
+/// The strip held for each taskbar, by its label (none: nothing held).
+static HELD: Mutex<BTreeMap<String, Held>> = Mutex::new(BTreeMap::new());
+
+fn held(label: &str) -> Held {
+    HELD.lock().unwrap().get(label).copied().unwrap_or_default()
+}
+
+fn set_held(label: &str, h: Held) {
+    let mut all = HELD.lock().unwrap();
+    if h.deep > 0 {
+        all.insert(label.to_string(), h);
+    } else {
+        all.remove(label);
+    }
+}
+
 /// The room its icons rise into over the bar, logical px (src/core/dock.ts HEADROOM), and the window's
-/// margin round the bar (16): BAR_AREA less these is the bar's own thickness.
+/// margin round the bar (16): the bar's area less these is the bar's own thickness.
 const RISE_ROOM: f64 = 20.0;
 
-/// How deep a strip the taskbar wants held now, physical px (0: none): from the screen's edge to just
+/// How deep a strip taskbar `label` wants held now, physical px (0: none): from the screen's edge to just
 /// past the bar's inner side (GAP clear of it), or to the bar's inner side when it sits on the edge.
-fn room_wanted(scale: f64) -> i32 {
+fn room_wanted(label: &str, scale: f64) -> i32 {
     if !ROOM.load(Ordering::SeqCst) || AUTO.load(Ordering::SeqCst) {
         return 0;
     }
-    let bar = *BAR_AREA.lock().unwrap();
+    let bar = bar(label).map(|b| b.bar_area).unwrap_or(0.0);
     let thick = bar - 16.0 - RISE_ROOM;
     if thick <= 0.0 {
         return 0;
@@ -669,11 +889,11 @@ fn room_wanted(scale: f64) -> i32 {
     (deep * scale).round() as i32
 }
 
-/// The work area as it would be without the strip held for the taskbar: out to the strip's outer side
-/// (the screen's edge, or Windows' own taskbar showing there). The bar is placed against that, so
+/// The work area as it would be without the strip held for taskbar `label`: out to the strip's outer
+/// side (the screen's edge, or Windows' own taskbar showing there). The bar is placed against that, so
 /// holding the strip doesn't move it.
-fn work_without_room(work: Area) -> Area {
-    let h = *HELD.lock().unwrap();
+fn work_without_room(label: &str, work: Area) -> Area {
+    let h = held(label);
     if h.deep <= 0 || h.side != side().index() {
         return work;
     }
@@ -691,36 +911,36 @@ pub fn widen_to(work: Area, side: Side, rect: (i32, i32, i32, i32)) -> Area {
     }
 }
 
-/// The window the room is held for: a hidden one of its own, on a thread of its own, and a new one each
-/// time the room is taken anew. Held for the taskbar's own window (WebView2's), or taken again for the
-/// same window after being let go, Windows said yes and then worked the work area out without it
-/// (Justin, 11-20: it worked once, then not); a window it hasn't seen before it keeps the room for.
+/// The window each taskbar's room is held for: a hidden one of its own, on a thread of its own, and a
+/// new one each time the room is taken anew. Held for the taskbar's own window (WebView2's), or taken
+/// again for the same window after being let go, Windows said yes and then worked the work area out
+/// without it (Justin, 11-20: it worked once, then not); a window it hasn't seen before it keeps the room for.
 #[cfg(windows)]
-static ROOM_HW: Mutex<(isize, u32)> = Mutex::new((0, 0));
+static ROOM_HW: Mutex<BTreeMap<String, (isize, u32)>> = Mutex::new(BTreeMap::new());
 
 #[cfg(windows)]
-fn room_window() -> Option<isize> {
-    let hw = ROOM_HW.lock().unwrap().0;
-    if hw != 0 {
-        return Some(hw);
+fn room_window(label: &str) -> Option<isize> {
+    if let Some(&(hw, _)) = ROOM_HW.lock().unwrap().get(label) {
+        if hw != 0 {
+            return Some(hw);
+        }
     }
-    fresh_room_window()
+    fresh_room_window(label)
 }
 
-/// A new window for the room, the last one closed.
+/// A new window for taskbar `label`'s room, its last one closed.
 #[cfg(windows)]
-fn fresh_room_window() -> Option<isize> {
+fn fresh_room_window(label: &str) -> Option<isize> {
     use windows::core::w;
     use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DispatchMessageW, GetMessageW, PostMessageW, PostThreadMessageW, TranslateMessage, MSG, WM_CLOSE, WM_QUIT, WS_EX_TOOLWINDOW, WS_POPUP};
-    let mut cur = ROOM_HW.lock().unwrap();
-    if cur.0 != 0 {
+    let mut all = ROOM_HW.lock().unwrap();
+    if let Some(cur) = all.remove(label) {
         unsafe {
             let _ = PostMessageW(Some(HWND(cur.0 as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0));
             let _ = PostThreadMessageW(cur.1, WM_QUIT, WPARAM(0), LPARAM(0));
         }
-        *cur = (0, 0);
     }
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || unsafe {
@@ -737,7 +957,7 @@ fn fresh_room_window() -> Option<isize> {
         }
     });
     let made = rx.recv().ok().flatten()?;
-    *cur = made;
+    all.insert(label.to_string(), made);
     Some(made.0)
 }
 
@@ -747,24 +967,29 @@ fn fresh_room_window() -> Option<isize> {
 #[cfg(windows)]
 fn hold_room(win: &WebviewWindow, check: bool) -> bool {
     // Straight to Explorer, not through Island's own stand-in for its tray (trayhost.rs).
-    crate::trayhost::explorer_first(|| hold_room_now(win, check))
+    crate::trayhost::explorer_first(|| hold_room_now(win.label(), check))
 }
 
+/// One taskbar's strip held at a time (each is a talk with Explorer in several steps).
 #[cfg(windows)]
-fn hold_room_now(win: &WebviewWindow, check: bool) -> bool {
+static HOLDING: Mutex<()> = Mutex::new(());
+
+#[cfg(windows)]
+fn hold_room_now(label: &str, check: bool) -> bool {
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::UI::Shell::{SHAppBarMessage, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
-    let _ = win;
-    let Some(m) = monitors::primary() else { return false };
-    let want = room_wanted(m.scale);
+    let _one = HOLDING.lock().unwrap();
+    let Some(m) = monitor_of(label) else { return false };
+    let want = room_wanted(label, m.scale);
     let s = side();
-    let mut held = HELD.lock().unwrap();
+    let mut held = held(label);
     let data = |hw: isize| APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: HWND(hw as *mut _), uCallbackMessage: 0x8000 + 0x1A5, ..Default::default() };
     let let_go = |held: &mut Held| {
-        if let Some(hw) = room_window() {
+        if let Some(hw) = room_window(label) {
             unsafe { SHAppBarMessage(ABM_REMOVE, &mut data(hw)) };
         }
-        *held = Held { side: 0, deep: 0, rect: (0, 0, 0, 0) };
+        *held = Held::default();
+        set_held(label, *held);
     };
     if want == 0 {
         if held.deep > 0 {
@@ -780,9 +1005,9 @@ fn hold_room_now(win: &WebviewWindow, check: bool) -> bool {
     }
     // Taken anew: for a window Windows hasn't seen.
     if held.deep == 0 {
-        fresh_room_window();
+        fresh_room_window(label);
     }
-    let Some(hw) = room_window() else { return false };
+    let Some(hw) = room_window(label) else { return false };
     let mut d = data(hw);
     // Made an app bar (when it held none; on a check, answering 0 while it still is one).
     let made = unsafe { SHAppBarMessage(ABM_NEW, &mut d) } != 0;
@@ -820,28 +1045,28 @@ fn hold_room_now(win: &WebviewWindow, check: bool) -> bool {
         Side::Right => w.x + w.width <= rect.0,
     };
     let now = Held { side: s.index(), deep: want, rect };
-    if *held == now {
+    if held == now {
         if out && !made {
             return false;
         }
-        // At most once in a while (it may be something else putting the work area back).
-        static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+        // At most once in a while for each taskbar (it may be something else putting the work area back).
+        static LAST: Mutex<BTreeMap<String, std::time::Instant>> = Mutex::new(BTreeMap::new());
         let mut last = LAST.lock().unwrap();
-        if !made && last.is_some_and(|t| t.elapsed().as_secs() < 30) {
+        if !made && last.get(label).is_some_and(|t| t.elapsed().as_secs() < 30) {
             return false;
         }
-        *last = Some(std::time::Instant::now());
+        last.insert(label.to_string(), std::time::Instant::now());
         // Held there, yet Windows forgot it (it was made again) or works the work area out without it: a
         // new window takes it.
-        crate::log::line(format!("dock: Windows {} the taskbar's room; held again for a new window", if made { "forgot" } else { "left out" }));
+        crate::log::line(format!("dock {label}: Windows {} the taskbar's room; held again for a new window", if made { "forgot" } else { "left out" }));
         unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
-        let Some(fresh) = fresh_room_window() else { return false };
+        let Some(fresh) = fresh_room_window(label) else { return false };
         d = data(fresh);
         unsafe { SHAppBarMessage(ABM_NEW, &mut d) };
         place(&mut d);
     }
     unsafe { SHAppBarMessage(ABM_SETPOS, &mut d) };
-    *held = Held { side: s.index(), deep: want, rect: (d.rc.left, d.rc.top, d.rc.right, d.rc.bottom) };
+    set_held(label, Held { side: s.index(), deep: want, rect: (d.rc.left, d.rc.top, d.rc.right, d.rc.bottom) });
     true
 }
 
@@ -856,55 +1081,61 @@ fn hold_room(_win: &WebviewWindow, _check: bool) -> bool {
 /// stayed up where that taskbar had been). About once a second it asks; moved or forgotten, it holds it
 /// again and the bar is put back against it.
 fn keep_room(win: &WebviewWindow) {
+    let label = win.label().to_string();
     {
         // What it wants and holds, in the log when that changes.
-        static SEEN: Mutex<String> = Mutex::new(String::new());
-        let h = *HELD.lock().unwrap();
-        let scale = monitors::primary().map(|m| m.scale).unwrap_or(1.0);
-        let want = room_wanted(scale);
-        let work = monitors::primary().map(|m| (m.work.y + m.work.height, m.bounds.y + m.bounds.height));
+        static SEEN: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+        let h = held(&label);
+        let m = monitor_of(&label);
+        let want = room_wanted(&label, m.as_ref().map(|m| m.scale).unwrap_or(1.0));
+        let work = m.map(|m| (m.work.y + m.work.height, m.bounds.y + m.bounds.height));
         let now = format!("room: on {} auto {} want {want} held {} at {:?}, work {:?}", ROOM.load(Ordering::SeqCst), AUTO.load(Ordering::SeqCst), h.deep, h.rect, work);
         let mut seen = SEEN.lock().unwrap();
-        if *seen != now {
-            crate::log::line(format!("dock: {now}"));
-            *seen = now;
+        if seen.get(&label) != Some(&now) {
+            crate::log::line(format!("dock {label}: {now}"));
+            seen.insert(label.clone(), now);
         }
     }
-    if HELD.lock().unwrap().deep <= 0 {
+    if held(&label).deep <= 0 {
         return;
     }
     if hold_room(win, true) {
-        let (sw, sh) = *SIZE.lock().unwrap();
+        let (sw, sh) = bar(&label).map(|b| b.size).unwrap_or((0.0, 0.0));
         if sw > 0.0 && sh > 0.0 {
             put(win, sw, sh);
         }
     }
 }
 
-/// Lets go of the strip (the taskbar is off, or Island quits).
-#[cfg(windows)]
+/// Lets go of every taskbar's strip (the taskbar is off, its side changed, or Island quits).
 fn let_go_room(app: &AppHandle) {
-    crate::trayhost::explorer_first(|| let_go_room_now(app));
+    let _ = app;
+    let all: Vec<String> = HELD.lock().unwrap().keys().cloned().collect();
+    for l in all {
+        let_go_room_of(&l);
+    }
 }
 
+/// Lets go of taskbar `label`'s strip.
 #[cfg(windows)]
-fn let_go_room_now(app: &AppHandle) {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_REMOVE, APPBARDATA};
-    let _ = app;
-    let mut held = HELD.lock().unwrap();
-    if held.deep == 0 {
-        return;
-    }
-    if let Some(hw) = room_window() {
-        let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: HWND(hw as *mut _), ..Default::default() };
-        unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
-    }
-    *held = Held { side: 0, deep: 0, rect: (0, 0, 0, 0) };
+fn let_go_room_of(label: &str) {
+    crate::trayhost::explorer_first(|| {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_REMOVE, APPBARDATA};
+        let _one = HOLDING.lock().unwrap();
+        if held(label).deep == 0 {
+            return;
+        }
+        if let Some(&(hw, _)) = ROOM_HW.lock().unwrap().get(label) {
+            let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: HWND(hw as *mut _), ..Default::default() };
+            unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
+        }
+        set_held(label, Held::default());
+    })
 }
 
 #[cfg(not(windows))]
-fn let_go_room(_app: &AppHandle) {}
+fn let_go_room_of(_label: &str) {}
 
 /// Keep windows clear of the taskbar, on or off (Settings › Taskbar).
 #[tauri::command]
@@ -915,10 +1146,11 @@ pub fn dock_room(app: AppHandle, on: bool) {
     replace(&app);
 }
 
-/// Places the dock again as it is (its mode changed).
+/// Places every taskbar again as it is (its mode changed).
 fn replace(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window(LABEL) {
-        let (w, h) = *SIZE.lock().unwrap();
+    for l in labels(app) {
+        let Some(win) = app.get_webview_window(&l) else { continue };
+        let (w, h) = bar(&l).map(|b| b.size).unwrap_or((0.0, 0.0));
         if w > 0.0 && h > 0.0 {
             put(&win, w, h);
         }
@@ -930,19 +1162,30 @@ pub fn solid_at(rects: &[[f64; 4]], x: f64, y: f64) -> bool {
     rects.iter().any(|r| x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3])
 }
 
-static POINTER_WATCH: AtomicBool = AtomicBool::new(false);
+/// The taskbars the pointer is on now (watch_pointer): the island's loop polls fast while there is one.
+static HOT: Mutex<BTreeMap<String, bool>> = Mutex::new(BTreeMap::new());
 
-/// While the dock exists: the window takes clicks only on what the page drew there (the bar, a card),
-/// so the room over the bar for a card never blocks the windows under it. Not while a button is held
-/// (a drag keeps going wherever the pointer goes). On the bottom edge, it also stays over Windows'
+fn set_hot(label: &str, on: bool) {
+    let mut hot = HOT.lock().unwrap();
+    if on {
+        hot.insert(label.to_string(), true);
+    } else {
+        hot.remove(label);
+    }
+    crate::overlay::DOCK_HOT.store(!hot.is_empty(), Ordering::Relaxed);
+}
+
+/// While taskbar `label` exists: its window takes clicks only on what the page drew there (the bar, a
+/// card), so the room over the bar for a card never blocks the windows under it. Not while a button is
+/// held (a drag keeps going wherever the pointer goes). On the bottom edge, it also stays over Windows'
 /// taskbar, which puts itself on top when it slides up.
 #[cfg(windows)]
-fn watch_pointer(app: AppHandle) {
+fn watch_pointer(app: AppHandle, label: String) {
     use windows::Win32::Foundation::{HWND, POINT, RECT};
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
     use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
-    if POINTER_WATCH.swap(true, Ordering::SeqCst) {
+    if !start_watch("pointer", &label) {
         return;
     }
     std::thread::spawn(move || {
@@ -955,15 +1198,15 @@ fn watch_pointer(app: AppHandle) {
         let mut was_held = false;
         loop {
             std::thread::sleep(std::time::Duration::from_millis(20));
-            let Some(win) = app.get_webview_window(LABEL) else {
-                POINTER_WATCH.store(false, Ordering::SeqCst);
-                crate::overlay::DOCK_HOT.store(false, Ordering::Relaxed);
+            let (Some(win), Some(b)) = (app.get_webview_window(&label), bar(&label)) else {
+                end_watch("pointer", &label);
+                set_hot(&label, false);
                 return;
             };
             let Ok(h) = win.hwnd() else { continue };
             let hwnd = HWND(h.0);
             tick = tick.wrapping_add(1);
-            if EDGE.load(Ordering::SeqCst) && !FULL.load(Ordering::SeqCst) && tick % 15 == 0 {
+            if EDGE.load(Ordering::SeqCst) && !b.full && tick % 15 == 0 {
                 // Over Windows' taskbar (it puts itself on top when it slides up), under the island, over
                 // the screen border (frame.rs restack).
                 crate::frame::restack(&app);
@@ -984,24 +1227,24 @@ fn watch_pointer(app: AppHandle) {
                 dpi => dpi as f64 / 96.0,
             };
             let (x, y) = ((p.x - r.left) as f64 / scale, (p.y - r.top) as f64 / scale);
-            let over = solid_at(&SOLID.lock().unwrap(), x, y);
-            crate::overlay::DOCK_HOT.store(over, Ordering::Relaxed);
+            let over = solid_at(&b.solid, x, y);
+            set_hot(&label, over);
             if pressed && !over {
                 // A press off the bar and its cards: the page may close what stays up through an app's
                 // own menu (the tray's hidden icons), which a lost focus can't tell.
-                let _ = app.emit_to(LABEL, "dock-press-out", ());
+                let _ = app.emit_to(label.as_str(), "dock-press-out", ());
             }
             let now_taps = crate::overlay::CTRL_TAPS.load(Ordering::SeqCst);
             if now_taps != taps {
                 taps = now_taps;
-                if over && !peeking && !TYPING.load(Ordering::Relaxed) {
+                if over && !peeking && !typing(h.0 as isize) {
                     peeking = true;
-                    let _ = app.emit_to(LABEL, "dock-peek", true);
+                    let _ = app.emit_to(label.as_str(), "dock-peek", true);
                 }
             }
             if peeking && !over {
                 peeking = false;
-                let _ = app.emit_to(LABEL, "dock-peek", false);
+                let _ = app.emit_to(label.as_str(), "dock-peek", false);
             }
             let on = over && !peeking;
             if taking != Some(on) {
@@ -1013,38 +1256,49 @@ fn watch_pointer(app: AppHandle) {
 }
 
 #[cfg(not(windows))]
-fn watch_pointer(_app: AppHandle) {}
+fn watch_pointer(_app: AppHandle, _label: String) {}
 
-/// Dragging the dock: its start (left edge, or top edge on a side) to `x` (physical px), along its edge
-/// only. `done`: the drag ended, so its place is kept and the island told (`dock-moved`). `x` negative
-/// with `done`: back to the middle (a double-click).
+/// Dragging a taskbar: its start (left edge, or top edge on a side) to `x`, along its edge on its own
+/// screen only. With `now` (where the page sees its start now, CSS px on the screen, as `x`) it moves by
+/// the difference; without, `x` is physical px. `done`: the drag ended, so its place is kept and the
+/// island told (`dock-moved`, with its screen: each screen's taskbar keeps its own place). `x` negative
+/// with `done` and no `now`: back to the middle (a double-click).
 #[tauri::command]
-pub fn dock_at(app: AppHandle, window: WebviewWindow, x: f64, done: bool) {
-    if window.label() != LABEL {
+pub fn dock_at(app: AppHandle, window: WebviewWindow, x: f64, done: bool, now: Option<f64>) {
+    let label = window.label().to_string();
+    if !is_dock(&label) {
         return;
     }
-    let (Some(m), Ok(at), Ok(size)) = (monitors::primary(), window.outer_position(), window.outer_size()) else { return };
+    let (Some(m), Ok(at), Ok(size)) = (monitor_of(&label), window.outer_position(), window.outer_size()) else { return };
     let across = side().across();
-    let (start, len, along, now) = if across { (m.work.x, m.work.width, size.width as i32, at.x) } else { (m.work.y, m.work.height, size.height as i32, at.y) };
-    if done && x < 0.0 {
-        *CENTRE.lock().unwrap() = -1.0;
+    let (start, len, along, cur) = if across { (m.work.x, m.work.width, size.width as i32, at.x) } else { (m.work.y, m.work.height, size.height as i32, at.y) };
+    let from = now.filter(|n| n.is_finite());
+    if done && x < 0.0 && from.is_none() {
+        with_bar(&label, |b| b.centre = -1.0);
     } else if x.is_finite() {
-        let n = (x.round() as i32).clamp(start, (start + len - along).max(start));
-        if n != now {
+        let scale = window.scale_factor().unwrap_or(m.scale);
+        let want = match from {
+            Some(n0) => cur + ((x - n0) * scale).round() as i32,
+            None => x.round() as i32,
+        };
+        let n = want.clamp(start, (start + len - along).max(start));
+        if n != cur {
             let to = if across { PhysicalPosition::new(n, at.y) } else { PhysicalPosition::new(at.x, n) };
             let _ = window.set_position(to);
         }
         if !done {
             return;
         }
-        *CENTRE.lock().unwrap() = centre_of(start, len, n, along);
+        let c = centre_of(start, len, n, along);
+        with_bar(&label, |b| b.centre = c);
     }
     if let Ok(s) = window.inner_size() {
         let scale = window.scale_factor().unwrap_or(m.scale);
         put(&window, s.width as f64 / scale, s.height as f64 / scale);
     }
-    let centre = *CENTRE.lock().unwrap();
-    let _ = app.emit_to(crate::overlay::LABEL, "dock-moved", serde_json::json!({ "centre": centre }));
+    let centre = bar(&label).map(|b| b.centre).unwrap_or(-1.0);
+    CENTRES.lock().unwrap().get_or_insert_with(HashMap::new).insert(m.id.clone(), centre);
+    let _ = app.emit_to(crate::overlay::LABEL, "dock-moved", serde_json::json!({ "centre": centre, "monitor": m.id, "primary": label == LABEL }));
 }
 
 /// The panels Windows opens from its own taskbar: Start (Win), Search (Win+S), Quick Settings (Win+A,
@@ -1274,6 +1528,31 @@ mod tests {
         let before = place_on(Side::Bottom, bounds, bounds, 1.0, 800, 120, -1.0, None, false);
         let held = (0, 0, 1920, 1200 - 96);
         assert_eq!(place_on(Side::Bottom, widen_to(held, Side::Bottom, (0, 1104, 1920, 1200)), bounds, 1.0, 800, 120, -1.0, None, false), before);
+    }
+
+    fn screen(id: &str, primary: bool, x: i32) -> crate::monitors::MonitorInfo {
+        let r = crate::monitors::Rect { x, y: 0, width: 1920, height: 1080 };
+        crate::monitors::MonitorInfo { id: id.into(), name: id.into(), primary, bounds: r.clone(), work: r, scale: 1.0, portrait: false, taskbar: "bottom" }
+    }
+
+    #[test]
+    fn a_taskbar_on_every_screen_the_main_ones_first() {
+        let screens = [screen(r"\.\DISPLAY2", false, -1920), screen(r"\.\DISPLAY1", true, 0), screen(r"\.\DISPLAY3", false, 1920)];
+        let all: Vec<(String, String)> = super::layout(&screens, true).into_iter().map(|(l, m)| (l, m.id)).collect();
+        assert_eq!(
+            all,
+            vec![
+                ("dock".to_string(), r"\.\DISPLAY1".to_string()),
+                ("dock-DISPLAY2".to_string(), r"\.\DISPLAY2".to_string()),
+                ("dock-DISPLAY3".to_string(), r"\.\DISPLAY3".to_string()),
+            ]
+        );
+        // The main screen only.
+        let main: Vec<String> = super::layout(&screens, false).into_iter().map(|(l, _)| l).collect();
+        assert_eq!(main, vec!["dock".to_string()]);
+        // Labels take only letters, digits and dashes; every one is a taskbar's.
+        assert_eq!(super::label_for(r"\.\DISPLAY12", false), "dock-DISPLAY12");
+        assert!(super::is_dock("dock") && super::is_dock("dock-DISPLAY2") && !super::is_dock("dockpeek") && !super::is_dock("island"));
     }
 
     const WORK: super::Area = (0, 0, 1920, 1032);

@@ -1438,7 +1438,7 @@ function settingsPage(part: 'island' | 'behavior' | 'alerts' | 'phone' | 'genera
       row('Border glow', 'Light that circles the pill while something works; orange is Claude. Off saves the most battery.', segmented(i.glow, [['off', 'Off'], ['slow', 'Slow'], ['medium', 'Medium'], ['fast', 'Fast']], (v) => { i.glow = v; save(true); render(); })),
     ]),
     section('Display', [
-      stacked(row('Show the island on', duplicate ? 'Duplicate: the pill shows on every screen picked below. You click it on the primary one (or the first picked); the rest are copies.' : 'Multi-monitor: which display it lives on.', displayChoice)),
+      stacked(row('Show the island on', duplicate ? 'Duplicate: the pill shows on every screen picked below. The one on the screen your pointer is on is the one that works; pointing at one never moves the others.' : 'Multi-monitor: which display it lives on.', displayChoice)),
       monitorList,
     ]),
     section('Behavior', [

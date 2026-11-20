@@ -12,8 +12,8 @@ import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tau
 import { duration } from './format';
 import { packageFamily } from './store-app';
 import { applyGlass } from './glass';
-import { artColour, barColour } from './artcolor';
-import { isTauri, native, on, sendTo, type DockIconRect, type InstalledApp, type LiveWindow, type TrayIcon } from './native';
+import { artColour, barColour, songFill } from './artcolor';
+import { isTauri, native, on, onMine, sendTo, windowLabel, type DockIconRect, type DockScreen, type InstalledApp, type LiveWindow, type TrayIcon } from './native';
 import { BAR_TALL_MAX, barOrder, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockFolder, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
 
 /** One app on the dock. */
@@ -578,9 +578,13 @@ export interface DockHooks {
   open(id?: string): void;
   /** The Claude usage item tapped: Claude's card with its limits and tokens, or closes it when it is up. */
   claudeCard(): void;
-  /** Where the taskbar was dragged to, 0..1 across the screen (-1: the middle). */
-  centre(): number;
-  saveCentre(centre: number): void;
+  /** Where screen `monitor`'s taskbar was dragged to, 0..1 across the screen (-1: the middle). */
+  centre(monitor: string, primary: boolean): number;
+  saveCentre(centre: number, monitor: string, primary: boolean): void;
+  /** A taskbar on every screen (Settings › Taskbar › Show on), or on the main one only. */
+  allScreens(): boolean;
+  /** The screens the island's pill shows on (the taskbar on the top edge splits round it there). */
+  pillScreens(): string[];
   scale(): number | null;
   minLen(): number;
   tall(): number;
@@ -626,8 +630,13 @@ export class DockHost {
   /** Programs with a window, in the order they opened (their places on the dock). */
   private seen: string[] = [];
   private readonly icons = new Map<string, string | null>();
-  private sent = '';
+  /** The frame last sent to each taskbar, by its label. */
+  private sent = new Map<string, string>();
   private shown = false;
+  /** Which taskbar is on which screen (dock_show's answer). */
+  private screens: DockScreen[] = [];
+  /** A taskbar on every screen, as last told to Rust. */
+  private allSent: boolean | undefined;
   private busy = false;
   /** The Apps card is open over the taskbar. */
   private cardOpen = false;
@@ -652,7 +661,7 @@ export class DockHost {
     this.offs.push(
       await on<DockAct>('dock-act', (a) => void this.act(a)),
       await on<null>('dock-ready', () => {
-        this.sent = '';
+        this.sent.clear();
         this.editing = false;
         void this.tick();
       }),
@@ -670,11 +679,16 @@ export class DockHost {
         if (typeof p?.autoHide === 'boolean') this.hooks.setAutoHide(p.autoHide);
         if (typeof p?.side === 'string' && (DOCK_SIDES as readonly string[]).includes(p.side)) this.hooks.setSide(p.side);
         if (typeof p?.toggle === 'string' && (DOCK_ITEMS as readonly string[]).includes(p.toggle)) this.hooks.setHidden(toggleDockItem(this.hooks.hidden(), p.toggle));
-        if (p?.centre === true) void native.dockAt(-1, true);
-        void this.tick();
+                void this.tick();
       }),
-      await on<{ centre: number }>('dock-moved', (m) => {
-        if (typeof m?.centre === 'number' && Number.isFinite(m.centre)) this.hooks.saveCentre(m.centre < 0 ? -1 : Math.min(1, m.centre));
+      await on<{ centre: number; monitor?: string; primary?: boolean }>('dock-moved', (m) => {
+        if (typeof m?.centre !== 'number' || !Number.isFinite(m.centre)) return;
+        const primary = m.primary !== false;
+        this.hooks.saveCentre(m.centre < 0 ? -1 : Math.min(1, m.centre), typeof m.monitor === 'string' ? m.monitor : '', primary);
+      }),
+      // A screen added or taken away: each screen gets its taskbar (Rust makes them; this learns where).
+      await on('displays-changed', () => {
+        if (this.shown) void this.showAll();
       }),
     );
   }
@@ -682,6 +696,23 @@ export class DockHost {
   stop(): void {
     for (const off of this.offs.splice(0)) off();
     if (this.shown) void native.dockShow(false, 0, 0);
+  }
+
+  /** The taskbars on their screens, each at its own place along its edge. */
+  private async showAll(): Promise<void> {
+    const mons = await native.monitors();
+    const centres: Record<string, number> = {};
+    for (const m of mons) centres[m.id] = this.hooks.centre(m.id, m.primary);
+    this.allSent = this.hooks.allScreens();
+    const screens = await native.dockShow(true, 640, 60, centres, this.allSent);
+    this.screens = screens.length ? screens : [{ label: 'dock', monitor: '', primary: true }];
+    this.sent.clear();
+    void this.tick();
+  }
+
+  /** The taskbars on any of these screens. */
+  labelsOn(monitors: readonly string[]): string[] {
+    return this.screens.filter((s) => monitors.includes(s.monitor) || (s.primary && monitors.includes(''))).map((s) => s.label);
   }
 
   /** The profile a Chromium browser last used (its Local State), for a new window to open in; null for other apps. */
@@ -720,8 +751,9 @@ export class DockHost {
         this.roomSent = undefined;
         this.sideSent = undefined;
         this.autoSent = undefined;
-        void native.dockShow(true, 640, 60, this.hooks.centre());
-      }
+        this.screens = [{ label: 'dock', monitor: '', primary: true }];
+        await this.showAll();
+      } else if (this.hooks.allScreens() !== this.allSent) await this.showAll();
       const [wins, front] = await Promise.all([native.wsWindows(true), native.foreground()]);
       const live = wins.ok ? wins.value : [];
       const pinned = this.hooks.pinned();
@@ -800,10 +832,14 @@ export class DockHost {
         this.roomSent = room;
         void native.dockRoom(room);
       }
-      const json = JSON.stringify(frame);
-      if (json !== this.sent) {
-        this.sent = json;
-        void sendTo('dock', 'dock-frame', frame);
+      // Each screen's taskbar: only where the island's pill is does the top edge split round it.
+      const pillOn = frame.gap === null ? [] : this.hooks.pillScreens();
+      for (const s of this.screens) {
+        const own = frame.gap === null || pillOn.includes(s.monitor) || (s.primary && pillOn.includes('')) ? frame : { ...frame, gap: null };
+        const json = JSON.stringify(own);
+        if (json === this.sent.get(s.label)) continue;
+        this.sent.set(s.label, json);
+        void sendTo(s.label, 'dock-frame', own);
       }
     } finally {
       this.busy = false;
@@ -811,8 +847,10 @@ export class DockHost {
     if (this.again) void this.tick();
   }
 
-  private async act(a: DockAct): Promise<void> {
+  private async act(a: DockAct & { from?: string }): Promise<void> {
     if (!a || typeof a !== 'object') return;
+    // The taskbar it came from (its icon's rect is in that window).
+    const from = typeof a.from === 'string' && (a.from === 'dock' || a.from.startsWith('dock-')) ? a.from : null;
     if (a.kind === 'start' || a.kind === 'search' || a.kind === 'quick' || a.kind === 'notifications') {
       void native.dockPanel(a.kind);
       return;
@@ -882,21 +920,21 @@ export class DockHost {
         if (!r.ok) void native.log(`taskbar: couldn't start ${target} ${args}: ${r.error}`);
       }
     } else if (a.kind === 'close') {
-      if (app.windows.length) void native.dockClose(app.windows, rect ?? [0, 0, 0, 0]);
+      if (app.windows.length) void native.dockClose(app.windows, rect ?? [0, 0, 0, 0], from);
     } else if (a.kind === 'window' || a.kind === 'closewin') {
       // Only one of its own windows.
       if (!app.windows.includes(a.hwnd)) return;
-      if (a.kind === 'window') await native.dockRaise(a.hwnd, rect ?? [0, 0, 0, 0]);
-      else void native.dockClose([a.hwnd], rect ?? [0, 0, 0, 0]);
+      if (a.kind === 'window') await native.dockRaise(a.hwnd, rect ?? [0, 0, 0, 0], from);
+      else void native.dockClose([a.hwnd], rect ?? [0, 0, 0, 0], from);
     } else if (a.kind === 'app') {
       const plan = clickPlan(app);
       if (plan.do === 'launch') {
         const target = this.hooks.pinned().find((p) => keyOf(p.target) === app.key)?.target;
         if (target) await native.wsLaunch({ kind: 'app', path: target, args: '', cwd: '' }, '');
       } else if (plan.do === 'minimize') {
-        void native.dockMinimize(plan.hwnd, rect ?? [0, 0, 0, 0]);
+        void native.dockMinimize(plan.hwnd, rect ?? [0, 0, 0, 0], from);
       } else {
-        await native.dockRaise(plan.hwnd, rect ?? [0, 0, 0, 0]);
+        await native.dockRaise(plan.hwnd, rect ?? [0, 0, 0, 0], from);
       }
     }
     setTimeout(() => void this.tick(), 400);
@@ -1057,7 +1095,7 @@ const LIVE_PEEK_MS = 300;
  *  "too slow", Justin 11-20: it trailed the app the pointer was on). */
 const GLIDE_EASE_MS = 25;
 /** The bar's other items, which rise with the apps (all of them, Justin 11-19). */
-const RISE_OTHERS = '.dk-winstart, .dk-search, .dk-start, .dk-music, .dk-skip, .dk-timer, .dk-claude, .dk-tray .dk-tray-ico, .dk-batt, .dk-wifi, .dk-sound, .dk-clock, .dk-bell, .dk-gear';
+const RISE_OTHERS = '.dk-winstart, .dk-search, .dk-start, .dk-song.dk-tint, .dk-song:not(.dk-tint) > .dk-music, .dk-song:not(.dk-tint) > .dk-skip, .dk-timer, .dk-claude, .dk-tray .dk-tray-ico, .dk-batt, .dk-wifi, .dk-sound, .dk-clock, .dk-bell, .dk-gear';
 /** Room above the bar for grown (and bobbing) apps, CSS px. */
 const HEADROOM = 20;
 /** An app's place on the bar, CSS px (island.css .dk-app). */
@@ -1293,7 +1331,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   document.body.append(outline);
   bar.append(el('i', 'dock-bg'));
   stage.append(bar);
-  const send = (a: DockAct) => void sendTo('island', 'dock-act', a);
+  // Which taskbar it came from: the island flies windows into and out of this one's icons.
+  const send = (a: DockAct) => void sendTo('island', 'dock-act', { ...a, from: windowLabel });
   /** Edit position is on: the bar only moves and stretches; its buttons only show, its styles rest. */
   let editing = false;
   /** A style is chosen (Rise, Spotlight, Glide; any together). */
@@ -1332,13 +1371,21 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   // then back, play/pause and next (Justin, 11-19). A click on the song brings the app playing it
   // forward, as the island's art does.
   const music = el('button', 'dk-music');
+  // The song and its buttons in one box: in the album's colour, it is all filled (Moss, 11-20: "the
+  // entire now playing section, including behind the arrows"); otherwise the box isn't there (contents).
+  const song = el('div', 'dk-song');
   let songTintFor: string | null = null;
   let songColour: string | null = null;
+  let songBox: { fill: string; light: boolean } | null = null;
   let songTint = { box: false, bar: false };
   const paintSong = () => {
     const root = document.documentElement;
     if (songColour) root.style.setProperty('--song', songColour);
-    music.classList.toggle('dk-tint', songTint.box && songColour !== null);
+    const boxed = songTint.box && songBox !== null;
+    if (songBox) song.style.setProperty('--song-fill', songBox.fill);
+    song.classList.toggle('dk-tint', boxed);
+    // Light colours (a pale yellow cover): black buttons and text, so they still show.
+    song.classList.toggle('dk-light', boxed && songBox!.light);
     root.classList.toggle('dk-bar-tint', songTint.bar && songColour !== null);
   };
   const musicCover = el('span', 'dk-cover');
@@ -1361,6 +1408,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   const musicNext = el('button', 'dk-btn dk-skip dk-next', SVG.next);
   musicNext.title = 'Next';
   musicNext.addEventListener('click', () => send({ kind: 'skip', dir: 'next' }));
+  song.append(music, musicPrev, musicPP, musicNext);
   const timer = el('button', 'dk-timer', SVG.timer);
   const timerText = el('span', '');
   timer.append(timerText);
@@ -1441,7 +1489,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       drawTray();
     }
   };
-  await on<TrayIcon[]>('tray-icons', (list) => {
+  await onMine<TrayIcon[]>('tray-icons', (list) => {
     trayList = Array.isArray(list) ? list : [];
     drawTray();
     squeezeToFit();
@@ -1525,7 +1573,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     void native.startToggle();
   });
   let startPrepared: string | null = null;
-  bar.append(winStart, search, start, appsBox, fillEl, gapEl, sepA, music, musicPrev, musicPP, musicNext, sepM, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell, gear, pinLine);
+  bar.append(winStart, search, start, appsBox, fillEl, gapEl, sepA, song, sepM, timer, claude, sepB, trayBox, battery, wifi, sound, clock, bell, gear, pinLine);
 
   // Over the bar, coming up from behind it: the Apps card (the arrow) and when S/W reset (pointing at them).
   const above = el('div', 'dk-above');
@@ -2671,7 +2719,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     winStart.hidden = !keep('winStart');
     search.hidden = !keep('search');
     appsBox.hidden = !want.apps;
-    music.hidden = musicPrev.hidden = musicPP.hidden = musicNext.hidden = !keep('music');
+    song.hidden = music.hidden = musicPrev.hidden = musicPP.hidden = musicNext.hidden = !keep('music');
     timer.hidden = !keep('timer');
     claude.hidden = !keep('claude');
     trayBox.hidden = !keep('tray') || !trayList.length;
@@ -2689,7 +2737,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     search: [search],
     arrow: [start],
     apps: [appsBox, fillEl, gapEl],
-    music: [music, musicPrev, musicPP, musicNext],
+    music: [song],
     timer: [timer],
     claude: [claude],
     tray: [trayBox],
@@ -2867,7 +2915,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const json = JSON.stringify(part);
     if (json === frameSent) return;
     frameSent = json;
-    void sendTo('frame', 'frame-dock', part);
+    // The border on this taskbar's screen.
+    void sendTo(isTauri ? `frame${windowLabel.slice('dock'.length)}` : 'frame', 'frame-dock', part);
   };
   /** Tells the window where it takes clicks: the bar (and the room its icons rise into) and the card
    *  while it is up. Elsewhere a click goes through to what is under it. */
@@ -3054,10 +3103,12 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (tintArt !== songTintFor) {
       songTintFor = tintArt;
       songColour = null;
+      songBox = null;
       if (tintArt)
         void artColour(tintArt).then((c) => {
           if (songTintFor !== tintArt) return;
           songColour = c ? barColour(c, /white/.test(document.documentElement.dataset.pill ?? '')) : null;
+          songBox = c ? songFill(c) : null;
           paintSong();
         });
     }
@@ -3153,9 +3204,10 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   // Dragging along its edge: by anything but a button. Not while it splits round the island.
   let drag: { id: number; grab: number; startX: number; moved: boolean } | null = null;
   const screenAlong = (e: PointerEvent) => (upright() ? e.screenY : e.screenX);
-  // Never below 0: a negative x is "back to the middle" (a double-click), and dragging past the
-  // screen's left edge made one, so the taskbar bounced back to the middle (Moss).
-  const leftPx = (e: PointerEvent) => Math.max(0, (screenAlong(e) - drag!.grab) * devicePixelRatio);
+  // Where its start goes, CSS px on the screen; told with where it is now (Rust moves it by the
+  // difference, so a screen left of or above the main one, at negative coordinates, works too).
+  const leftCss = (e: PointerEvent) => screenAlong(e) - drag!.grab;
+  const nowCss = () => (upright() ? window.screenY : window.screenX);
   bar.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest('button, .dk-handle') || !editing || !gapEl.hidden) return;
     drag = { id: e.pointerId, grab: screenAlong(e) - (upright() ? window.screenY : window.screenX), startX: screenAlong(e), moved: false };
@@ -3166,11 +3218,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (!drag || e.pointerId !== drag.id) return;
     if (!drag.moved && Math.abs(screenAlong(e) - drag.startX) < DRAG_PX) return;
     drag.moved = true;
-    void native.dockAt(leftPx(e), false);
+    void native.dockAt(leftCss(e), false, nowCss());
   });
   const end = (e: PointerEvent) => {
     if (!drag || e.pointerId !== drag.id) return;
-    if (drag.moved) void native.dockAt(leftPx(e), true);
+    if (drag.moved) void native.dockAt(leftCss(e), true, nowCss());
     drag = null;
     bar.classList.remove('grabbing');
   };
@@ -3221,7 +3273,9 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (frame) frame.tall = 0;
     void sendTo('island', 'dock-pref', { scale: null, minLen: 0, tall: 0 });
   });
-  await on<boolean>('dock-edit', (v) => setEditing(v !== false));
+  await onMine<boolean>('dock-edit', (v) => setEditing(v !== false));
+  // Settings › Taskbar › Back to the middle: every screen's taskbar.
+  await onMine<null>('dock-centre', () => void native.dockAt(-1, true));
   // Stretching: the window follows now and then while the pointer moves, and once more at the end.
   let fitAt = 0;
   const refit = (force = false) => {
@@ -3290,14 +3344,14 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   stretch(handles.end, 'end');
   stretch(handles.inner, 'inner');
 
-  await on<{ full: boolean; up: boolean }>('dock-full', (st) => bar.classList.toggle('faint', Boolean(st?.full && !st.up)));
+  await onMine<{ full: boolean; up: boolean }>('dock-full', (st) => bar.classList.toggle('faint', Boolean(st?.full && !st.up)));
   // Ctrl tapped with the pointer on the bar: it fades (html.peek #stage, as the island) and clicks go
   // through it (dock.rs) until the pointer leaves it.
   // A press off the bar: the hidden tray icons kept up through an app's menu go now.
-  await on('dock-press-out', () => {
+  await onMine('dock-press-out', () => {
     if (menuOn === TRAY_FLY && trayKeep) closeMenu();
   });
-  await on<boolean>('dock-peek', (peeking) => {
+  await onMine<boolean>('dock-peek', (peeking) => {
     document.documentElement.classList.toggle('peek', peeking === true);
     if (peeking !== true) return;
     closeMenu();
@@ -3305,12 +3359,12 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     setCard(false);
   });
   // The screen border's window just opened: it hears where the bar is.
-  await on<null>('frame-hello', () => {
+  await onMine<null>('frame-hello', () => {
     frameSent = '';
     void fit();
   });
   // The island's pill changed width, while the bar splits round it: the gap follows at once.
-  await on<number | { w: number; open?: boolean }>('dock-gap', (g) => {
+  await onMine<number | { w: number; open?: boolean }>('dock-gap', (g) => {
     const w = typeof g === 'number' ? g : g?.w;
     if (typeof g === 'object' && g) islandOpen = g.open === true;
     if (!frame || side() !== 'top' || !frame.gap || typeof w !== 'number' || !Number.isFinite(w)) return;
@@ -3320,7 +3374,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     void fit();
     placeSpot();
   });
-  await on<DockFrame>('dock-frame', (f) => {
+  await onMine<DockFrame>('dock-frame', (f) => {
     frame = f;
     learnMulti(f.apps);
     draw();
@@ -3336,7 +3390,12 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       openMenu(b.classList.contains('dk-ftile') ? (folderAnchor ?? b) : b, a);
       return;
     }
-    if (isTauri && frame) void dockMenu(frame, (p) => void sendTo('island', 'dock-pref', p), { on: editing, set: setEditing }).catch((err) => void native.log(`taskbar menu: ${String(err)}`));
+    const pref = (p: DockPref) => {
+      // Back to the middle: this taskbar (each screen's keeps its own place).
+      if (p?.centre === true) void native.dockAt(-1, true);
+      void sendTo('island', 'dock-pref', p);
+    };
+    if (isTauri && frame) void dockMenu(frame, pref, { on: editing, set: setEditing }).catch((err) => void native.log(`taskbar menu: ${String(err)}`));
   });
   setInterval(() => {
     tickClock();

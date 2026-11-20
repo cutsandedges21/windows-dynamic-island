@@ -247,6 +247,11 @@ export class Island {
   private mirrorCount = 0;
   private mirrorKey = '';
   private mirrorFrame: MirrorFrame | null = null;
+  /** The screens the copies are on, as last told to Rust. */
+  private mirrorIds = '';
+  /** Duplicate: the screen the pointer went to, where the island goes once it isn't in use here. */
+  private wantScreen: string | null = null;
+  private hopping = false;
   /** Monitor with a full-screen app in front (any monitor, for the copies). */
   private fullscreenAny: string | null = null;
   /** The activity whose own card the open island shows instead of Control Center (Land after a drop). */
@@ -391,6 +396,13 @@ export class Island {
     await on('mirror-ready', () => {
       if (this.mirrorFrame) void native.broadcast('mirror-frame', { ...this.mirrorFrame, bump: false });
     });
+    // Duplicate: the pointer went onto another screen (overlay.rs); the island follows when it can.
+    await on<string>('cursor-screen', (id) => {
+      const s = this.settings.island;
+      if (s.display !== 'duplicate' || !this.mirrorCount || typeof id !== 'string') return;
+      this.wantScreen = s.displayIds.includes(id) && id !== this.monitorId ? id : null;
+      this.hopWhenFree();
+    });
     await on<{ id: string }>('hotkey', ({ id }) => this.onHotkey(id));
     await on<{ id: string }>('tray-menu', ({ id }) => this.onTrayMenu(id));
     await on<{ id: string; target: string; cmd: string; arg: unknown }>('app-command', (req) => void this.onAppCommand(req));
@@ -523,8 +535,9 @@ export class Island {
         side: () => this.settings.island.taskbar.side,
         setSide: (side) => {
           this.settings.island.taskbar.side = side;
-          // Its place along the old edge means nothing on the new one.
+          // Its places along the old edge mean nothing on the new one.
           this.settings.island.taskbar.centre = -1;
+          this.settings.island.taskbar.centres = {};
           this.saveSettings();
         },
         border: () => (frameOn(this.settings.island) ? FRAME_W : 0),
@@ -557,11 +570,16 @@ export class Island {
           }
           void this.runAct('act:claude:usage-card', null);
         },
-        centre: () => this.settings.island.taskbar.centre,
-        saveCentre: (c) => {
-          this.settings.island.taskbar.centre = c;
+        centre: (monitor, primary) => (primary ? this.settings.island.taskbar.centre : (this.settings.island.taskbar.centres[monitor] ?? -1)),
+        saveCentre: (c, monitor, primary) => {
+          const t = this.settings.island.taskbar;
+          if (primary || !monitor) t.centre = c;
+          else if (c < 0) delete t.centres[monitor];
+          else t.centres[monitor] = c;
           this.saveSettings();
         },
+        allScreens: () => this.settings.island.taskbar.screens !== 'main',
+        pillScreens: () => this.pillScreens(),
       },
       () => this.settings.island.taskbar.on,
     );
@@ -597,6 +615,7 @@ export class Island {
         this.frameIslandSent = '';
         if (this.pillRect) this.reportPill(this.pillRect);
       },
+      allScreens: () => this.settings.island.taskbar.screens !== 'main',
     });
     this.frameHost.start().catch((err) => native.log(`screen border failed to start: ${String(err)}`));
     setInterval(() => {
@@ -775,7 +794,8 @@ export class Island {
     if (monitor === undefined && s.display === 'duplicate') {
       // The island itself lives on the primary screen if it was picked, else the first one picked.
       const chosen = (await native.monitors()).filter((m) => s.displayIds.includes(m.id));
-      want = (chosen.find((m) => m.primary) ?? chosen[0])?.id ?? null;
+      // It stays on the screen it went to (where the pointer is) while that is still one of them.
+      want = (chosen.find((m) => m.id === this.monitorId) ?? chosen.find((m) => m.primary) ?? chosen[0])?.id ?? null;
     }
     if (first && (this.settings.island.display === 'cursor' || this.settings.island.display === 'active')) {
       const m = await native.monitorAtCursor();
@@ -791,23 +811,81 @@ export class Island {
     void this.syncMirrors();
   }
 
-  /** Duplicate mode: a copy of the pill on every other chosen screen; otherwise none. */
+  /**
+   * Duplicate mode: a copy of the pill on every chosen screen, the island's own included; otherwise
+   * none. The copy under the island hides itself (MirrorFrame.host), so when the island goes to the
+   * screen the pointer is on, the copy it leaves shows at once and no copy's window has to move.
+   */
   private async syncMirrors(): Promise<void> {
     const s = this.settings.island;
     let ids: string[] = [];
     if (s.display === 'duplicate' && !native.demo) {
-      ids = (await native.monitors()).filter((m) => s.displayIds.includes(m.id) && m.id !== this.monitorId).map((m) => m.id);
+      const mons = (await native.monitors()).map((m) => m.id);
+      ids = s.displayIds.filter((id) => mons.includes(id));
+      // Only one screen picked (or left): no copies.
+      if (ids.length < 2) ids = [];
     }
-    if (!ids.length && !this.mirrorCount) return;
+    const key = ids.join('|');
+    if (key === this.mirrorIds) return;
+    this.mirrorIds = key;
     this.mirrorCount = ids.length;
     this.mirrorKey = '';
+    if (!ids.length) this.wantScreen = null;
     await native.mirrors(ids);
     this.schedule();
   }
 
+  /**
+   * In use here: open, typing, a file being dragged onto it, a hover or a card it shows. The island
+   * stays on its screen meanwhile, and the copies keep the pill as it was before (they don't grow with
+   * a hover here: each screen's pill only moves for its own pointer).
+   */
+  private inUse(): boolean {
+    return this.hover || this.open || this.view !== 'main' || this.inputActive || this.sheetEngaged || Boolean(this.fileDrag);
+  }
+
+  /** Duplicate: goes to the screen the pointer went to, once it isn't in use where it is. */
+  private hopWhenFree(): void {
+    const to = this.wantScreen;
+    if (!to || to === this.monitorId || this.hopping || this.moving || this.inUse()) return;
+    void this.hop(to);
+  }
+
+  /**
+   * Duplicate: the island goes to screen `to` with no animation. The copy there was showing the same
+   * pill, so nothing seems to move: the copy on the screen it leaves shows first, the island is placed
+   * and drawn, then the copy it lands on hides.
+   */
+  private async hop(to: string): Promise<void> {
+    this.hopping = true;
+    try {
+      this.wantScreen = null;
+      const rest = this.mirrorFrame;
+      if (rest) void native.broadcast('mirror-frame', { ...rest, host: null, bump: false });
+      await this.place(false, to);
+      this.fullscreenOn = this.fullscreenAny && this.fullscreenAny === this.monitorId ? this.fullscreenAny : null;
+      this.compose(true);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await new Promise((r) => setTimeout(r, 60));
+      this.mirrorKey = '';
+      if (this.lastFrame) this.sendMirror(this.lastFrame);
+    } finally {
+      this.hopping = false;
+    }
+    // The pointer may have gone on to yet another screen meanwhile.
+    this.hopWhenFree();
+  }
+
   private sendMirror(frame: MirrorFrame): void {
     if (!this.mirrorCount) return;
-    const key = `${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.glass}|${frame.reduce}|${frame.bot?.d ?? 0}`;
+    // While the island is in use here, the copies keep the pill as it rests (only the island under the
+    // pointer grows); a moment after it is let go, the island may go where the pointer is.
+    if (this.inUse() && this.mirrorFrame) {
+      frame = { ...this.mirrorFrame, bump: false };
+    } else if (this.wantScreen) queueMicrotask(() => this.hopWhenFree());
+    if (this.hopping) return;
+    frame = { ...frame, host: this.monitorId };
+    const key = `${frame.host}|${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.glass}|${frame.reduce}|${frame.bot?.d ?? 0}`;
     if (key === this.mirrorKey && !frame.bump) return;
     this.mirrorKey = key;
     this.mirrorFrame = frame;
@@ -2125,6 +2203,14 @@ export class Island {
   private openSent = false;
   private pillTimer: ReturnType<typeof setTimeout> | undefined;
 
+  /** The screens the pill shows on: every one picked in Duplicate, else the island's own. */
+  private pillScreens(): string[] {
+    const i = this.settings.island;
+    const own = this.monitorId ?? '';
+    if (i.display === 'duplicate' && this.mirrorCount) return [...new Set([own, ...i.displayIds].filter((id) => id !== ''))];
+    return [own];
+  }
+
   /** The taskbar sits on the top edge with the island: it splits round the pill. */
   private dockSplits(): boolean {
     const i = this.settings.island;
@@ -2148,14 +2234,18 @@ export class Island {
         this.pillSent = this.pillWidth;
         this.openSent = this.open;
         // Open, the taskbar keeps only its apps and the clock (Moss).
-        void sendTo('dock', 'dock-gap', { w: this.pillWidth, open: this.open });
+        for (const label of this.dock?.labelsOn(this.pillScreens()) ?? ['dock']) void sendTo(label, 'dock-gap', { w: this.pillWidth, open: this.open });
       }
       if (frameOn(this.settings.island) && this.pillRect) {
         const parts = this.islandParts(this.pillRect);
-        const json = JSON.stringify(parts);
+        // To the border on the island's screen; the one it left hears it is gone.
+        const label = this.frameHost?.labelOn(this.monitorId) ?? 'frame';
+        const json = `${label}|${JSON.stringify(parts)}`;
         if (json !== this.frameIslandSent) {
+          const was = this.frameIslandSent.split('|')[0];
+          if (was && was !== label) void sendTo(was, 'frame-island', []);
           this.frameIslandSent = json;
-          void sendTo('frame', 'frame-island', parts);
+          void sendTo(label, 'frame-island', parts);
         }
       }
     }, 40);

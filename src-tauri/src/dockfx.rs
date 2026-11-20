@@ -18,9 +18,11 @@ const FLY_MS: f64 = 320.0;
 /// The image's opacity at the icon (0..255).
 const AT_ICON: u8 = 120;
 
-/// The icon's rect on screen: `css` (x, y, w, h in CSS px) inside the dock window.
-fn icon_rect(app: &AppHandle, css: [f64; 4]) -> Option<(i32, i32, i32, i32)> {
-    let win = app.get_webview_window(crate::dock::LABEL)?;
+/// The icon's rect on screen: `css` (x, y, w, h in CSS px) inside taskbar `dock`'s window (the main
+/// screen's when not told).
+fn icon_rect(app: &AppHandle, css: [f64; 4], dock: Option<&str>) -> Option<(i32, i32, i32, i32)> {
+    let label = dock.filter(|d| crate::dock::is_dock(d)).unwrap_or(crate::dock::LABEL);
+    let win = app.get_webview_window(label)?;
     let at = win.inner_position().ok()?;
     let s = win.scale_factor().ok()?;
     let [x, y, w, h] = css;
@@ -51,20 +53,20 @@ pub fn between(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32), t: f64) -> (i32
 
 /// The window comes back out of its icon (or just comes forward if it isn't minimized).
 #[tauri::command]
-pub fn dock_raise(app: AppHandle, hwnd: isize, icon: [f64; 4]) -> bool {
-    imp::raise(icon_rect(&app, icon), hwnd)
+pub fn dock_raise(app: AppHandle, hwnd: isize, icon: [f64; 4], dock: Option<String>) -> bool {
+    imp::raise(icon_rect(&app, icon, dock.as_deref()), hwnd)
 }
 
 /// The window goes into its icon.
 #[tauri::command]
-pub fn dock_minimize(app: AppHandle, hwnd: isize, icon: [f64; 4]) {
-    imp::minimize(icon_rect(&app, icon), hwnd);
+pub fn dock_minimize(app: AppHandle, hwnd: isize, icon: [f64; 4], dock: Option<String>) {
+    imp::minimize(icon_rect(&app, icon, dock.as_deref()), hwnd);
 }
 
 /// The app's windows close, the first one into its icon.
 #[tauri::command]
-pub fn dock_close(app: AppHandle, hwnds: Vec<isize>, icon: [f64; 4]) {
-    imp::close(icon_rect(&app, icon), hwnds);
+pub fn dock_close(app: AppHandle, hwnds: Vec<isize>, icon: [f64; 4], dock: Option<String>) {
+    imp::close(icon_rect(&app, icon, dock.as_deref()), hwnds);
 }
 
 #[cfg(windows)]

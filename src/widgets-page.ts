@@ -4,7 +4,7 @@
 
 import { section, row, segmented, toggle } from './controls';
 import { icon, type IconName } from './core/icons';
-import { sendTo } from './core/native';
+import { native } from './core/native';
 import { DOCK_LABELS, DOCK_SIZE_LABELS, DOCK_STYLE_LABELS, dockRow, toggleDockItem, toggleStyle } from './core/dock';
 import {
   barNeedsHidden,
@@ -448,6 +448,15 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
               host.render();
             }),
           ),
+          row(
+            'Show on',
+            'With more than one screen: a taskbar on each, every one with all your apps and its own place along its edge, or only on the main screen.',
+            segmented(t.screens, [['all', 'Every screen'], ['main', 'Main screen']] as Array<['all' | 'main', string]>, (v) => {
+              t.screens = v;
+              host.save(true);
+              host.render();
+            }),
+          ),
           // Off the bottom, Windows' taskbar is not in the way: Blend and Auto-hide stand on their own.
           ...(barNeedsHidden(t) ? [] : edgeRows(host)),
           ...lookPicker(t.look, host),
@@ -468,8 +477,9 @@ function widgetsPage(host: WidgetsPageHost, part: 'widgets' | 'taskbar'): HTMLEl
             'Place',
             'It stays put. Edit position lets you drag it along its edge, stretch its ends to make it longer and its top to make it taller, and double-click it back to the middle; press Done when it is right.',
             h('div', { class: 'row-actions' }, [
-              h('button', { class: 'btn ghost', text: 'Back to the middle', onclick: () => void sendTo('island', 'dock-pref', { centre: true }) }),
-              h('button', { class: 'btn', text: 'Edit position', onclick: () => void sendTo('dock', 'dock-edit', true) }),
+              // Every screen's taskbar.
+              h('button', { class: 'btn ghost', text: 'Back to the middle', onclick: () => void native.broadcast('dock-centre', null) }),
+              h('button', { class: 'btn', text: 'Edit position', onclick: () => void native.broadcast('dock-edit', true) }),
             ]),
           ),
           h('p', { class: 'wtip', html: `${icon('info')}<span>Right-click the taskbar for the same choices.</span>` }),
@@ -703,7 +713,7 @@ function notchRows(kind: 'sites' | 'shelf', name: string, about: string, c: Notc
                     }),
                   ]
                 : []),
-              h('button', { class: 'btn', text: 'Edit position', onclick: () => void sendTo('frame', 'frame-edit', kind) }),
+              h('button', { class: 'btn', text: 'Edit position', onclick: () => void native.broadcast('frame-edit', kind) }),
             ]),
           ),
           sub(

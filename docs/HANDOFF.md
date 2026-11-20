@@ -4,6 +4,15 @@
 
 For the next Claude chat working on Island. Read this first, then docs/STATUS.md (section "2026-11-12, NotchPixel batch").
 
+## 2026-11-20 update (every screen)
+
+- The taskbar and the screen border with its notches are on every screen (Settings › Taskbar › Show on: Every screen / Main screen). Windows: `dock` and `frame` on the main screen, `dock-DISPLAYn` and `frame-DISPLAYn` on the others (dock.rs `Bar` per label, frame.rs `SCREENS`). Every taskbar shows all apps; each keeps its own place along its edge (`taskbar.centres` by screen id; the main one's is still `taskbar.centre`). Start opens on the taskbar of the screen the pointer is on.
+- Duplicate: a click-through copy on every picked screen, the island's own included (hidden there: `MirrorFrame.host`). The island goes, without animation, to the screen the pointer goes onto (overlay.rs emits `cursor-screen`), unless it is in use there (hover, open, typing, a card, a file drag). The copies show the pill at rest only, so pointing at one never moves another.
+- Events: Tauri's plain `listen` (native `on`) hears every window's `emit_to`. A page with one window per screen (taskbar, border, Duplicate copy) listens with `native.onMine` (this window only). New windows need their labels in src-tauri/capabilities/default.json (`dock-*`, `frame-*`), or their pages can't talk to Island.
+- A window moved onto a screen at another scale is rescaled by Windows as it crosses: place it twice (Start, the border, as the island always did).
+- Taskbar music: in the album colour, the whole now playing box (cover, title, back, play/pause, next) is filled with it (artcolor.ts `songFill`), black controls and text on a light one; it rises as one.
+- Moss tested on his two screens (main 125 %, second 100 % at x -1920) in the dev app. Mac: type-checks; Duplicate's following uses Tauri's monitor_from_point there; not run on a Mac.
+
 ## 2026-11-17 update (taskbar)
 
 - Tried and REJECTED by Moss: the taskbar reserving a strip along the bottom (an app bar via SHAppBarMessage) so maximized windows end above it. Removed; the taskbar floats over windows at the bottom of the work area, as before. Do not bring the strip back.

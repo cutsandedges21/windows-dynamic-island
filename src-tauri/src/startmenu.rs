@@ -339,8 +339,29 @@ pub struct StartUser {
 static OPEN: AtomicBool = AtomicBool::new(false);
 /// Counts opens and closes: a late step of an old one (a hide, a watcher) sees it changed and stops.
 static GEN: AtomicU64 = AtomicU64::new(0);
-/// The Start button and the bar in the taskbar's window (CSS px), and the bar's side (the dock page says).
-static ANCHOR: Mutex<Option<([f64; 4], [f64; 4], Side)>> = Mutex::new(None);
+/// The Start button and the bar in each taskbar's window (CSS px), and the bar's side (each dock page
+/// says), by the taskbar's label.
+type Anchor = ([f64; 4], [f64; 4], Side);
+static ANCHOR: Mutex<std::collections::BTreeMap<String, Anchor>> = Mutex::new(std::collections::BTreeMap::new());
+
+/// The taskbar Start opens over: the one on the screen the pointer is on (where Start or Search was
+/// clicked, or where you are when the Windows key is pressed), else the main screen's.
+#[cfg(windows)]
+fn anchor_now(app: &AppHandle) -> Option<(windows::Win32::Foundation::HWND, Anchor)> {
+    let anchors = ANCHOR.lock().unwrap().clone();
+    let here = crate::monitors::at_cursor().map(|m| m.id);
+    let mut main = None;
+    for (label, a) in anchors {
+        let Some(h) = crate::frame::hwnd_of(app, &label) else { continue };
+        if here.is_some() && crate::monitors::of_window(h).map(|m| m.id) == here {
+            return Some((h, a));
+        }
+        if label == crate::dock::LABEL {
+            main = Some((h, a));
+        }
+    }
+    main
+}
 /// What the page was last told to open with, for a page that loads after the open.
 static LAST: Mutex<Option<serde_json::Value>> = Mutex::new(None);
 /// When it last closed by itself (a click elsewhere, the keyboard going elsewhere).
@@ -411,9 +432,7 @@ fn placement(app: &AppHandle) -> Option<Placed> {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
-    let dock = crate::frame::hwnd_of(app, crate::dock::LABEL);
-    let anchor = *ANCHOR.lock().unwrap();
-    if let (Some(dock), Some((button, bar, side))) = (dock, anchor) {
+    if let Some((dock, (button, bar, side))) = anchor_now(app) {
         let mut r = RECT::default();
         if unsafe { GetWindowRect(dock, &mut r) }.is_ok() {
             let m = crate::monitors::of_window(dock)?;
@@ -462,8 +481,13 @@ fn open(app: &AppHandle) {
         }
         let Some(h) = hwnd(&win) else { return };
         let (x, y, w, hgt) = p.window;
-        unsafe {
-            let _ = SetWindowPos(h, Some(HWND_TOPMOST), x, y, w.max(1), hgt.max(1), SWP_NOACTIVATE);
+        // Twice: moved onto a screen at another scale (a second screen at 100 % beside a main one at
+        // 125 %), Windows rescales the window as it crosses, and the menu came out cut off with its
+        // shadow's edge showing (Moss, 11-20). Placed again once it is there, its size holds.
+        for _ in 0..2 {
+            unsafe {
+                let _ = SetWindowPos(h, Some(HWND_TOPMOST), x, y, w.max(1), hgt.max(1), SWP_NOACTIVATE);
+            }
         }
         let payload = serde_json::json!({ "side": p.side, "menu": p.menu, "origin": p.origin, "gen": gen });
         *LAST.lock().unwrap() = Some(payload.clone());
@@ -570,16 +594,18 @@ fn inside(raw: isize, x: i32, y: i32) -> bool {
 #[cfg(windows)]
 fn on_start_button(app: &AppHandle, x: i32, y: i32) -> bool {
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
-    let Some(dock) = crate::frame::hwnd_of(app, crate::dock::LABEL) else { return false };
-    let Some((button, _, _)) = *ANCHOR.lock().unwrap() else { return false };
-    let Some(r) = crate::procs::window_rect(dock.0 as isize) else { return false };
-    let s = match unsafe { GetDpiForWindow(dock) } {
-        0 => 1.0,
-        dpi => dpi as f64 / 96.0,
-    };
-    let (bx, by) = (r.left as f64 + button[0] * s, r.top as f64 + button[1] * s);
-    let (x, y) = (x as f64, y as f64);
-    x >= bx && x < bx + button[2] * s && y >= by && y < by + button[3] * s
+    let anchors = ANCHOR.lock().unwrap().clone();
+    anchors.iter().any(|(label, (button, _, _))| {
+        let Some(dock) = crate::frame::hwnd_of(app, label) else { return false };
+        let Some(r) = crate::procs::window_rect(dock.0 as isize) else { return false };
+        let s = match unsafe { GetDpiForWindow(dock) } {
+            0 => 1.0,
+            dpi => dpi as f64 / 96.0,
+        };
+        let (bx, by) = (r.left as f64 + button[0] * s, r.top as f64 + button[1] * s);
+        let (x, y) = (x as f64, y as f64);
+        x >= bx && x < bx + button[2] * s && y >= by && y < by + button[3] * s
+    })
 }
 
 // ------------------------------------------------------------------ the keyboard hook
@@ -1036,10 +1062,17 @@ mod win {
 
 /// The taskbar's page says where its Start button and the bar are (CSS px in its window) and its side.
 #[tauri::command]
-pub fn start_anchor(button: Vec<f64>, bar: Vec<f64>, side: String) {
+pub fn start_anchor(window: tauri::WebviewWindow, button: Vec<f64>, bar: Vec<f64>, side: String) {
     let four = |v: &[f64]| -> Option<[f64; 4]> { (v.len() == 4 && v.iter().all(|n| n.is_finite())).then(|| [v[0], v[1], v[2], v[3]]) };
     let (Some(b), Some(r)) = (four(&button), four(&bar)) else { return };
-    *ANCHOR.lock().unwrap() = Some((b, r, Side::parse(&side)));
+    if !crate::dock::is_dock(window.label()) {
+        return;
+    }
+    let mut all = ANCHOR.lock().unwrap();
+    // A closed taskbar's anchor goes with it.
+    let open = crate::dock::labels(window.app_handle());
+    all.retain(|l, _| open.contains(l));
+    all.insert(window.label().to_string(), (b, r, Side::parse(&side)));
 }
 
 /// Opens the menu, or closes it when it is open (Start, the Windows key).

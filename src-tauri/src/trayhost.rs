@@ -166,7 +166,7 @@ mod imp {
     use std::sync::{Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
-    use tauri::{AppHandle, Emitter};
+    use tauri::AppHandle;
     use windows::core::w;
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::Graphics::Gdi::{
@@ -670,7 +670,7 @@ mod imp {
 
     pub fn start(app: AppHandle) {
         let _ = NOTIFY.set(Box::new(move |list| {
-            let _ = app.emit_to(crate::dock::LABEL, "tray-icons", list);
+            crate::dock::emit_all(&app, "tray-icons", list);
         }));
         host();
     }

@@ -89,6 +89,17 @@ pub fn at_cursor() -> Option<MonitorInfo> {
     Some(info(&m, primary.as_ref()))
 }
 
+/// The screen at (x, y), physical px: a number for it (to tell a change, in a loop) and its id, as on
+/// Windows (monitors.rs screen_at).
+pub fn screen_at(x: i32, y: i32) -> (isize, Option<String>) {
+    let Some(app) = APP.get() else { return (0, None) };
+    let Some(m) = app.monitor_from_point(x as f64, y as f64).ok().flatten() else { return (0, None) };
+    let primary = app.primary_monitor().ok().flatten();
+    let id = info(&m, primary.as_ref()).id;
+    let n = id.bytes().fold(1469598103934665603u64, |h, b| (h ^ b as u64).wrapping_mul(1099511628211)) as isize;
+    (n, Some(id))
+}
+
 #[tauri::command]
 pub fn monitors_list() -> Vec<MonitorInfo> {
     all()

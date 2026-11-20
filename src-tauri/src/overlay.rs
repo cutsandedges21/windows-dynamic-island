@@ -74,6 +74,9 @@ pub struct Overlay {
     pub monitor_id: Mutex<String>,
     /// Monitor of each mirror window, by its number.
     mirrors: Mutex<Vec<String>>,
+    /// The island's window was just placed (maybe on another screen): the poll loop reads where it is
+    /// at once, not at its next once-a-second look.
+    replaced: AtomicBool,
     /// Peek behind (a setting): tapping Ctrl over the pill lets clicks through it.
     peek_enabled: AtomicBool,
     /// A Ctrl peek lasts until the pointer comes back onto the island (a setting), not just until it moves off.
@@ -99,6 +102,7 @@ impl Overlay {
             previous_fg: AtomicIsize::new(0),
             monitor_id: Mutex::new(String::new()),
             mirrors: Mutex::new(Vec::new()),
+            replaced: AtomicBool::new(false),
         }
     }
 }
@@ -297,10 +301,12 @@ pub fn place(app: &AppHandle, monitor_id: Option<&str>) -> Option<Placement> {
     let m = monitor_id
         .and_then(monitors::find)
         .or_else(monitors::primary)?;
+    let placed = cover(&win, m);
     if let Some(state) = app.try_state::<Arc<Overlay>>() {
-        *state.monitor_id.lock().unwrap() = m.id.clone();
+        *state.monitor_id.lock().unwrap() = placed.monitor.id.clone();
+        state.replaced.store(true, Ordering::Relaxed);
     }
-    Some(cover(&win, m))
+    Some(placed)
 }
 
 fn cover(win: &WebviewWindow, m: MonitorInfo) -> Placement {
@@ -551,6 +557,9 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
         // The last pointer position sent for the bot's eyes, and when.
         let mut last_pointer: Option<(f64, f64)> = None;
         let mut last_pointer_at = Instant::now() - Duration::from_secs(5);
+        // Duplicate: the screen the pointer is on (its handle), so the island can go where you are.
+        let mut cursor_screen: isize = 0;
+        let mut cursor_screen_at = Instant::now() - Duration::from_secs(5);
         #[cfg(target_os = "macos")]
         let mut clicks = crate::mac::input::Clicks::new();
         loop {
@@ -602,7 +611,7 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
             // Where the overlay sits only changes when displays do, so it is read
             // once a second rather than on every tick: asking the window costs far
             // more than the cursor test it feeds.
-            if last_geom.elapsed() >= Duration::from_secs(1) || geom.is_none() {
+            if last_geom.elapsed() >= Duration::from_secs(1) || geom.is_none() || state.replaced.swap(false, Ordering::Relaxed) {
                 last_geom = Instant::now();
                 geom = win.outer_position().ok().map(|o| (o.x as f64, o.y as f64, win.scale_factor().unwrap_or(1.0)));
             }
@@ -613,6 +622,22 @@ pub fn spawn_poll(app: AppHandle, state: Arc<Overlay>) {
             #[cfg(target_os = "macos")]
             let pointer = win.cursor_position().ok().map(|p| (p.x, p.y));
             let Some((cx, cy)) = pointer else { continue };
+            // Duplicate (copies of the pill on other screens): the island hears when the pointer goes
+            // onto another screen, and moves there so the copy you point at is the one that works.
+            // On a Mac each look goes through the main thread: four a second are plenty.
+            let every = if cfg!(windows) { Duration::ZERO } else { Duration::from_millis(250) };
+            if state.mirrors.lock().unwrap().is_empty() {
+                cursor_screen = 0;
+            } else if cursor_screen_at.elapsed() >= every {
+                cursor_screen_at = Instant::now();
+                let (handle, id) = monitors::screen_at(cx as i32, cy as i32);
+                if handle != cursor_screen {
+                    cursor_screen = handle;
+                    if let Some(id) = id {
+                        let _ = app.emit_to(LABEL, "cursor-screen", id);
+                    }
+                }
+            }
             let x = (cx - origin.0) / scale;
             let y = (cy - origin.1) / scale;
 
