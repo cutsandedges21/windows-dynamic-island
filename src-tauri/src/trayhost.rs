@@ -81,7 +81,9 @@ pub struct IconSetting {
 
 /// Whether Windows shows this icon on the taskbar rather than in the overflow: the setting for the same
 /// GUID, else for the same program and number (the one for this very path first: an older copy of the
-/// same app has its own). An icon Windows has no setting for yet is in the overflow, as Windows puts it.
+/// same app has its own). An icon Windows has no setting for yet goes with its program's other icons: on
+/// the bar when one of them is (Windows keeps a setting for an app's first icon only; Justin, 11-20: the
+/// usage widget's second number shows on Windows' taskbar beside its first), else in the overflow.
 pub fn is_pinned(exe: &str, uid: u32, guid: Option<[u8; 16]>, settings: &[IconSetting]) -> bool {
     let file = |p: &str| p.rsplit(['\\', '/']).next().unwrap_or(p).to_lowercase();
     let exe_l = exe.to_lowercase().replace('/', "\\");
@@ -100,7 +102,14 @@ pub fn is_pinned(exe: &str, uid: u32, guid: Option<[u8; 16]>, settings: &[IconSe
         .find(|s| s.path.to_lowercase().replace('/', "\\") == exe_l)
         .or_else(|| same.iter().find(|s| s.path.starts_with('{') && exe_l.ends_with(&tail(&s.path))))
         .or_else(|| same.first());
-    best.is_some_and(|s| s.promoted)
+    if let Some(s) = best {
+        return s.promoted;
+    }
+    let this_program = |s: &IconSetting| {
+        let p = s.path.to_lowercase().replace('/', "\\");
+        p == exe_l || (p.starts_with('{') && exe_l.ends_with(&tail(&s.path)))
+    };
+    real_guid.is_none() && !exe_l.is_empty() && settings.iter().any(|s| s.guid.is_none() && s.promoted && this_program(s))
 }
 
 /// An icon's tooltip as a key to find it among the icons Windows' own taskbar shows: its first line, in
@@ -357,7 +366,21 @@ mod imp {
         if let Some(order) = &shown {
             list.sort_by_key(|t| if t.pinned { order.iter().position(|k| *k == tip_key(&t.tip)).unwrap_or(usize::MAX) } else { usize::MAX });
         }
-        *LAST_PINNED.lock().unwrap() = pinned_keys(&list);
+        let keys = pinned_keys(&list);
+        let mut last = LAST_PINNED.lock().unwrap();
+        if *last != keys {
+            // Which are on the bar and which behind the arrow, when that changes (to see why one isn't).
+            let all = ITEMS.lock().unwrap();
+            let line = all
+                .iter()
+                .filter(|i| !i.hidden && i.icon.is_some())
+                .map(|i| format!("{} #{} {}", i.exe.rsplit(['\\', '/']).next().unwrap_or(&i.exe), i.uid, if list.iter().any(|t| t.key == i.key && t.pinned) { "bar" } else { "hidden" }))
+                .collect::<Vec<_>>()
+                .join(", ");
+            crate::log::line(format!("tray: {} icons ({}), Windows' taskbar {}: {line}", list.len(), keys.len(), if shown.is_some() { "read" } else { "not readable" }));
+        }
+        *last = keys;
+        drop(last);
         list
     }
 
@@ -502,7 +525,10 @@ mod imp {
                 NIM_ADD | NIM_MODIFY | NIM_SETVERSION => {
                     let i = match at {
                         Some(i) => i,
-                        None if message == NIM_ADD => {
+                        // A change to one it never saw added, with its picture: added now. An app whose icon
+                        // was up before Island started and that doesn't send it again when asked (the usage
+                        // widget's numbers; Justin, 11-20) still changes it when its number does.
+                        None if message == NIM_ADD || (message == NIM_MODIFY && nid.flags & NIF_ICON != 0) => {
                             items.push(Item {
                                 key: key.clone(),
                                 hwnd: nid.hwnd,
@@ -852,8 +878,10 @@ Session 89%, resets 7:40 PM"), "island");
             setting(r"C:\Users\me\AppData\Local\target\debug\island.exe", Some(2), None, true),
         ];
         assert!(is_pinned(r"C:\Users\me\AppData\Local\Programs\Claude-Usage-Widget\Claude-Usage-Widget.exe", 3, None, &s));
-        // Same program, another number: Windows has no setting for it, so it's in the overflow.
-        assert!(!is_pinned(r"C:\Users\me\AppData\Local\Programs\Claude-Usage-Widget\Claude-Usage-Widget.exe", 4, None, &s));
+        // Same program, another number Windows has no setting for: with its first, on the bar...
+        assert!(is_pinned(r"C:\Users\me\AppData\Local\Programs\Claude-Usage-Widget\Claude-Usage-Widget.exe", 4, None, &s));
+        // ...and in the overflow when its first is.
+        assert!(!is_pinned(r"C:\Program Files\Microsoft OneDrive\OneDrive.exe", 502, None, &s));
         assert!(!is_pinned(r"C:\Program Files\Microsoft OneDrive\OneDrive.exe", 501, None, &s));
         // By its GUID, whatever its program.
         assert!(is_pinned(r"C:\Program Files\Tailscale\tailscale-ipn.exe", 0, Some(g), &s));
