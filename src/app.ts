@@ -1424,6 +1424,8 @@ function settingsPage(part: 'island' | 'behavior' | 'alerts' | 'phone' | 'genera
       row('Pill colour', 'The whole island, card included.', segmented(i.color, [['black', 'Black'], ['white', 'White'], ['matte-white', 'Matte white'], ['matte-black', 'Matte black'], ['glass', 'Glass']], (v) => { i.color = v; save(true); render(); })),
       ...(i.color === 'glass' ? [row('Glass', 'Clear is more see-through; tinted lets less of what is behind show through.', glassSlider)] : []),
       row('Accent', null, accents),
+      // As the taskbar can take it (Justin, 11-20).
+      row("In the album's colour", "While a song plays, the island takes its album art's colour, as its music card does: the pill alone, or the pill and every card.", segmented(i.albumTint, [['off', 'Off'], ['compact', 'Pill only'], ['all', 'All of it']], (v) => { i.albumTint = v; save(true); render(); })),
       row('Bot', 'A little bot beside the pill, in your accent colour. It reacts to what happens; click it to talk to it.', toggle(i.bot, (v) => { i.bot = v; save(true); render(); })),
       row('Size', 'Pill height and text size.', segmented(i.size, [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], (v) => { i.size = v; save(true); render(); })),
       // Like the taskbar's Blend into the bottom; floating stays the default.

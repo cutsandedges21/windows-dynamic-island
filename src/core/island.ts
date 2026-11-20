@@ -568,7 +568,7 @@ export class Island {
     });
     // The taskbar's battery and Wi-Fi: the battery as Windows reports it, Wi-Fi asked now and then.
     const power = (p: PowerState | null) => {
-      this.dockBattery = p?.hasBattery && typeof p.percent === 'number' ? { percent: p.percent, charging: p.charging } : null;
+      this.dockBattery = p?.hasBattery && typeof p.percent === 'number' ? { percent: p.percent, charging: p.charging, ac: p.ac } : null;
     };
     void on<PowerState>('power', power);
     void native.powerState().then(power);
@@ -629,6 +629,18 @@ export class Island {
     native.log(`island ready on ${this.monitorId ?? 'unknown monitor'} ${Math.round(this.area.width)}x${Math.round(this.area.height)}${this.windowHidden ? ' (hidden)' : ''}`);
     // First run: the welcome screen asks two questions and sets the Control Center up.
     if (!this.settings.general.onboarded && !native.demo) void native.openApp('welcome');
+  }
+
+  /** The island in the playing song's album colour (Justin, 11-20: as the whole taskbar can be): the
+   *  pill alone, or the pill and every card, washed as the music card is. */
+  private paintAlbum(): void {
+    const mode = this.settings.island.albumTint;
+    const music = mode === 'off' ? undefined : (this.running.get('music') as unknown as { artTint?: () => string | null } | undefined);
+    const song = music?.artTint?.() ?? null;
+    const root = document.documentElement;
+    if (song) root.style.setProperty('--isl-song', song);
+    root.classList.toggle('isl-tint-compact', song !== null && mode === 'compact');
+    root.classList.toggle('isl-tint-all', song !== null && mode === 'all');
   }
 
   private applyLook(): void {
@@ -999,6 +1011,7 @@ export class Island {
     const now = Date.now();
     const s = this.settings.island;
     const statuses = this.statuses();
+    this.paintAlbum();
     // A pop-up that the pointer holds stays while the pointer is on the island (pill or card),
     // and goes a moment after it leaves.
     if (this.hover) {
@@ -2835,7 +2848,7 @@ export class Island {
 
   private dockMuted = false;
   private dockVolume: number | null = null;
-  private dockBattery: { percent: number; charging: boolean } | null = null;
+  private dockBattery: { percent: number; charging: boolean; ac: boolean } | null = null;
   private dockWifi: boolean | null = null;
 
   /** What is playing, for the taskbar: from Music's tile. */

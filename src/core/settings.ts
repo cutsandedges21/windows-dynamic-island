@@ -357,6 +357,8 @@ export interface Settings {
     edge: number;
     /** Blend into the edge: the pill sits on its screen edge, flat along it, instead of floating (no gap). */
     blend: boolean;
+    /** The pill (compact), or the pill and every card (all), in the playing song's album colour. */
+    albumTint: 'off' | 'compact' | 'all';
     size: IslandSize;
     /** What the island does when nothing is happening. */
     idle: 'pill' | 'hidden';
@@ -511,6 +513,7 @@ export function defaultSettings(): Settings {
       edge: 8,
       // Floating, as it always was; Blend into the top is a choice.
       blend: false,
+      albumTint: 'off',
       size: 'medium',
       idle: 'pill',
       hoverExpand: true,
@@ -602,6 +605,7 @@ export function migrate(saved: unknown): Settings {
   if (!['top', 'bottom', 'left', 'right'].includes(out.island.anchor)) out.island.anchor = 'top';
   if (!['off', 'slow', 'medium', 'fast'].includes(out.island.glow)) out.island.glow = 'medium';
   if (!['pointer', 'claude'].includes(out.island.hoverCard)) out.island.hoverCard = 'pointer';
+  if (!['off', 'compact', 'all'].includes(out.island.albumTint)) out.island.albumTint = 'off';
   if (out.island.defaultGrows !== 'wide' && out.island.defaultGrows !== 'card') out.island.defaultGrows = 'card';
   // 0.2.4 called matte white "silver" and matte black "blur".
   const renamed: Record<string, PillColor> = { silver: 'matte-white', blur: 'matte-black' };

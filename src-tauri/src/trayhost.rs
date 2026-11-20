@@ -260,6 +260,11 @@ mod imp {
                     out.push(key);
                 }
             }
+            // None found: its buttons aren't there to read (Explorer had only its bare frame while hidden
+            // under Island's taskbar; Justin, 11-20: only the arrow showed), so Windows' settings decide.
+            if out.is_empty() {
+                return None;
+            }
             Some(out)
         }
     }

@@ -42,7 +42,7 @@ export interface DockFrame {
   /** The Apps card, while it is open over the taskbar (the arrow at its start). */
   card?: DockCard | null;
   /** This PC's battery; null on a desktop. */
-  battery: { percent: number; charging: boolean } | null;
+  battery: { percent: number; charging: boolean; ac?: boolean } | null;
   muted: boolean;
   /** The volume, 0..1 (null: not known yet). */
   volume?: number | null;
@@ -218,8 +218,11 @@ const SOUND_WAVES = ['M15 10a2.8 2.8 0 0 1 0 4', 'M17.3 7.6a6.2 6.2 0 0 1 0 8.8'
 /** The speaker with `n` of its waves. */
 const soundIcon = (n: number) => `<svg viewBox="0 0 24 24" class="line"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/>${SOUND_WAVES.slice(0, n).map((d) => `<path d="${d}"/>`).join('')}</svg>`;
 
-export function batteryTone(b: { percent: number; charging: boolean }): 'low' | 'charging' | '' {
+export function batteryTone(b: { percent: number; charging: boolean; ac?: boolean }): 'low' | 'charging' | 'plugged' | '' {
   if (b.charging) return 'charging';
+  // Plugged in but not charging (full, or held at a charge limit): the bolt still, as Windows' own shows
+  // it (Justin, 11-20: at 99 % plugged in it had none).
+  if (b.ac) return 'plugged';
   return b.percent <= 15 ? 'low' : '';
 }
 
@@ -2633,7 +2636,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
       battFill.setAttribute('width', (BATTERY_FULL * pct / 100).toFixed(2));
       battText.textContent = `${pct}%`;
       battery.dataset.tone = batteryTone(b);
-      battery.title = `Battery ${pct}%${b.charging ? ', charging' : ''}`;
+      battery.title = `Battery ${pct}%${b.charging ? ', charging' : b.ac ? ', plugged in' : ''}`;
     }
     // Wi-Fi and sound.
     want.tray = !off.has('tray');

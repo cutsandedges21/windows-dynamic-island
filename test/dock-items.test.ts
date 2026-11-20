@@ -38,6 +38,9 @@ describe('taskbar items', () => {
     expect(batteryTone({ percent: 10, charging: true })).toBe('charging');
     expect(batteryTone({ percent: 10, charging: false })).toBe('low');
     expect(batteryTone({ percent: 80, charging: false })).toBe('');
+    // Plugged in, not charging (at its limit): the bolt, as Windows shows it.
+    expect(batteryTone({ percent: 99, charging: false, ac: true })).toBe('plugged');
+    expect(batteryTone({ percent: 99, charging: true, ac: true })).toBe('charging');
   });
 });
 

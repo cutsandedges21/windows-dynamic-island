@@ -127,6 +127,12 @@ export class MusicActivity extends BaseActivity {
     });
   }
 
+  /** The album's colour for the whole island (Settings › Appearance › In the album's colour), as its
+   *  music card takes it; null without a song, or with grey art. */
+  artTint(): string | null {
+    return this.barTint() ?? null;
+  }
+
   /** The bars' colour for this pill: the art's, made to read on a light or dark pill; undefined keeps the accent. */
   private barTint(): string | undefined {
     const hsl = this.tint?.hsl;
