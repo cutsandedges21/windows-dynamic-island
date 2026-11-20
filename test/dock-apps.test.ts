@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
-import { clickPlan, dockApps, dockRow, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, riseShifts, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
+import { clickPlan, dockApps, dockRow, fillOrder, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, riseShifts, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
 import { barAutoHide, barEdge, barFill, barOrder, barSquare, barStyles, barTall, BAR_TALL_MAX, cleanNames, DOCK_ITEMS, migrate, type DockItem } from '../src/core/settings';
 
 const app = (key: string, pinned: boolean, windows: number[] = [], front = false): DockApp => ({ key, name: key.toUpperCase(), icon: null, windows, front, pinned });
@@ -90,6 +90,12 @@ describe('taskbar apps', () => {
     expect(dockApps([], [min], 0, new Map()).map((a) => [a.key, a.name])).toEqual(dockApps([], [w], 0, new Map()).map((a) => [a.key, a.name]));
     // A frame with no app in it still gets none.
     expect(dockApps([], [{ ...min, appId: '' }], 0, new Map())).toEqual([]);
+  });
+
+  it('fills the width as Windows does: the song and usage at the left end, Start, search and the apps in the middle, the tray and clock at the right end', () => {
+    const order: DockItem[] = ['start', 'search', 'music', 'arrow', 'apps', 'timer', 'claude', 'tray', 'battery', 'wifi', 'sound', 'clock', 'notifications', 'settings'];
+    expect(fillOrder(order)).toEqual(['music', 'timer', 'claude', 'start', 'search', 'arrow', 'apps', 'tray', 'battery', 'wifi', 'sound', 'clock', 'notifications', 'settings']);
+    expect(fillOrder(DOCK_ITEMS).length).toBe(DOCK_ITEMS.length);
   });
 
   it('keeps how much taller the bar was stretched, within its bounds', () => {
