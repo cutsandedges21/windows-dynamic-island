@@ -1110,6 +1110,17 @@ const RISE_BOB_LIFT = 4;
 const RISE_BOB_GROW = 0.05;
 /** Pointing at a window's picture this long brings the window in front, ms. */
 const LIVE_PEEK_MS = 300;
+
+/**
+ * The windows' previews in the order they came up in while they stay up: `now` (the app's windows,
+ * front first) with those already `shown` kept where they are and new ones after. Pointing at a preview
+ * brings its window in front (LIVE_PEEK_MS), which reordered them under the pointer, so the one now under
+ * it came in front and they swapped again and again, their pictures blinking (Justin's recording, 11-21).
+ */
+export function peekOrder(shown: readonly number[], now: readonly number[]): number[] {
+  const kept = shown.filter((h) => now.includes(h));
+  return [...kept, ...now.filter((h) => !kept.includes(h))];
+}
 /** With Rise on, the Glide highlight eases onto the item it moves to with this time constant, ms (70 was
  *  "too slow", Justin 11-20: it trailed the app the pointer was on). */
 const GLIDE_EASE_MS = 25;
@@ -2126,6 +2137,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   above.append(peek);
   let peekKey: string | null = null;
   let peekSig = '';
+  /** The windows in the order their previews show (peekOrder), while they are up. */
+  let peekWins: number[] = [];
   let peekWait = 0;
   let peekLeave = 0;
   let peekShots = 0;
@@ -2157,6 +2170,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (peekKey === null && peek.hidden) return;
     peekKey = null;
     peekSig = '';
+    peekWins = [];
     clearShots();
     hidePop(peek);
   };
@@ -2173,19 +2187,23 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     const a = appOf(b.dataset.key ?? '');
     if (!a || !a.windows.length || cardOn || move?.moved || b.hidden || b.classList.contains('dk-cut')) return closePeek();
     const up = upright();
-    const sig = JSON.stringify([a.key, a.windows, a.titles, up]);
+    // Kept in the order they came up in while the same app's are up (peekOrder).
+    const wins = peekOrder(peekKey === a.key && !peek.hidden ? peekWins : [], a.windows);
+    const titles = wins.map((h) => a.titles?.[a.windows.indexOf(h)] ?? '');
+    peekWins = wins;
+    const sig = JSON.stringify([a.key, wins, titles, up]);
     const changed = sig !== peekSig;
     peekKey = a.key;
     if (changed) {
       peekSig = sig;
       const fits = up ? Math.max(1, Math.floor((window.innerHeight - 40) / (200 * 0.62 + 40))) : 4;
-      const n = Math.min(a.windows.length, fits, 4);
+      const n = Math.min(wins.length, fits, 4);
       const w = up ? 200 : Math.round(Math.max(140, Math.min(220, (window.innerWidth - 40) / n - 8)));
-      const slots: HTMLElement[] = a.windows.slice(0, n).map((hwnd, i) => {
+      const slots: HTMLElement[] = wins.slice(0, n).map((hwnd, i) => {
         const slot = el('div', 'dk-pk');
         slot.style.width = `${w}px`;
         const title = el('span', 'dk-pk-title');
-        title.textContent = a.titles?.[i] || a.name;
+        title.textContent = titles[i] || a.name;
         const x = el('button', 'dk-pk-x', SVG.x);
         x.title = 'Close this window';
         x.addEventListener('click', (e) => {
@@ -2227,9 +2245,9 @@ export async function runDock(stage: HTMLElement): Promise<void> {
         slot.append(head, shot);
         return slot;
       });
-      if (a.windows.length > n) {
+      if (wins.length > n) {
         const more = el('span', 'dk-pk-more');
-        more.textContent = `+${a.windows.length - n}`;
+        more.textContent = `+${wins.length - n}`;
         slots.push(more);
       }
       peek.replaceChildren(...slots);
