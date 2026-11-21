@@ -23,17 +23,39 @@ export function reducedMotion(): boolean {
 
 const raf: (cb: (t: number) => void) => number =
   typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb) => setTimeout(() => cb(Date.now()), 16) as unknown as number;
-const now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+/** The display's frame time to start from, before the animator has measured it (60 Hz). */
+const FIRST_PERIOD = 1 / 60;
+
+/**
+ * One frame's time step, from the time since the last frame (`raw`, seconds) and the display's
+ * frame time measured so far (`period`). Every frame is shown one vsync after the last, so a step
+ * near a whole number of frames is taken as exactly that many: the browser's frame clock jitters
+ * by a millisecond or two, and stepping springs by that jitter moved them unevenly (a little
+ * shimmer at the pill's edges). A step far from any whole number (a dropped, late frame) stays as
+ * it was. Short, steady frames teach the display's real rate (120 and 144 Hz screens included).
+ */
+export function frameStep(raw: number, period: number): { dt: number; period: number } {
+  const r = Math.min(0.064, Math.max(0, raw));
+  let p = period;
+  if (r > 1 / 250 && r < p * 1.5) p += (r - p) * 0.1;
+  const n = Math.max(1, Math.round(r / p));
+  const dt = Math.abs(r - n * p) < p * 0.25 ? Math.min(0.064, n * p) : r;
+  return { dt, period: p };
+}
 
 class Animator {
   private items = new Set<Tickable>();
   private frame = 0;
   private last = 0;
+  /** The loop's first frame after a rest: it has no frame of its own to measure from. */
+  private fresh = true;
+  private period = FIRST_PERIOD;
 
   add(item: Tickable): void {
     this.items.add(item);
     if (!this.frame) {
-      this.last = now();
+      this.fresh = true;
       this.frame = raf(this.loop);
     }
   }
@@ -47,8 +69,17 @@ class Animator {
   }
 
   private loop = (t: number): void => {
-    // A long gap (tab hidden, debugger) must not fling springs.
-    const dt = Math.min(0.064, Math.max(0, (t - this.last) / 1000));
+    // The first frame after a rest moves by one whole frame: the time since the click or event
+    // that started it is a fraction of one (often 0, since the frame clock runs ahead of the event
+    // clock), so that frame stood still and the next jumped, a hitch at the start of every motion.
+    // A long gap (tab hidden, debugger) must not fling springs: frameStep caps it.
+    let dt = this.period;
+    if (!this.fresh) {
+      const step = frameStep((t - this.last) / 1000, this.period);
+      dt = step.dt;
+      this.period = step.period;
+    }
+    this.fresh = false;
     this.last = t;
     for (const item of [...this.items]) {
       let alive = false;

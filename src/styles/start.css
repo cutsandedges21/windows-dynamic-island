@@ -79,7 +79,7 @@ html.start-window[data-side='right'] #stage { mask-image: linear-gradient(to lef
 
 /* Pinned apps dragged to new places (startmenu.ts wireDrag): the others slide over to make room. */
 .sm-grid, .sm-fgrid-box { position: relative; }
-.sm-dragging .sm-tile:not(.moving) { transition: transform 0.18s ease, background-color 0.12s ease; }
+.sm-dragging .sm-tile:not(.moving) { transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.12s ease; }
 .sm-tile.moving { position: relative; z-index: 3; background: transparent !important; pointer-events: none; }
 .sm-tile .sm-ico { transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), filter 0.18s ease; }
 .sm-tile.moving .sm-ico { transform: scale(1.1); filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.45)); }

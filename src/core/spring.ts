@@ -148,7 +148,9 @@ export function springEasing(cfg: SpringConfig): { easing: string; duration: num
     if (t - lastLoud > 0.25) break;
   }
   const duration = Math.max(0.12, Math.min(2.5, lastLoud + step));
-  const samples = Math.min(80, Math.max(24, Math.round(duration * 60)));
+  // 120 points a second: between points the curve is a straight line, and at 60 a second its speed
+  // changed in visible steps on 120 and 144 Hz screens.
+  const samples = Math.min(160, Math.max(32, Math.round(duration * 120)));
   const points: string[] = [];
   for (let i = 0; i <= samples; i++) {
     const [x] = solve(-1, 0, cfg, (duration * i) / samples);

@@ -8,6 +8,7 @@ import { ticksInPlace, timeLike } from '../src/core/renderer';
 import { fitSegments, fitVertical, type Seg } from '../src/core/segments';
 import { accentColor, defaultActivityConfig, migrate } from '../src/core/settings';
 import { solve, Spring, springEasing, springs } from '../src/core/spring';
+import { frameStep } from '../src/core/animator';
 
 describe('springs', () => {
   it('settles exactly on its target and keeps velocity when retargeted', () => {
@@ -324,5 +325,26 @@ describe('time text ticks in place', () => {
     expect(ticksInPlace('0:59', '1:00')).toBe(true);
     expect(ticksInPlace('CPU 17%', 'RAM 17%')).toBe(false);
     expect(ticksInPlace('Working…', 'Your turn')).toBe(false);
+  });
+});
+
+describe('frame step', () => {
+  it('takes a jittery frame as exactly one frame, and two for a dropped one', () => {
+    const p = 1 / 60;
+    expect(frameStep(0.0181, p).dt).toBeCloseTo(frameStep(0.0153, p).dt, 3);
+    expect(frameStep(0.0181, p).dt).toBeCloseTo(p, 2);
+    expect(frameStep(0.0334, p).dt).toBeCloseTo(2 * p, 2);
+  });
+
+  it('learns a 144 Hz screen from steady frames', () => {
+    let period = 1 / 60;
+    for (let i = 0; i < 120; i++) period = frameStep(1 / 144, period).period;
+    expect(period).toBeCloseTo(1 / 144, 3);
+    expect(frameStep(1 / 144 + 0.001, period).dt).toBeCloseTo(1 / 144, 3);
+  });
+
+  it('a long gap never flings a spring', () => {
+    expect(frameStep(5, 1 / 60).dt).toBeLessThanOrEqual(0.064);
+    expect(frameStep(-1, 1 / 60).dt).toBeGreaterThanOrEqual(0);
   });
 });

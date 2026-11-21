@@ -23,7 +23,7 @@ import { ACCENTS, backAt, cloneSettings, growsChoices, growsOf, GROWS_BELOW, HID
 import { springs } from './core/spring';
 import { catchErrors } from './core/errors';
 import { codeGrid } from './codegrid';
-import { multiSegmented, row, section, segmented, stacked, toggle } from './controls';
+import { keepKnobs, multiSegmented, row, section, segmented, stacked, toggle } from './controls';
 import { h } from './dom';
 import { gestureGroups } from './gestures';
 import { landPanel } from './land-panel';
@@ -173,8 +173,10 @@ function render(): void {
   const active = document.activeElement as HTMLInputElement | null;
   const focusKey = active?.dataset?.focus;
   const caret = active && 'selectionStart' in active ? active.selectionStart : null;
+  const knobs = keepKnobs(root);
   const body = searchQuery.trim() ? searchPage() : pageBody(page);
   root.replaceChildren(h('div', { class: 'body' }, [nav(), h('main', { class: 'content' }, [body])]));
+  knobs(root);
   const content = root.querySelector('.content');
   if (content) content.scrollTop = scroll;
   const panel = root.querySelector('.act-panel');

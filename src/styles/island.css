@@ -1437,7 +1437,7 @@ html[data-pill='custom'][data-tone='light'] { --bar-shade: #fff; }
 /* A picture on a card (a note's picture, sent with it through Land). */
 /* A tile dragged to a new place (wireReorder): lifted over the others, which don't react to the pointer meanwhile. */
 .sb-files .ftile.lifted { position: relative; z-index: 5; cursor: grabbing; transition: none; filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.45)); }
-.sb-files.reordering .ftile:not(.lifted) { transition: transform 0.18s ease; }
+.sb-files.reordering .ftile:not(.lifted) { transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
 .sb-files.reordering, .sb-files.reordering * { cursor: grabbing !important; user-select: none; }
 .sb-img { display: flex; justify-content: center; }
 .sb-img img { display: block; max-width: 100%; max-height: 200px; border-radius: 12px; object-fit: contain; background: rgba(var(--ink), 0.06); }
@@ -1493,7 +1493,7 @@ html[data-pill='custom'][data-tone='light'] { --bar-shade: #fff; }
   border-radius: 50%;
   background: rgba(var(--ink), 0.24);
   cursor: pointer;
-  transition: background-color 0.2s ease, transform 0.2s ease;
+  transition: background-color 0.2s ease, transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .sb-tiles .dot.on { background: var(--fg); transform: scale(1.15); }
 .sb-tiles .tray {
@@ -1625,7 +1625,7 @@ button.hp { cursor: pointer; }
   cursor: ns-resize;
   touch-action: none;
 }
-.tile.k-hub .hs .hf { position: absolute; left: 0; right: 0; bottom: 0; height: 100%; background: var(--fg); transform-origin: 50% 100%; transform: scaleY(var(--v)); transition: transform 0.18s ease; }
+.tile.k-hub .hs .hf { position: absolute; left: 0; right: 0; bottom: 0; height: 100%; background: var(--fg); transform-origin: 50% 100%; transform: scaleY(var(--v)); transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1); }
 .tile.k-hub .hs.dragging .hf { transition: none; }
 .tile.k-hub .hs .hsi { position: absolute; left: 50%; bottom: 8px; width: 16px; height: 16px; transform: translateX(-50%); color: var(--muted); mix-blend-mode: difference; }
 
@@ -2440,7 +2440,7 @@ html.dk-upright .dock .dk-pinline { left: 50%; top: -0.5px; width: 16px; height:
 .dock .dk-app:hover, .dock .dk-app:active { background: transparent; }
 .dock .dk-ico { display: grid; place-items: center; width: 26px; height: 26px; }
 /* Dragging one along the row: the others slide aside for it. */
-.dock.reordering .dk-app:not(.moving) { transition: transform 0.18s ease; }
+.dock.reordering .dk-app:not(.moving) { transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
 .dock .dk-app.moving { z-index: 2; }
 /* Held over another app: the dragged one goes a little see-through, so the ring under it shows. */
 .dock .dk-app.moving:has(~ .dk-fold-on), .dock .dk-fold-on ~ .dk-app.moving { opacity: 0.7; }
@@ -2917,7 +2917,7 @@ html.fr-autohide.fr-near :is(.fr-border, .fr-glow, .fr-tint, .notch) { opacity: 
 .dock .dk-tray-ico { width: 30px; padding: 0; }
 .dock .dk-tray-ico img { width: 16px; height: 16px; image-rendering: auto; pointer-events: none; }
 /* The arrow before them to the hidden ones (dock.ts trayFlyOpen); it turns over while they're up. */
-.dock .dk-tray-more svg { width: 16px; height: 16px; transition: transform 0.2s ease; }
+.dock .dk-tray-more svg { width: 16px; height: 16px; transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1); }
 .dock .dk-tray-more.on svg { transform: rotate(180deg); }
 .dock .dk-tray-more[hidden] { display: none; }
 /* The hidden icons over the arrow: a grid, four across. */

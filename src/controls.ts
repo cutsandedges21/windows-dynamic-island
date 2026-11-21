@@ -19,6 +19,35 @@ export function toggle(on: boolean, onchange: (v: boolean) => void, label = ''):
   return el;
 }
 
+/**
+ * Most switches redraw their page when flipped, and the redrawn switch stood still: the knob
+ * jumped to its new side instead of sliding there. Call this on the page before it is replaced;
+ * the function it returns, called on the new page, plays on each knob that was still sliding,
+ * from where it had got to (matched by place, else by label, and only if it shows the same state).
+ */
+export function keepKnobs(old: ParentNode): (next: ParentNode) => void {
+  const moving: Array<{ i: number; label: string | null; on: boolean; anim: Animation }> = [];
+  old.querySelectorAll<HTMLElement>('.switch').forEach((sw, i) => {
+    const anim = sw.firstElementChild?.getAnimations?.().find((a) => a.playState === 'running');
+    if (anim) moving.push({ i, label: sw.getAttribute('aria-label'), on: sw.classList.contains('on'), anim });
+  });
+  return (next) => {
+    if (!moving.length) return;
+    const all = [...next.querySelectorAll<HTMLElement>('.switch')];
+    const same = (sw: HTMLElement | undefined, m: (typeof moving)[number]) => sw !== undefined && sw.getAttribute('aria-label') === m.label && sw.classList.contains('on') === m.on;
+    for (const m of moving) {
+      // Same place and state first (a switch's label may name its state: "Turn Music off"), else the same label.
+      const at = all[m.i];
+      const sw = at && at.classList.contains('on') === m.on ? at : m.label ? all.find((x) => same(x, m)) : undefined;
+      const knob = sw?.firstElementChild;
+      const effect = m.anim.effect;
+      if (!knob || !(effect instanceof KeyframeEffect)) continue;
+      const again = knob.animate(effect.getKeyframes(), effect.getTiming());
+      again.currentTime = m.anim.currentTime;
+    }
+  };
+}
+
 export function segmented<T extends string>(value: T, options: Array<[T, string]>, onchange: (v: T) => void): HTMLElement {
   const wrap = h('div', { class: 'segmented' });
   for (const [v, label] of options) {

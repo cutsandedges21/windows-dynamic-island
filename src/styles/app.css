@@ -510,7 +510,7 @@ button.me-grip:hover, button.me-grip:focus-visible { background: rgba(255, 255, 
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .wcard:hover { background: var(--card-hi); }
 .wcard:active { transform: scale(0.985); }
