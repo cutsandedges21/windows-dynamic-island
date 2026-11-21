@@ -16,6 +16,18 @@ export function packageFamily(target: string): string | null {
 }
 
 /**
+ * An app that updates itself into a new folder per version (Squirrel's `app-<version>`: the Claude
+ * desktop app, Discord, Slack...), by its program's path with the version folder taken out:
+ * `...\AnthropicClaude\app-6.6395.0\claude.exe` and `...\AnthropicClaude\app-6.28899.2\claude.exe` are
+ * both `...\anthropicclaude\claude.exe` (Squirrel's own starter for it, there too). Null for any other path.
+ */
+export function versionlessPath(target: string): string | null {
+  if (/^shell:/i.test(target)) return null;
+  const m = /^(.*[\\/])app-\d+(?:\.\d+)*(?:-[\w.]+)?[\\/]([^\\/]+\.exe)$/i.exec(target);
+  return m ? `${m[1]}${m[2]}`.toLowerCase() : null;
+}
+
+/**
  * A list of apps with each Store app that was saved by its program's path inside WindowsApps (how
  * older lists kept them: no icon, a name like WindowsTerminal, and gone with the app's next update)
  * kept by Start's id for it instead, under Start's name. Null when there is nothing to change.

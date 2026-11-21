@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
 import { clickPlan, dockApps, dockRow, fillSplit, meltEnds, movePins, openOrder, pinToggle, resetLine, riseAt, riseShifts, spotlightOn, toggleStyle, type DockApp } from '../src/core/dock';
+import { versionlessPath } from '../src/core/store-app';
 import { barAutoHide, barEdge, barFill, barOrder, barSquare, barStyles, barTall, BAR_TALL_MAX, cleanNames, DOCK_ITEMS, migrate, type DockItem } from '../src/core/settings';
 
 const app = (key: string, pinned: boolean, windows: number[] = [], front = false): DockApp => ({ key, name: key.toUpperCase(), icon: null, windows, front, pinned });
@@ -285,5 +286,34 @@ describe('taskbar apps', () => {
     expect(svg(left.rim)).toContain("d='M0 52A72 34 0 0 0 72 18L72 18A18 18 0 0 1 90 0' fill='none' stroke='#000' stroke-width='2'");
     // Never higher than where the top corner starts.
     expect(svg(meltEnds(40, 50).left.fill)).toContain('A40 34 0 0 0 40 18');
+  });
+});
+
+describe('an app updating into a folder per version (Squirrel: the Claude desktop app)', () => {
+  const win = (hwnd: number, exe: string) => ({ hwnd, pid: hwnd, exe, title: 'Claude', className: 'Chrome_WidgetWin_1', rect: { x: 0, y: 0, width: 10, height: 10 }, state: 'normal' as const, monitor: 'm', dpi: 96 });
+  const old = 'c:\\users\\justi\\appdata\\local\\anthropicclaude\\app-6.6395.0\\claude.exe';
+  const now = 'C:\\Users\\justi\\AppData\\Local\\AnthropicClaude\\app-6.28899.2\\claude.exe';
+
+  it('knows the app across its version folders', () => {
+    expect(versionlessPath(old)).toBe('c:\\users\\justi\\appdata\\local\\anthropicclaude\\claude.exe');
+    expect(versionlessPath(now)).toBe(versionlessPath(old));
+    expect(versionlessPath('C:\\Users\\x\\AppData\\Local\\Discord\\app-1.0.9035\\Discord.exe')).toBe('c:\\users\\x\\appdata\\local\\discord\\discord.exe');
+    // Anything else: none.
+    expect(versionlessPath('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe')).toBeNull();
+    expect(versionlessPath('C:\\apps\\app-store\\thing.exe')).toBeNull();
+    expect(versionlessPath('shell:AppsFolder\\Microsoft.WindowsTerminal_8wekyb3d8bbwe!App')).toBeNull();
+  });
+
+  it("puts the new version's window on the pin, not a second icon (Justin, 11-21: \"why do i have 2 claudes\")", () => {
+    const apps = dockApps([{ name: 'claude', target: old }], [win(3, now)], 3, new Map());
+    expect(apps.map((a) => [a.key, a.pinned, a.windows, a.front])).toEqual([[old, true, [3], true]]);
+  });
+
+  it('keeps other programs apart', () => {
+    const apps = dockApps([{ name: 'claude', target: old }], [win(4, 'C:\\Users\\justi\\.local\\bin\\claude.exe')], 0, new Map());
+    expect(apps.map((a) => [a.pinned, a.windows])).toEqual([
+      [true, []],
+      [false, [4]],
+    ]);
   });
 });

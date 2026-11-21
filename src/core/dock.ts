@@ -10,7 +10,7 @@
 
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tauri-apps/api/menu';
 import { duration } from './format';
-import { packageFamily } from './store-app';
+import { packageFamily, versionlessPath } from './store-app';
 import { applyGlass, applyPill, pillIsLight } from './glass';
 import { artColour, barColour, songFade } from './artcolor';
 import { isTauri, native, on, onMine, sendTo, windowLabel, type DockIconRect, type DockScreen, type InstalledApp, type LiveWindow, type TrayIcon } from './native';
@@ -288,6 +288,9 @@ const isFramedApp = (w: Pick<LiveWindow, 'exe' | 'appId'>) => Boolean(w.appId) &
 /** What a window belongs to: File Explorer, its web app (YouTube Music), the shortcut of a browser's
  *  app window (Google Calendar, Omnivox: chrome --app=<address>), else its program (so not "Chrome"). */
 export const targetOf = (w: LiveWindow) => (isFileExplorer(w) ? FILE_EXPLORER : w.appId ? 'shell:AppsFolder\\' + w.appId : w.link || w.exe);
+/** One app however it is kept: a Store app by its package family, an app updating into a folder per
+ *  version by its path without that folder (store-app.ts); null for any other. */
+const sameApp = (target: string) => packageFamily(target) ?? versionlessPath(target);
 const nameOf = (path: string) => (path.split(/[\\/]/).pop() ?? path).replace(/\.exe$/i, '');
 
 /**
@@ -305,9 +308,11 @@ export function dockApps(pinned: readonly InstalledApp[], windows: readonly Live
     else byExe.set(k, [w]);
   }
   const app = (key: string, name: string, pin: boolean): DockApp => {
-    // A Store app pinned by its program's path (an older pin) still finds its windows, which go by its id.
-    const family = pin && !byExe.has(key) ? packageFamily(key) : null;
-    const own = family ? [...byExe.keys()].find((k) => packageFamily(k) === family) : undefined;
+    // A Store app pinned by its program's path (an older pin) still finds its windows, which go by its id;
+    // an app that updates into a new folder per version (the Claude desktop app's app-<version>) finds
+    // the new version's (Justin, 11-21: "why do i have 2 claudes", the pin was the version before's).
+    const family = pin && !byExe.has(key) ? sameApp(key) : null;
+    const own = family ? [...byExe.keys()].find((k) => sameApp(k) === family) : undefined;
     const wins = byExe.get(own ?? key) ?? [];
     byExe.delete(own ?? key);
     return { key, name, icon: icons.get(key) ?? null, windows: wins.map((w) => w.hwnd), titles: wins.map((w) => w.title), front: wins.some((w) => w.hwnd === front), pinned: pin };
@@ -928,7 +933,7 @@ export class DockHost {
       // profile already open only brought its window back (Justin, 11-19): it opens in the one last used.
       const args = target ? launchArgs(target, a.mode, await this.browserProfile(target)) : null;
       if (target && args !== null) {
-        const r = await native.wsLaunch({ kind: 'app', path: target, args, cwd: '' }, '');
+        const r = await native.wsLaunch({ kind: 'app', path: versionlessPath(target) ?? target, args, cwd: '' }, '');
         if (!r.ok) void native.log(`taskbar: couldn't start ${target} ${args}: ${r.error}`);
       }
     } else if (a.kind === 'close') {
@@ -942,7 +947,9 @@ export class DockHost {
       const plan = clickPlan(app);
       if (plan.do === 'launch') {
         const target = this.hooks.pinned().find((p) => keyOf(p.target) === app.key)?.target;
-        if (target) await native.wsLaunch({ kind: 'app', path: target, args: '', cwd: '' }, '');
+        // An app updating into a folder per version starts from its starter, which runs the version it
+        // has now (the pinned version's folder goes at its next update).
+        if (target) await native.wsLaunch({ kind: 'app', path: versionlessPath(target) ?? target, args: '', cwd: '' }, '');
       } else if (plan.do === 'minimize') {
         void native.dockMinimize(plan.hwnd, rect ?? [0, 0, 0, 0], from);
       } else {
