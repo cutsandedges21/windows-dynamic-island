@@ -12,6 +12,7 @@
 // island tell the window where they are (frame-dock, frame-island), for the light's path.
 
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
+import { songFade } from './artcolor';
 import { meltMasks } from './dock';
 import { applyGlass, applyPill } from './glass';
 import { GLOW_PACE, type GlowSpec, type GlowSpeed } from './glow';
@@ -76,7 +77,12 @@ export interface FrameFrame {
   melt?: boolean;
   /** The notches sit on the edge (unset: yes); off they float FLOAT_GAP off it. */
   blend?: boolean;
+  /** The playing song's album colour, over the whole border and the notches (unset: none). */
+  song?: string | null;
 }
+
+/** A colour the island sent, or null for anything that could break out of a style. */
+export const safeColour = (c: string | null | undefined): string | null => (c && /^[#\w\s(),.%-]+$/.test(c) ? c : null);
 
 /** A notch that doesn't blend into its edge floats this far off it, CSS px. */
 export const FLOAT_GAP = 8;
@@ -765,7 +771,7 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
   const drawTint = () => {
     const p = island.find((q) => q.tint);
     // Only a colour, nothing that could break out of the style.
-    const tint = p?.tint && /^[#\w\s(),.%-]+$/.test(p.tint) ? p.tint : null;
+    const tint = safeColour(p?.tint);
     if (!p || !tint || !frame) {
       tintEl.classList.remove('on');
       return;
@@ -915,6 +921,11 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
     glow.classList.add('on');
   };
 
+  /** The album's colour over the border and the notches, faded in, out and between songs. */
+  const paintSong = (song: string | null) => {
+    root.classList.toggle('fr-song', songFade(root, '--isl-song', song, () => paintSong(safeColour(frame?.song))));
+  };
+
   const draw = () => {
     const f = frame;
     if (!f) return;
@@ -926,6 +937,7 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
     root.classList.toggle('fr-float', f.blend === false);
     root.classList.toggle('fr-slide', slides());
     root.classList.toggle('reduce', f.reduce);
+    paintSong(safeColour(f.song));
     applyGlass(root, f.glass);
     drawBorder();
     drawSites(f);

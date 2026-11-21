@@ -1,7 +1,7 @@
 // Browser preview only: the screen border (/?frame), drawn from a made-up frame as the island would
 // send it. &dock&edge=1&melt=1&border=1 puts the taskbar on it too; &look=white (or matte-black,
 // matte-white, glass) its colour; &sites=bottom-left and &shelf=bottom-right place the notches (off:
-// none); &size=small|medium|large their size; &out=sites,shelf slides them out; &glow=claude runs
+// none); &song=hsl(20 80% 60%) an album's colour on it all; &size=small|medium|large their size; &out=sites,shelf slides them out; &glow=claude runs
 // the light round everything; &island=1 puts a stand-in island on top.
 
 import { cleanAt, FRAME_W, type NotchCorner, type NotchSize, type PillColor } from '../core/settings';
@@ -51,6 +51,8 @@ export function framePreview(emitLocal: typeof EmitLocal): void {
     autoHide: q.get('autohide') === '1',
     melt: q.get('melt') !== '0',
     blend: q.get('blend') !== '0',
+    // &song=hsl(...): the playing album's colour over the whole border and its notches.
+    song: q.get('song'),
     glow: glow ? { spec: { tone: glow as Tone, motion: (q.get('motion') as 'orbit' | 'still' | null) ?? 'orbit' }, speed: 'medium' } : null,
   };
   document.documentElement.classList.add('frame-preview');

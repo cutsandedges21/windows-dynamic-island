@@ -25,6 +25,7 @@ import type { MirrorFrame } from './mirror';
 import { Strip, type StripView } from './strip';
 import { lookOf, WidgetHost } from './widgets';
 import { DockHost, meltEnds, type DockCard, type DockFrame } from './dock';
+import { songFade } from './artcolor';
 import { FrameHost, type FrameAct, type FrameFrame, type FramePart } from './frame';
 import { PillRenderer } from './renderer';
 import { menuMain, menuSegments } from './menu';
@@ -510,6 +511,7 @@ export class Island {
         accentBorder: () => this.settings.island.taskbar.accentBorder,
         songTint: () => this.settings.island.taskbar.songTint,
         barTint: () => this.settings.island.taskbar.barTint,
+        edgeTint: () => this.edgeSong !== null,
         // At the bottom these two live inside Hide Windows' taskbar: they only count while it hides,
         // and turning one on from the taskbar's menu hides Windows' taskbar too.
         edge: () => barEdge(this.settings.island.taskbar),
@@ -664,13 +666,25 @@ export class Island {
   /** The island in the playing song's album colour (Justin, 11-20: as the whole taskbar can be): the
    *  pill alone, or the pill and every card, washed as the music card is. */
   private paintAlbum(): void {
-    const mode = this.settings.island.albumTint;
-    const music = mode === 'off' ? undefined : (this.running.get('music') as unknown as { artTint?: () => string | null } | undefined);
-    const song = music?.artTint?.() ?? null;
+    const i = this.settings.island;
+    const mode = i.albumTint;
+    const music = this.running.get('music') as unknown as { artTint?: () => string | null } | undefined;
+    const playing = music?.artTint?.() ?? null;
+    // The screen border and its notches (Moss, 11-20: "all over the border and notches too"): with
+    // the whole island in it, or the whole taskbar.
+    this.borderSong = mode === 'all' || (i.taskbar.on && i.taskbar.barTint) ? playing : null;
+    // With the border drawn the island, the bot and the taskbar meet it, so all of them take its one
+    // even wash: no seam where the line runs into the pill or the bar (Moss: "blend smoothly").
+    this.edgeSong = frameOn(i) ? this.borderSong : null;
+    const song = mode === 'off' ? this.edgeSong : playing;
     const root = document.documentElement;
-    if (song) root.style.setProperty('--isl-song', song);
-    root.classList.toggle('isl-tint-compact', song !== null && mode === 'compact');
-    root.classList.toggle('isl-tint-all', song !== null && mode === 'all');
+    // Faded in and out, and from one song's colour to the next; drawn while it fades out.
+    const shown = songFade(root, '--isl-song', song, () => this.paintAlbum());
+    if (song) this.album = { edge: this.edgeSong !== null, mode };
+    else if (!shown) this.album = { edge: false, mode: 'off' };
+    root.classList.toggle('isl-tint-edge', shown && this.album.edge);
+    root.classList.toggle('isl-tint-compact', shown && this.album.mode === 'compact');
+    root.classList.toggle('isl-tint-all', shown && this.album.mode === 'all');
   }
 
   private applyLook(): void {
@@ -2035,6 +2049,12 @@ export class Island {
 
   /** The screen border's window (frame.ts), and the light it runs round the border (Glow › Whole screen). */
   private frameHost: FrameHost | null = null;
+  /** The album's colour for the border and its notches (paintAlbum), else null. */
+  private borderSong: string | null = null;
+  /** The same while the border itself is drawn: the island and the taskbar then take its even wash. */
+  private edgeSong: string | null = null;
+  /** Where the album colour is drawn: kept while it fades out, so it fades where it was. */
+  private album: { edge: boolean; mode: Settings['island']['albumTint'] } = { edge: false, mode: 'off' };
   private screenGlow: GlowSpec | null = null;
 
   /** What the border shows: the taskbar's look, the notches and their contents, the light. */
@@ -2054,6 +2074,7 @@ export class Island {
       sites: { ...i.frame.sites, list: i.sites },
       shelf: { ...i.frame.shelf, files: shelf?.files() ?? [], undo: shelf?.canUndo() ?? false },
       glow: frameOn(i) && i.frame.glow === 'screen' && i.glow !== 'off' ? { spec: this.screenGlow, speed: i.glow } : null,
+      song: this.borderSong,
     };
   }
 

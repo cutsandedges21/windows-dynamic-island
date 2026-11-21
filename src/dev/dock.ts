@@ -56,6 +56,7 @@ export function dockPreview(emitLocal: typeof EmitLocal): void {
     accentBorder: q.get('accentborder') === '1',
     songTint: q.get('songtint') !== '0',
     barTint: q.get('bartint') === '1',
+    edgeTint: q.get('edgetint') === '1',
     edge: q.get('edge') === '1',
     melt: q.get('melt') === '1',
     side: (q.get('side') as DockSide | null) ?? 'bottom',

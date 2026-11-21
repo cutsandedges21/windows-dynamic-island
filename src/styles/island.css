@@ -3002,9 +3002,30 @@ html.dk-upright .dock .dk-song.dk-tint { flex-direction: column; padding: 0 0 3p
 html.dk-bar-tint .dock-bg { background: linear-gradient(150deg, color-mix(in srgb, var(--song) 46%, transparent), color-mix(in srgb, var(--song) 12%, transparent) 70%), var(--pill); }
 /* The island in the playing song's album colour (Settings > Appearance; Justin, 11-20): the music card's
    wash over the pill alone, or over the pill and every card (the music card's own then not again). */
-html.isl-tint-compact .pill-bg,
-html.isl-tint-all :is(.pill-bg, .sheet-bg) { background: linear-gradient(150deg, color-mix(in srgb, var(--isl-song) 46%, transparent), color-mix(in srgb, var(--isl-song) 12%, transparent) 70%), var(--pill); }
+html.isl-tint-compact :is(.pill-bg, .bubble-bg),
+html.isl-tint-all :is(.pill-bg, .sheet-bg, .bubble-bg) { background: linear-gradient(150deg, color-mix(in srgb, var(--isl-song) 46%, transparent), color-mix(in srgb, var(--isl-song) 12%, transparent) 70%), var(--pill); }
 html.isl-tint-all .sheet.tinted .sheet-bg::before { opacity: 0; }
+/* The bot's bubble takes it with the pill (Moss, 11-20: "it is currently black"). The screen border
+   and its notches too, with the whole island or the whole taskbar in it (frame.ts fr-song): one even
+   wash, so the notches still melt into the line without a seam, and the line's own tint beside the
+   island is not added again. */
+html.frame-window.fr-song .fr-border { background: linear-gradient(var(--fr-song), var(--fr-song)), var(--fr-bg, var(--pill)); }
+html.frame-window.fr-song .notch-bg { background: linear-gradient(var(--fr-song), var(--fr-song)), var(--pill); }
+html.frame-window.fr-song { --fr-song: var(--edge-song); }
+html.frame-window.fr-song .fr-tint { opacity: 0; }
+/* With the border drawn, what meets it takes the same even wash, so the colour runs from the line
+   into the island, the bot and the taskbar without a seam (Moss, 11-20: "blend smoothly"): one mix
+   of the song's colour (--edge-song) over each one's own colour. */
+/* Registered as colours, so a new song's colour (and none) fades in rather than snapping (artcolor.ts
+   songFade). Registered, they always have a value: clear until a song sets one. */
+@property --isl-song { syntax: '<color>'; inherits: true; initial-value: transparent; }
+@property --song { syntax: '<color>'; inherits: true; initial-value: transparent; }
+html { transition: --isl-song 0.6s ease, --song 0.6s ease; }
+html.reduce { transition: none; }
+html { --edge-song: color-mix(in srgb, var(--isl-song) 34%, transparent); --dk-edge-song: color-mix(in srgb, var(--song) 34%, transparent); }
+html.isl-tint-edge :is(.pill-bg, .bubble-bg),
+html.isl-tint-edge.isl-tint-all .sheet-bg { background: linear-gradient(var(--edge-song), var(--edge-song)), var(--pill); }
+html.dk-edge-tint .dock-bg { background: linear-gradient(var(--dk-edge-song), var(--dk-edge-song)), var(--pill); }
 
 /* Folders on the taskbar (dock.ts dockSlots, toggleFolder; Moss 11-19). On the bar: up to four of its
    apps' icons, small, in a rounded square. */

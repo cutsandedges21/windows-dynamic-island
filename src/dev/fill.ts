@@ -16,6 +16,7 @@ const ART =
 const icsTime = (ms: number) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 
 export async function fillPreview(island: Island, native: typeof Native, emit: typeof Emit): Promise<void> {
+  const q = new URLSearchParams(location.search);
   const now = Date.now();
   const n = native as unknown as Record<string, unknown>;
   Object.assign(n, {
@@ -40,8 +41,9 @@ export async function fillPreview(island: Island, native: typeof Native, emit: t
         audio: true,
       })),
     mediaState: async () => ({
-      available: true, app: 'Spotify', appId: 'Spotify.exe', title: 'Roman to Integer - LeetCode #13', artist: 'CodingNinja', album: 'LeetCode',
-      status: 'playing', position: 120, duration: 300, updatedAt: Date.now(), canPlay: true, canPause: true, canNext: true, canPrev: true, thumbnail: ART,
+      // &art=/cover.jpg&title=...&artist=...: another song (its album colour, say).
+      available: true, app: 'Spotify', appId: 'Spotify.exe', title: q.get('title') ?? 'Roman to Integer - LeetCode #13', artist: q.get('artist') ?? 'CodingNinja', album: 'LeetCode',
+      status: 'playing', position: 120, duration: 300, updatedAt: Date.now(), canPlay: true, canPause: true, canNext: true, canPrev: true, thumbnail: q.get('art') ?? ART,
     }),
     sysSample: async () => ({ cpu: 37, memUsed: 10.4e9, memTotal: 16e9, gpu: 22, top: { name: 'chrome.exe', cpu: 12 } }),
     sysTop: async (kind: string) => [

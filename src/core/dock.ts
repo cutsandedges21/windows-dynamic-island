@@ -12,7 +12,7 @@ import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tau
 import { duration } from './format';
 import { packageFamily } from './store-app';
 import { applyGlass, applyPill, pillIsLight } from './glass';
-import { artColour, barColour, songFill } from './artcolor';
+import { artColour, barColour, songFade, songFill } from './artcolor';
 import { isTauri, native, on, onMine, sendTo, windowLabel, type DockIconRect, type DockScreen, type InstalledApp, type LiveWindow, type TrayIcon } from './native';
 import { BAR_TALL_MAX, barOrder, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockFolder, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
 
@@ -78,6 +78,9 @@ export interface DockFrame {
   songTint?: boolean;
   /** The whole bar in it. */
   barTint?: boolean;
+  /** The screen border is in the album's colour: the whole bar takes the border's even wash, so the
+   *  two run into each other without a seam (Moss, 11-20: "blend smoothly into the island and taskbar"). */
+  edgeTint?: boolean;
   /** Fill the width (barFill): the bar runs the screen's whole width, Start, search and the apps in the
    *  middle, the rest at the ends, search a box with its word. */
   fill?: boolean;
@@ -604,6 +607,8 @@ export interface DockHooks {
   accentBorder(): boolean;
   songTint(): boolean;
   barTint(): boolean;
+  /** See DockFrame.edgeTint. */
+  edgeTint?(): boolean;
   edge(): boolean;
   setEdge(on: boolean): void;
   melt(): boolean;
@@ -807,6 +812,7 @@ export class DockHost {
         accentBorder: this.hooks.accentBorder(),
         songTint: this.hooks.songTint(),
         barTint: this.hooks.barTint(),
+        edgeTint: this.hooks.edgeTint?.() ?? false,
         fill: this.hooks.fill(),
         square: this.hooks.square(),
         edge: this.hooks.edge(),
@@ -1379,16 +1385,22 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   let songTintFor: string | null = null;
   let songColour: string | null = null;
   let songBox: { fill: string; light: boolean } | null = null;
-  let songTint = { box: false, bar: false };
+  let songTint = { box: false, bar: false, edge: false };
+  /** How the bar was last drawn in the song's colour: it fades out the same way. */
+  let barWas = { edge: false };
   const paintSong = () => {
     const root = document.documentElement;
-    if (songColour) root.style.setProperty('--song', songColour);
+    // The bar's colour fades in, out and from one song to the next (drawn while it fades out).
+    const bar = songTint.bar || songTint.edge;
+    const shown = songFade(root, '--song', bar ? songColour : null, paintSong);
+    if (bar && songColour) barWas = { edge: songTint.edge };
     const boxed = songTint.box && songBox !== null;
     if (songBox) song.style.setProperty('--song-fill', songBox.fill);
     song.classList.toggle('dk-tint', boxed);
     // Light colours (a pale yellow cover): black buttons and text, so they still show.
     song.classList.toggle('dk-light', boxed && songBox!.light);
-    root.classList.toggle('dk-bar-tint', songTint.bar && songColour !== null);
+    root.classList.toggle('dk-bar-tint', shown);
+    root.classList.toggle('dk-edge-tint', shown && barWas.edge);
   };
   const musicCover = el('span', 'dk-cover');
   const musicArt = document.createElement('img');
@@ -3100,8 +3112,8 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // The album's colour, as the island's music card takes it (the same colour, washed over the same way;
     // Justin, 11-20: "the colors are not the same"): on the song's box, and on the whole bar when that is
     // on too ("make it an option"). Grey art keeps the bar's own.
-    songTint = { box: f.songTint === true, bar: f.barTint === true };
-    const tintArt = (songTint.box || songTint.bar) && m?.art ? m.art : null;
+    songTint = { box: f.songTint === true, bar: f.barTint === true, edge: f.edgeTint === true };
+    const tintArt = (songTint.box || songTint.bar || songTint.edge) && m?.art ? m.art : null;
     if (tintArt !== songTintFor) {
       songTintFor = tintArt;
       songColour = null;

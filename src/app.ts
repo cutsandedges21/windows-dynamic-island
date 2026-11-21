@@ -1430,7 +1430,7 @@ function settingsPage(part: 'island' | 'behavior' | 'alerts' | 'phone' | 'genera
       ...(i.color === 'custom' ? [row('Your colour', 'Text on it turns dark by itself when the colour is light.', customColour(i))] : []),
       row('Accent', null, accents),
       // As the taskbar can take it (Justin, 11-20).
-      row("In the album's colour", "While a song plays, the island takes its album art's colour, as its music card does: the pill alone, or the pill and every card.", segmented(i.albumTint, [['off', 'Off'], ['compact', 'Pill only'], ['all', 'All of it']], (v) => { i.albumTint = v; save(true); render(); })),
+      row("In the album's colour", "While a song plays, the island and the bot take its album art's colour, as its music card does: the pill alone, or the pill and every card. With All of it, the screen border and its notches take it too, and it runs from the border into the island and the taskbar as one colour.", segmented(i.albumTint, [['off', 'Off'], ['compact', 'Pill only'], ['all', 'All of it']], (v) => { i.albumTint = v; save(true); render(); })),
       row('Bot', 'A little bot beside the pill, in your accent colour. It reacts to what happens; click it to talk to it.', toggle(i.bot, (v) => { i.bot = v; save(true); render(); })),
       row('Size', 'Pill height and text size.', segmented(i.size, [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], (v) => { i.size = v; save(true); render(); })),
       // Like the taskbar's Blend into the bottom; floating stays the default.

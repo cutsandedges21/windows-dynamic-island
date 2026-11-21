@@ -6,8 +6,12 @@
 const SAMPLE = 24;
 /** Hue buckets the colours are sorted into. */
 const BUCKETS = 18;
-/** Less vivid colour than this, all buckets together, and the art counts as grey. */
-const MIN_VIVID = 0.06;
+/**
+ * Less vivid colour than this, all buckets together, and the art counts as grey. Mostly pale or dark
+ * art with some colour in it still has one (Moss, 11-20: Korn's See You on the Other Side, 0.0596,
+ * and The Weeknd's After Hours, 0.05, came out grey at 0.06 and the island kept its own colour).
+ */
+const MIN_VIVID = 0.03;
 
 type Rgb = [number, number, number];
 
@@ -129,4 +133,38 @@ export async function artColour(src: string): Promise<[number, number, number] |
   if (cache.size > 8) cache.delete(cache.keys().next().value!);
   cache.set(src, found);
   return found;
+}
+
+/** The album colour fades from one song to the next, and out, over this long (island.css --isl-song). */
+export const SONG_FADE_MS = 600;
+const fadingOut = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Puts the album colour in custom property `prop` on `root` (registered as a colour in island.css, so
+ * it fades from one song to the next instead of snapping; Moss, 11-20: "blend smoothly"). With none,
+ * it fades to clear first: the answer stays true until it has, so the caller keeps the classes that
+ * draw it till then, and `again` runs once it has, to take them off. A new song while it fades (the
+ * moment between a song and its art being read) fades straight to the new colour.
+ */
+export function songFade(root: HTMLElement, prop: string, colour: string | null, again: () => void): boolean {
+  const st = root.style;
+  const timer = fadingOut.get(prop);
+  if (colour) {
+    if (timer !== undefined) clearTimeout(timer);
+    fadingOut.delete(prop);
+    st.setProperty(prop, colour);
+    return true;
+  }
+  if (timer !== undefined) return true;
+  const was = st.getPropertyValue(prop);
+  if (!was || was === 'transparent') return false;
+  st.setProperty(prop, 'transparent');
+  fadingOut.set(
+    prop,
+    setTimeout(() => {
+      fadingOut.delete(prop);
+      again();
+    }, SONG_FADE_MS),
+  );
+  return true;
 }
