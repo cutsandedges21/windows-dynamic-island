@@ -1118,6 +1118,14 @@ const APP_W = 40;
 const RISE_SLACK = 8;
 
 /** The bar's zoom: its own height when stretched in Edit position, else its size's. */
+/**
+ * What goes first when the bar runs off the screen (an open island in the middle of a top bar, or a
+ * small screen), one at a time until it fits; what is left at the end is the apps (Moss: "the
+ * taskbar CANNOT go off the screen ... only keep tabs and time (if there is space)"). Before any of
+ * them goes, a filled bar's Search box shrinks to its icon (dock.ts squeezeToFit, dk-tight).
+ */
+export const DOCK_DROP = ['gear', 'tray', 'claude', 'timer', 'battery', 'sound', 'wifi', 'bell', 'music', 'search', 'start', 'winStart', 'clock'] as const;
+
 export const zoomOf = (f: Pick<DockFrame, 'size' | 'scale'> | null): number => (f ? (f.scale ?? DOCK_ZOOM[f.size] ?? 1) : 1);
 
 export const DOCK_SIZE_LABELS: Record<DockSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
@@ -2436,7 +2444,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // Every item on the bar rises, in the bar's order: the apps, Start, Search, the song and its buttons,
     // S/W, the tray's, the battery, the clock... (Justin, 11-19: "search doesn't rise", then "no not all").
     const els = [...bar.querySelectorAll<HTMLElement>(`.dk-apps > .dk-app, ${RISE_OTHERS}`)].filter(
-      (b) => !b.hidden && !b.classList.contains('dk-cut') && b.offsetWidth > 0 && !b.closest('[hidden]') && !(b === search && fullNow()),
+      (b) => !b.hidden && !b.classList.contains('dk-cut') && b.offsetWidth > 0 && !b.closest('[hidden]') && !(b === search && fullNow() && !document.documentElement.classList.contains('dk-tight')),
     );
     // Where each one's middle is with nothing spread (measured while nothing is): the pointer is
     // measured against those, so the spreading never moves the item it is on away from it.
@@ -2725,12 +2733,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   let islandOpen = false;
   /** What the island's frame shows, before any squeezing. */
   const want = { winStart: true, search: true, start: true, apps: true, music: false, timer: false, claude: false, tray: true, battery: false, wifi: true, sound: true, clock: true, bell: true, gear: true };
-  /**
-   * What goes first when the bar runs off the screen (an open island in the middle of a top bar, or a
-   * small screen), one at a time until it fits; what is left at the end is the apps (Moss: "the
-   * taskbar CANNOT go off the screen ... only keep tabs and time (if there is space)").
-   */
-  const DROP = ['gear', 'tray', 'claude', 'timer', 'battery', 'sound', 'wifi', 'bell', 'music', 'search', 'start', 'winStart', 'clock'] as const;
+  const DROP = DOCK_DROP;
   /** Shows what `want` says, less the first `n` of DROP. */
   const showItems = (n: number) => {
     const gone = new Set<string>(DROP.slice(0, n));
@@ -2870,7 +2873,15 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // The island open in the bar's middle: only the apps and the clock, room or not (Moss: "temporarily
     // hide things like now playing ... only keep tabs and time").
     let n = islandOpen && !gapEl.hidden ? DROP.indexOf('clock') : 0;
+    // Before anything goes, Search filling the width shrinks to its icon, as on Windows' own taskbar
+    // (Justin, 11-21: "sometimes some icons disappear", the gear the first to go once a song and a few
+    // more apps took the room its 220px box was holding).
+    document.documentElement.classList.remove('dk-tight');
     showItems(n);
+    if (n === 0 && fullNow() && want.search && overflow().any > 0) {
+      document.documentElement.classList.add('dk-tight');
+      showItems(n);
+    }
     while (n < DROP.length && overflow().any > 0) {
       // Past the ones not on the bar anyway: no layout for those.
       do n++;

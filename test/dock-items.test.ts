@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: {}, PredefinedMenuItem: {}, Submenu: {} }));
 
-import { batteryTone, claudeUsageText, DOCK_LABELS, DOCK_ZOOM, soundWaves, toggleDockItem } from '../src/core/dock';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { batteryTone, claudeUsageText, DOCK_DROP, DOCK_LABELS, DOCK_ZOOM, soundWaves, toggleDockItem } from '../src/core/dock';
 import { DOCK_ITEMS, migrate } from '../src/core/settings';
 
 describe('taskbar items', () => {
@@ -70,5 +72,26 @@ describe('taskbar Claude usage and sizes', () => {
     expect(soundWaves(1)).toBe(3);
     // Not known yet: the middle one.
     expect(soundWaves(null)).toBe(2);
+  });
+});
+
+describe('a full taskbar', () => {
+  it("shrinks Search to its icon before anything leaves the bar (Justin, 11-21: the gear went once a song played)", () => {
+    const css = readFileSync(resolve(__dirname, '../src/styles/island.css'), 'utf8');
+    // The 220px box with its word is only drawn while there is room for it.
+    const box = css.split(/\r?\n/).filter((l) => l.includes('.dock .dk-search') && l.includes('html.dock-full'));
+    expect(box.length).toBeGreaterThan(0);
+    for (const l of box) expect(l).toContain(':not(.dk-tight)');
+    const dock = readFileSync(resolve(__dirname, '../src/core/dock.ts'), 'utf8');
+    const squeeze = dock.slice(dock.indexOf('const squeezeToFit'), dock.indexOf('let sq = n;'));
+    // dk-tight is tried before the loop that drops DOCK_DROP's items.
+    expect(squeeze.indexOf("classList.add('dk-tight')")).toBeGreaterThan(0);
+    expect(squeeze.indexOf("classList.add('dk-tight')")).toBeLessThan(squeeze.indexOf('while (n < DROP.length'));
+  });
+
+  it('drops every item but the apps at most, each once', () => {
+    expect(new Set(DOCK_DROP).size).toBe(DOCK_DROP.length);
+    expect(DOCK_DROP).not.toContain('apps');
+    expect(DOCK_DROP[DOCK_DROP.length - 1]).toBe('clock');
   });
 });
