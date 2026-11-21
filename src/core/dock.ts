@@ -3111,20 +3111,24 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     want.music = Boolean(m);
     // The album's colour, as the island's music card takes it (the same colour, washed over the same way;
     // Justin, 11-20: "the colors are not the same"): on the song's box, and on the whole bar when that is
-    // on too ("make it an option"). Grey art keeps the bar's own.
+    // on too ("make it an option"). Every cover has a colour (artcolor.ts); the last song's stays until
+    // the next one's is read, and while a song's cover is missing for a moment (Moss, 11-20: never the
+    // bar's own colour while music plays). It goes when the music does, or the option is off.
     songTint = { box: f.songTint === true, bar: f.barTint === true, edge: f.edgeTint === true };
-    const tintArt = (songTint.box || songTint.bar || songTint.edge) && m?.art ? m.art : null;
-    if (tintArt !== songTintFor) {
-      songTintFor = tintArt;
+    const tinting = (songTint.box || songTint.bar || songTint.edge) && m !== null;
+    const tintArt = tinting && m?.art ? m.art : null;
+    if (!tinting) {
+      songTintFor = null;
       songColour = null;
       songBox = null;
-      if (tintArt)
-        void artColour(tintArt).then((c) => {
-          if (songTintFor !== tintArt) return;
-          songColour = c ? barColour(c, pillIsLight(document.documentElement)) : null;
-          songBox = c ? songFill(c) : null;
-          paintSong();
-        });
+    } else if (tintArt && tintArt !== songTintFor) {
+      songTintFor = tintArt;
+      void artColour(tintArt).then((c) => {
+        if (songTintFor !== tintArt || !c) return;
+        songColour = barColour(c, pillIsLight(document.documentElement));
+        songBox = songFill(c);
+        paintSong();
+      });
     }
     paintSong();
     if (m) {

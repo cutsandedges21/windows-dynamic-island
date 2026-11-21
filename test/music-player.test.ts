@@ -21,8 +21,11 @@ describe('bar colour from the art', () => {
     expect(c[0]).toBeLessThan(30);
   });
 
-  it('grey or black-and-white art has none, and the bars keep the accent', () => {
-    expect(vividColour(pixels([60, [30, 30, 30]], [40, [220, 220, 220]]))).toBeNull();
+  it('black-and-white art still has a colour (its grey, kept grey); only no art has none', () => {
+    const [, s, l] = vividColour(pixels([60, [30, 30, 30]], [40, [220, 220, 220]]))!;
+    expect(s).toBe(0);
+    expect(l).toBeGreaterThan(0.3);
+    expect(barColour([0, 0, 0.4], false)).toBe('hsl(0 0% 60%)');
     expect(vividColour([])).toBeNull();
   });
 

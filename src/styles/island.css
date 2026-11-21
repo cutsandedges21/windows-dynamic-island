@@ -3026,6 +3026,12 @@ html { --edge-song: color-mix(in srgb, var(--isl-song) 34%, transparent); --dk-e
 html.isl-tint-edge :is(.pill-bg, .bubble-bg),
 html.isl-tint-edge.isl-tint-all .sheet-bg { background: linear-gradient(var(--edge-song), var(--edge-song)), var(--pill); }
 html.dk-edge-tint .dock-bg { background: linear-gradient(var(--dk-edge-song), var(--dk-edge-song)), var(--pill); }
+/* The names over the bar (Names, as bubbles) and what comes up from it (the arrow's Apps card, S/W's
+   resets) in the bar's album colour too, washed as the bar is (Moss, 11-20). */
+html.dk-bar-tint[data-name-look='bubble'] .dk-label,
+html.dk-bar-tint .dk-pop { background: linear-gradient(150deg, color-mix(in srgb, var(--song) 46%, transparent), color-mix(in srgb, var(--song) 12%, transparent) 70%), var(--pill); }
+html.dk-edge-tint[data-name-look='bubble'] .dk-label,
+html.dk-edge-tint .dk-pop { background: linear-gradient(var(--dk-edge-song), var(--dk-edge-song)), var(--pill); }
 
 /* Folders on the taskbar (dock.ts dockSlots, toggleFolder; Moss 11-19). On the bar: up to four of its
    apps' icons, small, in a rounded square. */

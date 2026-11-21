@@ -11,7 +11,9 @@ html.start-window, html.start-window body { background: transparent; overflow: h
   background: var(--pill);
   color: var(--fg);
   font-family: var(--font);
-  box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.1), 0 24px 60px -18px rgba(0, 0, 0, 0.7);
+  /* No rim and no shadow (Moss, 11-20: "a faint black border around it"): the window ends PAD (28 px)
+     past the menu, so its shadow was cut off there in a dark ring. */
+  box-shadow: none;
   /* Down behind the taskbar: the window's edge is the bar's, so the menu slides straight out from
      behind it, fading in as it comes up and out as it goes back down (Moss, 11-19); down quicker. */
   opacity: 0;
@@ -106,3 +108,9 @@ html.start-window[data-side='right'] #stage { mask-image: linear-gradient(to lef
 /* An app dragged out past the folder's edge: let go, and it is out. */
 .sm-fpanel.sm-dropping { box-shadow: inset 0 0 0 1.5px var(--accent), 0 20px 50px -16px rgba(0, 0, 0, 0.75); }
 .sm-tile.moving .sm-name { opacity: 0; }
+
+/* In the taskbar's album colour while a song plays (startmenu.ts sm-song; Moss, 11-20), washed as the bar
+   is: evenly when it runs into the screen border (sm-even), else the music card's way. --song fades
+   (island.css registers it). */
+html.sm-song :is(.sm, .sm-power, .sm-fpanel) { background: linear-gradient(150deg, color-mix(in srgb, var(--song) 46%, transparent), color-mix(in srgb, var(--song) 12%, transparent) 70%), var(--pill); }
+html.sm-song.sm-even :is(.sm, .sm-power, .sm-fpanel) { background: linear-gradient(var(--dk-edge-song), var(--dk-edge-song)), var(--pill); }

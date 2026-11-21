@@ -114,16 +114,15 @@ export class MusicActivity extends BaseActivity {
 
   /** The bars' colour from new art: read once per picture, off the main path. */
   private readTint(src: string | null): void {
-    if (!src) {
-      this.tint = null;
-      return;
-    }
+    // No cover for a moment (a new song's not sent yet): the colour stays as it is.
+    if (!src) return;
     if (this.tint?.src === src) return;
-    const tint: { src: string; hsl: [number, number, number] | null } = { src, hsl: null };
+    // The last song's colour stays until this one's is read, then fades to it (no flash of the pill's own).
+    const tint: { src: string; hsl: [number, number, number] | null } = { src, hsl: this.tint?.hsl ?? null };
     this.tint = tint;
     void artColour(src).then((hsl) => {
       if (this.tint !== tint || !this.alive) return;
-      tint.hsl = hsl;
+      if (hsl) tint.hsl = hsl;
       this.ctx.update();
     });
   }
@@ -131,6 +130,8 @@ export class MusicActivity extends BaseActivity {
   /** The album's colour for the whole island (Settings › Appearance › In the album's colour), as its
    *  music card takes it; null without a song, or with grey art. */
   artTint(): string | null {
+    // Only while there is a song: the colour is held between covers, not after the music has gone.
+    if (!this.m?.available || !this.m.title) return null;
     return this.barTint() ?? null;
   }
 

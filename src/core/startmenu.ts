@@ -7,6 +7,8 @@
 
 import '../styles/start.css';
 import { cleanFolders, dockSlots, foldApps, FOLD_MS, FOLD_ZONE, FOLDER_NAME, folderKey, glideFrom, moveSlot, popIn, sinkInto, staggerIn, unfoldApp, type DockApp, type DockSlot } from './dock';
+import { songFade } from './artcolor';
+import { safeColour } from './frame';
 import { applyGlass, applyPill } from './glass';
 import { isTauri, native, on, sendTo, type InstalledApp } from './native';
 import type { DockFolder, PillColor } from './settings';
@@ -21,6 +23,10 @@ export interface StartFrame {
   pins: InstalledApp[];
   /** Pinned apps dropped onto one another (as the taskbar's: dock.ts dockSlots). */
   folders?: DockFolder[];
+  /** The playing song's album colour, as the taskbar takes it (unset: none), and whether evenly (the
+   *  bar runs into the screen border) or as the music card's wash. */
+  song?: string | null;
+  even?: boolean;
 }
 
 /** A drag on a pinned app starts once the pointer has moved this far (CSS px); less is a click. */
@@ -620,12 +626,20 @@ export async function runStart(stage: HTMLElement): Promise<void> {
   });
   foot.append(userBtn, el('i', 'sm-spacer'), quick('documents', SVG.file, 'Documents'), quick('explorer', SVG.folder, 'File Explorer'), quick('settings', SVG.settings, 'Settings'), powerBtn, powerMenu);
 
+  /** The taskbar's album colour on the menu, faded in, out and between songs. */
+  const paintSong = () => {
+    const shown = songFade(root, '--song', safeColour(frame?.song), paintSong);
+    root.classList.toggle('sm-song', shown);
+    if (frame?.song) root.classList.toggle('sm-even', frame.even === true);
+  };
+
   const draw = () => {
     if (frame) {
       applyPill(root, frame.color, frame.custom);
       root.style.setProperty('--accent', frame.accent);
       applyGlass(root, frame.glass);
     }
+    paintSong();
     if (query.trim()) drawSearch();
     else if (view === 'all') drawAll();
     else drawHome();

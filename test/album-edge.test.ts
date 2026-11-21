@@ -24,8 +24,10 @@ describe('album colour', () => {
     expect(Math.min(c![0], 360 - c![0])).toBeLessThan(20);
   });
 
-  it('grey art still has none', () => {
-    expect(vividColour(pixels([50, [40, 40, 40]], [50, [210, 210, 210]]))).toBeNull();
+  it('grey art has its grey: while a song plays there is always a colour', () => {
+    const c = vividColour(pixels([50, [40, 40, 40]], [50, [210, 210, 210]]));
+    expect(c).not.toBeNull();
+    expect(c![1]).toBe(0);
   });
 
   it('fades out before the classes that draw it go, and between songs straight to the next', () => {

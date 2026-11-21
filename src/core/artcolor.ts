@@ -13,6 +13,9 @@ const BUCKETS = 18;
  */
 const MIN_VIVID = 0.03;
 
+/** Less saturated than this, a colour is grey: kept grey, not pushed into its (meaningless) hue. */
+const GREY = 0.04;
+
 type Rgb = [number, number, number];
 
 function hsl([r, g, b]: Rgb): [number, number, number] {
@@ -30,18 +33,24 @@ function hsl([r, g, b]: Rgb): [number, number, number] {
 }
 
 /**
- * The art's main vivid colour from its pixels (RGBA, row by row), as an HSL triple, or null
- * for grey art. Each pixel weighs by how vivid it is (saturated, neither near black nor near
- * white); the hue bucket with the most weight wins and its pixels are averaged.
+ * The art's main colour from its pixels (RGBA, row by row), as an HSL triple; null only with no
+ * pixels. Each pixel weighs by how vivid it is (saturated, neither near black nor near white); the
+ * hue bucket with the most weight wins and its pixels are averaged. Art with too little colour for
+ * that (black and white, all grey) gives its average colour, grey or nearly: while a song plays there
+ * is always a colour, never the pill's own (Moss, 11-20: "there must ALWAYS be a colour").
  */
 export function vividColour(rgba: ArrayLike<number>): [number, number, number] | null {
   const weight = new Array<number>(BUCKETS).fill(0);
   const sum: Array<[number, number, number, number]> = Array.from({ length: BUCKETS }, () => [0, 0, 0, 0]);
   let total = 0;
   let pixels = 0;
+  const mean = [0, 0, 0];
   for (let i = 0; i + 3 < rgba.length; i += 4) {
     if (rgba[i + 3] < 128) continue;
     pixels++;
+    mean[0] += rgba[i];
+    mean[1] += rgba[i + 1];
+    mean[2] += rgba[i + 2];
     const [h, s, l] = hsl([rgba[i], rgba[i + 1], rgba[i + 2]]);
     const w = s * (1 - Math.abs(2 * l - 1)) ** 2;
     if (w <= 0) continue;
@@ -54,7 +63,8 @@ export function vividColour(rgba: ArrayLike<number>): [number, number, number] |
     sum[k][3] += l * w;
     total += w;
   }
-  if (!pixels || total / pixels < MIN_VIVID) return null;
+  if (!pixels) return null;
+  if (total / pixels < MIN_VIVID) return hsl([mean[0] / pixels, mean[1] / pixels, mean[2] / pixels]);
   let best = 0;
   for (let k = 1; k < BUCKETS; k++) if (weight[k] > weight[best]) best = k;
   // A bucket's neighbours count towards it, so a hue on a bucket edge is not split in two.
@@ -93,7 +103,7 @@ export function luminance([h, s, l]: [number, number, number]): number {
  */
 export function songFill(c: [number, number, number]): { fill: string; light: boolean } {
   const [h, s0, l0] = c;
-  const s = Math.max(0.35, Math.min(0.9, s0));
+  const s = s0 < GREY ? s0 : Math.max(0.35, Math.min(0.9, s0));
   const l = Math.max(0.3, Math.min(0.8, l0));
   return { fill: `hsl(${Math.round(h)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%)`, light: luminance([h, s, l]) > 0.4 };
 }
@@ -101,7 +111,7 @@ export function songFill(c: [number, number, number]): { fill: string; light: bo
 /** The colour the bars are drawn in on a dark pill (`light` false) or a light one. */
 export function barColour(c: [number, number, number], light: boolean): string {
   const [h, s] = c;
-  const sat = Math.round(Math.max(0.55, Math.min(0.95, s)) * 100);
+  const sat = Math.round((s < GREY ? s : Math.max(0.55, Math.min(0.95, s))) * 100);
   return `hsl(${Math.round(h)} ${sat}% ${light ? 42 : 60}%)`;
 }
 

@@ -3,7 +3,7 @@
 // players all work without per-app integrations.
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use serde::Serialize;
@@ -84,9 +84,30 @@ fn friendly_app(aumid: &str) -> String {
     base.rsplit('.').next().unwrap_or(base).to_string()
 }
 
+/// The song's cover, read once per song, then again for a few seconds: a player tells Windows the new
+/// title before its new cover (Spotify), and the one read at the change was often the last song's, kept
+/// for the whole song (Moss, 11-20: "showing the previous album cover randomly").
 struct ThumbCache {
     key: String,
     data: Option<String>,
+    /// The last song's cover, to tell a cover that has not changed yet from a new one.
+    prev: Option<String>,
+    /// When the song changed.
+    since: Option<Instant>,
+}
+
+/// One cover for the watcher and the slow poll (`media_state`): with a cache each, one could hold the
+/// last song's cover while the other had the new one, and the island flipped between them.
+static THUMBS: std::sync::Mutex<ThumbCache> = std::sync::Mutex::new(ThumbCache { key: String::new(), data: None, prev: None, since: None });
+
+/// After a song changes its cover is read again for this long, and for up to SETTLE_MAX while it is
+/// missing or still the last song's (a song from the same album keeps its cover once that is over).
+const SETTLE: Duration = Duration::from_secs(5);
+const SETTLE_MAX: Duration = Duration::from_secs(15);
+
+/// Whether to read the cover again, `since` the song changed: while it may still be the last one's.
+fn reread(since: Duration, missing: bool, same_as_last: bool) -> bool {
+    since < SETTLE || ((missing || same_as_last) && since < SETTLE_MAX)
 }
 
 fn ticks_to_secs(t: i64) -> f64 {
@@ -123,9 +144,20 @@ fn read(manager: &Manager, cache: &mut ThumbCache) -> windows::core::Result<Medi
     let updated_at = if updated > 0 { (updated / 10_000 - FILETIME_UNIX_OFFSET_MS) as f64 } else { 0.0 };
 
     let key = format!("{aumid}|{title}|{artist}|{album}");
+    let cover = || props.Thumbnail().ok().and_then(|r| thumbnail(&r).ok()).flatten();
     if key != cache.key {
         cache.key = key;
-        cache.data = props.Thumbnail().ok().and_then(|r| thumbnail(&r).ok()).flatten();
+        cache.prev = cache.data.take();
+        cache.since = Some(Instant::now());
+        cache.data = cover();
+    } else if let Some(since) = cache.since {
+        if reread(since.elapsed(), cache.data.is_none(), cache.data.is_some() && cache.data == cache.prev) {
+            if let Some(fresh) = cover() {
+                cache.data = Some(fresh);
+            }
+        } else {
+            cache.since = None;
+        }
     }
     Ok(MediaState {
         available: !title.is_empty(),
@@ -180,10 +212,9 @@ pub fn start(app: AppHandle) {
                 }
             }
         };
-        let mut cache = ThumbCache { key: String::new(), data: None };
         let mut last = MediaState::default();
         loop {
-            let state = read(&manager, &mut cache).unwrap_or_else(|_| MediaState { status: "none".into(), ..Default::default() });
+            let state = read(&manager, &mut THUMBS.lock().unwrap()).unwrap_or_else(|_| MediaState { status: "none".into(), ..Default::default() });
             *PLAYING.lock().unwrap() = if state.status == "playing" { state.app.clone() } else { None };
             if state != last {
                 let _ = app.emit_to(ISLAND, "media", state.clone());
@@ -199,7 +230,7 @@ pub async fn media_state() -> Option<MediaState> {
     tauri::async_runtime::spawn_blocking(|| {
         com();
         let manager = Manager::RequestAsync().ok()?.get().ok()?;
-        let mut cache = ThumbCache { key: String::new(), data: None };
+        let mut cache = THUMBS.lock().ok()?;
         read(&manager, &mut cache).ok()
     })
     .await
@@ -429,7 +460,20 @@ fn activate_package(aumid: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{friendly_app, tab_score};
+    use super::{friendly_app, reread, tab_score};
+    use std::time::Duration;
+
+    #[test]
+    fn a_new_songs_cover_is_read_again_until_it_has_changed() {
+        let s = Duration::from_secs;
+        // The first seconds: always, the player may not have its new cover yet.
+        assert!(reread(s(1), false, false));
+        // Later only while it is missing or still the last song's, and not for ever.
+        assert!(!reread(s(6), false, false));
+        assert!(reread(s(6), true, false));
+        assert!(reread(s(6), false, true));
+        assert!(!reread(s(16), false, true));
+    }
 
     #[test]
     fn the_playing_tab_scores_highest() {

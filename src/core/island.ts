@@ -676,6 +676,14 @@ export class Island {
     // With the border drawn the island, the bot and the taskbar meet it, so all of them take its one
     // even wash: no seam where the line runs into the pill or the bar (Moss: "blend smoothly").
     this.edgeSong = frameOn(i) ? this.borderSong : null;
+    // Island's Start menu, as the taskbar it comes out of: sent again when it changes, open or not.
+    const startSong = i.taskbar.on && (i.taskbar.barTint || this.edgeSong !== null) ? playing : null;
+    const startKey = `${startSong}|${this.edgeSong !== null}`;
+    if (startKey !== this.startSongSent) {
+      this.startSong = startSong;
+      this.startSongSent = startKey;
+      this.sendStart();
+    }
     const song = mode === 'off' ? this.edgeSong : playing;
     const root = document.documentElement;
     // Faded in and out, and from one song's colour to the next; drawn while it fades out.
@@ -2053,6 +2061,9 @@ export class Island {
   private borderSong: string | null = null;
   /** The same while the border itself is drawn: the island and the taskbar then take its even wash. */
   private edgeSong: string | null = null;
+  /** The taskbar's album colour for Island's Start menu, and what was last sent of it. */
+  private startSong: string | null = null;
+  private startSongSent = '';
   /** Where the album colour is drawn: kept while it fades out, so it fades where it was. */
   private album: { edge: boolean; mode: Settings['island']['albumTint'] } = { edge: false, mode: 'off' };
   private screenGlow: GlowSpec | null = null;
@@ -2241,7 +2252,7 @@ export class Island {
     const i = this.settings.island;
     const saved = this.settings.activities.config.apps?.options.apps;
     const taskbarPins = Array.isArray(saved) ? (saved as Array<{ name: string; target: string }>).filter((a) => a && typeof a.target === 'string') : [];
-    void sendTo('start', 'start-frame', { ...lookOf(i.taskbar.look, i), accent: accentColor(i), pins: i.taskbar.startPins ?? taskbarPins, folders: i.taskbar.startFolders });
+    void sendTo('start', 'start-frame', { ...lookOf(i.taskbar.look, i), accent: accentColor(i), pins: i.taskbar.startPins ?? taskbarPins, folders: i.taskbar.startFolders, song: this.startSong, even: this.edgeSong !== null });
   }
 
   /** The pill's width (CSS px), for the taskbar on the top edge that leaves a gap for it. */

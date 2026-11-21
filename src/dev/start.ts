@@ -1,5 +1,5 @@
 // Browser preview only: Island's Start menu (/?start, &look=white, &q=spot types a search, &all=1 All apps,
-// &folder=1 a folder of two).
+// &folder=1 a folder of two, &song=hsl(227 55% 60%) in an album's colour, &even=1 evenly).
 
 import { native } from '../core/native';
 
@@ -30,7 +30,7 @@ export function startPreview(emit: (event: string, payload: unknown) => void): v
   setTimeout(() => {
     // &folder=1: Spotify and Discord in a folder named Fun.
     const folders = q.get('folder') === '1' ? [{ id: 'f1', name: 'Fun', apps: [APPS[0].target.toLowerCase(), APPS[1].target.toLowerCase()] }] : [];
-    emit('start-frame', { color: q.get('look') ?? 'black', glass: 50, accent: '#6aa6e8', pins: APPS.slice(0, 12), folders });
+    emit('start-frame', { color: q.get('look') ?? 'black', glass: 50, accent: '#6aa6e8', pins: APPS.slice(0, 12), folders, song: q.get('song'), even: q.get('even') === '1' });
     emit('start-open', { side: 'bottom', menu: [28, 28, Math.min(640, w - 56), Math.min(720, h - 56)], origin: [80, h], gen: 1 });
   }, 600);
   if (q.has('q'))
