@@ -599,7 +599,7 @@ export class Island {
     });
     // The taskbar's battery and Wi-Fi: the battery as Windows reports it, Wi-Fi asked now and then.
     const power = (p: PowerState | null) => {
-      this.dockBattery = p?.hasBattery && typeof p.percent === 'number' ? { percent: p.percent, charging: p.charging, ac: p.ac } : null;
+      this.dockBattery = p?.hasBattery && typeof p.percent === 'number' ? { percent: p.percent, charging: p.charging, ac: p.ac, saver: p.saver === true } : null;
     };
     void on<PowerState>('power', power);
     void native.powerState().then(power);
@@ -3016,7 +3016,7 @@ export class Island {
 
   private dockMuted = false;
   private dockVolume: number | null = null;
-  private dockBattery: { percent: number; charging: boolean; ac: boolean } | null = null;
+  private dockBattery: { percent: number; charging: boolean; ac: boolean; saver: boolean } | null = null;
   private dockWifi: boolean | null = null;
 
   /** What is playing, for the taskbar: from Music's tile. */

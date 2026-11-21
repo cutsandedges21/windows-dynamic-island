@@ -4,7 +4,7 @@ vi.mock('@tauri-apps/api/menu', () => ({ CheckMenuItem: {}, Menu: {}, MenuItem: 
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { batteryTone, claudeUsageText, DOCK_DROP, DOCK_LABELS, DOCK_ZOOM, soundWaves, toggleDockItem } from '../src/core/dock';
+import { batteryBadge, batteryTone, claudeUsageText, DOCK_DROP, DOCK_LABELS, DOCK_ZOOM, soundWaves, toggleDockItem } from '../src/core/dock';
 import { DOCK_ITEMS, migrate } from '../src/core/settings';
 
 describe('taskbar items', () => {
@@ -93,5 +93,24 @@ describe('a full taskbar', () => {
     expect(new Set(DOCK_DROP).size).toBe(DOCK_DROP.length);
     expect(DOCK_DROP).not.toContain('apps');
     expect(DOCK_DROP[DOCK_DROP.length - 1]).toBe('clock');
+  });
+});
+
+describe("the battery's leaf while Energy saver is on, as Windows 11's (Justin, 11-21)", () => {
+  it('shows the leaf on battery with Energy saver on, nothing with it off', () => {
+    expect(batteryBadge({ charging: false, ac: false, saver: true })).toBe('leaf');
+    expect(batteryBadge({ charging: false, ac: false, saver: false })).toBeNull();
+    expect(batteryBadge({ charging: false })).toBeNull();
+  });
+
+  it('the bolt wins while plugged in, charging or not', () => {
+    expect(batteryBadge({ charging: true, ac: true, saver: true })).toBe('bolt');
+    expect(batteryBadge({ charging: false, ac: true, saver: true })).toBe('bolt');
+    expect(batteryBadge({ charging: true, saver: false })).toBe('bolt');
+  });
+
+  it('low on Energy saver: still red, and the leaf', () => {
+    expect(batteryTone({ percent: 9, charging: false, ac: false })).toBe('low');
+    expect(batteryBadge({ charging: false, ac: false, saver: true })).toBe('leaf');
   });
 });

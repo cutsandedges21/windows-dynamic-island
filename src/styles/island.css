@@ -2513,6 +2513,10 @@ html[data-pill='white'] .dock .dk-batt, html[data-pill='matte-white'] .dock .dk-
 .dock .dk-batt[data-tone='charging'] .dk-bfill { fill: var(--bt-charge); }
 .dock .dk-batt:is([data-tone='charging'], [data-tone='plugged']) :is(.dk-bbolt, .dk-bcut) { display: inline; }
 .dock .dk-batt[data-tone='low'] .dk-bfill { fill: var(--bt-low); }
+/* Energy saver on (dock.ts batteryBadge): Windows 11's leaf where the bolt goes, cut out of the battery the same way. */
+.dock .dk-bleaf { fill: var(--fg); display: none; }
+.dock .dk-bcut-leaf { display: none; }
+.dock .dk-batt[data-badge='leaf'] :is(.dk-bleaf, .dk-bcut-leaf) { display: inline; }
 .dock .dk-wifi, .dock .dk-sound { width: 34px; padding: 0; }
 /* The numbers keep one width as they change (up to 59:59, 99% | 99%, 12:00 AM, 12/28/2026), so the bar never moves. */
 .dock .dk-timer span { font: 600 15px/1 var(--font); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; min-width: 41px; text-align: center; }
