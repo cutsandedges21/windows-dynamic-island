@@ -13,7 +13,7 @@
 
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
 import { meltMasks } from './dock';
-import { applyGlass } from './glass';
+import { applyGlass, applyPill } from './glass';
 import { GLOW_PACE, type GlowSpec, type GlowSpeed } from './glow';
 import { icon } from './icons';
 import { isTauri, native, on, onMine, onFileDrop, sendTo, windowLabel, type DockScreen } from './native';
@@ -62,6 +62,8 @@ export interface FrameFrame {
   width: number;
   color: PillColor;
   glass?: number;
+  /** Pill colour › Custom's own colour. */
+  custom?: string;
   accent: string;
   reduce: boolean;
   sites: NotchConfig & { list: PinnedSite[] };
@@ -916,7 +918,7 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
   const draw = () => {
     const f = frame;
     if (!f) return;
-    root.dataset.pill = f.color;
+    applyPill(root, f.color, f.custom);
     root.style.setProperty('--accent', f.accent);
     root.style.setProperty('--fr-w', `${f.width}px`);
     root.classList.toggle('fr-autohide', f.autoHide === true);

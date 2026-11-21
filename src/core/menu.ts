@@ -89,6 +89,8 @@ export interface MenuState {
   reminders: boolean;
   /** The island is faded and lets clicks through (the menu's Fade): its button says Show. */
   faded?: boolean;
+  /** Fade fades at once, no card (Settings › Behavior › Fade the island, its settings rows off). */
+  fadeAtOnce?: boolean;
 }
 
 /**
@@ -141,7 +143,9 @@ export function menuSegments(shown: MenuShown, st: MenuState, look: MenuLook = D
         segs.push(
           st.faded
             ? { t: 'button', key: 'menu/fade', icon: 'eye', ...named('Show', 'Bring the island back'), action: 'island:fade', style: 'primary', side, prio: 2 }
-            : { t: 'button', key: 'menu/fade', icon: 'fade', ...named('Fade', 'Fade the island now, or choose how it fades on its own'), action: 'island:fade-menu', style: 'ghost', side, prio: 2 },
+            : st.fadeAtOnce
+              ? { t: 'button', key: 'menu/fade', icon: 'fade', ...named('Fade', 'Fade the island now: right-click it and press Show to bring it back'), action: 'island:fade', style: 'ghost', side, prio: 2 }
+              : { t: 'button', key: 'menu/fade', icon: 'fade', ...named('Fade', 'Fade the island now, or choose how it fades on its own'), action: 'island:fade-menu', style: 'ghost', side, prio: 2 },
         );
         break;
       case 'reminders':

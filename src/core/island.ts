@@ -28,10 +28,10 @@ import { DockHost, meltEnds, type DockCard, type DockFrame } from './dock';
 import { FrameHost, type FrameAct, type FrameFrame, type FramePart } from './frame';
 import { PillRenderer } from './renderer';
 import { menuMain, menuSegments } from './menu';
-import { fadeSegments, fadeSheet } from './fade-menu';
+import { fadesAtOnce, fadeSegments, fadeSheet } from './fade-menu';
 import { quietMoon } from './quiet';
 import { fitSegments, fitVertical, signature, type Placed, type Seg } from './segments';
-import { applyGlass } from './glass';
+import { applyGlass, applyPill } from './glass';
 import { accentColor, backAt, barAutoHide, barFill, barSquare, cleanAt, cleanDockFolders, cleanPins, barEdge, barMinLen, barNeedsHidden, barScale, barTall, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { CARD_RADIUS, mapActions, SheetRenderer, type Block, type DropZone, type SheetButton, type SheetChip, type SheetView, type Tile } from './sheet';
@@ -222,6 +222,8 @@ export class Island {
   private gridDrag: { key: string; snap: GridPages; dims: Map<string, { w: number; h: number }>; size: { w: number; h: number }; preview: GridPages | null } | null = null;
   /** Segment key under the pointer: tells whose card a hover asks for. */
   private hoverKey: string | null = null;
+  /** The segment under the pointer as it came onto the pill, until it moves off it. */
+  private entryKey: string | null = null;
   /** The pointer is on the pill itself (not the card). */
   private pointerOnPill = false;
   /** Pointed at, this activity grows into a card but had none to show: the pill widens for it instead. */
@@ -425,7 +427,7 @@ export class Island {
         act: (action, arg) => void this.runAct(action, arg),
         save: () => this.saveSettings(),
         // The accent's colour, not its name ("teal" is CSS's own dark teal; Justin, 11-20).
-        look: () => ({ accent: accentColor(this.settings.island), color: this.settings.island.color, glass: this.settings.island.glass, reduce: document.documentElement.classList.contains('reduce') }),
+        look: () => ({ accent: accentColor(this.settings.island), color: this.settings.island.color, glass: this.settings.island.glass, custom: this.settings.island.custom, reduce: document.documentElement.classList.contains('reduce') }),
         enabled: (kind) => this.running.has(kind),
       },
       () => this.settings.island.widgets,
@@ -678,7 +680,7 @@ export class Island {
     document.documentElement.classList.toggle('reduce', reduce);
     document.documentElement.style.setProperty('--accent', accentColor(s));
     this.bubble.colour(accentColor(s));
-    document.documentElement.dataset.pill = s.color;
+    applyPill(document.documentElement, s.color, s.custom);
     applyGlass(document.documentElement, s.glass);
   }
 
@@ -885,7 +887,7 @@ export class Island {
     } else if (this.wantScreen) queueMicrotask(() => this.hopWhenFree());
     if (this.hopping) return;
     frame = { ...frame, host: this.monitorId };
-    const key = `${frame.host}|${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.glass}|${frame.reduce}|${frame.bot?.d ?? 0}`;
+    const key = `${frame.host}|${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.custom ?? ""}|${frame.glass}|${frame.reduce}|${frame.bot?.d ?? 0}`;
     if (key === this.mirrorKey && !frame.bump) return;
     this.mirrorKey = key;
     this.mirrorFrame = frame;
@@ -1208,7 +1210,7 @@ export class Island {
         segs = fadeSegments(vertical);
         viewKey = 'fade';
       } else if (this.view === 'menu') {
-        const state = { anchor, dnd: this.settings.general.dnd, mac: platform === 'macos', reminders: this.running.has('reminders'), faded: s.faded };
+        const state = { anchor, dnd: this.settings.general.dnd, mac: platform === 'macos', reminders: this.running.has('reminders'), faded: s.faded, fadeAtOnce: fadesAtOnce(s.fadeCard) };
         const look = { order: s.menuOrder, iconOnly: s.menuIconOnly, settingsIconOnly: s.menuSettingsIconOnly };
         segs = menuSegments(s.menu, state, look);
         viewKey = 'menu';
@@ -1246,7 +1248,13 @@ export class Island {
         if (!cfg.interactive) own = own.filter((x) => x.t !== 'button' && x.t !== 'input' && !(x.t === 'chip' && x.action));
         segs = this.namespaced(primary, own);
         viewKey = `act:${primary}`;
-        if (s.showSecondary && level !== 'idle') segs = segs.concat(this.secondarySegments(choice.visible.filter((id) => id !== primary), statuses, level, now, vertical));
+        // On the resting pill, the small icons show as Settings › Behavior › Icons on the small pill
+        // says: always, only while pointed at, or never; at its left end (first) or right end.
+        const iconsHere = level !== 'compact' || s.compactIcons.show === 'always' || (s.compactIcons.show === 'hover' && this.hover);
+        if (s.showSecondary && level !== 'idle' && iconsHere) {
+          const others = this.secondarySegments(choice.visible.filter((id) => id !== primary), statuses, level, now, vertical);
+          segs = level === 'compact' && s.compactIcons.side === 'start' ? others.concat(segs) : segs.concat(others);
+        }
       }
       // Quiet on: a small moon at the end of the pill, like the iPhone's Focus icon, so it is never on unnoticed.
       segs = segs.concat(quietMoon(this.settings.general.dnd, viewKey));
@@ -1258,19 +1266,36 @@ export class Island {
       orient = 'horizontal';
       built = build(orient);
     }
-    const { size, inner, crossMax, viewKey } = built;
+    const { crossMax, viewKey } = built;
+    let { size, inner } = built;
     let segs = built.segs;
-    const { w, h } = size;
-    const fit = (list: Seg[]): Placed[] => (orient === 'vertical' ? fitVertical(list, inner, crossMax) : fitSegments(list, inner, h));
+    const fit = (list: Seg[]): Placed[] => (orient === 'vertical' ? fitVertical(list, inner, crossMax) : fitSegments(list, inner, size.h));
 
     let placed: Placed[] = fit(segs);
-    // Secondary chips that did not fit fold into a "+N" chip.
     const offered = segs.filter((x) => x.key.startsWith('chip/')).length;
-    const shown = placed.filter((p) => p.seg.key.startsWith('chip/')).length;
-    if (offered > shown && this.view === 'main' && level !== 'compact') {
-      segs = segs.concat([{ t: 'chip', key: 'island/more', label: `+${offered - shown}`, icon: orient === 'vertical' ? undefined : 'more', action: 'island:overflow', side: 'end', prio: 1, tip: 'More activities' }]);
+    const chipsIn = () => placed.filter((p) => p.seg.key.startsWith('chip/')).length;
+    // The resting pill's small icons never drop off it (Moss, 11-20): it grows to hold them, as
+    // far as the screen goes.
+    if (offered > chipsIn() && this.view === 'main' && level === 'compact' && orient === 'horizontal') {
+      const most = Math.max(size.w, this.area.width - 32);
+      for (let guard = 24; offered > chipsIn() && size.w < most && guard > 0; guard--) {
+        const more = Math.min(24, most - size.w);
+        size = { ...size, w: size.w + more, main: size.main + more };
+        inner += more;
+        placed = fit(segs);
+      }
+    }
+    // Secondary chips that still did not fit fold into a "+N" (a plain count on the small pill).
+    const shown = chipsIn();
+    if (offered > shown && this.view === 'main') {
+      const side = level === 'compact' ? s.compactIcons.side : 'end';
+      const more: Seg = level === 'compact'
+        ? { t: 'text', key: 'island/more', text: `+${offered - shown}`, tone: 'muted', size: 'sm', weight: 'semibold', side, prio: 1, tip: 'More activities' }
+        : { t: 'chip', key: 'island/more', label: `+${offered - shown}`, icon: orient === 'vertical' ? undefined : 'more', action: 'island:overflow', side, prio: 1, tip: 'More activities' };
+      segs = side === 'start' ? [more, ...segs] : segs.concat([more]);
       placed = fit(segs);
     }
+    const { w, h } = size;
 
     // Blend into the edge: on its screen edge, no gap, its corners there square (and a grown card's).
     const gap = pillGap(s.edge, s.blend);
@@ -1368,7 +1393,7 @@ export class Island {
       hidden: hiddenEverywhere, fsHide, fullscreen: this.fullscreenAny,
       glow: beamSpec(beam), speed: s.glow,
       bot: botShown ? { d: botD } : null,
-      accent: accentColor(s), color: s.color, glass: s.glass, reduce: s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches),
+      accent: accentColor(s), color: s.color, glass: s.glass, custom: s.custom, reduce: s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches),
     };
     this.sendMirror(this.lastFrame);
     this.pillInput = placed.some((p) => p.seg.t === 'input');
@@ -1424,8 +1449,9 @@ export class Island {
       if (compact) {
         const tip = statuses.get(id)?.summary ?? meta.name;
         // A chip that keeps its label (a number) shows just that, in place of the icon.
-        if (view?.keepLabel && view.label) out.push({ t: 'text', key: `chip/${id}`, text: view.label, tone: view.tone ?? 'muted', size: 'sm', weight: 'semibold', side: 'end', prio, tip });
-        else out.push({ t: 'icon', key: `chip/${id}`, icon: view?.icon ?? meta.icon, tone: view?.tone ?? 'muted', size: 'sm', side: 'end', prio, tip });
+        const side = this.settings.island.compactIcons.side;
+        if (view?.keepLabel && view.label) out.push({ t: 'text', key: `chip/${id}`, text: view.label, tone: view.tone ?? 'muted', size: 'sm', weight: 'semibold', side, prio, tip });
+        else out.push({ t: 'icon', key: `chip/${id}`, icon: view?.icon ?? meta.icon, tone: view?.tone ?? 'muted', size: 'sm', side, prio, tip });
       } else {
         out.push({
           t: 'chip',
@@ -1589,7 +1615,7 @@ export class Island {
     if (this.view === 'hide' && !this.previewLevel) return this.hideSheet(now);
     if (this.view === 'fade' && !this.previewLevel) {
       const s = this.settings.island;
-      return { owner: 'island', view: fadeSheet({ faded: s.faded, peekUntilBack: s.peekUntilBack, smartFade: s.smartFade }) };
+      return { owner: 'island', view: fadeSheet({ faded: s.faded, peekUntilBack: s.peekUntilBack, smartFade: s.smartFade, shown: s.fadeCard }) };
     }
     if (this.view !== 'main' || this.previewLevel) return null;
     if (this.open && this.fileDrag?.where === 'island') return this.dropSheet(pillW);
@@ -2498,6 +2524,11 @@ export class Island {
         return;
       case 'island:fade-menu':
         // The menu's Fade, opened: fade now, and the two ways it fades on its own (fade-menu.ts).
+        // With both of those taken off the card in Settings, it just fades.
+        if (fadesAtOnce(this.settings.island.fadeCard)) {
+          this.setFaded(true);
+          break;
+        }
         this.view = 'fade';
         this.open = false;
         break;
@@ -2536,7 +2567,13 @@ export class Island {
         this.setHover(Boolean(arg));
         return;
       case 'island:hover-key': {
-        const key = typeof arg === 'string' ? arg : null;
+        let key = typeof arg === 'string' ? arg : null;
+        // Coming onto the pill right over one of its small icons points at the pill, not the icon:
+        // the card is the one in front's (Moss, 11-20). The icon's own comes once the pointer moves
+        // off it and back. pointerover comes before pointerenter, so the pointer is not on it yet.
+        if (!this.pointerOnPill) this.entryKey = key;
+        else if (key !== this.entryKey) this.entryKey = null;
+        if (key !== null && key === this.entryKey && key.startsWith('chip/')) key = null;
         const moved = this.ownerOf(key) !== this.ownerOf(this.hoverKey);
         this.hoverKey = key;
         this.syncPasteArm();

@@ -5,12 +5,36 @@
 import type { Seg } from './segments';
 import type { SheetView } from './sheet';
 
+/**
+ * What the Fade card shows (Settings › Behavior › Fade the island, Moss 11-20): each of its three
+ * rows on or off. With neither setting row on there is nothing to choose, so the menu's Fade fades
+ * at once, no card (fadesAtOnce).
+ */
+export interface FadeShown {
+  now: boolean;
+  peek: boolean;
+  smart: boolean;
+}
+export const FULL_FADE: FadeShown = { now: true, peek: true, smart: true };
+
+export function fadesAtOnce(shown: FadeShown): boolean {
+  return !shown.peek && !shown.smart;
+}
+
+export function normalizeFadeShown(v: unknown): FadeShown {
+  const o = typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
+  const b = (k: keyof FadeShown) => (typeof o[k] === 'boolean' ? (o[k] as boolean) : FULL_FADE[k]);
+  return { now: b('now'), peek: b('peek'), smart: b('smart') };
+}
+
 export interface FadeMenuState {
   /** Faded by the menu now (until Show). */
   faded: boolean;
   /** A tap of Ctrl keeps it faded until the pointer comes back, not just until it moves off. */
   peekUntilBack: boolean;
   smartFade: boolean;
+  /** Its rows on or off (all on when not given). */
+  shown?: FadeShown;
 }
 
 /** The pill while the Fade card shows: back to the menu, then what this is. */
@@ -28,6 +52,7 @@ export function fadeSegments(vertical: boolean): Seg[] {
  * island fades on its own, each one row with its choices side by side (Justin: not two rows).
  */
 export function fadeSheet(s: FadeMenuState): SheetView {
+  const shown = s.shown ?? FULL_FADE;
   return {
     key: 'island/fade',
     blocks: [
@@ -36,10 +61,11 @@ export function fadeSheet(s: FadeMenuState): SheetView {
         t: 'choices',
         key: 'for',
         items: [
-          s.faded
+          // Show always stays while faded: it is the way back.
+          ...(s.faded || shown.now ? [s.faded
             ? { key: 'show', label: 'Show the island', detail: 'Bring it back now', action: 'island:fade' }
-            : { key: 'fade', label: 'Fade now', detail: 'Until you right-click it and press Show', action: 'island:fade' },
-          {
+            : { key: 'fade', label: 'Fade now', detail: 'Until you right-click it and press Show', action: 'island:fade' }] : []),
+          ...(shown.peek ? [{
             key: 'lasts',
             label: 'Peek lasts',
             detail: 'How long a Ctrl tap fades it',
@@ -48,8 +74,8 @@ export function fadeSheet(s: FadeMenuState): SheetView {
               { key: 'off', label: 'Until the pointer moves off', selected: !s.peekUntilBack, action: 'island:peek-lasts', arg: 'off' },
               { key: 'back', label: 'Until it comes back', selected: s.peekUntilBack, action: 'island:peek-lasts', arg: 'back' },
             ],
-          },
-          {
+          }] : []),
+          ...(shown.smart ? [{
             key: 'smart',
             label: 'Smart fade',
             detail: 'Faded until you point at it; pop-ups still show',
@@ -58,7 +84,7 @@ export function fadeSheet(s: FadeMenuState): SheetView {
               { key: 'off', label: 'Off', selected: !s.smartFade, action: 'island:smart-fade', arg: false },
               { key: 'on', label: 'On', selected: s.smartFade, action: 'island:smart-fade', arg: true },
             ],
-          },
+          }] : []),
         ],
       },
     ],

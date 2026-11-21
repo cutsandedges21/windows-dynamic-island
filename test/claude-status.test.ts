@@ -152,14 +152,49 @@ describe('Claude Status: app and Chrome chats (ui_watcher.ps1)', () => {
     expect(rows.filter((x) => x.gone == null).map((x) => x.title)).toEqual(['Totally new']);
   });
 
-  it('a chat leaving the screen is done if the sidebar would show it, else hidden', () => {
+  it('a chat leaving the screen keeps running: the sidebar shows a light, not a label (Moss, 11-20)', () => {
     const runs: number[] = [];
     const w = new ChatWatcher((s) => runs.push(s));
     w.update(scan([chat({ title: 'App chat' }), chat({ source: 'chrome', hwnd: 9, title: 'Tab chat' })]), 100);
     const rows = w.update(scan([], true), 200);
-    expect(rows.find((x) => x.title === 'App chat')).toMatchObject({ state: 'done', since: 200, visible: true });
+    expect(rows.find((x) => x.title === 'App chat')).toMatchObject({ state: 'running', since: 100, visible: true });
     expect(rows.find((x) => x.title === 'Tab chat')).toMatchObject({ state: 'running', visible: false });
-    expect(runs).toEqual([100]);
+    expect(runs).toEqual([]);
+    // With the app's sidebar folded away it is hidden, as Chrome's.
+    const w2 = new ChatWatcher();
+    w2.update(scan([chat({ title: 'App chat' })]), 100);
+    expect(w2.update(scan([], false), 200)[0]).toMatchObject({ state: 'running', visible: false });
+  });
+
+  it('switching chats in the app does not mark the one you left done', () => {
+    const w = new ChatWatcher();
+    w.update(scan([chat({ title: 'First' })]), 1);
+    // You open Second; First is still working, its light blinking in the sidebar (no label).
+    const rows = w.update(scan([chat({ title: 'Second', state: 'running' })]), 2);
+    expect(rows.find((x) => x.title === 'First')).toMatchObject({ state: 'running' });
+    // Back on First: it shows its answer, so it is done now.
+    w.update(scan([chat({ title: 'First', state: 'done' })]), 30);
+    const back = w.update(scan([chat({ title: 'First', state: 'done' })]), 31);
+    expect(back.find((x) => x.title === 'First')).toMatchObject({ state: 'done', since: 31 });
+  });
+
+  it('a screen half drawn for one pass does not end a running chat', () => {
+    const w = new ChatWatcher();
+    w.update(scan([chat()]), 1);
+    // The buttons are not there yet (idle) or are the last chat's (done) for a pass.
+    expect(w.update(scan([chat({ state: 'idle' })]), 2)[0].state).toBe('running');
+    expect(w.update(scan([chat({ state: 'done' })]), 3)[0].state).toBe('running');
+    expect(w.update(scan([chat({ state: 'running' })]), 4)[0].state).toBe('running');
+    // Ended for two passes in a row: done.
+    w.update(scan([chat({ state: 'done' })]), 5);
+    expect(w.update(scan([chat({ state: 'done' })]), 6)[0]).toMatchObject({ state: 'done', since: 6 });
+  });
+
+  it("the app sidebar's own label still ends a chat at once", () => {
+    const w = new ChatWatcher();
+    w.update(scan([chat({ title: 'Side' })]), 1);
+    const [r] = w.update(scan([chat({ title: 'Side', open: false, state: 'done', unread: true })]), 2);
+    expect(r).toMatchObject({ state: 'done', unread: true });
   });
 
   it('ids are stable and renames are judged by words', () => {

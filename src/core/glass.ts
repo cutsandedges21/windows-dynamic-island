@@ -36,3 +36,44 @@ export function glassStyle(glass: number | undefined): Record<'--glass-smoke' | 
 export function applyGlass(root: HTMLElement, glass: number | undefined): void {
   for (const [name, value] of Object.entries(glassStyle(glass))) root.style.setProperty(name, value);
 }
+
+/** Pill colour › Custom, before one is picked: a deep blue. */
+export const CUSTOM_DEFAULT = '#1f4fbf';
+
+/** A saved custom colour as #rrggbb, or the default for anything else. */
+export function pillHex(v: unknown): string {
+  return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : CUSTOM_DEFAULT;
+}
+
+/** Light enough that dark text reads better on it than white (WCAG relative luminance). */
+export function hexIsLight(hex: string | undefined): boolean {
+  const c = pillHex(hex);
+  const lin = (i: number) => {
+    const v = parseInt(c.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  const l = 0.2126 * lin(1) + 0.7152 * lin(3) + 0.0722 * lin(5);
+  // Where black text and white text have the same contrast.
+  return l > 0.179;
+}
+
+/**
+ * Sets the pill's colour on a page: data-pill for the look, and for Custom the colour itself
+ * (--custom-pill) and whether it is light (data-tone), so text goes dark on it as on White.
+ */
+export function applyPill(root: HTMLElement, color: string, custom?: string): void {
+  root.dataset.pill = color;
+  if (color === 'custom') {
+    const hex = pillHex(custom);
+    root.style.setProperty('--custom-pill', hex);
+    root.dataset.tone = hexIsLight(hex) ? 'light' : 'dark';
+  } else {
+    root.style.removeProperty('--custom-pill');
+    delete root.dataset.tone;
+  }
+}
+
+/** The pill is a light one (White, Matte white, a light Custom): what sits on it goes dark. */
+export function pillIsLight(root: HTMLElement): boolean {
+  return /white/.test(root.dataset.pill ?? '') || root.dataset.tone === 'light';
+}

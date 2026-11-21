@@ -31,11 +31,13 @@
 
 /* Pill colour (Settings › Appearance): text and tones go darker so they read on a light pill. */
 html[data-pill='white'],
-html[data-pill='matte-white'] {
+html[data-pill='matte-white'],
+html[data-pill='custom'][data-tone='light'] {
   --ink: 0, 0, 0;
   color-scheme: light;
 }
-html[data-pill='white'] {
+html[data-pill='white'],
+html[data-pill='custom'][data-tone='light'] {
   --pill: #ffffff;
   --fg: #141416;
   --muted: rgba(20, 20, 22, 0.62);
@@ -135,9 +137,11 @@ html[data-pill='glass'] :where(.tile) { box-shadow: inset 0 1px 0 rgba(255, 255,
 html[data-pill='glass'] :is(.pill, .sheet) { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55); }
 /* screen blending only lightens, so on a light pill the glow is drawn as is */
 html[data-pill='white'] .glow,
-html[data-pill='matte-white'] .glow { mix-blend-mode: normal; }
+html[data-pill='matte-white'] .glow,
+html[data-pill='custom'][data-tone='light'] .glow { mix-blend-mode: normal; }
 html[data-pill='white'] :is(.seg-btn, .sbtn).style-danger,
-html[data-pill='matte-white'] :is(.seg-btn, .sbtn).style-danger { color: var(--bad); }
+html[data-pill='matte-white'] :is(.seg-btn, .sbtn).style-danger,
+html[data-pill='custom'][data-tone='light'] :is(.seg-btn, .sbtn).style-danger { color: var(--bad); }
 
 html,
 body {
@@ -665,7 +669,8 @@ html.reduce .pill.covered > .pill-content { transition: none; }
    Heights, not scaleY, so the round ends stay round. */
 :root { --bar-shade: #000; }
 html[data-pill='white'],
-html[data-pill='matte-white'] { --bar-shade: #fff; }
+html[data-pill='matte-white'],
+html[data-pill='custom'][data-tone='light'] { --bar-shade: #fff; }
 @property --lvl { syntax: '<number>'; inherits: false; initial-value: 0; }
 .seg-bars {
   --bars-w: 25px;
@@ -2496,7 +2501,7 @@ html.dk-upright .dock .dk-skip { width: 34px; height: 26px; min-height: 26px; pa
 .dock .dk-batt { gap: 5px; padding: 0 6px; }
 /* Windows 11's battery (Justin, 11-19): white outline and percent, pale green fill and a bolt while charging. */
 .dock .dk-batt { --bt-fill: var(--fg); --bt-charge: #9fd89f; --bt-low: #ff99a4; }
-html[data-pill='white'] .dock .dk-batt, html[data-pill='matte-white'] .dock .dk-batt { --bt-charge: #0f7b0f; --bt-low: #c42b1c; }
+html[data-pill='white'] .dock .dk-batt, html[data-pill='matte-white'] .dock .dk-batt, html[data-pill='custom'][data-tone='light'] .dock .dk-batt { --bt-charge: #0f7b0f; --bt-low: #c42b1c; }
 .dock .dk-batt > span { font: 400 12px/1 var(--font); color: var(--fg); font-variant-numeric: tabular-nums; }
 .dock .dk-bbody { display: block; width: 20px; height: 13.6px; }
 .dock .dk-bbody svg { display: block; width: 100%; height: 100%; overflow: visible; }
@@ -2745,7 +2750,7 @@ html.frame-window.fr-full :is(.fr-border, .notch, .fr-glow, .fr-label) { opacity
 .nt-ring { position: absolute; left: 0; pointer-events: none; opacity: 0; transform: scale(var(--nk)); transform-origin: 0 50%; transition: opacity 0.12s ease 0.34s, transform 0.46s cubic-bezier(0.22, 1, 0.36, 1); mix-blend-mode: screen; }
 .notch[data-side='right'] .nt-ring { left: auto; right: 0; transform-origin: 100% 50%; }
 html.fr-lit .notch.out .nt-ring, html.fr-lit .notch.drop .nt-ring { opacity: 1; transform: none; transition: opacity 0.08s ease, transform 0.46s cubic-bezier(0.22, 1, 0.36, 1); }
-html[data-pill='white'] .nt-ring, html[data-pill='matte-white'] .nt-ring { mix-blend-mode: normal; }
+html[data-pill='white'] .nt-ring, html[data-pill='matte-white'] .nt-ring, html[data-pill='custom'][data-tone='light'] .nt-ring { mix-blend-mode: normal; }
 .nt-ring > div { position: absolute; inset: 0; overflow: hidden; }
 .nt-ring-halo { opacity: 0.45; -webkit-mask: var(--m-halo) 0 0 / 100% 100% no-repeat; mask: var(--m-halo) 0 0 / 100% 100% no-repeat; filter: blur(1.5px); }
 .nt-ring-core { -webkit-mask: var(--m-core) 0 0 / 100% 100% no-repeat; mask: var(--m-core) 0 0 / 100% 100% no-repeat; }
@@ -2785,7 +2790,7 @@ html[data-fr-motion='still'] .nt-cone { background: var(--c); opacity: 0.55; }
    just inside the line and round every shape on it (frame.ts ringMask). Nothing repaints while it turns. */
 .fr-glow { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.4s ease; mix-blend-mode: screen; }
 html.frame-window { --lap: 5s; --breath: 2.4s; --c: var(--accent); --hot: #fff; --p: 0deg; }
-html[data-pill='white'] .fr-glow, html[data-pill='matte-white'] .fr-glow { mix-blend-mode: normal; }
+html[data-pill='white'] .fr-glow, html[data-pill='matte-white'] .fr-glow, html[data-pill='custom'][data-tone='light'] .fr-glow { mix-blend-mode: normal; }
 .fr-glow.on { opacity: 1; }
 .fr-ring { position: absolute; inset: 0; overflow: hidden; -webkit-mask: var(--m) 0 0 / 100% 100% no-repeat; mask: var(--m) 0 0 / 100% 100% no-repeat; }
 .fr-ring.halo { opacity: 0.45; }
@@ -3034,3 +3039,14 @@ html.isl-tint-all .sheet.tinted .sheet-bg::before { opacity: 0; }
 /* Dragged out past its edge: let go, and it is out of the folder. */
 .dk-folderpop.dk-dropping { box-shadow: inset 0 0 0 1.5px rgba(var(--ink), 0.18); }
 .dk-folderpop.dk-dropping .dk-ftile.moving { opacity: 0.75; }
+
+/* Custom (Settings › Appearance › Pill colour › Custom): the colour you picked (--custom-pill, set by
+   applyPill in glass.ts), lit a little from the top like the matte looks, with a faint rim. A light
+   one (data-tone='light') takes White's dark text above. */
+html[data-pill='custom'] {
+  --pill: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 45%, rgba(0, 0, 0, 0.06)), var(--custom-pill, #1f4fbf);
+  --cut: var(--custom-pill, #1f4fbf);
+}
+html[data-pill='custom'] :is(.pill-bg, .sheet-bg, .bubble-bg, .chat-bar, .chat-card, .dock-bg) {
+  box-shadow: inset 0 0 0 1px rgba(var(--ink), 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}

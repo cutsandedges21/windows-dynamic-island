@@ -4,7 +4,8 @@
 import { cleanWidgets } from './widgets';
 import { CATALOG, type Band, type Behavior } from '../activities/catalog';
 import { normalizeWidths, type Anchor, type IslandSize, type Widths } from './layout';
-import { GLASS_DEFAULT } from './glass';
+import { FULL_FADE, normalizeFadeShown, type FadeShown } from './fade-menu';
+import { CUSTOM_DEFAULT, GLASS_DEFAULT, hexIsLight, pillHex } from './glass';
 import { SOUND_PACKS } from './sound-packs';
 import { DEFAULT_ICON_ONLY, DEFAULT_MENU_ORDER, FULL_MENU, normalizeIconOnly, normalizeMenuOrder, type MenuIconOnly, type MenuItemId, type MenuShown } from './menu';
 
@@ -349,8 +350,9 @@ export interface GridLayout {
   pages: Array<Array<string | null>>;
 }
 
-/** tinted: the taskbar's and widgets' near-black with a blue tint, as Windows' own dark taskbar (Justin, 11-20). */
-export type PillColor = 'black' | 'white' | 'matte-white' | 'matte-black' | 'glass' | 'tinted';
+/** tinted: the taskbar's and widgets' near-black with a blue tint, as Windows' own dark taskbar (Justin, 11-20).
+ *  custom: a colour you pick (Settings › Appearance › Pill colour › Custom; island.custom). */
+export type PillColor = 'black' | 'white' | 'matte-white' | 'matte-black' | 'glass' | 'tinted' | 'custom';
 
 /** The chimes Island synthesizes (src/core/sounds.ts). */
 export type SynthStyle = 'soft' | 'glass' | 'pop' | 'bell' | 'retro';
@@ -387,11 +389,18 @@ export interface Settings {
     hoverExpand: boolean;
     hideInFullscreen: boolean;
     showSecondary: boolean;
+    /**
+     * The other activities' small icons on the resting (compact) pill (Moss, 11-20): `show` always,
+     * only while pointed at, or never; `side` which end of the pill they sit at.
+     */
+    compactIcons: { show: 'always' | 'hover' | 'never'; side: 'start' | 'end' };
     accent: string;
     /** The pill's own colour, and the card's under it. */
     color: PillColor;
     /** Glass only, like iOS Liquid Glass: 0 is clear, 100 is tinted (less of what is behind shows through). */
     glass: number;
+    /** Custom only: the pill's own colour, #rrggbb. */
+    custom: string;
     reduceMotion: 'system' | 'on' | 'off';
     /** How fast the border glow moves, or off. */
     glow: 'off' | 'slow' | 'medium' | 'fast';
@@ -428,6 +437,8 @@ export interface Settings {
     faded: boolean;
     /** Smart fade: faded whenever the pointer is off the island; pop-ups still show in full. */
     smartFade: boolean;
+    /** What the right-click menu's Fade card shows (Settings › Behavior › Fade the island). */
+    fadeCard: FadeShown;
     /** What the right-click menu shows (src/core/menu.ts); Settings is always in it, whatever this says. */
     menu: MenuShown;
     /** The right-click menu's order (Settings � Behavior � Right-click menu, by dragging); Settings stays last. */
@@ -507,7 +518,8 @@ export const ACCENTS: Record<string, string> = {
 /** The accent as the pill draws it: white turns dark on a white or matte white pill, where it would vanish. */
 export function accentColor(island: Settings['island']): string {
   const c = ACCENTS[island.accent] ?? island.accent ?? ACCENTS.ember;
-  return (island.color === 'white' || island.color === 'matte-white') && c.toLowerCase() === '#ffffff' ? '#1c1c1e' : c;
+  const light = island.color === 'white' || island.color === 'matte-white' || (island.color === 'custom' && hexIsLight(island.custom));
+  return light && c.toLowerCase() === '#ffffff' ? '#1c1c1e' : c;
 }
 
 export function defaultActivityConfig(id: string): ActivityConfig {
@@ -544,9 +556,11 @@ export function defaultSettings(): Settings {
       // Moss: the island stays on screen over full-screen apps and videos too.
       hideInFullscreen: false,
       showSecondary: true,
+      compactIcons: { show: 'always', side: 'end' },
       accent: 'sky',
       color: 'black',
       glass: GLASS_DEFAULT,
+      custom: CUSTOM_DEFAULT,
       reduceMotion: 'system',
       glow: 'medium',
       hoverCard: 'pointer',
@@ -562,6 +576,7 @@ export function defaultSettings(): Settings {
       hiddenUntil: 0,
       faded: false,
       smartFade: false,
+      fadeCard: { ...FULL_FADE },
       menu: { ...FULL_MENU },
       menuOrder: [...DEFAULT_MENU_ORDER],
       menuIconOnly: { ...DEFAULT_ICON_ONLY },
@@ -634,7 +649,11 @@ export function migrate(saved: unknown): Settings {
   // 0.2.4 called matte white "silver" and matte black "blur".
   const renamed: Record<string, PillColor> = { silver: 'matte-white', blur: 'matte-black' };
   out.island.color = renamed[out.island.color] ?? out.island.color;
-  if (!['black', 'white', 'matte-white', 'matte-black', 'glass'].includes(out.island.color)) out.island.color = 'black';
+  if (!['black', 'white', 'matte-white', 'matte-black', 'glass', 'custom'].includes(out.island.color)) out.island.color = 'black';
+  out.island.custom = pillHex(out.island.custom);
+  out.island.fadeCard = normalizeFadeShown(out.island.fadeCard);
+  if (!['always', 'hover', 'never'].includes(out.island.compactIcons.show)) out.island.compactIcons.show = 'always';
+  if (out.island.compactIcons.side !== 'start' && out.island.compactIcons.side !== 'end') out.island.compactIcons.side = 'end';
   // Justin's 0.2.11 saved the glass slider; Moss's 0.4.2 had none and gets the old look.
   out.island.glass = Number.isFinite(out.island.glass) ? Math.max(0, Math.min(100, out.island.glass)) : GLASS_DEFAULT;
   const snd = out.general.sound;

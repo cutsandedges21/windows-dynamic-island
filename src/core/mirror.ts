@@ -5,7 +5,7 @@
 import { setReducedMotion } from './animator';
 import { BorderGlow, type GlowSpec, type GlowSpeed } from './glow';
 import { BubbleView } from './bubble';
-import { applyGlass } from './glass';
+import { applyGlass, applyPill } from './glass';
 import { bubbleRect, pillRect, tuckedRect, type Anchor, type Area, type Orientation } from './layout';
 import { native, onMine, type Placement } from './native';
 import { PillRenderer } from './renderer';
@@ -38,6 +38,8 @@ export interface MirrorFrame {
   color: PillColor;
   /** The glass slider, 0 (clear) to 100 (tinted); absent from an Island before it had one. */
   glass?: number;
+  /** Pill colour › Custom's own colour. */
+  custom?: string;
   reduce: boolean;
   /** The bot's bubble beside the pill (its diameter), or null when it is off or the island is moving. */
   bot: { d: number } | null;
@@ -62,7 +64,7 @@ export async function runMirror(stage: HTMLElement): Promise<void> {
     // The island itself is on this screen (Duplicate): it is the one you see and use here.
     stage.style.visibility = f.host && f.host === monitor ? 'hidden' : '';
     document.documentElement.style.setProperty('--accent', f.accent);
-    document.documentElement.dataset.pill = f.color;
+    applyPill(document.documentElement, f.color, f.custom);
     applyGlass(document.documentElement, f.glass);
     setReducedMotion(f.reduce);
     document.documentElement.classList.toggle('reduce', f.reduce);

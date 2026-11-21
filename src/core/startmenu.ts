@@ -7,7 +7,7 @@
 
 import '../styles/start.css';
 import { cleanFolders, dockSlots, foldApps, FOLD_MS, FOLD_ZONE, FOLDER_NAME, folderKey, glideFrom, moveSlot, popIn, sinkInto, staggerIn, unfoldApp, type DockApp, type DockSlot } from './dock';
-import { applyGlass } from './glass';
+import { applyGlass, applyPill } from './glass';
 import { isTauri, native, on, sendTo, type InstalledApp } from './native';
 import type { DockFolder, PillColor } from './settings';
 
@@ -15,6 +15,8 @@ import type { DockFolder, PillColor } from './settings';
 export interface StartFrame {
   color: PillColor;
   glass?: number;
+  /** Pill colour › Custom's own colour. */
+  custom?: string;
   accent: string;
   pins: InstalledApp[];
   /** Pinned apps dropped onto one another (as the taskbar's: dock.ts dockSlots). */
@@ -620,7 +622,7 @@ export async function runStart(stage: HTMLElement): Promise<void> {
 
   const draw = () => {
     if (frame) {
-      root.dataset.pill = frame.color;
+      applyPill(root, frame.color, frame.custom);
       root.style.setProperty('--accent', frame.accent);
       applyGlass(root, frame.glass);
     }

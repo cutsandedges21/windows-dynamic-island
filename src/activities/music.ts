@@ -16,6 +16,7 @@ import type { PlayerBlock } from '../core/player';
 import { growsOf } from '../core/settings';
 import type { Seg } from '../core/segments';
 import type { SheetButton, SheetView, Tile } from '../core/sheet';
+import { pillIsLight } from '../core/glass';
 import { BaseActivity } from './base';
 import { lineAt, lineIndex, LyricsLoader } from './lyrics';
 
@@ -137,7 +138,7 @@ export class MusicActivity extends BaseActivity {
   private barTint(): string | undefined {
     const hsl = this.tint?.hsl;
     if (!hsl) return undefined;
-    return barColour(hsl, /white/.test(document.documentElement.dataset.pill ?? ''));
+    return barColour(hsl, pillIsLight(document.documentElement));
   }
 
   private hoverPlayer(): boolean {

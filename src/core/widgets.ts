@@ -4,7 +4,7 @@
 // saves where each was dragged to. A widget window runs no activities; `runWidget` draws what
 // it is sent with the same SheetRenderer the island's cards use.
 
-import { applyGlass } from './glass';
+import { applyGlass, applyPill } from './glass';
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
 import { isTauri, native, on, sendTo, windowLabel } from './native';
 import { SheetRenderer, type SheetView, type Tile } from './sheet';
@@ -59,8 +59,8 @@ export function sized(tile: Tile, size: string | undefined): Tile {
 }
 
 /** The look widgets (or the taskbar) are drawn in: their own, or the island's when set to follow it. */
-export function lookOf(own: ItemLook, island: { color: PillColor; glass?: number }): { color: PillColor; glass?: number } {
-  return own.color === 'island' ? { color: island.color, glass: island.glass } : { color: own.color, glass: own.glass };
+export function lookOf(own: ItemLook, island: { color: PillColor; glass?: number; custom?: string }): { color: PillColor; glass?: number; custom?: string } {
+  return own.color === 'island' ? { color: island.color, glass: island.glass, custom: island.custom } : { color: own.color, glass: own.glass };
 }
 
 export const MAX_WIDGETS = 8;
@@ -116,6 +116,8 @@ export interface WidgetFrame {
   accent: string;
   color: PillColor;
   glass?: number;
+  /** Pill colour › Custom's own colour. */
+  custom?: string;
   reduce: boolean;
   /** Dragging it is off (right-click › Lock in place). */
   locked: boolean;
@@ -168,7 +170,7 @@ export interface WidgetHostHooks {
   /** The widgets' saved places or choices changed. */
   save(): void;
   /** The island's own look. */
-  look(): { accent: string; color: PillColor; glass?: number; reduce: boolean };
+  look(): { accent: string; color: PillColor; glass?: number; custom?: string; reduce: boolean };
   /** Its activity runs (the clock always does). */
   enabled(kind: string): boolean;
 }
@@ -347,7 +349,7 @@ export async function runWidget(stage: HTMLElement, label = windowLabel): Promis
     current = f;
     root.classList.toggle('locked', f.locked);
     root.style.setProperty('--accent', f.accent);
-    root.dataset.pill = f.color;
+    applyPill(root, f.color, f.custom);
     applyGlass(root, f.glass);
     root.classList.toggle('reduce', f.reduce);
     if (f.kind === 'clock') {

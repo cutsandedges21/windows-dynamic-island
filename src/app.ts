@@ -10,14 +10,16 @@ import { activityMatches, CATALOG_BY_ID, type ActivityMeta, type Category, type 
 import { activityPreview, alertPreview, islandPreview } from './previews';
 import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from './core/format';
 import { icon, type IconName } from './core/icons';
+import { applyPill } from './core/glass';
 import { blendLabel, innerPadding, levelWidth, normalizeWidths, pillSize, type Anchor, type Level } from './core/layout';
+import { fadesAtOnce } from './core/fade-menu';
 import { MENU_ITEMS, menuMain, menuSegments, normalizeMenuOrder, type MenuItemId } from './core/menu';
 import { fitSegments } from './core/segments';
 import { isTauri, native, on, sendTo, type AutoModelState, type MonitorInfo } from './core/native';
 import { ctrlKey, optionHere, platform, thisComputer, unavailableReason } from './core/platform';
 import { springAnimate } from './core/renderer';
 import { playSound, styleChoices, type ChimeKind } from './core/sounds';
-import { ACCENTS, backAt, cloneSettings, growsChoices, growsOf, GROWS_BELOW, HIDE_CHOICES, hideUntil, migrate, newPhoneTopic, type ActivityConfig, type Grows, type Settings } from './core/settings';
+import { ACCENTS, backAt, cloneSettings, growsChoices, growsOf, GROWS_BELOW, HIDE_CHOICES, hideUntil, migrate, newPhoneTopic, type ActivityConfig, type Grows, type PillColor, type Settings } from './core/settings';
 import { springs } from './core/spring';
 import { catchErrors } from './core/errors';
 import { codeGrid } from './codegrid';
@@ -165,7 +167,7 @@ function render(): void {
     return;
   }
   // The window takes the island's colour (Settings follows the pill, Moss).
-  document.documentElement.dataset.pill = settings.island.color;
+  applyPill(document.documentElement, settings.island.color, settings.island.custom);
   const scroll = root.querySelector('.content')?.scrollTop ?? 0;
   const panelScroll = root.querySelector('.act-panel')?.scrollTop ?? 0;
   const active = document.activeElement as HTMLInputElement | null;
@@ -1421,8 +1423,9 @@ function settingsPage(part: 'island' | 'behavior' | 'alerts' | 'phone' | 'genera
   const glassSlider = h('div', { class: 'glass-slider' }, [h('span', { class: 'muted', text: 'Clear' }), glass, h('span', { class: 'muted', text: 'Tinted' })]);
   const secs: HTMLElement[] = [
     section('Appearance', [
-      row('Pill colour', 'The whole island, card included.', segmented(i.color, [['black', 'Black'], ['white', 'White'], ['matte-white', 'Matte white'], ['matte-black', 'Matte black'], ['glass', 'Glass']], (v) => { i.color = v; save(true); render(); })),
+      stacked(row('Pill colour', 'The whole island, card included.', pillColours(i))),
       ...(i.color === 'glass' ? [row('Glass', 'Clear is more see-through; tinted lets less of what is behind show through.', glassSlider)] : []),
+      ...(i.color === 'custom' ? [row('Your colour', 'Text on it turns dark by itself when the colour is light.', customColour(i))] : []),
       row('Accent', null, accents),
       // As the taskbar can take it (Justin, 11-20).
       row("In the album's colour", "While a song plays, the island takes its album art's colour, as its music card does: the pill alone, or the pill and every card.", segmented(i.albumTint, [['off', 'Off'], ['compact', 'Pill only'], ['all', 'All of it']], (v) => { i.albumTint = v; save(true); render(); })),
@@ -1447,10 +1450,17 @@ function settingsPage(part: 'island' | 'behavior' | 'alerts' | 'phone' | 'genera
       row('Peek lasts', `How long a tap of ${ctrlKey()} keeps the island faded.`, segmented(i.peekUntilBack ? 'back' : 'off', [['off', 'Until the pointer moves off'], ['back', 'Until it comes back']], (v) => { i.peekUntilBack = v === 'back'; save(true); render(); })),
       row('Smart fade', 'The island stays faded until you point at it. Pop-ups, like a finished chat, still show in full.', toggle(i.smartFade, (v) => { i.smartFade = v; save(true); })),
       row('Hide in full-screen apps', 'Games, videos and presentations. Urgent things still show.', toggle(i.hideInFullscreen, (v) => { i.hideInFullscreen = v; save(true); })),
-      row('Show other activities beside the main one', 'Small chips, with +N when there is no room.', toggle(i.showSecondary, (v) => { i.showSecondary = v; save(true); })),
+      row('Show other activities beside the main one', 'Small chips, with +N when there is no room.', toggle(i.showSecondary, (v) => { i.showSecondary = v; save(true); render(); })),
+      ...(i.showSecondary
+        ? [
+            row('Icons on the small pill', 'The other activities as small icons while the island rests. The pill grows to fit them, so none drop off.', segmented(i.compactIcons.show, [['always', 'Always'], ['hover', 'Only when pointed at'], ['never', 'Never']], (v) => { i.compactIcons.show = v; save(true); render(); })),
+            ...(i.compactIcons.show === 'never' ? [] : [row('Where they sit', i.anchor === 'left' || i.anchor === 'right' ? 'On a standing pill, Left is the top end and Right the bottom.' : null, segmented(i.compactIcons.side, [['start', 'Left'], ['end', 'Right']], (v) => { i.compactIcons.side = v; save(true); render(); }))]),
+          ]
+        : []),
       row('Do not disturb', 'Nothing expands on its own; urgent moments still interrupt.', toggle(g.dnd, (v) => { g.dnd = v; save(true); })),
       menuRow(i),
       hideRow(i, mac),
+      fadeRow(i),
     ]),
     section('Startup', [
       row(mac ? 'Open at login' : 'Start with Windows', null, toggle(g.startWithWindows, (v) => { g.startWithWindows = v; save(true); void native.autostartSet(v); })),
@@ -1823,6 +1833,42 @@ function menuRow(i: Settings['island']): HTMLElement {
   return stacked(row('Right-click menu', 'What the island shows when you right-click it, as it will look and as big as it is. Drag the handles to reorder, or drag an item straight onto the island; turn off what you never use and the menu gets shorter by that much. Settings always stays, last unless you move it.', h('div', { class: 'menu-edit-wrap' }, [stage, list])));
 }
 
+/**
+ * Pill colour: Glass first, on its own (Moss, 11-20), then the solid looks, then Custom, your own
+ * colour, its dot showing it.
+ */
+function pillColours(i: Settings['island']): HTMLElement {
+  const pick = (v: PillColor, label: string, dot = false) =>
+    h('button', { class: i.color === v ? 'on' : '', 'aria-pressed': String(i.color === v), onclick: () => { i.color = v; save(true); render(); } }, [
+      ...(dot ? [h('i', { class: 'seg-dot', style: `--c:${i.custom}` })] : []),
+      h('span', { text: label }),
+    ]);
+  return h('div', { class: 'segmented pill-colours' }, [
+    pick('glass', 'Glass'),
+    h('i', { class: 'seg-sep', 'aria-hidden': 'true' }),
+    pick('black', 'Black'),
+    pick('white', 'White'),
+    pick('matte-white', 'Matte white'),
+    pick('matte-black', 'Matte black'),
+    h('i', { class: 'seg-sep', 'aria-hidden': 'true' }),
+    pick('custom', 'Custom', true),
+  ]);
+}
+
+/** Custom's colour: the system picker, the island following while you drag through it. */
+function customColour(i: Settings['island']): HTMLElement {
+  const input = h('input', { type: 'color', value: i.custom, 'aria-label': 'Pill colour' });
+  const hex = h('span', { class: 'muted mono', text: i.custom.toUpperCase() });
+  input.addEventListener('input', () => {
+    i.custom = input.value.toLowerCase();
+    hex.textContent = i.custom.toUpperCase();
+    applyPill(document.documentElement, i.color, i.custom);
+    save();
+  });
+  input.addEventListener('change', () => { save(true); render(); });
+  return h('label', { class: 'custom-colour' }, [input, hex]);
+}
+
 /** Hide the island for a while, or, while it is hidden, say until when and bring it back. */
 function hideRow(i: Settings['island'], mac: boolean): HTMLElement {
   const now = Date.now();
@@ -1837,6 +1883,24 @@ function hideRow(i: Settings['island'], mac: boolean): HTMLElement {
     h('button', { class: 'btn ghost', text: c.label, onclick: () => { i.hiddenUntil = hideUntil(c.id, Date.now()); save(true); render(); } }),
   ));
   return stacked(row('Hide the island', `The pill and the bot leave the screen for a while; Claude's prompts go back to the terminal meanwhile. Also in ${where}.`, choices));
+}
+
+/**
+ * Fade the island: what the right-click menu's Fade card shows. Take both settings off and Fade
+ * just fades, no card (Moss, 11-20). As it came, all three show.
+ */
+function fadeRow(i: Settings['island']): HTMLElement {
+  const f = i.fadeCard;
+  const on = (Object.keys(f) as Array<keyof typeof f>).filter((k) => f[k]);
+  const pick = multiSegmented(on, [['now', 'Fade now'], ['peek', 'Peek lasts'], ['smart', 'Smart fade']], (v) => {
+    i.fadeCard = { now: v.includes('now'), peek: v.includes('peek'), smart: v.includes('smart') };
+    save(true);
+    render();
+  }, 0);
+  const what = fadesAtOnce(f)
+    ? "Fade in the right-click menu fades the island at once, nothing else. Right-click it and press Show to bring it back."
+    : 'What the card shows when you press Fade in the right-click menu. Turn off Peek lasts and Smart fade and Fade just fades, no card.';
+  return stacked(row('Fade the island', what, pick));
 }
 
 /** The topic to subscribe to on the phone, with Copy and a test push. */

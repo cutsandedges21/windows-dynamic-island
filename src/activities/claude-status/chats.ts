@@ -72,6 +72,13 @@ export class ChatWatcher {
   private ranTitles = new Set<string>();
   /** "source|hwnd" -> id of the chat open in that window last pass. */
   private lastOpen = new Map<string, string>();
+  /**
+   * A running app chat's open screen showing it ended, seen once: it counts only when the next
+   * pass shows it too. Switching chats in the app catches a screen half drawn for a pass, the
+   * new chat's title over buttons that are not its own yet (Moss, 11-20: chats read done when
+   * you only switched).
+   */
+  private settling = new Map<string, ChatState>();
 
   /** `addRun` gets how long a chat ran (seconds) when it finishes. */
   constructor(private readonly addRun: (seconds: number) => void = () => {}) {}
@@ -123,8 +130,9 @@ export class ChatWatcher {
       }
       seen.add(id);
       const prev = this.known.get(id);
-      const since = prev && prev.state === o.state ? prev.since : now;
-      if (prev && prev.gone == null && prev.state === 'running' && (o.state === 'done' || o.state === 'failed')) this.addRun(now - prev.since);
+      const state = this.settle(id, o, prev);
+      const since = prev && prev.state === state ? prev.since : now;
+      if (prev && prev.gone == null && prev.state === 'running' && (state === 'done' || state === 'failed')) this.addRun(now - prev.since);
 
       let prog: Prog | null = null;
       if (o.steps) {
@@ -137,24 +145,27 @@ export class ChatWatcher {
           si.step = o.step!;
           si.last = now;
         }
-      } else if (o.state !== 'running') {
+      } else if (state !== 'running') {
         this.steps.delete(id);
       }
       const si = this.steps.get(id);
-      if (si && o.state === 'running') prog = { total: si.steps, done: si.step - 1, baseDone: si.base, lastDoneAt: si.last, countStart: si.start };
+      if (si && state === 'running') prog = { total: si.steps, done: si.step - 1, baseDone: si.base, lastDoneAt: si.last, countStart: si.start };
 
       this.known.set(id, {
-        id, source: o.source, title: o.title, state: o.state, since, updated: now, visible: true, hwnd: o.hwnd, ord: o.ord,
+        id, source: o.source, title: o.title, state, since, updated: now, visible: true, hwnd: o.hwnd, ord: o.ord,
         unread: o.unread, chatId: o.chat || prev?.chatId || '', prog, gone: null,
       });
     }
 
-    // Gone from view. Desktop-app chats: with the sidebar open it would still label
-    // them if they were running or waiting, so they're finished; with it collapsed
-    // we can't tell, so they're hidden. Chrome: running/waiting ones are hidden
-    // until they reappear. Rows gone for an hour are forgotten.
+    // Gone from view. Running or waiting ones keep their state: the app's sidebar now shows a
+    // light, not a label, for a chat at work, so a chat missing from the labels says nothing
+    // (it used to be taken as finished, and switching chats marked the one left done). What
+    // settles it: seeing it again, a sidebar label, or the app's own "finished" notification
+    // (engine.ts applyNotifications). With the app's sidebar collapsed, or in Chrome, it is
+    // hidden until it reappears. Rows gone for an hour are forgotten.
     for (const [id, r] of [...this.known]) {
       if (seen.has(id)) continue;
+      this.settling.delete(id);
       if (r.gone != null) {
         if (now - r.gone > FORGET_AFTER) {
           this.known.delete(id);
@@ -166,15 +177,32 @@ export class ChatWatcher {
       r.gone = now;
       r.unread = false;
       r.prog = null;
-      if (r.source === 'app' && (r.state === 'running' || r.state === 'input') && scan.sidebarOpen) {
-        if (r.state === 'running') this.addRun(now - r.since);
-        r.state = 'done';
-        r.since = now;
-      } else if (r.state === 'running' || r.state === 'input') {
-        r.visible = false;
-      }
+      if ((r.state === 'running' || r.state === 'input') && !(r.source === 'app' && scan.sidebarOpen)) r.visible = false;
       r.updated = now;
     }
     return [...this.known.values()];
+  }
+
+  /**
+   * The state to keep for an app chat seen open. A screen with none of the buttons that tell
+   * (still drawing) says nothing, so the chat keeps what it had; a running one shown ended
+   * counts from its second pass in a row.
+   */
+  private settle(id: string, o: UiChat, prev: ChatRecord | undefined): ChatState {
+    if (o.source !== 'app' || !o.open || !prev) {
+      this.settling.delete(id);
+      return o.state;
+    }
+    if (o.state === 'idle') return prev.state;
+    if (prev.state !== 'running' || o.state === 'running' || o.state === 'input') {
+      this.settling.delete(id);
+      return o.state;
+    }
+    if (this.settling.get(id) === o.state) {
+      this.settling.delete(id);
+      return o.state;
+    }
+    this.settling.set(id, o.state);
+    return prev.state;
   }
 }
