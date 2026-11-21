@@ -59,8 +59,8 @@ export function sized(tile: Tile, size: string | undefined): Tile {
 }
 
 /** The look widgets (or the taskbar) are drawn in: their own, or the island's when set to follow it. */
-export function lookOf(own: ItemLook, island: { color: PillColor; glass?: number; tint?: number; custom?: string }): { color: PillColor; glass?: number; tint?: number; custom?: string } {
-  return own.color === 'island' ? { color: island.color, glass: island.glass, tint: island.tint, custom: island.custom } : { color: own.color, glass: own.glass, tint: own.tint };
+export function lookOf(own: ItemLook, island: { color: PillColor; glass?: number; tint?: number; custom?: string; tinted?: boolean }): { color: PillColor; glass?: number; tint?: number; custom?: string; tinted?: boolean } {
+  return own.color === 'island' ? { color: island.color, glass: island.glass, tint: island.tint, custom: island.custom, tinted: island.tinted } : { color: own.color, glass: own.glass, tint: own.tint };
 }
 
 export const MAX_WIDGETS = 8;
@@ -120,6 +120,8 @@ export interface WidgetFrame {
   tint?: number;
   /** Pill colour › Custom's own colour. */
   custom?: string;
+  /** Black or Matte black see-through (Settings › Tinted). */
+  tinted?: boolean;
   reduce: boolean;
   /** Dragging it is off (right-click › Lock in place). */
   locked: boolean;
@@ -172,7 +174,7 @@ export interface WidgetHostHooks {
   /** The widgets' saved places or choices changed. */
   save(): void;
   /** The island's own look. */
-  look(): { accent: string; color: PillColor; glass?: number; tint?: number; custom?: string; reduce: boolean };
+  look(): { accent: string; color: PillColor; glass?: number; tint?: number; custom?: string; tinted?: boolean; reduce: boolean };
   /** Its activity runs (the clock always does). */
   enabled(kind: string): boolean;
 }
@@ -351,7 +353,7 @@ export async function runWidget(stage: HTMLElement, label = windowLabel): Promis
     current = f;
     root.classList.toggle('locked', f.locked);
     root.style.setProperty('--accent', f.accent);
-    applyPill(root, f.color, f.custom);
+    applyPill(root, f.color, f.custom, f.tinted);
     applyGlass(root, f.glass, f.tint);
     root.classList.toggle('reduce', f.reduce);
     if (f.kind === 'clock') {

@@ -10,7 +10,7 @@ import { activityMatches, CATALOG_BY_ID, type ActivityMeta, type Category, type 
 import { activityPreview, alertPreview, islandPreview } from './previews';
 import { agoText, pace, resetsIn, resetsOn, SESSION_WINDOW_MS, tokens as fmtTokens, WEEK_WINDOW_MS } from './core/format';
 import { icon, type IconName } from './core/icons';
-import { applyPill } from './core/glass';
+import { applyPill, pillTints } from './core/glass';
 import { blendLabel, innerPadding, levelWidth, normalizeWidths, pillSize, type Anchor, type Level } from './core/layout';
 import { fadesAtOnce } from './core/fade-menu';
 import { MENU_ITEMS, menuMain, menuSegments, normalizeMenuOrder, type MenuItemId } from './core/menu';
@@ -167,7 +167,7 @@ function render(): void {
     return;
   }
   // The window takes the island's colour (Settings follows the pill, Moss).
-  applyPill(document.documentElement, settings.island.color, settings.island.custom);
+  applyPill(document.documentElement, settings.island.color, settings.island.custom, settings.island.tinted);
   const scroll = root.querySelector('.content')?.scrollTop ?? 0;
   const panelScroll = root.querySelector('.act-panel')?.scrollTop ?? 0;
   const active = document.activeElement as HTMLInputElement | null;
@@ -1433,8 +1433,10 @@ function settingsPage(part: 'island' | 'behavior' | 'alerts' | 'phone' | 'genera
   const secs: HTMLElement[] = [
     section('Appearance', [
       stacked(row('Pill colour', 'The whole island, card included.', pillColours(i))),
+      // Black and Matte black can be see-through too (Justin, 11-21): the row only shows under them.
+      ...(pillTints(i.color) ? [row('Tinted', 'See-through: a little of what is behind shows through.', toggle(i.tinted, (v) => { i.tinted = v; save(true); render(); }))] : []),
       ...(i.color === 'glass' ? [row('Glass', 'Clear is more see-through; tinted lets less of what is behind show through.', glassSlider)] : []),
-      ...(i.color === 'tinted' ? [row('Tint', 'See-through lets more of what is behind show through; solid is plain black.', tintSlider)] : []),
+      ...(i.color === 'tinted' || (pillTints(i.color) && i.tinted) ? [row('Tint', 'See-through lets more of what is behind show through; solid is plain black.', tintSlider)] : []),
       ...(i.color === 'custom' ? [row('Your colour', 'Text on it turns dark by itself when the colour is light.', customColour(i))] : []),
       row('Accent', null, accents),
       // As the taskbar can take it (Justin, 11-20).
@@ -1873,7 +1875,7 @@ function customColour(i: Settings['island']): HTMLElement {
   input.addEventListener('input', () => {
     i.custom = input.value.toLowerCase();
     hex.textContent = i.custom.toUpperCase();
-    applyPill(document.documentElement, i.color, i.custom);
+    applyPill(document.documentElement, i.color, i.custom, i.tinted);
     save();
   });
   input.addEventListener('change', () => { save(true); render(); });

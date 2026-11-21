@@ -8,6 +8,7 @@ import { barEdge, frameAvailable, ACCENTS } from './core/settings';
 import type { ActivityMeta } from './activities/catalog';
 import { icon } from './core/icons';
 import { h } from './dom';
+import { pillTints } from './core/glass';
 
 /** The island's colour for a preview: the taskbar's own look, else the island's. */
 const lookOf = (s: Settings, own?: { color: string }) => (own && own.color !== 'island' ? own.color : s.island.color);
@@ -17,12 +18,13 @@ const SIZE_K: Record<string, number> = { small: 0.86, medium: 1, large: 1.14 };
 const GLOW_LAP: Record<string, string> = { slow: '8s', medium: '5s', fast: '3s' };
 
 /** A mini pill: `look` its colour, `blend` flush with the top edge, `glow` its light (speed or off). */
-function miniPill(look: string, opts: { blend: boolean; glow: string; accent: string; content: Node[]; k?: number; melt?: boolean }): HTMLElement {
+function miniPill(look: string, opts: { blend: boolean; glow: string; accent: string; content: Node[]; k?: number; melt?: boolean; tinted?: boolean }): HTMLElement {
   const pill = h('div', { class: `pv-pill${opts.blend ? ' blend' : ''}${opts.melt ? ' melt' : ''}`, 'data-look': look }, [
     h('i', { class: 'pv-pill-bg' }),
     ...(opts.melt ? [h('i', { class: 'pv-foot l' }), h('i', { class: 'pv-foot r' })] : []),
     h('div', { class: 'pv-pill-in' }, opts.content),
   ]);
+  if (opts.tinted) pill.dataset.tinted = '';
   pill.style.setProperty('--k', String(opts.k ?? 1));
   pill.style.setProperty('--pv-accent', opts.accent);
   if (opts.glow !== 'off') {
@@ -44,6 +46,7 @@ export function islandPreview(s: Settings): HTMLElement {
     accent,
     k: SIZE_K[i.size] ?? 1,
     melt: framed && i.blend,
+    tinted: i.tinted && pillTints(i.color),
     content: [
       h('span', { class: 'pv-ico claude', html: icon('claude') }),
       h('span', { class: 'pv-text', text: 'Working on the island' }),
@@ -53,6 +56,7 @@ export function islandPreview(s: Settings): HTMLElement {
   if (!i.blend) pill.style.marginTop = `${Math.min(18, i.edge * 0.6)}px`;
   const bot = i.bot ? h('span', { class: 'pv-bot', 'data-look': i.color }, [h('i')]) : null;
   if (bot) bot.style.setProperty('--pv-accent', accent);
+  if (bot && i.tinted && pillTints(i.color)) bot.dataset.tinted = '';
   const screen = h('div', { class: `pv-screen island${framed ? ' framed' : ''}`, 'data-look': lookOf(s, i.taskbar.look) }, [
     framed ? h('i', { class: 'pv-border' }) : null,
     h('div', { class: 'pv-top' }, [bot, pill]),
@@ -64,7 +68,7 @@ export function islandPreview(s: Settings): HTMLElement {
 function captionIsland(s: Settings): string {
   const i = s.island;
   const bits = [
-    i.color === 'glass' ? 'Glass' : i.color === 'tinted' ? 'Tinted black' : i.color.replace('-', ' ').replace(/^./, (c) => c.toUpperCase()),
+    (i.color === 'glass' ? 'Glass' : i.color === 'tinted' ? 'Tinted black' : i.color.replace('-', ' ').replace(/^./, (c) => c.toUpperCase())) + (i.tinted && pillTints(i.color) ? ', tinted' : ''),
     `${i.size[0].toUpperCase()}${i.size.slice(1)}`,
     i.blend ? 'blended into the top' : 'floating',
     i.glow === 'off' ? 'no glow' : `${i.glow} glow`,

@@ -405,8 +405,14 @@ export interface Settings {
     color: PillColor;
     /** Glass only, like iOS Liquid Glass: 0 is clear, 100 is tinted (less of what is behind shows through). */
     glass: number;
-    /** Tinted black only: 0 lets the most of what is behind show through, 100 is solid black (80: its old 80% black). */
+    /** Tinted black, or Black or Matte black with Tinted on: 0 lets the most of what is behind show through, 100 is solid black (80: its old 80% black). */
     tint: number;
+    /**
+     * Black or Matte black only: see-through, a little of what is behind showing through it (Justin, 11-21).
+     * Black's is the first Tinted black (black at the tint's opacity, a faint line along its top); Matte
+     * black's keeps Matte's sheen and lit rim over the tint's black.
+     */
+    tinted: boolean;
     /** Custom only: the pill's own colour, #rrggbb. */
     custom: string;
     reduceMotion: 'system' | 'on' | 'off';
@@ -569,6 +575,7 @@ export function defaultSettings(): Settings {
       color: 'black',
       glass: GLASS_DEFAULT,
       tint: TINT_DEFAULT,
+      tinted: false,
       custom: CUSTOM_DEFAULT,
       reduceMotion: 'system',
       glow: 'medium',
@@ -667,6 +674,7 @@ export function migrate(saved: unknown): Settings {
   out.island.glass = Number.isFinite(out.island.glass) ? Math.max(0, Math.min(100, out.island.glass)) : GLASS_DEFAULT;
   // Tinted black's slider (11-21); before it, its 80% black.
   out.island.tint = cleanSlider(out.island.tint, TINT_DEFAULT);
+  out.island.tinted = out.island.tinted === true;
   const snd = out.general.sound;
   if (!soundStyleKnown(snd.style)) snd.style = 'soft';
   snd.volume = Math.round(Math.max(0, Math.min(100, Number.isFinite(snd.volume) ? snd.volume : 50)));

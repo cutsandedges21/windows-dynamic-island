@@ -56,6 +56,8 @@ export interface DockFrame {
   tint?: number;
   /** Pill colour › Custom's own colour. */
   custom?: string;
+  /** Black or Matte black see-through (Settings › Tinted). */
+  tinted?: boolean;
   /** Its own height (a zoom like its sizes'), stretched in Edit position; null or unset: its size's. */
   scale?: number | null;
   /** Its least length (CSS px before its zoom), stretched in Edit position; 0 or unset: as long as what it holds. */
@@ -578,7 +580,7 @@ export interface DockHooks {
   hidden(): DockItem[];
   order(): DockItem[];
   setHidden(items: DockItem[]): void;
-  look(): { accent: string; color: PillColor; glass?: number; tint?: number; custom?: string };
+  look(): { accent: string; color: PillColor; glass?: number; tint?: number; custom?: string; tinted?: boolean };
   /** One of an activity's actions (`act:music:toggle`). */
   act(action: string): void;
   /** Opens the island, on activity `id` when given (the timer: its time is there). */
@@ -2998,7 +3000,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     bar.style.zoom = String(zoomOf(f));
     // The zoom scales the bar's place in its window too; the CSS divides it back out of that.
     root.style.setProperty('--dk-z', bar.style.zoom);
-    applyPill(root, f.color, f.custom);
+    applyPill(root, f.color, f.custom, f.tinted);
     root.classList.toggle('dk-accent-border', f.accentBorder === true);
     root.dataset.side = side();
     root.classList.toggle('dk-upright', upright());

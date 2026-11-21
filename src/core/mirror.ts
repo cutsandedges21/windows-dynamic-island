@@ -42,6 +42,8 @@ export interface MirrorFrame {
   tint?: number;
   /** Pill colour › Custom's own colour. */
   custom?: string;
+  /** Black or Matte black see-through (Settings › Tinted). */
+  tinted?: boolean;
   reduce: boolean;
   /** The bot's bubble beside the pill (its diameter), or null when it is off or the island is moving. */
   bot: { d: number } | null;
@@ -66,7 +68,7 @@ export async function runMirror(stage: HTMLElement): Promise<void> {
     // The island itself is on this screen (Duplicate): it is the one you see and use here.
     stage.style.visibility = f.host && f.host === monitor ? 'hidden' : '';
     document.documentElement.style.setProperty('--accent', f.accent);
-    applyPill(document.documentElement, f.color, f.custom);
+    applyPill(document.documentElement, f.color, f.custom, f.tinted);
     applyGlass(document.documentElement, f.glass, f.tint);
     setReducedMotion(f.reduce);
     document.documentElement.classList.toggle('reduce', f.reduce);

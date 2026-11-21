@@ -428,7 +428,7 @@ export class Island {
         act: (action, arg) => void this.runAct(action, arg),
         save: () => this.saveSettings(),
         // The accent's colour, not its name ("teal" is CSS's own dark teal; Justin, 11-20).
-        look: () => ({ accent: accentColor(this.settings.island), color: this.settings.island.color, glass: this.settings.island.glass, tint: this.settings.island.tint, custom: this.settings.island.custom, reduce: document.documentElement.classList.contains('reduce') }),
+        look: () => ({ accent: accentColor(this.settings.island), color: this.settings.island.color, glass: this.settings.island.glass, tint: this.settings.island.tint, custom: this.settings.island.custom, tinted: this.settings.island.tinted, reduce: document.documentElement.classList.contains('reduce') }),
         enabled: (kind) => this.running.has(kind),
       },
       () => this.settings.island.widgets,
@@ -702,7 +702,7 @@ export class Island {
     document.documentElement.classList.toggle('reduce', reduce);
     document.documentElement.style.setProperty('--accent', accentColor(s));
     this.bubble.colour(accentColor(s));
-    applyPill(document.documentElement, s.color, s.custom);
+    applyPill(document.documentElement, s.color, s.custom, s.tinted);
     applyGlass(document.documentElement, s.glass, s.tint);
   }
 
@@ -909,7 +909,7 @@ export class Island {
     } else if (this.wantScreen) queueMicrotask(() => this.hopWhenFree());
     if (this.hopping) return;
     frame = { ...frame, host: this.monitorId };
-    const key = `${frame.host}|${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.custom ?? ""}|${frame.glass}|${frame.tint}|${frame.reduce}|${frame.bot?.d ?? 0}`;
+    const key = `${frame.host}|${frame.sig}|${frame.hidden}|${frame.fsHide}|${frame.fullscreen}|${JSON.stringify(frame.glow)}|${frame.speed}|${frame.anchor}|${frame.edge}|${frame.accent}|${frame.color}|${frame.custom ?? ""}|${frame.tinted === true}|${frame.glass}|${frame.tint}|${frame.reduce}|${frame.bot?.d ?? 0}`;
     if (key === this.mirrorKey && !frame.bump) return;
     this.mirrorKey = key;
     this.mirrorFrame = frame;
@@ -1415,7 +1415,7 @@ export class Island {
       hidden: hiddenEverywhere, fsHide, fullscreen: this.fullscreenAny,
       glow: beamSpec(beam), speed: s.glow,
       bot: botShown ? { d: botD } : null,
-      accent: accentColor(s), color: s.color, glass: s.glass, tint: s.tint, custom: s.custom, reduce: s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches),
+      accent: accentColor(s), color: s.color, glass: s.glass, tint: s.tint, custom: s.custom, tinted: s.tinted, reduce: s.reduceMotion === 'on' || (s.reduceMotion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches),
     };
     this.sendMirror(this.lastFrame);
     this.pillInput = placed.some((p) => p.seg.t === 'input');

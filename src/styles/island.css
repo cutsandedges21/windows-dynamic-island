@@ -3013,6 +3013,19 @@ html[data-pill='tinted']:not(.dock-window, .widget-window) :is(.pill-bg, .sheet-
   mask-composite: intersect;
 }
 html[data-pill='tinted'] :is(.pill-bg, .sheet-bg, .bubble-bg, .chat-bar, .chat-card) { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+/* Black and Matte black with Tinted on (Settings › Pill colour › Tinted, Justin, 11-21), every window that wears
+   the island's colour. Black's is the first Tinted black: black at the tint's opacity with a faint line along
+   its top. Matte black's keeps Matte's sheen and lit rim over the tint's black. */
+html[data-pill='black'][data-tinted] {
+  --pill: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 40%), rgba(0, 0, 0, var(--tint-a, 0.8));
+}
+html[data-pill='black'][data-tinted] :is(.pill-bg, .sheet-bg, .bubble-bg, .chat-bar, .chat-card, .dock-bg) { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+html[data-pill='black'][data-tinted].dock-square .dock-bg { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07); }
+html[data-pill='matte-black'][data-tinted] {
+  --pill:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 40%, rgba(255, 255, 255, 0.02) 70%, rgba(255, 255, 255, 0.07) 100%),
+    rgba(5, 6, 8, var(--tint-a, 0.8));
+}
 html[data-pill='tinted'] .dock-bg { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
 html[data-pill='tinted'].dock-square .dock-bg { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07); }
 /* The song's box in its album's colour, washed over the bar as the island's music card's glass is

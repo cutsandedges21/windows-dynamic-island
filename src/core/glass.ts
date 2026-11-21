@@ -76,11 +76,14 @@ export function hexIsLight(hex: string | undefined): boolean {
 }
 
 /**
- * Sets the pill's colour on a page: data-pill for the look, and for Custom the colour itself
- * (--custom-pill) and whether it is light (data-tone), so text goes dark on it as on White.
+ * Sets the pill's colour on a page: data-pill for the look, data-tinted when Black or Matte black is
+ * see-through (Settings › Tinted), and for Custom the colour itself (--custom-pill) and whether it is
+ * light (data-tone), so text goes dark on it as on White.
  */
-export function applyPill(root: HTMLElement, color: string, custom?: string): void {
+export function applyPill(root: HTMLElement, color: string, custom?: string, tinted?: boolean): void {
   root.dataset.pill = color;
+  if (tinted === true && pillTints(color)) root.dataset.tinted = '';
+  else delete root.dataset.tinted;
   if (color === 'custom') {
     const hex = pillHex(custom);
     root.style.setProperty('--custom-pill', hex);
@@ -89,6 +92,11 @@ export function applyPill(root: HTMLElement, color: string, custom?: string): vo
     root.style.removeProperty('--custom-pill');
     delete root.dataset.tone;
   }
+}
+
+/** The colours with a Tinted switch (Settings › Pill colour): Black and Matte black. */
+export function pillTints(color: string): boolean {
+  return color === 'black' || color === 'matte-black';
 }
 
 /** The pill is a light one (White, Matte white, a light Custom): what sits on it goes dark. */

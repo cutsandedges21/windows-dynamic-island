@@ -21,6 +21,8 @@ export interface StartFrame {
   tint?: number;
   /** Pill colour › Custom's own colour. */
   custom?: string;
+  /** Black or Matte black see-through (Settings › Tinted). */
+  tinted?: boolean;
   accent: string;
   pins: InstalledApp[];
   /** Pinned apps dropped onto one another (as the taskbar's: dock.ts dockSlots). */
@@ -637,7 +639,7 @@ export async function runStart(stage: HTMLElement): Promise<void> {
 
   const draw = () => {
     if (frame) {
-      applyPill(root, frame.color, frame.custom);
+      applyPill(root, frame.color, frame.custom, frame.tinted);
       root.style.setProperty('--accent', frame.accent);
       applyGlass(root, frame.glass, frame.tint);
     }

@@ -300,6 +300,9 @@ html[data-pill='glass'] .act-panel { background: rgba(28, 30, 37, 0.97); }
    as island.css draws it, so the preview shows it is not plain Black. */
 .preview [data-look='tinted'] { --pv-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 40%), rgba(0, 0, 0, var(--tint-a, 0.8)); --pv-solid: rgba(0, 0, 0, var(--tint-a, 0.8)); --pv-rim: rgba(255, 255, 255, 0.07); }
 .preview :is(.pv-pill, .pv-bot)[data-look='tinted'] { --pv-bg: radial-gradient(closest-side, rgba(120, 122, 128, 0.05), rgba(120, 122, 128, 0.025) 55%, transparent), linear-gradient(160deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04) 40%, rgba(255, 255, 255, 0.02) 70%, rgba(255, 255, 255, 0.07)), rgba(5, 6, 8, var(--tint-a, 0.8)); --pv-solid: rgba(5, 6, 8, var(--tint-a, 0.8)); --pv-rim: rgba(255, 255, 255, 0.22); }
+/* Black and Matte black with Tinted on (the pill and the bot): see-through, as island.css draws them. */
+.preview [data-look='black'][data-tinted] { --pv-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 40%), rgba(0, 0, 0, var(--tint-a, 0.8)); --pv-solid: rgba(0, 0, 0, var(--tint-a, 0.8)); --pv-rim: rgba(255, 255, 255, 0.07); }
+.preview [data-look='matte-black'][data-tinted] { --pv-bg: linear-gradient(160deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04) 40%, rgba(255, 255, 255, 0.02) 70%, rgba(255, 255, 255, 0.07)), rgba(5, 6, 8, var(--tint-a, 0.8)); --pv-solid: rgba(5, 6, 8, var(--tint-a, 0.8)); }
 .preview [data-look='custom'] { --pv-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 45%), var(--custom-pill, #1f4fbf); --pv-solid: var(--custom-pill, #1f4fbf); --pv-rim: rgba(255, 255, 255, 0.18); }
 html[data-tone='light'] .preview [data-look='custom'] { --pv-fg: #141416; --pv-rim: rgba(0, 0, 0, 0.14); --pv-ink: 0, 0, 0; }
 

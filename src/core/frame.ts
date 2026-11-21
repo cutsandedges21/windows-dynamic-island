@@ -67,6 +67,8 @@ export interface FrameFrame {
   tint?: number;
   /** Pill colour › Custom's own colour. */
   custom?: string;
+  /** Black or Matte black see-through (Settings › Tinted). */
+  tinted?: boolean;
   accent: string;
   reduce: boolean;
   sites: NotchConfig & { list: PinnedSite[] };
@@ -931,7 +933,7 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
   const draw = () => {
     const f = frame;
     if (!f) return;
-    applyPill(root, f.color, f.custom);
+    applyPill(root, f.color, f.custom, f.tinted);
     root.style.setProperty('--accent', f.accent);
     root.style.setProperty('--fr-w', `${f.width}px`);
     root.classList.toggle('fr-autohide', f.autoHide === true);
