@@ -64,7 +64,7 @@ export function islandPreview(s: Settings): HTMLElement {
 function captionIsland(s: Settings): string {
   const i = s.island;
   const bits = [
-    i.color === 'glass' ? 'Glass' : i.color.replace('-', ' ').replace(/^./, (c) => c.toUpperCase()),
+    i.color === 'glass' ? 'Glass' : i.color === 'tinted' ? 'Tinted black' : i.color.replace('-', ' ').replace(/^./, (c) => c.toUpperCase()),
     `${i.size[0].toUpperCase()}${i.size.slice(1)}`,
     i.blend ? 'blended into the top' : 'floating',
     i.glow === 'off' ? 'no glow' : `${i.glow} glow`,

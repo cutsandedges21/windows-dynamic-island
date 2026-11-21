@@ -293,6 +293,7 @@ const COLORS: Array<[PillColor, string]> = [
   ['white', 'White'],
   ['matte-black', 'Matte black'],
   ['matte-white', 'Matte white'],
+  ['tinted', 'Tinted black'],
 ];
 
 /** The look saves at once, so the real island changes while you pick; the preview shows it too. */

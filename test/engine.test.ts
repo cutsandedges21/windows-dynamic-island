@@ -252,7 +252,7 @@ describe('settings migration', () => {
 
   it('pill colour: black by default, any of the five kept, anything else back to black', () => {
     expect(migrate({}).island.color).toBe('black');
-    for (const c of ['white', 'matte-white', 'matte-black', 'glass']) expect(migrate({ island: { color: c } }).island.color).toBe(c);
+    for (const c of ['white', 'matte-white', 'matte-black', 'glass', 'tinted']) expect(migrate({ island: { color: c } }).island.color).toBe(c);
     // 0.2.4's names carry over.
     expect(migrate({ island: { color: 'silver' } }).island.color).toBe('matte-white');
     expect(migrate({ island: { color: 'blur' } }).island.color).toBe('matte-black');

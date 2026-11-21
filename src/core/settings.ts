@@ -649,7 +649,7 @@ export function migrate(saved: unknown): Settings {
   // 0.2.4 called matte white "silver" and matte black "blur".
   const renamed: Record<string, PillColor> = { silver: 'matte-white', blur: 'matte-black' };
   out.island.color = renamed[out.island.color] ?? out.island.color;
-  if (!['black', 'white', 'matte-white', 'matte-black', 'glass', 'custom'].includes(out.island.color)) out.island.color = 'black';
+  if (!['black', 'white', 'matte-white', 'matte-black', 'glass', 'tinted', 'custom'].includes(out.island.color)) out.island.color = 'black';
   out.island.custom = pillHex(out.island.custom);
   out.island.fadeCard = normalizeFadeShown(out.island.fadeCard);
   if (!['always', 'hover', 'never'].includes(out.island.compactIcons.show)) out.island.compactIcons.show = 'always';

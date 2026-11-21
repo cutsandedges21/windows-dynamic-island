@@ -1852,6 +1852,7 @@ function pillColours(i: Settings['island']): HTMLElement {
     pick('white', 'White'),
     pick('matte-white', 'Matte white'),
     pick('matte-black', 'Matte black'),
+    pick('tinted', 'Tinted black'),
     h('i', { class: 'seg-sep', 'aria-hidden': 'true' }),
     pick('custom', 'Custom', true),
   ]);
