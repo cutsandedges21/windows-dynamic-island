@@ -3020,11 +3020,11 @@ export class Island {
   private dockWifi: boolean | null = null;
 
   /** What is playing, for the taskbar: from Music's tile. */
-  private dockMusic(): { title: string; artist: string; playing: boolean; art: string | null } | null {
+  private dockMusic(): { title: string; artist: string; playing: boolean; art: string | null; between?: boolean } | null {
     const env = { reason: 'open' as const, now: Date.now(), width: 400, vertical: false, interactive: true, surfaced: null };
     const t = this.running.get('music')?.tile?.(env);
     // Its player, or its lyrics with Lyrics on: both carry the track.
-    return t && (t.body.k === 'media' || t.body.k === 'lyrics') ? { title: t.body.title, artist: t.body.artist, playing: t.body.playing, art: t.body.art ?? null } : null;
+    return t && (t.body.k === 'media' || t.body.k === 'lyrics') ? { title: t.body.title, artist: t.body.artist, playing: t.body.playing, art: t.body.art ?? null, between: (this.running.get('music') as unknown as { betweenSongs?: () => boolean } | undefined)?.betweenSongs?.() === true } : null;
   }
 
   /** Claude's limits for the taskbar, asked of the Claude activity once a second. */

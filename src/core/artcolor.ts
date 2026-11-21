@@ -146,7 +146,7 @@ export async function artColour(src: string): Promise<[number, number, number] |
 }
 
 /** The album colour fades from one song to the next, and out, over this long (island.css --isl-song). */
-export const SONG_FADE_MS = 600;
+export const SONG_FADE_MS = 1200;
 const fadingOut = new Map<string, ReturnType<typeof setTimeout>>();
 
 /**

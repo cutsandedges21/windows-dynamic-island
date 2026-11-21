@@ -34,7 +34,7 @@ export interface DockApp {
 
 export interface DockFrame {
   apps: DockApp[];
-  music: { title: string; artist: string; playing: boolean; art: string | null } | null;
+  music: { title: string; artist: string; playing: boolean; art: string | null; between?: boolean } | null;
   timer: string | null;
   /** Claude's limits used, whole percents: the session (5 hours) and the week, and when each
    *  resets (ms since 1970; null: not started). */
@@ -1388,11 +1388,13 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   let songTint = { box: false, bar: false, edge: false };
   /** How the bar was last drawn in the song's colour: it fades out the same way. */
   let barWas = { edge: false };
+  let songBetween = false;
   const paintSong = () => {
     const root = document.documentElement;
     // The bar's colour fades in, out and from one song to the next (drawn while it fades out).
     const bar = songTint.bar || songTint.edge;
-    const shown = songFade(root, '--song', bar ? songColour : null, paintSong);
+    // Between songs (a skip) it fades to the bar's own, and the next song's fades in.
+    const shown = songFade(root, '--song', bar && !songBetween ? songColour : null, paintSong);
     if (bar && songColour) barWas = { edge: songTint.edge };
     const boxed = songTint.box && songBox !== null;
     if (songBox) song.style.setProperty('--song-fill', songBox.fill);
@@ -3116,6 +3118,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // bar's own colour while music plays). It goes when the music does, or the option is off.
     songTint = { box: f.songTint === true, bar: f.barTint === true, edge: f.edgeTint === true };
     const tinting = (songTint.box || songTint.bar || songTint.edge) && m !== null;
+    songBetween = m?.between === true;
     const tintArt = tinting && m?.art ? m.art : null;
     if (!tinting) {
       songTintFor = null;

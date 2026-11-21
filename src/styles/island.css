@@ -3005,33 +3005,58 @@ html.dk-bar-tint .dock-bg { background: linear-gradient(150deg, color-mix(in srg
 html.isl-tint-compact :is(.pill-bg, .bubble-bg),
 html.isl-tint-all :is(.pill-bg, .sheet-bg, .bubble-bg) { background: linear-gradient(150deg, color-mix(in srgb, var(--isl-song) 46%, transparent), color-mix(in srgb, var(--isl-song) 12%, transparent) 70%), var(--pill); }
 html.isl-tint-all .sheet.tinted .sheet-bg::before { opacity: 0; }
-/* The bot's bubble takes it with the pill (Moss, 11-20: "it is currently black"). The screen border
-   and its notches too, with the whole island or the whole taskbar in it (frame.ts fr-song): one even
-   wash, so the notches still melt into the line without a seam, and the line's own tint beside the
-   island is not added again. */
-html.frame-window.fr-song .fr-border { background: linear-gradient(var(--fr-song), var(--fr-song)), var(--fr-bg, var(--pill)); }
-html.frame-window.fr-song .notch-bg { background: linear-gradient(var(--fr-song), var(--fr-song)), var(--pill); }
-html.frame-window.fr-song { --fr-song: var(--edge-song); }
-html.frame-window.fr-song .fr-tint { opacity: 0; }
-/* With the border drawn, what meets it takes the same even wash, so the colour runs from the line
-   into the island, the bot and the taskbar without a seam (Moss, 11-20: "blend smoothly"): one mix
-   of the song's colour (--edge-song) over each one's own colour. */
 /* Registered as colours, so a new song's colour (and none) fades in rather than snapping (artcolor.ts
    songFade). Registered, they always have a value: clear until a song sets one. */
 @property --isl-song { syntax: '<color>'; inherits: true; initial-value: transparent; }
 @property --song { syntax: '<color>'; inherits: true; initial-value: transparent; }
-html { transition: --isl-song 0.6s ease, --song 0.6s ease; }
+html { transition: --isl-song 1.2s ease, --song 1.2s ease; }
 html.reduce { transition: none; }
-html { --edge-song: color-mix(in srgb, var(--isl-song) 34%, transparent); --dk-edge-song: color-mix(in srgb, var(--song) 34%, transparent); }
+/* The album colour, everywhere it shows, is a gradient (Moss, 11-20: "i dont want a solid colour"):
+   - On its own (the bot, cards, Start, the names, the Apps card, a floating pill or bar): the music
+     card's, strongest top left and fading across (--song-wash).
+   - Where it runs into the screen border (frame.ts fr-song; the island blended into the edge, the
+     taskbar on its edge, the notches): the line's even mix (--edge-song) under a glow (--edge-glow)
+     that is strongest on the inner side a third of the way along and gone at the edge and at both
+     ends, where it melts into the line: still a gradient, with no seam where they meet. */
+html {
+  --edge-song: color-mix(in srgb, var(--isl-song) 34%, transparent);
+  --edge-glow: color-mix(in srgb, var(--isl-song) 34%, transparent);
+  --dk-edge-song: color-mix(in srgb, var(--song) 34%, transparent);
+  --dk-edge-glow: color-mix(in srgb, var(--song) 34%, transparent);
+  --isl-wash: linear-gradient(150deg, color-mix(in srgb, var(--isl-song) 46%, transparent), color-mix(in srgb, var(--isl-song) 12%, transparent) 70%);
+  --song-wash: linear-gradient(150deg, color-mix(in srgb, var(--song) 46%, transparent), color-mix(in srgb, var(--song) 12%, transparent) 70%);
+}
+/* The glow for a shape whose outer edge is on side X: centred on its inner edge, reaching to the
+   outer edge and to both ends. */
+html { --glow-top: radial-gradient(38% 100% at 38% 100%, var(--g), transparent); --glow-bottom: radial-gradient(38% 100% at 38% 0%, var(--g), transparent); --glow-left: radial-gradient(100% 38% at 100% 38%, var(--g), transparent); --glow-right: radial-gradient(100% 38% at 0% 38%, var(--g), transparent); }
+
+/* The border and its notches. */
+html.frame-window.fr-song { --g: var(--edge-glow); }
+html.frame-window.fr-song .fr-border { background: linear-gradient(var(--edge-song), var(--edge-song)), var(--fr-bg, var(--pill)); }
+html.frame-window.fr-song .notch[data-side='left'] .notch-bg { background: var(--glow-left), linear-gradient(var(--edge-song), var(--edge-song)), var(--pill); }
+html.frame-window.fr-song .notch[data-side='right'] .notch-bg { background: var(--glow-right), linear-gradient(var(--edge-song), var(--edge-song)), var(--pill); }
+html.frame-window.fr-song .fr-tint { opacity: 0; }
+
+/* The island and the bot: the music card's gradient, and the glow on the pill blended into the border. */
 html.isl-tint-edge :is(.pill-bg, .bubble-bg),
-html.isl-tint-edge.isl-tint-all .sheet-bg { background: linear-gradient(var(--edge-song), var(--edge-song)), var(--pill); }
-html.dk-edge-tint .dock-bg { background: linear-gradient(var(--dk-edge-song), var(--dk-edge-song)), var(--pill); }
+html.isl-tint-edge.isl-tint-all .sheet-bg { background: var(--isl-wash), var(--pill); }
+html.isl-tint-edge { --g: var(--edge-glow); }
+html.isl-tint-edge[data-blend='top'] .pill-bg { background: var(--glow-top), linear-gradient(var(--edge-song), var(--edge-song)), var(--pill); }
+html.isl-tint-edge[data-blend='bottom'] .pill-bg { background: var(--glow-bottom), linear-gradient(var(--edge-song), var(--edge-song)), var(--pill); }
+html.isl-tint-edge[data-blend='left'] .pill-bg { background: var(--glow-left), linear-gradient(var(--edge-song), var(--edge-song)), var(--pill); }
+html.isl-tint-edge[data-blend='right'] .pill-bg { background: var(--glow-right), linear-gradient(var(--edge-song), var(--edge-song)), var(--pill); }
+
+/* The taskbar: the music card's gradient (dk-bar-tint, above), and the glow on its edge with the border. */
+html.dk-edge-tint .dock-bg { background: var(--song-wash), var(--pill); }
+html.dk-edge-tint.dock-edge { --g: var(--dk-edge-glow); }
+html.dk-edge-tint.dock-edge[data-side='bottom'] .dock-bg { background: var(--glow-bottom), linear-gradient(var(--dk-edge-song), var(--dk-edge-song)), var(--pill); }
+html.dk-edge-tint.dock-edge[data-side='top'] .dock-bg { background: var(--glow-top), linear-gradient(var(--dk-edge-song), var(--dk-edge-song)), var(--pill); }
+html.dk-edge-tint.dock-edge[data-side='left'] .dock-bg { background: var(--glow-left), linear-gradient(var(--dk-edge-song), var(--dk-edge-song)), var(--pill); }
+html.dk-edge-tint.dock-edge[data-side='right'] .dock-bg { background: var(--glow-right), linear-gradient(var(--dk-edge-song), var(--dk-edge-song)), var(--pill); }
 /* The names over the bar (Names, as bubbles) and what comes up from it (the arrow's Apps card, S/W's
-   resets) in the bar's album colour too, washed as the bar is (Moss, 11-20). */
+   resets): the music card's gradient (Moss, 11-20). */
 html.dk-bar-tint[data-name-look='bubble'] .dk-label,
-html.dk-bar-tint .dk-pop { background: linear-gradient(150deg, color-mix(in srgb, var(--song) 46%, transparent), color-mix(in srgb, var(--song) 12%, transparent) 70%), var(--pill); }
-html.dk-edge-tint[data-name-look='bubble'] .dk-label,
-html.dk-edge-tint .dk-pop { background: linear-gradient(var(--dk-edge-song), var(--dk-edge-song)), var(--pill); }
+html.dk-bar-tint .dk-pop { background: var(--song-wash), var(--pill); }
 
 /* Folders on the taskbar (dock.ts dockSlots, toggleFolder; Moss 11-19). On the bar: up to four of its
    apps' icons, small, in a rounded square. */

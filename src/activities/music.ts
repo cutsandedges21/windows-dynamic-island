@@ -117,8 +117,7 @@ export class MusicActivity extends BaseActivity {
     // No cover for a moment (a new song's not sent yet): the colour stays as it is.
     if (!src) return;
     if (this.tint?.src === src) return;
-    // The last song's colour stays until this one's is read, then fades to it (no flash of the pill's own).
-    const tint: { src: string; hsl: [number, number, number] | null } = { src, hsl: this.tint?.hsl ?? null };
+    const tint: { src: string; hsl: [number, number, number] | null } = { src, hsl: null };
     this.tint = tint;
     void artColour(src).then((hsl) => {
       if (this.tint !== tint || !this.alive) return;
@@ -130,9 +129,18 @@ export class MusicActivity extends BaseActivity {
   /** The album's colour for the whole island (Settings › Appearance › In the album's colour), as its
    *  music card takes it; null without a song, or with grey art. */
   artTint(): string | null {
-    // Only while there is a song: the colour is held between covers, not after the music has gone.
-    if (!this.m?.available || !this.m.title) return null;
+    // Only while a song shows (the tile's test, as the taskbar's: Moss, 11-20, the island kept the
+    // colour after the player closed), and not between songs: it fades to the pill's own and the next
+    // song's fades in, while the last song stays on show (Moss: "slowly fade to black, then ... fade
+    // into colour").
+    const m = this.m;
+    if (!m || !this.status().active || m.between) return null;
     return this.barTint() ?? null;
+  }
+
+  /** Between songs (a skip): the taskbar's colour fades out too. */
+  betweenSongs(): boolean {
+    return this.m?.between === true;
   }
 
   /** The bars' colour for this pill: the art's, made to read on a light or dark pill; undefined keeps the accent. */

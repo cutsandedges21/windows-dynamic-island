@@ -306,6 +306,8 @@ export interface MediaState {
   canNext: boolean;
   canPrev: boolean;
   thumbnail: string | null;
+  /** Between songs (a skip): the last song, kept on show till the next has loaded (media.rs Hold). */
+  between?: boolean;
 }
 export interface BtBattery {
   name: string;

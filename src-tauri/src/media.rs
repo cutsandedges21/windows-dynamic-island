@@ -54,6 +54,9 @@ pub struct MediaState {
     can_next: bool,
     can_prev: bool,
     thumbnail: Option<String>,
+    /// Between songs (a skip): this is the last song, kept on show till the next one has loaded; its
+    /// colour fades out meanwhile (Moss, 11-20).
+    between: bool,
 }
 
 fn friendly_app(aumid: &str) -> String {
@@ -104,6 +107,68 @@ static THUMBS: std::sync::Mutex<ThumbCache> = std::sync::Mutex::new(ThumbCache {
 /// missing or still the last song's (a song from the same album keeps its cover once that is over).
 const SETTLE: Duration = Duration::from_secs(5);
 const SETTLE_MAX: Duration = Duration::from_secs(15);
+
+/// Skipping a song, the player says for a moment that nothing plays (no session, no title, Changing or
+/// Stopped), and the island and taskbar dropped Now playing till the next song came (Moss, 11-20: "i
+/// dont want it to show no song at all. have it show the previous song until the next song loads in").
+/// A gap this short keeps the last song on show, marked `between` (its colour fades to the pill's own,
+/// then the next song's fades in). The next song has loaded once its cover has come too: while the
+/// player still gives the last song's cover (or none), the last song stays, up to COVER_WAIT.
+const GAP: Duration = Duration::from_secs(4);
+const COVER_WAIT: Duration = Duration::from_millis(2500);
+
+/// The last song that played, and since when the player has said there is none.
+struct Hold {
+    good: Option<MediaState>,
+    gone: Option<Instant>,
+}
+static HOLD: std::sync::Mutex<Hold> = std::sync::Mutex::new(Hold { good: None, gone: None });
+
+impl Hold {
+    /// What to tell the island: `s`, or the last song (marked `between`) while the player is between
+    /// songs, up to GAP, or while the new song's cover (`stale`) has not come yet, up to COVER_WAIT.
+    fn settle(&mut self, s: MediaState, stale: bool, now: Instant) -> MediaState {
+        let gap = !s.available || matches!(s.status.as_str(), "none" | "closed" | "changing" | "stopped");
+        if !gap && !stale {
+            self.good = Some(s.clone());
+            self.gone = None;
+            return s;
+        }
+        let since = *self.gone.get_or_insert(now);
+        let wait = if gap { GAP } else { COVER_WAIT };
+        match &self.good {
+            Some(g) if g.title != s.title || gap || g.artist != s.artist => {
+                if now.duration_since(since) < wait {
+                    return MediaState { between: true, ..g.clone() };
+                }
+                if gap {
+                    self.good = None;
+                } else {
+                    self.good = Some(s.clone());
+                    self.gone = None;
+                }
+                s
+            }
+            _ => {
+                // The same song (its cover read again), or nothing played before: as it is.
+                if !gap {
+                    self.good = Some(s.clone());
+                    self.gone = None;
+                } else {
+                    self.good = None;
+                }
+                s
+            }
+        }
+    }
+}
+
+impl ThumbCache {
+    /// The song changed a moment ago and its cover is still the last song's, or missing.
+    fn stale(&self) -> bool {
+        self.since.is_some_and(|t| t.elapsed() < COVER_WAIT) && (self.data.is_none() || (self.prev.is_some() && self.data == self.prev))
+    }
+}
 
 /// Whether to read the cover again, `since` the song changed: while it may still be the last one's.
 fn reread(since: Duration, missing: bool, same_as_last: bool) -> bool {
@@ -175,6 +240,7 @@ fn read(manager: &Manager, cache: &mut ThumbCache) -> windows::core::Result<Medi
         can_next: controls.IsNextEnabled().unwrap_or(false),
         can_prev: controls.IsPreviousEnabled().unwrap_or(false),
         thumbnail: cache.data.clone(),
+        between: false,
     })
 }
 
@@ -215,6 +281,8 @@ pub fn start(app: AppHandle) {
         let mut last = MediaState::default();
         loop {
             let state = read(&manager, &mut THUMBS.lock().unwrap()).unwrap_or_else(|_| MediaState { status: "none".into(), ..Default::default() });
+            let stale = THUMBS.lock().unwrap().stale();
+            let state = HOLD.lock().unwrap().settle(state, stale, Instant::now());
             *PLAYING.lock().unwrap() = if state.status == "playing" { state.app.clone() } else { None };
             if state != last {
                 let _ = app.emit_to(ISLAND, "media", state.clone());
@@ -231,7 +299,10 @@ pub async fn media_state() -> Option<MediaState> {
         com();
         let manager = Manager::RequestAsync().ok()?.get().ok()?;
         let mut cache = THUMBS.lock().ok()?;
-        read(&manager, &mut cache).ok()
+        let state = read(&manager, &mut cache).ok()?;
+        let stale = cache.stale();
+        drop(cache);
+        Some(HOLD.lock().ok()?.settle(state, stale, Instant::now()))
     })
     .await
     .ok()
@@ -460,8 +531,37 @@ fn activate_package(aumid: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{friendly_app, reread, tab_score};
-    use std::time::Duration;
+    use super::{friendly_app, reread, tab_score, Hold, MediaState};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_skip_keeps_the_last_song_through_the_gap() {
+        let song = |t: &str| MediaState { available: true, title: t.into(), status: "playing".into(), ..Default::default() };
+        let none = MediaState { status: "none".into(), ..Default::default() };
+        let mut h = Hold { good: None, gone: None };
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let a = h.settle(song("A"), false, t0);
+        assert!(a.title == "A" && !a.between);
+        // Between songs: still A, marked between (its colour fades out).
+        let gap = h.settle(none.clone(), false, at(700));
+        assert!(gap.title == "A" && gap.between && gap.available);
+        let changing = MediaState { status: "changing".into(), ..song("") };
+        assert_eq!(h.settle(changing, false, at(1400)).title, "A");
+        // B's title has come but its cover is still A's: A stays till the cover comes.
+        let early = h.settle(song("B"), true, at(1800));
+        assert!(early.title == "A" && early.between);
+        let b = h.settle(song("B"), false, at(2100));
+        assert!(b.title == "B" && !b.between);
+        // A cover that never changes (the same album) holds the new song back only so long.
+        let c = h.settle(song("C"), true, at(3000));
+        assert_eq!(c.title, "B");
+        assert_eq!(h.settle(song("C"), true, at(6000)).title, "C");
+        // Music really stopped: gone after the gap.
+        assert_eq!(h.settle(none.clone(), false, at(7000)).title, "C");
+        assert!(!h.settle(none.clone(), false, at(12000)).available);
+        assert!(!h.settle(none, false, at(13000)).available);
+    }
 
     #[test]
     fn a_new_songs_cover_is_read_again_until_it_has_changed() {

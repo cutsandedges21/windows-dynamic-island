@@ -19,6 +19,11 @@ export async function fillPreview(island: Island, native: typeof Native, emit: t
   const q = new URLSearchParams(location.search);
   const now = Date.now();
   const n = native as unknown as Record<string, unknown>;
+  let media: unknown = null;
+  (window as unknown as { __media: (m: unknown) => void }).__media = (m) => {
+    media = m;
+    emit('media', m);
+  };
   Object.assign(n, {
     powerState: async () => ({ hasBattery: true, percent: 72, ac: true, charging: true, saver: false, secondsLeft: 1500 }),
     audioState: async () => ({ volume: 0.42, muted: false, device: 'Speakers (Realtek(R) Audio)', deviceId: 'spk', micMuted: false, micDevice: 'Microphone' }),
@@ -40,7 +45,8 @@ export async function fillPreview(island: Island, native: typeof Native, emit: t
         connected: i === 1,
         audio: true,
       })),
-    mediaState: async () => ({
+    // window.__media(state): what plays from now on (a skip, the player closing), for headless checks.
+    mediaState: async () => media ?? ({
       // &art=/cover.jpg&title=...&artist=...: another song (its album colour, say).
       available: true, app: 'Spotify', appId: 'Spotify.exe', title: q.get('title') ?? 'Roman to Integer - LeetCode #13', artist: q.get('artist') ?? 'CodingNinja', album: 'LeetCode',
       status: 'playing', position: 120, duration: 300, updatedAt: Date.now(), canPlay: true, canPause: true, canNext: true, canPrev: true, thumbnail: q.get('art') ?? ART,
