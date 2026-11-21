@@ -2980,6 +2980,38 @@ html.dock-square .dock-bg { border-radius: 0; box-shadow: inset 0 1px 0 rgba(var
 html[data-pill='tinted'] {
   --pill: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 40%), rgba(0, 0, 0, var(--tint-a, 0.8));
 }
+/* On the island (and the screen border that meets it) Tinted black is Matte black made see-through: Matte's
+   soft sheen from the top left and its lit rim, over the tint's black, so over a black screen it reads as
+   its own look, not the plain Black pill (Justin, 11-21: "what if tinted black looked more like matte
+   black"; a grey glow in the middle came first, kept on branch save/tinted-ends). The taskbar and widgets
+   keep their Windows-matched black and faint line. */
+html[data-pill='tinted']:not(.dock-window, .widget-window) {
+  --pill:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 40%, rgba(255, 255, 255, 0.02) 70%, rgba(255, 255, 255, 0.07) 100%),
+    rgba(5, 6, 8, var(--tint-a, 0.8));
+}
+html[data-pill='tinted']:not(.dock-window, .widget-window) :is(.pill-bg, .sheet-bg, .bubble-bg, .chat-bar, .chat-card) {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}
+/* plus the grey glow in the middle easing out on every side (branch save/tinted-ends), "include the gradation"; on Matte's sheen it showed
+   cuts, so here it is fainter (5%) and eases all the way to the centre with no flat middle */
+html[data-pill='tinted']:not(.dock-window, .widget-window) :is(.pill-bg, .sheet-bg, .bubble-bg)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  /* a fine grain over the grey hides the few dark shades' steps, which showed as rings */
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.025 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"), rgba(120, 122, 128, 0.05);
+  -webkit-mask: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.04) 6.25%, rgba(0, 0, 0, 0.16) 12.5%, rgba(0, 0, 0, 0.32) 18.75%, rgba(0, 0, 0, 0.50) 25%, rgba(0, 0, 0, 0.68) 31.25%, rgba(0, 0, 0, 0.84) 37.5%, rgba(0, 0, 0, 0.96) 43.75%, #000 50%, rgba(0, 0, 0, 0.96) 56.25%, rgba(0, 0, 0, 0.84) 62.5%, rgba(0, 0, 0, 0.68) 68.75%, rgba(0, 0, 0, 0.50) 75%, rgba(0, 0, 0, 0.32) 81.25%, rgba(0, 0, 0, 0.16) 87.5%, rgba(0, 0, 0, 0.04) 93.75%, transparent 100%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.20) 0%, rgba(0, 0, 0, 0.23) 6.25%, rgba(0, 0, 0, 0.32) 12.5%, rgba(0, 0, 0, 0.45) 18.75%, rgba(0, 0, 0, 0.60) 25%, rgba(0, 0, 0, 0.75) 31.25%, rgba(0, 0, 0, 0.88) 37.5%, rgba(0, 0, 0, 0.97) 43.75%, #000 50%, rgba(0, 0, 0, 0.97) 56.25%, rgba(0, 0, 0, 0.88) 62.5%, rgba(0, 0, 0, 0.75) 68.75%, rgba(0, 0, 0, 0.60) 75%, rgba(0, 0, 0, 0.45) 81.25%, rgba(0, 0, 0, 0.32) 87.5%, rgba(0, 0, 0, 0.23) 93.75%, rgba(0, 0, 0, 0.20) 100%);
+  -webkit-mask-composite: source-in;
+  mask: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.04) 6.25%, rgba(0, 0, 0, 0.16) 12.5%, rgba(0, 0, 0, 0.32) 18.75%, rgba(0, 0, 0, 0.50) 25%, rgba(0, 0, 0, 0.68) 31.25%, rgba(0, 0, 0, 0.84) 37.5%, rgba(0, 0, 0, 0.96) 43.75%, #000 50%, rgba(0, 0, 0, 0.96) 56.25%, rgba(0, 0, 0, 0.84) 62.5%, rgba(0, 0, 0, 0.68) 68.75%, rgba(0, 0, 0, 0.50) 75%, rgba(0, 0, 0, 0.32) 81.25%, rgba(0, 0, 0, 0.16) 87.5%, rgba(0, 0, 0, 0.04) 93.75%, transparent 100%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.20) 0%, rgba(0, 0, 0, 0.23) 6.25%, rgba(0, 0, 0, 0.32) 12.5%, rgba(0, 0, 0, 0.45) 18.75%, rgba(0, 0, 0, 0.60) 25%, rgba(0, 0, 0, 0.75) 31.25%, rgba(0, 0, 0, 0.88) 37.5%, rgba(0, 0, 0, 0.97) 43.75%, #000 50%, rgba(0, 0, 0, 0.97) 56.25%, rgba(0, 0, 0, 0.88) 62.5%, rgba(0, 0, 0, 0.75) 68.75%, rgba(0, 0, 0, 0.60) 75%, rgba(0, 0, 0, 0.45) 81.25%, rgba(0, 0, 0, 0.32) 87.5%, rgba(0, 0, 0, 0.23) 93.75%, rgba(0, 0, 0, 0.20) 100%);
+  mask-composite: intersect;
+}
 html[data-pill='tinted'] :is(.pill-bg, .sheet-bg, .bubble-bg, .chat-bar, .chat-card) { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
 html[data-pill='tinted'] .dock-bg { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
 html[data-pill='tinted'].dock-square .dock-bg { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07); }
