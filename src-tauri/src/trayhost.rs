@@ -81,6 +81,25 @@ pub struct IconSetting {
 
 /// Whether Windows shows this icon on the taskbar rather than in the overflow: the setting for the same
 /// GUID, else for the same program and number (the one for this very path first: an older copy of the
+/// The order to show icons in when Windows' own taskbar can't be read: each program where its first
+/// icon came, and a program's icons newest number first, as Windows puts an app's later icon left of its
+/// first (Justin, 11-21: the usage widget's two numbers swapped places with whichever changed first after
+/// a restart; session then week, as Windows shows them). Gives the indices of `items` (program, number).
+pub fn fallback_order(items: &[(String, u32)]) -> Vec<usize> {
+    let mut programs: Vec<&str> = Vec::new();
+    for (exe, _) in items {
+        if !programs.iter().any(|p| p.eq_ignore_ascii_case(exe)) {
+            programs.push(exe);
+        }
+    }
+    let mut out: Vec<usize> = (0..items.len()).collect();
+    out.sort_by_key(|&i| {
+        let p = programs.iter().position(|p| p.eq_ignore_ascii_case(&items[i].0)).unwrap_or(usize::MAX);
+        (p, std::cmp::Reverse(items[i].1))
+    });
+    out
+}
+
 /// same app has its own). An icon Windows has no setting for yet goes with its program's other icons: on
 /// the bar when one of them is (Windows keeps a setting for an app's first icon only; Justin, 11-20: the
 /// usage widget's second number shows on Windows' taskbar beside its first), else in the overflow.
@@ -354,13 +373,16 @@ mod imp {
     pub fn icons() -> Vec<TrayIcon> {
         let settings = settings();
         let shown = SHOWN.lock().unwrap().clone();
-        let list: Vec<TrayIcon> = ITEMS
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|i| !i.hidden && i.icon.is_some())
+        let items = ITEMS.lock().unwrap();
+        let live: Vec<&Item> = items.iter().filter(|i| !i.hidden && i.icon.is_some()).collect();
+        // Not read from Windows' taskbar: an order that doesn't hang on which icon changed first.
+        let order = if shown.is_none() { super::fallback_order(&live.iter().map(|i| (i.exe.clone(), i.uid)).collect::<Vec<_>>()) } else { (0..live.len()).collect() };
+        let list: Vec<TrayIcon> = order
+            .into_iter()
+            .map(|n| live[n])
             .map(|i| TrayIcon { key: i.key.clone(), tip: i.tip.clone(), icon: i.icon.clone(), pinned: pinned(i, &shown, &settings) })
             .collect();
+        drop(items);
         // The ones on the bar in the order Windows' taskbar has them; the rest after, as they came.
         let mut list = list;
         if let Some(order) = &shown {
@@ -816,7 +838,17 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{callback_params, is_pinned, key_of, tip_key, IconSetting};
+    use super::{callback_params, fallback_order, is_pinned, key_of, tip_key, IconSetting};
+
+    #[test]
+    fn without_windows_order_a_programs_icons_go_newest_number_first_whichever_came_first() {
+        let it = |v: &[(&str, u32)]| v.iter().map(|(e, u)| (e.to_string(), *u)).collect::<Vec<_>>();
+        // The widget's week (#3) then session (#4), or the other way: session, week, then Island.
+        assert_eq!(fallback_order(&it(&[("W.exe", 3), ("W.exe", 4), ("island.exe", 2)])), vec![1, 0, 2]);
+        assert_eq!(fallback_order(&it(&[("W.exe", 4), ("w.EXE", 3), ("island.exe", 2)])), vec![0, 1, 2]);
+        // Programs stay where their first icon came.
+        assert_eq!(fallback_order(&it(&[("island.exe", 2), ("W.exe", 3), ("W.exe", 4)])), vec![0, 2, 1]);
+    }
 
     #[test]
     fn what_windows_showed_before_the_apps_sent_their_icons_again_still_counts() {
