@@ -289,11 +289,11 @@ function cityField(): HTMLElement {
 
 const COLORS: Array<[PillColor, string]> = [
   ['glass', 'Glass'],
+  ['tinted', 'Tinted black'],
   ['black', 'Black'],
   ['white', 'White'],
   ['matte-black', 'Matte black'],
   ['matte-white', 'Matte white'],
-  ['tinted', 'Tinted black'],
 ];
 
 /** The look saves at once, so the real island changes while you pick; the preview shows it too. */

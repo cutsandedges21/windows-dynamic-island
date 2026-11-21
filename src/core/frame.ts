@@ -63,6 +63,8 @@ export interface FrameFrame {
   width: number;
   color: PillColor;
   glass?: number;
+  /** Tinted black's tint slider, 0–100 (glass.ts tintAlpha). */
+  tint?: number;
   /** Pill colour › Custom's own colour. */
   custom?: string;
   accent: string;
@@ -938,7 +940,7 @@ export async function runFrame(stage: HTMLElement): Promise<void> {
     root.classList.toggle('fr-slide', slides());
     root.classList.toggle('reduce', f.reduce);
     paintSong(safeColour(f.song));
-    applyGlass(root, f.glass);
+    applyGlass(root, f.glass, f.tint);
     drawBorder();
     drawSites(f);
     drawShelf(f);

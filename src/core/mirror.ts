@@ -38,6 +38,8 @@ export interface MirrorFrame {
   color: PillColor;
   /** The glass slider, 0 (clear) to 100 (tinted); absent from an Island before it had one. */
   glass?: number;
+  /** Tinted black's tint slider, 0 (see-through) to 100 (solid); absent from an Island before it had one. */
+  tint?: number;
   /** Pill colour › Custom's own colour. */
   custom?: string;
   reduce: boolean;
@@ -65,7 +67,7 @@ export async function runMirror(stage: HTMLElement): Promise<void> {
     stage.style.visibility = f.host && f.host === monitor ? 'hidden' : '';
     document.documentElement.style.setProperty('--accent', f.accent);
     applyPill(document.documentElement, f.color, f.custom);
-    applyGlass(document.documentElement, f.glass);
+    applyGlass(document.documentElement, f.glass, f.tint);
     setReducedMotion(f.reduce);
     document.documentElement.classList.toggle('reduce', f.reduce);
     bubble.colour(f.accent);

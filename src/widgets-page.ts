@@ -69,7 +69,7 @@ const LOOKS: ReadonlyArray<[ItemLook['color'], string]> = [
   ['tinted', 'Tinted black'],
 ];
 
-/** A row of small swatches, one per look, the chosen one ringed; under it the glass slider when Glass is picked. */
+/** A row of small swatches, one per look, the chosen one ringed; under it the glass slider when Glass is picked, the tint slider for Tinted black. */
 function lookPicker(look: ItemLook, host: WidgetsPageHost, followLabel = 'Like the island'): HTMLElement[] {
   const swatches = h(
     'div',
@@ -101,6 +101,14 @@ function lookPicker(look: ItemLook, host: WidgetsPageHost, followLabel = 'Like t
       host.save();
     });
     out.push(row('Glass', 'Clear is more see-through; tinted lets less of what is behind show through.', h('div', { class: 'glass-slider' }, [h('span', { class: 'muted', text: 'Clear' }), slider, h('span', { class: 'muted', text: 'Tinted' })])));
+  }
+  if (look.color === 'tinted') {
+    const slider = h('input', { type: 'range', min: 0, max: 100, value: String(look.tint), 'aria-label': 'Tint' });
+    slider.addEventListener('input', () => {
+      look.tint = Number(slider.value);
+      host.save();
+    });
+    out.push(row('Tint', 'See-through lets more of what is behind show through; solid is plain black.', h('div', { class: 'glass-slider' }, [h('span', { class: 'muted', text: 'See-through' }), slider, h('span', { class: 'muted', text: 'Solid' })])));
   }
   return out;
 }

@@ -32,9 +32,27 @@ export function glassStyle(glass: number | undefined): Record<'--glass-smoke' | 
   return { '--glass-smoke': smoke.toFixed(3), '--glass-frost': frost.toFixed(3) };
 }
 
-/** Sets the glass on a page (the island, a Duplicate copy, the phone); every glass surface follows. */
-export function applyGlass(root: HTMLElement, glass: number | undefined): void {
+/** Tinted black's slider where it starts: black at 80%, the look it always had. */
+export const TINT_DEFAULT = 80;
+
+/**
+ * Tinted black's See-through ↔ Solid slider (0–100) as the black's opacity: 0 is black at 40%,
+ * the default (80) its old 80%, 100 solid black. Two straight lines meeting at the default, so the
+ * old look stays where the slider starts. Anything that is not a number (a phone hearing from an
+ * older Island) is the default.
+ */
+export function tintAlpha(tint: number | undefined): number {
+  const v = typeof tint === 'number' && Number.isFinite(tint) ? Math.max(0, Math.min(100, tint)) : TINT_DEFAULT;
+  return v <= TINT_DEFAULT ? 0.4 + (v / TINT_DEFAULT) * 0.4 : 0.8 + ((v - TINT_DEFAULT) / (100 - TINT_DEFAULT)) * 0.2;
+}
+
+/**
+ * Sets the glass and Tinted black's tint on a page (the island, a Duplicate copy, a taskbar, the
+ * phone); every glass and tinted surface follows.
+ */
+export function applyGlass(root: HTMLElement, glass: number | undefined, tint?: number): void {
   for (const [name, value] of Object.entries(glassStyle(glass))) root.style.setProperty(name, value);
+  root.style.setProperty('--tint-a', tintAlpha(tint).toFixed(3));
 }
 
 /** Pill colour › Custom, before one is picked: a deep blue. */

@@ -1423,10 +1423,18 @@ function settingsPage(part: 'island' | 'behavior' | 'alerts' | 'phone' | 'genera
     save();
   });
   const glassSlider = h('div', { class: 'glass-slider' }, [h('span', { class: 'muted', text: 'Clear' }), glass, h('span', { class: 'muted', text: 'Tinted' })]);
+  // Tinted black's own slider, like Glass's (Justin, 11-21): how much black, see-through to solid.
+  const tint = h('input', { type: 'range', min: 0, max: 100, value: String(i.tint), 'aria-label': 'Tint' });
+  tint.addEventListener('input', () => {
+    i.tint = Number(tint.value);
+    save();
+  });
+  const tintSlider = h('div', { class: 'glass-slider' }, [h('span', { class: 'muted', text: 'See-through' }), tint, h('span', { class: 'muted', text: 'Solid' })]);
   const secs: HTMLElement[] = [
     section('Appearance', [
       stacked(row('Pill colour', 'The whole island, card included.', pillColours(i))),
       ...(i.color === 'glass' ? [row('Glass', 'Clear is more see-through; tinted lets less of what is behind show through.', glassSlider)] : []),
+      ...(i.color === 'tinted' ? [row('Tint', 'See-through lets more of what is behind show through; solid is plain black.', tintSlider)] : []),
       ...(i.color === 'custom' ? [row('Your colour', 'Text on it turns dark by itself when the colour is light.', customColour(i))] : []),
       row('Accent', null, accents),
       // As the taskbar can take it (Justin, 11-20).
@@ -1847,12 +1855,12 @@ function pillColours(i: Settings['island']): HTMLElement {
     ]);
   return h('div', { class: 'segmented pill-colours' }, [
     pick('glass', 'Glass'),
+    pick('tinted', 'Tinted black'),
     h('i', { class: 'seg-sep', 'aria-hidden': 'true' }),
     pick('black', 'Black'),
     pick('white', 'White'),
     pick('matte-white', 'Matte white'),
     pick('matte-black', 'Matte black'),
-    pick('tinted', 'Tinted black'),
     h('i', { class: 'seg-sep', 'aria-hidden': 'true' }),
     pick('custom', 'Custom', true),
   ]);

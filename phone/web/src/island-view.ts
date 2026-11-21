@@ -158,7 +158,7 @@ export class IslandView {
     const root = document.documentElement;
     root.style.setProperty('--accent', frame.accent);
     root.dataset.pill = frame.color;
-    applyGlass(root, frame.glass);
+    applyGlass(root, frame.glass, frame.tint);
     const reduce = frame.reduce || matchMedia('(prefers-reduced-motion: reduce)').matches;
     setReducedMotion(reduce);
     root.classList.toggle('reduce', reduce);

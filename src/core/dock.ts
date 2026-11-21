@@ -52,6 +52,8 @@ export interface DockFrame {
   accent: string;
   color: PillColor;
   glass?: number;
+  /** Tinted black's tint slider, 0–100 (glass.ts tintAlpha). */
+  tint?: number;
   /** Pill colour › Custom's own colour. */
   custom?: string;
   /** Its own height (a zoom like its sizes'), stretched in Edit position; null or unset: its size's. */
@@ -576,7 +578,7 @@ export interface DockHooks {
   hidden(): DockItem[];
   order(): DockItem[];
   setHidden(items: DockItem[]): void;
-  look(): { accent: string; color: PillColor; glass?: number; custom?: string };
+  look(): { accent: string; color: PillColor; glass?: number; tint?: number; custom?: string };
   /** One of an activity's actions (`act:music:toggle`). */
   act(action: string): void;
   /** Opens the island, on activity `id` when given (the timer: its time is there). */
@@ -3014,7 +3016,7 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     }
     root.classList.toggle('dk-border', border > 0);
     setGap(side() === 'top' && f.gap ? f.gap : 0);
-    applyGlass(root, f.glass);
+    applyGlass(root, f.glass, f.tint);
     for (const k of DOCK_STYLES) root.classList.toggle(`dk-${k}`, has(k));
     if (!raf) keepSlack(0);
     root.dataset.nameFont = f.names?.font ?? 'system';

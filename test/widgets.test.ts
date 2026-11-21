@@ -40,18 +40,18 @@ describe('the saved list', () => {
   });
 
   it('survives settings migration, and is off by default', () => {
-    expect(defaultSettings().island.widgets).toEqual({ on: false, items: [], look: { color: 'island', glass: 11 } });
+    expect(defaultSettings().island.widgets).toEqual({ on: false, items: [], look: { color: 'island', glass: 11, tint: 80 } });
     const out = migrate({ island: { widgets: { on: true, look: { color: 'matte-white', glass: 300 }, items: [{ id: 'clock', kind: 'clock', x: 5, y: 6, locked: true }, { id: 'music', kind: 'music', size: '2x4' }, { id: 'w', kind: 'weather', size: '9x9' }, { id: 'bad id', kind: 'timer' }] } } });
     expect(out.island.widgets).toEqual({
       on: true,
-      look: { color: 'matte-white', glass: 100 },
+      look: { color: 'matte-white', glass: 100, tint: 80 },
       items: [
         { id: 'clock', kind: 'clock', x: 5, y: 6, locked: true },
         { id: 'music', kind: 'music', x: -1, y: -1, size: '2x4' },
         { id: 'w', kind: 'weather', x: -1, y: -1 },
       ],
     });
-    expect(migrate({ island: { widgets: 7 } }).island.widgets).toEqual({ on: false, items: [], look: { color: 'island', glass: 11 } });
+    expect(migrate({ island: { widgets: 7 } }).island.widgets).toEqual({ on: false, items: [], look: { color: 'island', glass: 11, tint: 80 } });
     expect(migrate({ island: { widgets: { look: { color: 'neon' } } } }).island.widgets.look.color).toBe('island');
   });
 
@@ -74,7 +74,7 @@ describe('what a kind shows', () => {
   });
 });
 
-function host(items: Array<{ id: string; kind: string; x: number; y: number; size?: string; locked?: boolean }>, on = true, look: ItemLook = { color: 'island', glass: 11 }) {
+function host(items: Array<{ id: string; kind: string; x: number; y: number; size?: string; locked?: boolean }>, on = true, look: ItemLook = { color: 'island', glass: 11, tint: 80 }) {
   const settings = { on, items, look };
   const acts: Array<[string, unknown]> = [];
   let saved = 0;
@@ -135,9 +135,10 @@ describe('the island host', () => {
 
 describe('looks, sizes and the right-click menu', () => {
   it('a widget looks like the island unless it has a look of its own', () => {
-    const island = { color: 'matte-black' as const, glass: 40 };
-    expect(lookOf({ color: 'island', glass: 90 }, island)).toEqual({ color: 'matte-black', glass: 40 });
-    expect(lookOf({ color: 'glass', glass: 90 }, island)).toEqual({ color: 'glass', glass: 90 });
+    const island = { color: 'matte-black' as const, glass: 40, tint: 55 };
+    expect(lookOf({ color: 'island', glass: 90, tint: 20 }, island)).toEqual({ color: 'matte-black', glass: 40, tint: 55 });
+    expect(lookOf({ color: 'glass', glass: 90, tint: 20 }, island)).toEqual({ color: 'glass', glass: 90, tint: 20 });
+    expect(lookOf({ color: 'tinted', glass: 90, tint: 20 }, island)).toEqual({ color: 'tinted', glass: 90, tint: 20 });
   });
 
   it('only tiles that show more when bigger have sizes, and only those sizes take', () => {
@@ -160,7 +161,7 @@ describe('looks, sizes and the right-click menu', () => {
   });
 
   it('sends its own look, its lock and its sizes with each frame', async () => {
-    const { w } = host([{ id: 'timer', kind: 'timer', x: 1, y: 1, locked: true }], true, { color: 'glass', glass: 70 });
+    const { w } = host([{ id: 'timer', kind: 'timer', x: 1, y: 1, locked: true }], true, { color: 'glass', glass: 70, tint: 80 });
     await w.start();
     w.tick(0);
     const frame = h.sent.at(-1)![2] as WidgetFrame;

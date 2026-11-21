@@ -28,6 +28,8 @@ describe('the allow-list', () => {
     const s = defaultSettings();
     expect(applyPref(s, 'island.glass', 30)).toBe(true);
     expect(s.island.glass).toBe(30);
+    expect(applyPref(s, 'island.tint', 64.4)).toBe(true);
+    expect(s.island.tint).toBe(64);
     expect(applyPref(s, 'general.dnd', true)).toBe(true);
     expect(s.general.dnd).toBe(true);
     expect(applyPref(s, 'island.anchor', 'bottom')).toBe(true);

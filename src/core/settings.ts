@@ -5,7 +5,7 @@ import { cleanWidgets } from './widgets';
 import { CATALOG, type Band, type Behavior } from '../activities/catalog';
 import { normalizeWidths, type Anchor, type IslandSize, type Widths } from './layout';
 import { FULL_FADE, normalizeFadeShown, type FadeShown } from './fade-menu';
-import { CUSTOM_DEFAULT, GLASS_DEFAULT, hexIsLight, pillHex } from './glass';
+import { CUSTOM_DEFAULT, GLASS_DEFAULT, hexIsLight, pillHex, TINT_DEFAULT } from './glass';
 import { SOUND_PACKS } from './sound-packs';
 import { DEFAULT_ICON_ONLY, DEFAULT_MENU_ORDER, FULL_MENU, normalizeIconOnly, normalizeMenuOrder, type MenuIconOnly, type MenuItemId, type MenuShown } from './menu';
 
@@ -68,11 +68,13 @@ export interface DesktopWidget {
 
 /**
  * How widgets or the taskbar look: like the island ('island'), or a colour of their own with
- * the glass slider's value (Settings, Widgets).
+ * the glass slider's value and Tinted black's tint slider's (Settings, Widgets).
  */
 export interface ItemLook {
   color: 'island' | PillColor;
   glass: number;
+  /** Tinted black only: 0 lets the most of what is behind show through, 100 is solid black. */
+  tint: number;
 }
 
 /**
@@ -329,11 +331,15 @@ export function barMinLen(v: unknown): number {
 
 export const ITEM_COLORS: ReadonlyArray<ItemLook['color']> = ['island', 'black', 'white', 'matte-black', 'matte-white', 'glass', 'tinted'];
 
+/** A 0–100 slider's saved value, whole; anything that is not a number is its default. */
+function cleanSlider(v: unknown, fallback: number): number {
+  return typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : fallback;
+}
+
 function cleanLook(v: unknown): ItemLook {
   const o = isObj(v) ? v : {};
   const color = ITEM_COLORS.includes(o.color as ItemLook['color']) ? (o.color as ItemLook['color']) : 'island';
-  const glass = typeof o.glass === 'number' && Number.isFinite(o.glass) ? Math.max(0, Math.min(100, Math.round(o.glass))) : GLASS_DEFAULT;
-  return { color, glass };
+  return { color, glass: cleanSlider(o.glass, GLASS_DEFAULT), tint: cleanSlider(o.tint, TINT_DEFAULT) };
 }
 
 /** How the user arranged the open island's grid (long-press a tile to edit). */
@@ -399,6 +405,8 @@ export interface Settings {
     color: PillColor;
     /** Glass only, like iOS Liquid Glass: 0 is clear, 100 is tinted (less of what is behind shows through). */
     glass: number;
+    /** Tinted black only: 0 lets the most of what is behind show through, 100 is solid black (80: its old 80% black). */
+    tint: number;
     /** Custom only: the pill's own colour, #rrggbb. */
     custom: string;
     reduceMotion: 'system' | 'on' | 'off';
@@ -560,6 +568,7 @@ export function defaultSettings(): Settings {
       accent: 'sky',
       color: 'black',
       glass: GLASS_DEFAULT,
+      tint: TINT_DEFAULT,
       custom: CUSTOM_DEFAULT,
       reduceMotion: 'system',
       glow: 'medium',
@@ -569,9 +578,9 @@ export function defaultSettings(): Settings {
       peekUntilBack: false,
       bot: true,
       grid: { order: [], sizes: {}, hidden: [], pages: [] },
-      widgets: { on: false, items: [], look: { color: 'island', glass: GLASS_DEFAULT } },
-      taskbar: { on: false, hideWindows: true, centre: -1, centres: {}, screens: 'all', look: { color: 'island', glass: GLASS_DEFAULT }, scale: null, minLen: 0, tall: 0, hidden: [], order: [...DOCK_ITEMS], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom', autoHide: false, names: { font: 'system', look: 'bubble', bold: false }, startOpens: 'island', startKey: false, startPins: null, accentBorder: false, keepClear: false, fill: false, square: false, songOpens: 'app', songTint: true, barTint: false, folders: [], startFolders: [] },
-      frame: { on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small', at: null, free: false }, shelf: { on: false, corner: 'bottom-right', size: 'small', at: null, free: false }, look: { color: 'island', glass: GLASS_DEFAULT }, autoHide: false, melt: true, blend: true },
+      widgets: { on: false, items: [], look: { color: 'island', glass: GLASS_DEFAULT, tint: TINT_DEFAULT } },
+      taskbar: { on: false, hideWindows: true, centre: -1, centres: {}, screens: 'all', look: { color: 'island', glass: GLASS_DEFAULT, tint: TINT_DEFAULT }, scale: null, minLen: 0, tall: 0, hidden: [], order: [...DOCK_ITEMS], size: 'medium', styles: ['rise'], edge: false, melt: false, side: 'bottom', autoHide: false, names: { font: 'system', look: 'bubble', bold: false }, startOpens: 'island', startKey: false, startPins: null, accentBorder: false, keepClear: false, fill: false, square: false, songOpens: 'app', songTint: true, barTint: false, folders: [], startFolders: [] },
+      frame: { on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small', at: null, free: false }, shelf: { on: false, corner: 'bottom-right', size: 'small', at: null, free: false }, look: { color: 'island', glass: GLASS_DEFAULT, tint: TINT_DEFAULT }, autoHide: false, melt: true, blend: true },
       sites: [],
       hiddenUntil: 0,
       faded: false,
@@ -656,6 +665,8 @@ export function migrate(saved: unknown): Settings {
   if (out.island.compactIcons.side !== 'start' && out.island.compactIcons.side !== 'end') out.island.compactIcons.side = 'end';
   // Justin's 0.2.11 saved the glass slider; Moss's 0.4.2 had none and gets the old look.
   out.island.glass = Number.isFinite(out.island.glass) ? Math.max(0, Math.min(100, out.island.glass)) : GLASS_DEFAULT;
+  // Tinted black's slider (11-21); before it, its 80% black.
+  out.island.tint = cleanSlider(out.island.tint, TINT_DEFAULT);
   const snd = out.general.sound;
   if (!soundStyleKnown(snd.style)) snd.style = 'soft';
   snd.volume = Math.round(Math.max(0, Math.min(100, Number.isFinite(snd.volume) ? snd.volume : 50)));

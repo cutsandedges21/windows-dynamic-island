@@ -1,4 +1,4 @@
-import { GLASS_DEFAULT } from '../src/core/glass';
+import { GLASS_DEFAULT, TINT_DEFAULT } from '../src/core/glass';
 import { describe, expect, it } from 'vitest';
 import { meltEnds, meltMasks } from '../src/core/dock';
 import { barOutline, faviconOf, NOTCH_ZOOM, notchTop, restThick, sideOf, TAB } from '../src/core/frame';
@@ -36,7 +36,7 @@ describe('screen border', () => {
 
   it('starts off, Websites bottom left and the Shelf bottom right, both small and off, the light on the island', () => {
     const s = migrate({ version: 6, island: {} }).island;
-    expect(s.frame).toEqual({ on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small', at: null, free: false }, shelf: { on: false, corner: 'bottom-right', size: 'small', at: null, free: false }, look: { color: 'island', glass: GLASS_DEFAULT }, autoHide: false, melt: true, blend: true });
+    expect(s.frame).toEqual({ on: false, glow: 'island', sites: { on: false, corner: 'bottom-left', size: 'small', at: null, free: false }, shelf: { on: false, corner: 'bottom-right', size: 'small', at: null, free: false }, look: { color: 'island', glass: GLASS_DEFAULT, tint: TINT_DEFAULT }, autoHide: false, melt: true, blend: true });
     expect(notchesOn(s)).toBe(false);
     expect(s.sites).toEqual([]);
     expect(s.taskbar.side).toBe('bottom');

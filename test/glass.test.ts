@@ -2,7 +2,7 @@
 // that Duplicate copies and phones hear about it.
 
 import { describe, expect, it } from 'vitest';
-import { GLASS_DEFAULT, glassStyle, glassTint } from '../src/core/glass';
+import { GLASS_DEFAULT, glassStyle, glassTint, TINT_DEFAULT, tintAlpha } from '../src/core/glass';
 import type { MirrorFrame } from '../src/core/mirror';
 import { defaultSettings, migrate } from '../src/core/settings';
 import { pillKey } from '../src/remote/hub';
@@ -76,5 +76,56 @@ describe('the glass on other screens', () => {
 
   it("a frame from an Island before the slider draws the glass's old look", () => {
     expect(glassStyle(frame().glass)).toEqual(glassStyle(GLASS_DEFAULT));
+  });
+});
+
+describe("Tinted black's tint slider", () => {
+  it('starts at the 80% black it always had, and runs from see-through to solid', () => {
+    expect(TINT_DEFAULT).toBe(80);
+    expect(tintAlpha(TINT_DEFAULT)).toBeCloseTo(0.8, 10);
+    expect(tintAlpha(0)).toBeCloseTo(0.4, 10);
+    expect(tintAlpha(100)).toBe(1);
+    let last = -1;
+    for (let v = 0; v <= 100; v += 5) {
+      expect(tintAlpha(v)).toBeGreaterThan(last);
+      last = tintAlpha(v);
+    }
+  });
+
+  it('keeps to its ends, and takes anything else (an older Island) as the default', () => {
+    expect(tintAlpha(-20)).toBeCloseTo(0.4, 10);
+    expect(tintAlpha(400)).toBe(1);
+    expect(tintAlpha(undefined)).toBe(tintAlpha(TINT_DEFAULT));
+    expect(tintAlpha(Number.NaN)).toBe(tintAlpha(TINT_DEFAULT));
+    expect(tintAlpha(frame().tint)).toBe(tintAlpha(TINT_DEFAULT));
+  });
+
+  it('is saved apart from the glass, 80 until moved', () => {
+    expect(defaultSettings().island.tint).toBe(80);
+    expect(migrate({ version: 5, island: { color: 'tinted', glass: 32 } }).island).toMatchObject({ color: 'tinted', glass: 32, tint: 80 });
+    expect(migrate({ island: { color: 'tinted', tint: 35 } }).island.tint).toBe(35);
+  });
+
+  it('drops junk, rounds, and keeps it between 0 and 100', () => {
+    const saved = (v: unknown) => migrate({ island: { tint: v } }).island.tint;
+    expect(saved(150)).toBe(100);
+    expect(saved(-3)).toBe(0);
+    expect(saved(42.6)).toBe(43);
+    expect(saved(Number.NaN)).toBe(TINT_DEFAULT);
+    expect(saved('40')).toBe(TINT_DEFAULT);
+    expect(saved(null)).toBe(TINT_DEFAULT);
+  });
+
+  it('widgets, the taskbar and the border keep their own tint, or get the default', () => {
+    const s = defaultSettings().island;
+    for (const look of [s.widgets.look, s.taskbar.look, s.frame.look]) expect(look.tint).toBe(TINT_DEFAULT);
+    const out = migrate({ island: { widgets: { look: { color: 'tinted', tint: 30 } }, taskbar: { look: { color: 'tinted', tint: 250 } }, frame: { look: { color: 'tinted', tint: 'dark' } } } }).island;
+    expect(out.widgets.look).toEqual({ color: 'tinted', glass: GLASS_DEFAULT, tint: 30 });
+    expect(out.taskbar.look.tint).toBe(100);
+    expect(out.frame.look.tint).toBe(TINT_DEFAULT);
+  });
+
+  it('a phone gets a new pill when the tint moves', () => {
+    expect(pillKey({ ...frame(), color: 'tinted', tint: 80 }, null)).not.toBe(pillKey({ ...frame(), color: 'tinted', tint: 20 }, null));
   });
 });

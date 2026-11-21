@@ -17,6 +17,8 @@ import type { DockFolder, PillColor } from './settings';
 export interface StartFrame {
   color: PillColor;
   glass?: number;
+  /** Tinted black's tint slider, 0–100 (glass.ts tintAlpha). */
+  tint?: number;
   /** Pill colour › Custom's own colour. */
   custom?: string;
   accent: string;
@@ -637,7 +639,7 @@ export async function runStart(stage: HTMLElement): Promise<void> {
     if (frame) {
       applyPill(root, frame.color, frame.custom);
       root.style.setProperty('--accent', frame.accent);
-      applyGlass(root, frame.glass);
+      applyGlass(root, frame.glass, frame.tint);
     }
     paintSong();
     if (query.trim()) drawSearch();
