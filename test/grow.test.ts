@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carryApart, carryCard, carryCurve, carryFades, carryShape, carrySplit, pillSlice, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, phoneHoverView, snapSpan, tweenShape } from '../src/core/grow';
+import { cardKeyAt, carryApart, carryCard, carryCurve, carryFades, carryShape, carrySplit, pillSlice, chatView, closeCurve, contentLeft, flatView, growCurve, handOff, hoverGrows, hoverView, phoneHoverView, snapSpan, tweenShape } from '../src/core/grow';
 import { defaultSettings, growsChoices, growsOf, migrate } from '../src/core/settings';
 import type { SheetView } from '../src/core/sheet';
 import { tileCard } from '../src/core/tilecard';
@@ -375,5 +375,20 @@ describe('a grown card carried on into the open island (and back)', () => {
     const cardR = carryCard(sideR, { x: 836, y: 150, w: 380, h: 400 }, 'right', 8, 1);
     expect(cardR.glass.x + cardR.glass.w).toBe(1216);
     expect(cardR.outer.x + cardR.outer.w).toBe(1272);
+  });
+});
+
+describe('whose card pointing at the pill asks for', () => {
+  it("the resting pill's small icons ask for the card in front, not their own (Justin, 11-21)", () => {
+    // Over the music note, the battery and Land's arrow it showed the player, System and Land, not Claude.
+    for (const key of ['chip/music', 'chip/system', 'chip/land']) expect(cardKeyAt(key, 'compact')).toBeNull();
+  });
+
+  it("the pill's own segments and a raised pill's labelled chips still name their activity", () => {
+    expect(cardKeyAt('claude/dot-0', 'compact')).toBe('claude/dot-0');
+    expect(cardKeyAt(null, 'compact')).toBeNull();
+    expect(cardKeyAt('chip/music', 'expanded')).toBe('chip/music');
+    expect(cardKeyAt('chip/music', 'maximum')).toBe('chip/music');
+    expect(cardKeyAt('chip/music', null)).toBe('chip/music');
   });
 });

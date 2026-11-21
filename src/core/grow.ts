@@ -1,6 +1,7 @@
 // How a card grows out of the pill and goes back into it (sheet.ts), and which card pointing at
 // an activity shows, by its Grows choice (island.ts). No DOM in here, so it is covered by plain vitest.
 
+import type { Level } from './layout';
 import type { Grows } from './settings';
 import type { SheetView } from './sheet';
 
@@ -193,6 +194,17 @@ export function hoverView(grows: Grows, own: SheetView | null, tile: () => Sheet
   if (own) return { ...own, morph: true };
   const made = tile();
   return made ? { ...made, morph: true } : null;
+}
+
+/**
+ * Whose card pointing at the pill asks for, from the segment under the pointer (`key`) and the
+ * pill's level as drawn. The resting pill's small icons are part of the pill: pointing at one shows
+ * the card of the one in front, as anywhere else on it (Justin, 11-21: over the music note it showed
+ * the player, over the battery System, over Land's arrow Land, not Claude in front). Null: the
+ * pill's own. A raised pill's labelled chips still ask for their own activity's card.
+ */
+export function cardKeyAt(key: string | null, level: Level | null): string | null {
+  return key?.startsWith('chip/') && level === 'compact' ? null : key;
 }
 
 /**

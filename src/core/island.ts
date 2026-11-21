@@ -36,7 +36,7 @@ import { applyGlass, applyPill } from './glass';
 import { accentColor, backAt, barAutoHide, barFill, barSquare, cleanAt, cleanDockFolders, cleanPins, barEdge, barMinLen, barNeedsHidden, barScale, barTall, FRAME_W, frameOn, notchesOn, growsOf, HIDE_CHOICES, hiddenNow, hideUntil, migrate, ALL_TILE_SIZES, FULL_WIDTH_SIZES, TILE_SIZES, type GridLayout, type Grows, type HideChoice, type Settings, type TileSize } from './settings';
 import { availableHere, platform } from './platform';
 import { CARD_RADIUS, mapActions, SheetRenderer, type Block, type DropZone, type SheetButton, type SheetChip, type SheetView, type Tile } from './sheet';
-import { chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
+import { cardKeyAt, chatView, flatView, GROW_MS, hoverGrows, hoverView, phoneHoverView } from './grow';
 import { tileCard } from './tilecard';
 import { pillMotion } from './spring';
 import { WheelGesture } from './wheel';
@@ -223,6 +223,8 @@ export class Island {
   private gridDrag: { key: string; snap: GridPages; dims: Map<string, { w: number; h: number }>; size: { w: number; h: number }; preview: GridPages | null } | null = null;
   /** Segment key under the pointer: tells whose card a hover asks for. */
   private hoverKey: string | null = null;
+  /** The segment under the pointer as it is, also a small icon that asks for no card of its own (Land's arms Ctrl+V). */
+  private pointedKey: string | null = null;
   /** The segment under the pointer as it came onto the pill, until it moves off it. */
   private entryKey: string | null = null;
   /** The pointer is on the pill itself (not the card). */
@@ -1441,7 +1443,7 @@ export class Island {
    * press opens Land with what was copied (`land-paste`). It lets go the moment the pointer leaves.
    */
   private syncPasteArm(): void {
-    const key = this.pointerOnPill ? this.hoverKey : null;
+    const key = this.pointerOnPill ? this.pointedKey : null;
     const armed = key !== null && (key === 'chip/land' || key.startsWith('land/')) && this.running.has('land');
     if (armed === this.pasteArmed) return;
     this.pasteArmed = armed;
@@ -2600,12 +2602,15 @@ export class Island {
         return;
       case 'island:hover-key': {
         let key = typeof arg === 'string' ? arg : null;
+        this.pointedKey = key;
         // Coming onto the pill right over one of its small icons points at the pill, not the icon:
         // the card is the one in front's (Moss, 11-20). The icon's own comes once the pointer moves
         // off it and back. pointerover comes before pointerenter, so the pointer is not on it yet.
         if (!this.pointerOnPill) this.entryKey = key;
         else if (key !== this.entryKey) this.entryKey = null;
         if (key !== null && key === this.entryKey && key.startsWith('chip/')) key = null;
+        // The resting pill's small icons never ask for their own card: the one in front's shows (grow.ts cardKeyAt).
+        key = cardKeyAt(key, this.lastLevel);
         const moved = this.ownerOf(key) !== this.ownerOf(this.hoverKey);
         this.hoverKey = key;
         this.syncPasteArm();
