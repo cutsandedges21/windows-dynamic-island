@@ -12,7 +12,7 @@ import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tau
 import { duration } from './format';
 import { packageFamily } from './store-app';
 import { applyGlass, applyPill, pillIsLight } from './glass';
-import { artColour, barColour, songFade, songFill } from './artcolor';
+import { artColour, barColour, songFade } from './artcolor';
 import { isTauri, native, on, onMine, sendTo, windowLabel, type DockIconRect, type DockScreen, type InstalledApp, type LiveWindow, type TrayIcon } from './native';
 import { BAR_TALL_MAX, barOrder, DOCK_ITEMS, DOCK_SIDES, DOCK_SIZES, DOCK_STYLES, type DockFolder, type DockItem, type DockSide, type DockSize, type DockStyle, type NameStyle, type PillColor } from './settings';
 
@@ -1383,12 +1383,12 @@ export async function runDock(stage: HTMLElement): Promise<void> {
   // then back, play/pause and next (Justin, 11-19). A click on the song brings the app playing it
   // forward, as the island's art does.
   const music = el('button', 'dk-music');
-  // The song and its buttons in one box: in the album's colour, it is all filled (Moss, 11-20: "the
-  // entire now playing section, including behind the arrows"); otherwise the box isn't there (contents).
+  // The song and its buttons in one box: in the album's colour, all of it takes the music card's wash (Moss,
+  // 11-20: "the entire now playing section, including behind the arrows"; Justin, 11-21: like the card, not
+  // a solid fill); otherwise the box isn't there (contents).
   const song = el('div', 'dk-song');
   let songTintFor: string | null = null;
   let songColour: string | null = null;
-  let songBox: { fill: string; light: boolean } | null = null;
   let songTint = { box: false, bar: false, edge: false };
   /** How the bar was last drawn in the song's colour: it fades out the same way. */
   let barWas = { edge: false };
@@ -1400,11 +1400,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     // Between songs (a skip) it fades to the bar's own, and the next song's fades in.
     const shown = songFade(root, '--song', bar && !songBetween ? songColour : null, paintSong);
     if (bar && songColour) barWas = { edge: songTint.edge };
-    const boxed = songTint.box && songBox !== null;
-    if (songBox) song.style.setProperty('--song-fill', songBox.fill);
+    // The box: the island's music card's colour and wash (island.css .dk-song.dk-tint), see-through over
+    // the bar, so its text and buttons stay the bar's own.
+    const boxed = songTint.box && songColour !== null;
+    if (songColour) song.style.setProperty('--song-fill', songColour);
     song.classList.toggle('dk-tint', boxed);
-    // Light colours (a pale yellow cover): black buttons and text, so they still show.
-    song.classList.toggle('dk-light', boxed && songBox!.light);
     root.classList.toggle('dk-bar-tint', shown);
     root.classList.toggle('dk-edge-tint', shown && barWas.edge);
   };
@@ -3127,13 +3127,11 @@ export async function runDock(stage: HTMLElement): Promise<void> {
     if (!tinting) {
       songTintFor = null;
       songColour = null;
-      songBox = null;
     } else if (tintArt && tintArt !== songTintFor) {
       songTintFor = tintArt;
       void artColour(tintArt).then((c) => {
         if (songTintFor !== tintArt || !c) return;
         songColour = barColour(c, pillIsLight(document.documentElement));
-        songBox = songFill(c);
         paintSong();
       });
     }

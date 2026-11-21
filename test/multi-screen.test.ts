@@ -4,6 +4,8 @@
 import { describe, expect, it } from 'vitest';
 import { luminance, songFill, vividColour } from '../src/core/artcolor';
 import { migrate } from '../src/core/settings';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const pixels = (...runs: Array<[number, [number, number, number]]>) => runs.flatMap(([n, [r, g, b]]) => Array.from({ length: n }, () => [r, g, b, 255]).flat());
 
@@ -50,5 +52,26 @@ describe('now playing in the album colour', () => {
     expect(luminance([0, 0, 1])).toBeCloseTo(1, 5);
     // Yellow looks far brighter than blue at the same lightness.
     expect(luminance([60, 1, 0.5])).toBeGreaterThan(luminance([240, 1, 0.5]) * 5);
+  });
+});
+
+describe("the taskbar's song box looks like the island's music card", () => {
+  const css = readFileSync(resolve(__dirname, '../src/styles/island.css'), 'utf8');
+  const rule = (sel: string) => css.split(/\r?\n/).find((l) => l.startsWith(`${sel} {`)) ?? '';
+
+  it("takes the card's see-through wash, never a solid fill (Justin, 11-21: \"why is it back\")", () => {
+    const box = rule('.dock .dk-song.dk-tint');
+    expect(box).toContain('color-mix(in srgb, var(--song-fill) 46%, transparent), color-mix(in srgb, var(--song-fill) 12%, transparent) 70%');
+    // The card's own wash, the same numbers.
+    expect(css).toContain('color-mix(in srgb, var(--card-tint, transparent) 46%, transparent), color-mix(in srgb, var(--card-tint, transparent) 12%, transparent) 70%');
+    // No opaque colour of its own, and the bar's text colour stays.
+    expect(box).not.toMatch(/linear-gradient\(150deg, var\(--song-fill\)/);
+    expect(box).not.toMatch(/(^|[ ;{])color:/);
+  });
+
+  it('is drawn in the same colour as the card (barColour), not a fill of its own', () => {
+    const dock = readFileSync(resolve(__dirname, '../src/core/dock.ts'), 'utf8');
+    expect(dock).toContain("song.style.setProperty('--song-fill', songColour)");
+    expect(dock).not.toContain('songFill(');
   });
 });
