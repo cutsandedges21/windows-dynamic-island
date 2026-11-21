@@ -231,8 +231,8 @@ const soundIcon = (n: number) => `<svg viewBox="0 0 24 24" class="line"><path d=
 
 /**
  * How the battery shows its state beyond its charge: the bolt while plugged in (charging or not), else
- * an orange inside while Energy saver is on, as Windows 11's (Justin, 11-21: "make inside the battery
- * orange like windows, no need for leaf").
+ * a yellow inside while Energy saver is on, as Windows 11's (Justin, 11-21: "make inside the battery
+ * orange like windows, no need for leaf", then "more yellow than orange").
  */
 export function batteryBadge(b: { charging: boolean; ac?: boolean; saver?: boolean }): 'bolt' | 'saver' | null {
   if (b.charging || b.ac) return 'bolt';
