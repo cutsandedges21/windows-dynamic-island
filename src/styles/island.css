@@ -2500,8 +2500,8 @@ html.dk-upright .dock .dk-skip { width: 34px; height: 26px; min-height: 26px; pa
 /* the battery: small, a body filled to its charge with the percent beside it */
 .dock .dk-batt { gap: 5px; padding: 0 6px; }
 /* Windows 11's battery (Justin, 11-19): white outline and percent, pale green fill and a bolt while charging. */
-.dock .dk-batt { --bt-fill: var(--fg); --bt-charge: #9fd89f; --bt-low: #ff99a4; }
-html[data-pill='white'] .dock .dk-batt, html[data-pill='matte-white'] .dock .dk-batt, html[data-pill='custom'][data-tone='light'] .dock .dk-batt { --bt-charge: #0f7b0f; --bt-low: #c42b1c; }
+.dock .dk-batt { --bt-fill: var(--fg); --bt-charge: #9fd89f; --bt-low: #ff99a4; --bt-saver: #ffb340; }
+html[data-pill='white'] .dock .dk-batt, html[data-pill='matte-white'] .dock .dk-batt, html[data-pill='custom'][data-tone='light'] .dock .dk-batt { --bt-charge: #0f7b0f; --bt-low: #c42b1c; --bt-saver: #b35a00; }
 .dock .dk-batt > span { font: 400 12px/1 var(--font); color: var(--fg); font-variant-numeric: tabular-nums; }
 .dock .dk-bbody { display: block; width: 20px; height: 13.6px; }
 .dock .dk-bbody svg { display: block; width: 100%; height: 100%; overflow: visible; }
@@ -2513,10 +2513,8 @@ html[data-pill='white'] .dock .dk-batt, html[data-pill='matte-white'] .dock .dk-
 .dock .dk-batt[data-tone='charging'] .dk-bfill { fill: var(--bt-charge); }
 .dock .dk-batt:is([data-tone='charging'], [data-tone='plugged']) :is(.dk-bbolt, .dk-bcut) { display: inline; }
 .dock .dk-batt[data-tone='low'] .dk-bfill { fill: var(--bt-low); }
-/* Energy saver on (dock.ts batteryBadge): Windows 11's leaf where the bolt goes, cut out of the battery the same way. */
-.dock .dk-bleaf { fill: var(--fg); display: none; }
-.dock .dk-bcut-leaf { display: none; }
-.dock .dk-batt[data-badge='leaf'] :is(.dk-bleaf, .dk-bcut-leaf) { display: inline; }
+/* Energy saver on (dock.ts batteryBadge): the inside orange, as Windows 11's, low or not. */
+.dock .dk-batt[data-badge='saver'] .dk-bfill { fill: var(--bt-saver); }
 .dock .dk-wifi, .dock .dk-sound { width: 34px; padding: 0; }
 /* The numbers keep one width as they change (up to 59:59, 99% | 99%, 12:00 AM, 12/28/2026), so the bar never moves. */
 .dock .dk-timer span { font: 600 15px/1 var(--font); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; min-width: 41px; text-align: center; }

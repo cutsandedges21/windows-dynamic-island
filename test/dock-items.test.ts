@@ -96,9 +96,9 @@ describe('a full taskbar', () => {
   });
 });
 
-describe("the battery's leaf while Energy saver is on, as Windows 11's (Justin, 11-21)", () => {
-  it('shows the leaf on battery with Energy saver on, nothing with it off', () => {
-    expect(batteryBadge({ charging: false, ac: false, saver: true })).toBe('leaf');
+describe("the battery orange inside while Energy saver is on, as Windows 11's (Justin, 11-21)", () => {
+  it('orange on battery with Energy saver on, nothing with it off', () => {
+    expect(batteryBadge({ charging: false, ac: false, saver: true })).toBe('saver');
     expect(batteryBadge({ charging: false, ac: false, saver: false })).toBeNull();
     expect(batteryBadge({ charging: false })).toBeNull();
   });
@@ -109,8 +109,8 @@ describe("the battery's leaf while Energy saver is on, as Windows 11's (Justin, 
     expect(batteryBadge({ charging: true, saver: false })).toBe('bolt');
   });
 
-  it('low on Energy saver: still red, and the leaf', () => {
+  it('low on Energy saver: orange, as Windows shows it', () => {
     expect(batteryTone({ percent: 9, charging: false, ac: false })).toBe('low');
-    expect(batteryBadge({ charging: false, ac: false, saver: true })).toBe('leaf');
+    expect(batteryBadge({ charging: false, ac: false, saver: true })).toBe('saver');
   });
 });
