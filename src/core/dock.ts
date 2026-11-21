@@ -208,14 +208,17 @@ export function toggleDockItem(hidden: readonly DockItem[], item: DockItem): Doc
  *  off Justin's 11-19 screenshot of his taskbar at 125 %. */
 const BATTERY_FULL = 17.6;
 const BATTERY_BOLT = 'M12.4 0H14.4L13.5 3.9H15.9L12 11.8L12.6 6.5H9.8Z';
+/** Energy saver's leaf, where the bolt goes (Windows 11's: tip up to the right, a short stem down left). */
+const BATTERY_LEAF = 'M16.2 0.4C11.4 0.5 9.5 3.2 9.7 6.9C9.8 8.1 10.2 9.1 10.8 9.8L9.7 11.4L10.6 12L11.6 10.6C14.9 11.4 16.9 8.4 16.2 0.4Z';
 const BATTERY_SVG =
   '<svg viewBox="0 0 25 17" aria-hidden="true">' +
   '<mask id="dk-bcut" maskUnits="userSpaceOnUse" x="0" y="0" width="25" height="17"><rect width="25" height="17" fill="#fff"/>' +
-  `<path class="dk-bcut" d="${BATTERY_BOLT}" fill="#000" stroke="#000" stroke-width="2.4" stroke-linejoin="round"/></mask>` +
+  `<path class="dk-bcut" d="${BATTERY_BOLT}" fill="#000" stroke="#000" stroke-width="2.4" stroke-linejoin="round"/>` +
+  `<path class="dk-bcut-leaf" d="${BATTERY_LEAF}" fill="#000" stroke="#000" stroke-width="2.4" stroke-linejoin="round"/></mask>` +
   '<g mask="url(#dk-bcut)"><rect class="dk-bline" x="1.6" y="4.1" width="21.2" height="11" rx="3"/>' +
   '<rect class="dk-bnub" x="23.3" y="7.9" width="1.3" height="3.4" rx="0.6"/>' +
   `<rect class="dk-bfill" x="3.4" y="6.4" width="${BATTERY_FULL}" height="7.2" rx="1.4"/></g>` +
-  `<path class="dk-bbolt" d="${BATTERY_BOLT}"/></svg>`;
+  `<path class="dk-bbolt" d="${BATTERY_BOLT}"/><path class="dk-bleaf" d="${BATTERY_LEAF}"/></svg>`;
 
 /** How many waves the speaker shows for a volume (0..1), as Windows 11's: none when silent, then one,
  *  two, three by thirds; two while the volume isn't known. */
@@ -231,8 +234,8 @@ const soundIcon = (n: number) => `<svg viewBox="0 0 24 24" class="line"><path d=
 
 /**
  * How the battery shows its state beyond its charge: the bolt while plugged in (charging or not), else
- * a yellow inside while Energy saver is on, as Windows 11's (Justin, 11-21: "make inside the battery
- * orange like windows, no need for leaf", then "more yellow than orange").
+ * a yellow inside and the leaf where the bolt goes while Energy saver is on, as Windows 11's (Justin,
+ * 11-21: "make inside the battery orange like windows", "more yellow than orange", "add the leaf too").
  */
 export function batteryBadge(b: { charging: boolean; ac?: boolean; saver?: boolean }): 'bolt' | 'saver' | null {
   if (b.charging || b.ac) return 'bolt';
